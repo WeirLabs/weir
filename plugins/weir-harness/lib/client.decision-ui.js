@@ -53,6 +53,66 @@ window.__ModuleLoader__.load({
 .weir-da-selector-option input { flex: none; margin: 3px 0 0; }
 .weir-da-selector-option span { min-width: 0; }
 .weir-da-selector-footer { padding-top: 8px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
+.weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+.weir-da-page-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.weir-da-page-header h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 650; }
+.weir-da-page-header p { margin: 4px 0 0; max-width: 68ch; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
+.weir-da-primary-nav { box-sizing: border-box; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); }
+.weir-da-primary-nav .weir-da-button { border-color: transparent; background: transparent; }
+.weir-da-primary-nav .weir-da-button[aria-pressed="true"] { border-color: var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.weir-da-count { display: inline-flex; min-width: 20px; min-height: 20px; align-items: center; justify-content: center; margin-inline-start: 6px; padding: 0 5px; border-radius: 10px; background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
+.weir-da-view, .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
+.weir-da-card { box-sizing: border-box; min-width: 0; padding: 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
+.weir-da-card-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.weir-da-card-header h2 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
+.weir-da-card-header p, .weir-da-card p { margin: 4px 0 0; line-height: 20px; }
+.weir-da-record-answers { display: grid; gap: 10px; }
+.weir-da-answer-summary { min-width: 0; display: grid; gap: 4px; padding: 10px; border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-record-detail section { min-width: 0; margin-top: 16px; }
+.weir-da-record-detail h3 { margin: 0 0 8px; font-size: 13px; line-height: 18px; }
+.weir-da-evidence-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.weir-da-evidence-list li { padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); white-space: pre-wrap; }
+.weir-da-records-layout { min-width: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 6px; }
+.weir-da-record-row.weir-da-button { width: 100%; height: auto; min-height: 64px; display: grid; justify-items: start; gap: 4px; padding: 10px; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.weir-da-record-row span { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.weir-da-select { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 32px; padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.weir-da-page select:focus-visible, .weir-da-page input:focus-visible, .weir-da-page textarea:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.weir-da-record-back { display: none; }
+@media (max-width: 760px) {
+  .weir-da-page-inner { padding: 16px; gap: 16px; }
+  .weir-da-records-layout { grid-template-columns: minmax(0, 1fr); }
+  .weir-da-records-layout[data-drill-in="true"] .weir-da-record-list { display: none; }
+  .weir-da-records-layout[data-drill-in="false"] .weir-da-record-detail-pane { display: none; }
+  .weir-da-record-back { display: inline-flex; }
+}
+.weir-da-disclosure-trigger { box-sizing: border-box; width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; text-align: start; cursor: pointer; }
+.weir-da-disclosure-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.weir-da-disclosure { min-width: 0; }
+.weir-da-disclosure [role="region"] { min-width: 0; padding-top: 10px; }
+.weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
+.weir-da-suggestion-review { margin: 12px 0; padding: 10px; border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-suggestion-review ul, .weir-da-memory-summary { margin: 6px 0 0; padding-inline-start: 20px; }
+.weir-da-filters, .weir-da-records-view, .weir-da-agents-view { min-width: 0; display: grid; gap: 12px; }
+.weir-da-filter-row { min-width: 0; display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.weir-da-filter { min-width: 0; flex: 1 1 160px; display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.weir-da-filter input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.weir-da-section-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.weir-da-section-header h2, .weir-da-metrics h2 { margin: 0; font-size: 16px; line-height: 24px; }
+.weir-da-agent-editor .weir-da-field textarea, .weir-da-agent-advanced textarea { resize: vertical; max-height: 40vh; overflow: auto; overflow-wrap: normal; }
+.weir-da-correction-preview { padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-evaluation { min-width: 0; display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-metrics { display: grid; gap: 16px; }
+.weir-da-metrics section { min-width: 0; }
+.weir-da-metrics h3 { margin: 0 0 8px; font-size: 13px; }
+.weir-da-metrics-grid { min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 8px; margin: 0; }
+.weir-da-metric { min-width: 0; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-metric dt { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.weir-da-metric dd { margin: 4px 0 0; color: var(--dsw-alias-label-primary); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.weir-da-advanced-record pre, .weir-da-agent-diagnostics pre, .weir-da-metrics pre { box-sizing: border-box; max-width: 100%; max-height: 420px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); font-size: 12px; }
+.weir-da-agent-diagnostics button { max-width: 100%; overflow-wrap: anywhere; }
+@media (max-width: 400px) { .weir-da-page-inner { padding: 12px; } }
 @media (max-width: 600px) {
   .weir-da-button { min-height: 36px; }
   .weir-da-actions { align-items: stretch; }
@@ -146,10 +206,10 @@ window.__ModuleLoader__.load({
         jsx.jsx("button", {
           ref: triggerRef, type: "button", className: "weir-da-disclosure-trigger",
           "aria-expanded": open, "aria-controls": `${id}-content`,
-          onClick: () => open ? close() : setOpen(true),
+          onClick: () => { if (open) close(); else { setOpen(true); props.onOpen?.(); } },
           children: props.label,
         }, "trigger"),
-        open ? jsx.jsx("div", { id: `${id}-content`, role: "region", "aria-label": props.label, children: props.children }, "content") : null,
+        open ? jsx.jsx("div", { id: `${id}-content`, role: "region", "aria-label": props.label, children: typeof props.children === "function" ? props.children() : props.children }, "content") : null,
       ] });
     }
 
