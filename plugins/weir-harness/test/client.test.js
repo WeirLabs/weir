@@ -2184,6 +2184,7 @@ describe('weir settings client half', () => {
     'decisionCurrentSnapshot', 'decisionNoCurrentSnapshot', 'decisionLearningRuns', 'decisionNoLearningRuns', 'decisionSnapshots', 'decisionNoSnapshots',
     'decisionLearningDetail', 'decisionNoLearningDetail', 'decisionFrozenInput', 'decisionStructuralReplay', 'decisionStructuralReplayHint',
     'decisionReplayPassed', 'decisionReplayFailed', 'decisionReplayPending', 'decisionOperations', 'decisionNoOperations', 'decisionPrincipleDiff',
+    'decisionSourceRecords', 'decisionCorrectionDirection',
     'decisionDiffAdded', 'decisionDiffChanged', 'decisionDiffRemoved', 'decisionBefore', 'decisionAfter', 'decisionNoPrincipleChanges', 'decisionNoSnapshotForRun',
     'decisionSnapshotPin', 'decisionNoSnapshotPin', 'decisionReviewedPrinciples', 'decisionL5Mappings', 'decisionExclusions', 'decisionNoExclusions',
     'decisionLearningOutcome_running', 'decisionLearningOutcome_candidate', 'decisionLearningOutcome_published', 'decisionLearningOutcome_rejected',

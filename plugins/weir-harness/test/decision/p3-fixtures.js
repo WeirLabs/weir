@@ -47,7 +47,7 @@ export async function seedUserDecision(f, key, options = {}) {
   const agentId = options.agentId ?? f.profile.agentId
   const scope = options.scope ?? { workspaces: [workspaceKey] }
   let current = (await f.broker.cases.createCase({
-    workspaceKey, rootSessionId: 'root', entry: 'hook', agentId,
+    workspaceKey, rootSessionId: options.rootSessionId ?? 'root', entry: 'hook', agentId,
     request: {
       entry: 'hook',
       questions: [{ id: 'q', question: options.question ?? `Question ${key}`, options: [{ label: 'A' }, { label: 'B' }] }],

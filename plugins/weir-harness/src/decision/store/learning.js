@@ -252,6 +252,43 @@ export class DecisionLearning {
     return memorySnapshotOf(rows[0])
   }
 
+  /**
+   * Read only explicitly reviewed sources, with Agent/workspace authorization
+   * independent of the root-scoped general history reader.
+   * @param {{agentId:string,workspaceKey:string,sourceIds:string[],revisions?:Record<string,number>}} input
+   */
+  sourceRecords(input) {
+    const sourceIds = [...new Set(input.sourceIds)]
+    const limit = LEARNING_LIMITS.cases + LEARNING_LIMITS.feedback
+    if (sourceIds.length > limit) throw new DecisionContractError('LEARNING_INPUT_TOO_LARGE', `At most ${limit} unique learning sources can be reviewed`)
+    const revisions = input.revisions ?? {}
+    const records = []
+    for (const sourceId of sourceIds) {
+      const caseRow = this.store.db.prepare('SELECT * FROM cases WHERE case_id=? AND agent_id=? AND workspace_key=?').get(sourceId, input.agentId, input.workspaceKey)
+      if (caseRow) {
+        const projected = projectLearningRecords({
+          agentId: input.agentId, workspaceKey: input.workspaceKey, cases: [caseOf(caseRow)], feedback: [],
+        }).projection.cases[0]
+        records.push({ sourceId, kind: 'case', ...projected, revision: revisions[sourceId] ?? projected.revision })
+        continue
+      }
+      const feedbackRow = this.store.db.prepare(`SELECT feedback.* FROM feedback
+        JOIN cases ON cases.case_id=feedback.case_id
+        WHERE feedback.feedback_id=? AND feedback.agent_id=? AND feedback.kind='correction'
+          AND cases.agent_id=? AND cases.workspace_key=?`).get(sourceId, input.agentId, input.agentId, input.workspaceKey)
+      const correctionRow = feedbackRow
+        ? this.store.db.prepare('SELECT * FROM corrections WHERE feedback_id=? AND agent_id=?').get(sourceId, input.agentId)
+        : undefined
+      if (!feedbackRow || !correctionRow) continue
+      const projected = projectLearningRecords({
+        agentId: input.agentId, workspaceKey: input.workspaceKey, cases: [],
+        feedback: [feedbackRecord(feedbackRow)], corrections: [correctionRecord(correctionRow)],
+      }).projection.feedback[0]
+      records.push({ sourceId, ...projected, revision: revisions[sourceId] ?? projected.revision })
+    }
+    return deepFreeze(records)
+  }
+
   /** Freeze the actual model input and insert running before any model call. */
   async beginRun(input) {
     let result

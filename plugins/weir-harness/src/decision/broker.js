@@ -599,6 +599,8 @@ export class DecisionBroker {
     const profile = this.profiles.getProfile(input.agentId)
     if (profile.workspaceKey !== context.workspaceKey) this.rejectBoundary({ agentId: input.agentId, rootSessionId: context.rootSessionId })
     const currentSnapshot = this.learning.currentSnapshot(profile.agentId, context.workspaceKey)
+    const snapshotHistory = this.learning.listSnapshots(profile.agentId).slice(0, 20)
+    if (currentSnapshot && !snapshotHistory.some(snapshot => snapshot.snapshotId === currentSnapshot.snapshotId)) snapshotHistory.push(currentSnapshot)
     return {
       ...profile,
       descriptionHistory: this.profiles.descriptionHistory(profile.agentId),
@@ -607,7 +609,7 @@ export class DecisionBroker {
         learningRunId: run.learningRunId, outcome: run.outcome, revision: run.revision,
         createdAt: run.createdAt, updatedAt: run.updatedAt,
       })),
-      snapshots: this.learning.listSnapshots(profile.agentId).slice(0, 20).map(snapshot => ({
+      snapshots: snapshotHistory.map(snapshot => ({
         snapshotId: snapshot.snapshotId, version: snapshot.version, parentSnapshotId: snapshot.parentSnapshotId,
         state: snapshot.state, learningRunId: snapshot.learningRunId, revision: snapshot.revision,
         contentHash: snapshot.contentHash, createdAt: snapshot.createdAt, updatedAt: snapshot.updatedAt,
@@ -775,7 +777,13 @@ export class DecisionBroker {
     if (profile.workspaceKey !== context.workspaceKey || (input.agentId && input.agentId !== run.agentId)) {
       this.rejectLearningBoundary('learning-run', { learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId })
     }
-    return run
+    return {
+      ...run,
+      sourceRecords: this.learning.sourceRecords({
+        agentId: run.agentId, workspaceKey: context.workspaceKey,
+        sourceIds: run.operations.flatMap(operation => operation.sources ?? []), revisions: run.inputFrozen.revisions,
+      }),
+    }
   }
 
   async memorySnapshot(input) {
@@ -786,7 +794,15 @@ export class DecisionBroker {
     if (profile.workspaceKey !== context.workspaceKey || (input.agentId && input.agentId !== snapshot.agentId)) {
       this.rejectLearningBoundary('snapshot', { snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId })
     }
-    return snapshot
+    const run = this.learning.getRunById(snapshot.learningRunId)
+    const revisions = run.agentId === snapshot.agentId && run.inputFrozen.workspaceKey === context.workspaceKey ? run.inputFrozen.revisions : {}
+    return {
+      ...snapshot,
+      sourceRecords: this.learning.sourceRecords({
+        agentId: snapshot.agentId, workspaceKey: context.workspaceKey,
+        sourceIds: snapshot.principles.flatMap(principle => principle.sources), revisions,
+      }),
+    }
   }
 
   async records(input) {

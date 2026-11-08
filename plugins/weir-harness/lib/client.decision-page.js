@@ -174,6 +174,7 @@ window.__ModuleLoader__.load({
       const canRollback = !busy && current?.state === "published" && Number.isInteger(currentRevision);
       const run = detail?.run ?? null;
       const snapshot = detail?.snapshot ?? null;
+      const sourceRecords = learningRows(snapshot?.sourceRecords ?? run?.sourceRecords);
       const diff = snapshot ? principleDiff(detail?.parentSnapshot, snapshot) : [];
       const operations = Array.isArray(run?.operations) ? run.operations.filter(operation => operation && typeof operation === "object") : [];
       const frozen = run?.inputFrozen ? {
@@ -222,6 +223,21 @@ window.__ModuleLoader__.load({
               ? jsx.jsxs("div", { children: [jsx.jsx("div", { children: run.replay.passed === true ? t("decisionReplayPassed") : t("decisionReplayFailed") }, "result"), jsx.jsx("pre", { children: JSON.stringify({ detail: run.replay.detail ?? null, metrics: run.replay.metrics ?? {}, finalHash: run.replay.finalHash ?? null }, null, 2) }, "replay")] }, "result")
               : jsx.jsx("div", { children: t("decisionReplayPending") }, "pending"),
           ] }, "replay"),
+          sourceRecords.length ? jsx.jsxs("div", { children: [
+            jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionSourceRecords") }, "label"),
+            jsx.jsx("ul", { style: { listStyle: "none", margin: "4px 0 0", padding: 0, display: "grid", gap: "6px" }, children: sourceRecords.map((record, index) => jsx.jsxs("li", {
+              "data-learning-source-record": record.sourceId,
+              style: contextPackStyle,
+              children: [
+                jsx.jsx("code", { children: `${record.kind ?? "source"} · ${record.sourceId} · r${record.revision ?? "—"}` }, "id"),
+                record.kind === "case" ? jsx.jsx("pre", { style: { whiteSpace: "pre-wrap", margin: "6px 0 0" }, children: record.excerpt ?? "—" }, "excerpt") : null,
+                record.kind === "correction" ? jsx.jsxs("div", { children: [
+                  jsx.jsx("div", { style: { marginTop: "6px" }, children: `${t("decisionCorrectionDirection")}: ${record.direction ?? "—"}` }, "direction"),
+                  jsx.jsx("pre", { style: { whiteSpace: "pre-wrap", margin: "6px 0 0" }, children: JSON.stringify({ scope: record.scope ?? null, supersedes: record.supersedes ?? [] }, null, 2) }, "scope"),
+                ] }, "correction") : null,
+              ],
+            }, `${record.sourceId}:${index}`)) }, "sources"),
+          ] }, "source-records") : null,
           jsx.jsxs("div", { children: [
             jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionOperations") }, "label"),
             operations.length

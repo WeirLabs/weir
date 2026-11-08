@@ -224,3 +224,91 @@ test('Agent governance exposes every real lifecycle state and blocks conflicting
   const disabled = exports.AgentLearning({ agent: { ...agent, state: 'disabled', learningRuns: [], snapshots: [], currentSnapshotId: null }, detail: null, run: async () => {}, pending: null, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key })
   assert.equal(findAll(disabled, node => node.type === 'button' && node.children === 'decisionConsolidate')[0].disabled, true)
 })
+
+test('current Snapshot beyond twenty newer drafts keeps authoritative rollback and detail actions', async () => {
+  const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({
+    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
+  }))
+  const newer = Array.from({ length: 21 }, (_, index) => {
+    const version = 22 - index
+    return { snapshotId: `ms_rejected_${version}`, state: 'draft', version, revision: 1, learningRunId: `lr_rejected_${version}` }
+  })
+  const current = { snapshotId: 'ms_current', state: 'published', version: 1, revision: 7, learningRunId: 'lr_current', parentSnapshotId: null }
+  const agent = {
+    agentId: 'a', state: 'enabled', currentSnapshotId: 'ms_current',
+    learningRuns: newer.map(snapshot => ({ learningRunId: snapshot.learningRunId, outcome: 'rejected', revision: 2 })),
+    snapshots: [...newer, current],
+  }
+  const calls = []
+  const selected = []
+  const rendered = exports.AgentLearning({
+    agent, detail: null, pending: null, run: async (...args) => { calls.push(args) },
+    selectRun: async () => {}, selectSnapshot: async id => { selected.push(id) }, openRecord: async () => {}, t: key => key,
+  })
+  const rollback = findAll(rendered, node => node.type === 'button' && node.children === 'decisionRollback')[0]
+  assert.equal(rollback.disabled, false)
+  await rollback.onClick()
+  assert.deepEqual(calls, [['snapshotRollback', 'ms_current', 7]])
+  const currentButton = findAll(rendered, node => node.type === 'button' && node.children === 'ms_current · v1 · decisionSnapshotState_published · r7')[0]
+  await currentButton.onClick()
+  assert.deepEqual(selected, ['ms_current'])
+})
+
+test('current Snapshot detail resolves even when its run is outside the recent-run cap', async () => {
+  const calls = []
+  const newer = Array.from({ length: 21 }, (_, index) => {
+    const version = 22 - index
+    return { snapshotId: `ms_rejected_${version}`, state: 'draft', version, revision: 1, learningRunId: `lr_rejected_${version}` }
+  })
+  const agent = {
+    agentId: 'a', name: 'A', state: 'enabled', currentSnapshotId: 'ms_current',
+    learningRuns: newer.map(snapshot => ({ learningRunId: snapshot.learningRunId, outcome: 'rejected', revision: 2 })),
+    snapshots: [...newer, { snapshotId: 'ms_current', state: 'published', version: 1, revision: 7, learningRunId: 'lr_current', parentSnapshotId: null }],
+  }
+  const actions = {
+    learningRun: async id => { calls.push(['learningRun', id]); return { learningRunId: id, agentId: 'a', outcome: 'published', inputFrozen: { parentSnapshotId: null }, operations: [] } },
+    memorySnapshot: async id => { calls.push(['memorySnapshot', id]); return { snapshotId: id, agentId: 'a', learningRunId: 'lr_current', principles: [] } },
+  }
+  const states = ['agents', [agent], [], [], null, null, null, agent, {}, null, '', '', '', null, null]
+  let cursor = 0
+  const react = { useState: initial => [cursor < states.length ? states[cursor++] : initial, () => {}], useEffect: () => {} }
+  const { exports } = await loadClientChunk('lib/client.decision-page.js', name => name === 'react' ? react : {
+    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
+  })
+  const rendered = exports.DecisionPage({
+    connection: {}, decisionRpc: async () => {}, createDecisionActions: () => actions,
+    getSessionId: () => 'root', t: key => key,
+  })
+  const current = findAll(rendered, node => node.type === 'button' && node.children === 'ms_current · v1 · decisionSnapshotState_published · r7')[0]
+  await current.onClick()
+  assert.deepEqual(calls, [['learningRun', 'lr_current'], ['memorySnapshot', 'ms_current']])
+})
+
+test('learning detail renders bounded Case and correction source disclosures read-only', async () => {
+  const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({
+    jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }),
+  }))
+  const sourceRecords = [
+    { sourceId: 'dc_cross_root', kind: 'case', caseId: 'dc_cross_root', revision: 3, scope: { workspaces: ['/repo'] }, excerpt: 'Answer q: Cross-root A\nQuestion q: CROSS ROOT SOURCE QUESTION' },
+    { sourceId: 'fb_correction', kind: 'correction', feedbackId: 'fb_correction', caseId: 'dc_cross_root', revision: 1, direction: 'Use the corrected direction', scope: { workspaces: ['/repo'] }, supersedes: ['dc_cross_root'] },
+  ]
+  const agent = {
+    agentId: 'a', state: 'enabled', currentSnapshotId: null,
+    learningRuns: [{ learningRunId: 'lr_review', outcome: 'candidate', revision: 2 }],
+    snapshots: [{ snapshotId: 'ms_review', state: 'draft', version: 1, revision: 1, learningRunId: 'lr_review' }],
+  }
+  const detail = {
+    agentId: 'a',
+    run: { learningRunId: 'lr_review', agentId: 'a', outcome: 'candidate', revision: 2, inputFrozen: { caseIds: ['dc_cross_root'], feedbackIds: ['fb_correction'] }, operations: [], sourceRecords },
+    snapshot: { snapshotId: 'ms_review', agentId: 'a', state: 'draft', version: 1, revision: 1, principles: [], sourceRecords },
+  }
+  const rendered = exports.AgentLearning({
+    agent, detail, pending: null, run: async () => {}, selectRun: async () => {}, selectSnapshot: async () => {}, openRecord: async () => {}, t: key => key,
+  })
+  const disclosures = findAll(rendered, node => typeof node['data-learning-source-record'] === 'string')
+  assert.deepEqual(disclosures.map(node => node['data-learning-source-record']), ['dc_cross_root', 'fb_correction'])
+  const text = JSON.stringify(disclosures)
+  for (const value of ['Answer q: Cross-root A', 'CROSS ROOT SOURCE QUESTION', 'Use the corrected direction', '/repo', 'dc_cross_root']) assert.ok(text.includes(value), value)
+  assert.equal(text.includes('DO_NOT_EXPOSE_TASK_SUMMARY'), false)
+  for (const disclosure of disclosures) assert.deepEqual(findAll(disclosure, node => ['button', 'input', 'textarea', 'select'].includes(node.type)), [])
+})
