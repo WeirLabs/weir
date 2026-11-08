@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { brokerFixture, insertSnapshot, seedUserDecision, snapshotForRun, validAdd } from './p3-fixtures.js'
+import { brokerFixture, insertSnapshot, seedUserDecision, seedValidatedAnswer, snapshotForRun, validAdd } from './p3-fixtures.js'
 
 test('consolidation-contract/1 sends only bounded frozen authority without tools or temperature', async t => {
   const f = await brokerFixture(t)
@@ -105,4 +105,91 @@ test('add/refine/merge/narrow/retire replay deterministically into a complete dr
   assert.equal(draft.principles.filter(principle => principle.state === 'active').length, 4)
   assert.equal(draft.principles.filter(principle => principle.state === 'retired').length, 3)
   assert.equal((await f.broker.agent({ sessionId: 'root', agentId: f.profile.agentId })).currentSnapshotId, 'ms_parent')
+})
+
+test('validated answered Cases and active corrections are authoritative through real Evidence', async t => {
+  const f = await brokerFixture(t)
+  const validated = await seedValidatedAnswer(f, 'validated-source')
+  f.respond(() => ({ operations: [validAdd(f, [validated.caseId])] }))
+  const first = await f.broker.learningStart({ sessionId: 'root', agentId: f.profile.agentId, requestId: 'validated-run' })
+  assert.equal(first.outcome, 'candidate')
+  const firstId = snapshotForRun(f, first.learningRunId).snapshot_id
+  const firstDraft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: firstId })
+  await f.broker.snapshotPublish({ sessionId: 'root', snapshotId: firstId, expectedRevision: firstDraft.revision })
+
+  const correction = await f.broker.feedbackStore.append({
+    actor: { kind: 'user' }, caseId: validated.caseId, kind: 'correction',
+    payload: { direction: 'Prefer the corrected answer', scope: { workspaces: [f.workspace] }, supersedes: [] },
+  })
+  f.respond(() => ({ operations: [validAdd(f, [correction.feedbackId], { text: 'Use the corrected answer' })] }))
+  const second = await f.broker.learningStart({ sessionId: 'root', agentId: f.profile.agentId, requestId: 'correction-run' })
+  assert.equal(second.outcome, 'candidate')
+  const secondId = snapshotForRun(f, second.learningRunId).snapshot_id
+  const secondDraft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: secondId })
+  const published = await f.broker.snapshotPublish({ sessionId: 'root', snapshotId: secondId, expectedRevision: secondDraft.revision })
+  assert.equal(published.state, 'published')
+  assert.equal(published.principles.at(-1).sources[0], correction.feedbackId)
+})
+
+test('a superseded correction makes its candidate unpublishable', async t => {
+  const f = await brokerFixture(t)
+  const source = await seedUserDecision(f, 'correction-supersede-source')
+  const correction = await f.broker.feedbackStore.append({
+    actor: { kind: 'user' }, caseId: source.caseId, kind: 'correction',
+    payload: { direction: 'Use B', scope: { workspaces: [f.workspace] }, supersedes: [] },
+  })
+  f.respond(() => ({ operations: [validAdd(f, [correction.feedbackId], { text: 'Use B' })] }))
+  const run = await f.broker.learningStart({ sessionId: 'root', agentId: f.profile.agentId, requestId: 'correction-superseded-run' })
+  const snapshotId = snapshotForRun(f, run.learningRunId).snapshot_id
+  const draft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })
+  await f.broker.feedbackStore.append({
+    actor: { kind: 'user' }, caseId: source.caseId, kind: 'correction',
+    payload: { direction: 'Use C', scope: { workspaces: [f.workspace] }, supersedes: [correction.feedbackId] },
+  })
+  await assert.rejects(
+    f.broker.snapshotPublish({ sessionId: 'root', snapshotId, expectedRevision: draft.revision }),
+    error => error.code === 'STALE_SOURCE',
+  )
+  assert.equal((await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })).state, 'draft')
+})
+
+test('structural replay rejects scope, target, temporary-id, and same-question authority conflicts', async t => {
+  const f = await brokerFixture(t)
+  const scoped = { workspaces: [f.workspace], paths: ['src'] }
+  const source = await seedUserDecision(f, 'structural-source', { scope: scoped })
+  insertSnapshot(f, 'ms_structural', 1, 'published', { principles: [
+    { principleId: 'pr_a', text: 'A', scope: scoped, sources: [source.caseId], state: 'active' },
+    { principleId: 'pr_b', text: 'B', scope: scoped, sources: [source.caseId], state: 'active' },
+  ] })
+  const wide = { workspaces: [f.workspace] }
+  const cases = [
+    ['refine-expands', { operations: [{ op: 'refine', principleId: 'pr_a', text: 'Wide', scope: wide, sources: [source.caseId] }] }, 'SCOPE_EXPANSION'],
+    ['merge-expands', { operations: [{ op: 'merge', targetPrincipleIds: ['pr_a', 'pr_b'], text: 'Wide', scope: wide }] }, 'SCOPE_EXPANSION'],
+    ['narrow-same', { operations: [{ op: 'narrow', principleId: 'pr_a', scope: scoped }] }, 'SCOPE_NOT_NARROWED'],
+    ['duplicate-target', { operations: [
+      { op: 'refine', principleId: 'pr_a', text: 'One', scope: scoped, sources: [source.caseId] },
+      { op: 'refine', principleId: 'pr_a', text: 'Two', scope: scoped, sources: [source.caseId] },
+    ] }, 'DUPLICATE_TARGET'],
+    ['temporary-conflict', { operations: [
+      validAdd(f, [source.caseId], { principleId: 'tmp_same', scope: scoped }),
+      validAdd(f, [source.caseId], { principleId: 'tmp_same', scope: scoped }),
+    ] }, 'TEMPORARY_ID_CONFLICT'],
+    ['unknown-target', { operations: [{ op: 'retire', principleId: 'pr_missing' }] }, 'UNKNOWN_TARGET'],
+  ]
+  for (const [name, output, code] of cases) {
+    f.respond(() => output)
+    const run = await f.broker.learningStart({ sessionId: 'root', agentId: f.profile.agentId, requestId: `req-${name}` })
+    assert.equal(run.outcome, 'failed', name)
+    assert.equal(run.replay.detail, code, name)
+  }
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM memory_snapshots').get().n, 1)
+
+  const conflicting = await brokerFixture(t)
+  const left = await seedUserDecision(conflicting, 'conflict-left', { question: 'Same question', selected: 'A' })
+  const right = await seedUserDecision(conflicting, 'conflict-right', { question: 'Same question', selected: 'B' })
+  conflicting.respond(() => ({ operations: [validAdd(conflicting, [left.caseId, right.caseId])] }))
+  const run = await conflicting.broker.learningStart({ sessionId: 'root', agentId: conflicting.profile.agentId, requestId: 'authority-conflict' })
+  assert.equal(run.outcome, 'failed')
+  assert.equal(run.replay.detail, 'AUTHORITY_CONFLICT')
+  assert.equal(conflicting.broker.store.db.prepare('SELECT COUNT(*) AS n FROM memory_snapshots').get().n, 0)
 })

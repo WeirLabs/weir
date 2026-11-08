@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { canonicalJson } from '../../src/decision/contracts.js'
-import { brokerFixture, insertLearningRun, insertSnapshot } from './p3-fixtures.js'
+import { brokerFixture, frozenInput, insertLearningRun, insertSnapshot } from './p3-fixtures.js'
 
 test('P3 strict readers reject high-version, corrupt, and unknown records without rewriting v1 rows', async t => {
   const f = await brokerFixture(t)
@@ -56,4 +56,41 @@ test('Snapshot content hash is canonical and generatedDescription stays empty an
   f.broker.store.db.prepare('UPDATE memory_snapshots SET generated_description_json=? WHERE snapshot_id=?')
     .run(JSON.stringify({ revision: 1, text: 'INVENTED PROFILE' }), 'ms_hash')
   await assert.rejects(f.broker.memorySnapshot({ sessionId: 'root', snapshotId: 'ms_hash' }))
+})
+
+test('P3 strict readers close JSON envelopes, operations, principles, and scopes', async t => {
+  const f = await brokerFixture(t)
+  insertLearningRun(f, 'lr_extra_input', 'failed', { inputFrozen: { ...frozenInput(f), unexpected: true } })
+  await assert.rejects(f.broker.learningRun({ sessionId: 'root', learningRunId: 'lr_extra_input' }), error => error.code === 'UNKNOWN_FIELD')
+
+  insertLearningRun(f, 'lr_bad_operation', 'failed', { operations: [{ op: 'invert', principleId: 'pr_one' }] })
+  await assert.rejects(f.broker.learningRun({ sessionId: 'root', learningRunId: 'lr_bad_operation' }))
+
+  insertSnapshot(f, 'ms_extra_principle', 1, 'draft', { principles: [{
+    principleId: 'pr_one', text: 'Prefer A', scope: { workspaces: [f.workspace], unexpected: true },
+    sources: ['dc_source'], state: 'active', unexpected: true,
+  }] })
+  await assert.rejects(f.broker.memorySnapshot({ sessionId: 'root', snapshotId: 'ms_extra_principle' }), error => error.code === 'UNKNOWN_FIELD')
+})
+
+test('any duplicate Agent/version is ambiguous, even outside the published set', async t => {
+  const f = await brokerFixture(t)
+  insertSnapshot(f, 'ms_draft_a', 1, 'draft')
+  insertSnapshot(f, 'ms_draft_b', 1, 'draft')
+  await assert.rejects(
+    f.broker.agent({ sessionId: 'root', agentId: f.profile.agentId }),
+    error => error.code === 'SNAPSHOT_VERSION_AMBIGUOUS',
+  )
+})
+
+test('Learning Run replay details are closed bounded failure codes, not raw model text', async t => {
+  const f = await brokerFixture(t)
+  insertLearningRun(f, 'lr_raw_replay', 'failed', {
+    replay: {
+      passed: false,
+      metrics: { operationCount: 0, sourceCount: 0, activePrincipleCount: 0, retiredPrincipleCount: 0 },
+      detail: 'raw model text must not be stored here',
+    },
+  })
+  await assert.rejects(f.broker.learningRun({ sessionId: 'root', learningRunId: 'lr_raw_replay' }))
 })

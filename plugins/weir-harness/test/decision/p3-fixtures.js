@@ -63,6 +63,31 @@ export async function seedUserDecision(f, key, options = {}) {
   })
 }
 
+/** Build a real validated agent_record Evidence owner through public stores. */
+export async function seedValidatedAnswer(f, key, options = {}) {
+  const workspaceKey = options.workspaceKey ?? f.workspace
+  const agentId = options.agentId ?? f.profile.agentId
+  const scope = options.scope ?? { workspaces: [workspaceKey] }
+  let current = (await f.broker.cases.createCase({
+    workspaceKey, rootSessionId: 'root', entry: 'hook', agentId,
+    request: { entry: 'hook', questions: [{ id: 'q', question: options.question ?? `Question ${key}`, options: [{ label: 'A' }, { label: 'B' }] }] },
+    scope, idempotencyKey: key,
+  })).case
+  current = await f.broker.cases.transition({ caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision, state: 'evaluating' })
+  const attempt = await f.broker.attempts.start({
+    caseId: current.caseId, agentId, pins: {}, contextPackHash: `hash-${key}`, packManifest: {},
+  })
+  await f.broker.attempts.finish(attempt.attemptId, { outcome: 'answer', citedEvidenceIds: [] })
+  current = f.broker.cases.getCase(current.caseId)
+  current = await f.broker.cases.transition({
+    caseId: current.caseId, expectedState: 'evaluating', expectedRevision: current.revision,
+    state: 'closed', closing: 'answered',
+    decision: { kind: 'answer', attemptId: attempt.attemptId, answers: [{ id: 'q', selected: [options.selected ?? 'A'] }], decidedAt: f.broker.now() },
+  })
+  await f.broker.feedbackStore.append({ actor: { kind: 'user' }, caseId: current.caseId, attemptId: attempt.attemptId, kind: 'rating_up' })
+  return f.broker.cases.getCase(current.caseId)
+}
+
 export function validAdd(f, sources, overrides = {}) {
   return {
     op: 'add', principleId: 'temporary-add', text: 'Prefer A for this question',
