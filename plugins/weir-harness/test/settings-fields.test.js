@@ -102,6 +102,7 @@ const NO_DEFAULT_KEYS = [
 function coerceRowValue(raw) {
   if (raw === 'true') return true
   if (raw === 'false') return false
+  if (raw === "''") return ''
   if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw)
   return raw
 }
@@ -121,7 +122,7 @@ function chunkFieldDefaults() {
   if (start < 0) throw new Error('client.settings-page.js: frozen FIELD_DEFAULTS literal not found')
   const block = page.slice(start, page.indexOf('})', start))
   const entries = new Map()
-  for (const match of block.matchAll(/(\w+): (".+"|true|false|[\d.]+),?/g)) {
+  for (const match of block.matchAll(/(\w+): (".*"|true|false|[\d.]+),?/g)) {
     const raw = match[2]
     entries.set(match[1], raw === 'true' ? true : raw === 'false' ? false : raw.startsWith('"') ? raw.slice(1, -1) : Number(raw))
   }
@@ -129,9 +130,9 @@ function chunkFieldDefaults() {
 }
 
 describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
-  it('declares exactly the 33 concrete defaults, frozen, with no entry where unset is meaningful', () => {
+  it('declares exactly the 42 concrete defaults, frozen, with no entry where unset is meaningful', () => {
     expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
-    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(33)
+    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(42)
     for (const key of NO_DEFAULT_KEYS) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must stay unset-meaningful (no default entry)`).toBe(false)
     }
@@ -186,16 +187,16 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
     // the 29 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
     // absences (whitelist tables, defaultsPath/Reload) are covered by the
     // dedicated tests above, not required here
-    expect(entries.size).toBe(29)
+    expect(entries.size).toBe(38)
     for (const [key, raw] of entries) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `patch row key ${key} has no FIELD_DEFAULTS entry`).toBe(true)
       expect(FIELD_DEFAULTS[key], `patch row value of ${key} drifted from FIELD_DEFAULTS`).toEqual(coerceRowValue(raw))
     }
   })
 
-  it('the boolean subset is exactly the 11 switch defaults the patch row declares', () => {
+  it('the boolean subset is exactly the 12 switch defaults the patch row declares', () => {
     const booleans = Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === 'boolean')
-    expect(booleans).toHaveLength(11)
+    expect(booleans).toHaveLength(12)
     const row = patchRowEntries()
     for (const [key, value] of booleans) {
       expect(row.get(key), `${key} must ride the patch row as a boolean product default`).toBe(String(value))
@@ -211,6 +212,7 @@ describe('RESTART_KEYS (restart-required settings declaration)', () => {
     'intentGateClassifier', 'intentGateProvider', 'intentGateModel', 'intentGateReasoningEffort',
     'intentGateTimeoutMs', 'jevEndpoint', 'jevModel', 'jevApiKeyEnv',
     'todoEnabled', 'todoMaxConsecutive', 'todoErrorRetryMax', 'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
+    'decisionAgentStorePath',
     'hashlineHideStockEdit',
   ]
 
@@ -287,5 +289,19 @@ describe('worktreeAutoApprove (worktree auto-approve mode)', () => {
     expect(resolveApproveMode('sometimes', 'auto-keep')).toBe('auto-keep')
     expect(resolveApproveMode(undefined, 'sometimes')).toBe('auto-clean')
     expect(resolveApproveMode(null, undefined)).toBe('auto-clean')
+  })
+})
+
+describe('Decision Agent P1 settings boundary', () => {
+  it('does not declare P2–P5 Auto, consolidation, sharing, or export knobs', () => {
+    for (const key of ['decisionAgentDefaultMode', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswerClasses', 'decisionAgentConsolidationSchedule', 'decisionAgentCrossWorkspace', 'decisionAgentExport']) {
+      expect(FIELDS.some(row => row.key === key)).toBe(false)
+      expect(Object.hasOwn(FIELD_DEFAULTS, key)).toBe(false)
+    }
+  })
+
+  it('parses configured chains and drops an empty chain map', () => {
+    expect(computeSections({ decisionAgentChains: '{"agent-a":[{"provider":"p","model":"m"}]}' }).decisionAgent.chains['agent-a'][0].model).toBe('m')
+    expect(computeSections({ decisionAgentChains: '{}' }).decisionAgent).toBe(undefined)
   })
 })

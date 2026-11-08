@@ -1,0 +1,31 @@
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: mock
+    model: mock-1
+- id: ui-settings-account
+  name: '@deepseek-ai/dsh-client-ui-settings-account'
+  config:
+    version: 1
+    step: done
+    purpose: both
+    process: standard
+    completion: completed
+    usage: detailed
+    developerTools: true
+- id: workspace-controller
+  name: '@deepseek-ai/dsh-api-workspace-controller'
+  config:
+    documentsDirectory: !!js process.env.WEIR_DECISION_DESKTOP_OUT + '/documents'
+    documentsLookupTimeoutMs: 1000
+- id: desktop-product-telemetry
+  disabled: true
+- id: product-analytics
+  disabled: true
+- insert:
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+    - id: cordis-inspect-providers
+      name: '@deepseek-ai/dsh-tool-cordis/host'
+    - id: ui-weir-decision-desktop-spike
+      name: 'weir-decision-desktop-spike'

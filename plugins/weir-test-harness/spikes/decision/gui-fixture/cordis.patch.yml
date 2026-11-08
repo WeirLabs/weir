@@ -1,0 +1,15 @@
+# Disposable isolated Desktop QA composition. Never install into a real profile.
+- id: weir-settings
+  config:
+    decisionAgentsEnabled: !!js process.env.WEIR_DECISION_GUI_ENABLED !== '0'
+- id: agent-default-model
+  config:
+    provider: mock
+    model: mock-1
+- insert:
+    - id: weir-decision-gui-fixture
+      name: 'weir-decision-gui-fixture'
+    - id: weir-gui-agent-presets
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      config:
+        default: weir

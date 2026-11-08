@@ -72,6 +72,16 @@ EXPECTED_ORDER.push('filelease-release-watch', 'filelease-watch-reset')
 EXPECTED_ORDER.push('custom-skill-paths')
 // Real two-child foreground overlap proven by a causal filesystem handshake.
 EXPECTED_ORDER.push('delegate-parallel')
+if (process.env.WEIR_IT_DECISION_SPIKES === '1') EXPECTED_ORDER.push('decision-spike-order', 'decision-spike-delegated', 'decision-spike-json', 'decision-spike-multi-mount', 'decision-spike-cancel', 'decision-spike-slots', 'decision-spike-current')
+EXPECTED_ORDER.push('decision-hook')
+EXPECTED_ORDER.push('decision-consult')
+EXPECTED_ORDER.push('decision-batch')
+EXPECTED_ORDER.push('decision-route')
+EXPECTED_ORDER.push('decision-recovery')
+EXPECTED_ORDER.push('decision-feedback')
+EXPECTED_ORDER.push('decision-isolation')
+EXPECTED_ORDER.push('decision-ui-remote')
+if (process.env.WEIR_IT_DECISION_GUI === '1') EXPECTED_ORDER.push('decision-gui')
 
 describe('scenario registry', () => {
   it('holds exactly the registered scenarios, in the historical order (append-only)', () => {
@@ -112,6 +122,10 @@ describe('scenario registry', () => {
     if (process.env.WEIR_IT_MCP_SCOPED_CANARY !== '1') {
       files.splice(files.indexOf('scoped-preset-tree-canary'), 1)
     }
+    if (process.env.WEIR_IT_DECISION_SPIKES !== '1') {
+      for (const id of ['decision-spike-order', 'decision-spike-delegated', 'decision-spike-json', 'decision-spike-multi-mount', 'decision-spike-cancel', 'decision-spike-slots', 'decision-spike-current']) files.splice(files.indexOf(id), 1)
+    }
+    if (process.env.WEIR_IT_DECISION_GUI !== '1') files.splice(files.indexOf('decision-gui'), 1)
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
   })
 
@@ -189,6 +203,9 @@ RUN_OVERRIDE.push('filelease-release-watch', 'filelease-watch-reset')
   RUN_OVERRIDE.push('capability-lifecycle-retained-revision')
   RUN_OVERRIDE.push('scoped-preset-tree-canary')
   RUN_OVERRIDE.push('custom-skill-paths')
+  RUN_OVERRIDE.push('decision-spike-multi-mount')
+  RUN_OVERRIDE.push('decision-spike-cancel')
+  RUN_OVERRIDE.push('decision-recovery')
 
   it('exactly the declared scenarios carry a run override', () => {
     for (const scenario of SCENARIOS) {

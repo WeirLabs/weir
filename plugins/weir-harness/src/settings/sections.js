@@ -42,6 +42,15 @@ const FIELDS = [
   { key: 'guardEnabled', section: 'contextGuard', field: 'enabled', type: 'boolean', description: 'Context pressure guard switch (live)' },
   { key: 'guardSoftThreshold', section: 'contextGuard', field: 'softThreshold', type: 'number', description: 'Soft pressure threshold (live advisory; 0 < soft < hard < 1)' },
   { key: 'guardHardThreshold', section: 'contextGuard', field: 'hardThreshold', type: 'number', description: 'Hard pressure threshold (live maintenance request; not a completion guarantee)' },
+  { key: 'decisionAgentsEnabled', section: 'decisionAgent', field: 'enabled', type: 'boolean', description: 'Decision Agents master switch; Off performs no interception, consultation, sampling, or database creation' },
+  { key: 'decisionAgentAnswerTimeoutMs', section: 'decisionAgent', field: 'answerTimeoutMs', type: 'number', description: 'Hard timeout for one Decision Attempt (ms)' },
+  { key: 'decisionAgentMaxAttemptsPerCase', section: 'decisionAgent', field: 'maxAttemptsPerCase', type: 'number', description: 'Combined evaluation, revision, and retry budget per Case' },
+  { key: 'decisionAgentContextBudgetTokens', section: 'decisionAgent', field: 'contextBudgetTokens', type: 'number', description: 'Bounded evaluator context budget; four characters approximate one token' },
+  { key: 'decisionAgentMaxOutputTokens', section: 'decisionAgent', field: 'maxOutputTokens', type: 'number', description: 'Maximum evaluator output tokens per Attempt' },
+  { key: 'decisionAgentMaxConcurrentAttempts', section: 'decisionAgent', field: 'maxConcurrentAttempts', type: 'number', description: 'Maximum concurrent Decision Attempts; excess Hook requests use the native question path' },
+  { key: 'decisionAgentChains', section: 'decisionAgent', field: 'chains', type: 'string', description: 'JSON map of Agent id to ordered [{provider, model, reasoningEffort?}] rungs; an empty chain inherits the session route' },
+  { key: 'decisionAgentRetentionDays', section: 'decisionAgent', field: 'retentionDays', type: 'number', description: 'Startup-only retention for closed unreviewed records; 0 keeps them permanently' },
+  { key: 'decisionAgentStorePath', section: 'decisionAgent', field: 'storePath', type: 'string', description: 'Absolute override directory for the local Decision database; empty uses the profile-private store', restart: true },
   { key: 'hashlineHideStockEdit', section: 'hashlineEdit', field: 'hideStockEdit', type: 'boolean', description: 'Hide the stock edit tool (hash_edit only)', restart: true },
   { key: 'robashEnabled', section: 'robash', field: 'enabled', type: 'boolean', description: 'Guarded read-only bash for curated agents (master switch)' },
   { key: 'robashAllow', section: 'robash', field: 'allow', type: 'string', list: true, description: 'JSON array of command names to APPEND to the product-default bash allow list (empty adds nothing; the defaults are always in effect)' },
@@ -109,6 +118,15 @@ export const FIELD_DEFAULTS = Object.freeze({
   guardEnabled: true,
   guardSoftThreshold: 0.72,
   guardHardThreshold: 0.88,
+  decisionAgentsEnabled: false,
+  decisionAgentAnswerTimeoutMs: 60000,
+  decisionAgentMaxAttemptsPerCase: 3,
+  decisionAgentContextBudgetTokens: 24000,
+  decisionAgentMaxOutputTokens: 1600,
+  decisionAgentMaxConcurrentAttempts: 4,
+  decisionAgentChains: '',
+  decisionAgentRetentionDays: 0,
+  decisionAgentStorePath: '',
   hashlineHideStockEdit: true,
   robashEnabled: true,
   lspEnabled: false,
@@ -339,6 +357,14 @@ export function computeSections(config, { readDefaults } = {}) {
           if (parsed.length === 0) delete out.disabledCategories
           else out.disabledCategories = parsed
         }
+      }
+    }
+    if (key === 'decisionAgent' && typeof out.chains === 'string') {
+      if (out.chains.trim().length === 0) delete out.chains
+      else {
+        const parsed = parseJsonField(chainsValidator('decisionAgentChains'), out.chains)
+        if (Object.keys(parsed).length === 0) delete out.chains
+        else out.chains = parsed
       }
     }
     if (key === 'contextGuard') guardOptions(out)

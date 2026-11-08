@@ -22,6 +22,10 @@
     "./capability-remote-probe": "./src/capability-remote-probe.js",
     "./worktree-approve-probe": "./src/worktree-approve-probe.js",
     "./user-questions-stub": "./src/user-questions-stub.js",
+    "./decision-spike-probe": "./src/decision-spike-probe.js",
+    "./decision-integration-probe": "./src/decision-integration-probe.js",
+    "./decision-recovery-probe": "./src/decision-recovery-probe.js",
+    "./decision-remote-probe": "./src/decision-remote-probe.js",
     "./blackboard-remote-probe": "./src/blackboard-remote-probe.js",
     "./file-lease-turn-probe": "./src/file-lease-turn-probe.js"
   },

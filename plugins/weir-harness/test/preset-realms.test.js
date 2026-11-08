@@ -128,3 +128,24 @@ describe('planned compaction realm', () => {
     expect(PATCH.match(/              toolResultPruner: true/g) ?? []).toHaveLength(2)
   })
 })
+
+describe('Decision Agent composition', () => {
+  it('mounts the preset row once in each delegation group without a new isolate', () => {
+    expect(PATCH.split("name: 'weir-harness/decision'").length - 1).toBe(2)
+    expect(enclosingGroup('weir-harness/decision')?.id).toBe('delegation')
+    expect(PATCH.includes('weirDecisionBroker: true')).toBe(false)
+    expect(PATCH.includes('weirDecisionRemote: true')).toBe(false)
+  })
+
+  it('mounts both Host rows before the presets and resolves all three exports', async () => {
+    const broker = PATCH.indexOf("name: 'weir-harness/decision-broker'")
+    const remote = PATCH.indexOf("name: 'weir-harness/decision-remote'")
+    expect(broker).toBeGreaterThan(-1)
+    expect(remote).toBeGreaterThan(broker)
+    expect(remote < PATCH.indexOf('- id: preset-weir')).toBe(true)
+    for (const specifier of ['weir-harness/decision', 'weir-harness/decision-broker', 'weir-harness/decision-remote']) {
+      const module = await import(specifier)
+      expect(typeof module.apply).toBe('function')
+    }
+  })
+})

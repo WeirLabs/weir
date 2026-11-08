@@ -1,0 +1,16 @@
+# Disposable fixture for the explicitly authorized current Desktop profile.
+- insert:
+    - id: ui-weir-decision-p0
+      name: 'weir-decision-p0-current-profile'
+    - id: preset-decision-p0
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: decision-p0
+        name: Decision P0 spike
+        description: Disposable current-profile evidence fixture; never a product preset.
+        order: 90
+        plugins:
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: decision-p0-agent
+            name: 'weir-decision-p0-current-profile/agent'
