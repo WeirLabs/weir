@@ -40,16 +40,18 @@ async function run(output) {
 }
 
 test('only-L2 answers and Snapshot/principle citations cannot satisfy G1 or become an answer', async () => {
-  const cited = await run({
-    outcome: 'answer', claims: [{ text: 'Trust the summary', evidenceIds: ['pr_only'] }],
-    answers: [{ id: 'q', selected: ['A'] }],
-  })
-  assert.equal(cited.result.outcome, 'failed')
-  assert.equal(cited.result.error.kind, 'invalid_output')
-  assert.deepEqual(cited.result.packManifest.evidenceIds, [])
-  assert.match(cited.requests[0].system, /Decision evaluator contract v3/)
-  assert.equal('temperature' in cited.requests[0], false)
-  assert.deepEqual(cited.calls, { stream: 1, tools: 0, session: 0 })
+  for (const memoryId of ['pr_only', 'ms_only', 'pr_unknown']) {
+    const cited = await run({
+      outcome: 'answer', claims: [{ text: 'Trust the summary', evidenceIds: [memoryId] }],
+      answers: [{ id: 'q', selected: ['A'] }],
+    })
+    assert.equal(cited.result.outcome, 'failed')
+    assert.equal(cited.result.error.kind, 'invalid_output')
+    assert.deepEqual(cited.result.packManifest.evidenceIds, [])
+    assert.match(cited.requests[0].system, /Decision evaluator contract v3/)
+    assert.equal('temperature' in cited.requests[0], false)
+    assert.deepEqual(cited.calls, { stream: 1, tools: 0, session: 0 })
+  }
 
   const unsupported = await run({
     outcome: 'answer', claims: [{ text: 'Trust only the summary', evidenceIds: [] }],

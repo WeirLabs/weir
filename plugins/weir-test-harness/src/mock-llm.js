@@ -60,8 +60,14 @@ function trace(record) {
 function decide(options, obs) {
   if (options.purpose === 'session-title') return textChunks('Integration Test Session')
   if (options.purpose === 'compaction') return textChunks('SUMMARY: the probe task was in progress with no errors.')
-  // Decision evaluator sidecar: scenario-specific strict JSON, never a tool loop.
-  if (obs.system.includes('Decision evaluator contract v1') || obs.system.includes('Decision evaluator contract v2')) {
+  const contract = obs.system.split('\n', 1)[0]
+  if (contract === 'Decision consolidation contract v1') {
+    if (typeof scenario.decideConsolidation !== 'function') throw new Error(`${scenario.id} has no consolidation Decision brain`)
+    return scenario.decideConsolidation(options, obs)
+  }
+  // Exact first-line dispatch keeps historical fixtures working without
+  // confusing evaluator v3 with the independent consolidation v1 contract.
+  if (['Decision evaluator contract v1', 'Decision evaluator contract v2', 'Decision evaluator contract v3'].includes(contract)) {
     return (scenario.decideDecision ?? scenario.decide)(options, obs)
   }
   // Intent-gate semantic-classifier sidecar: scripted answer per scenario.

@@ -11,6 +11,7 @@ import { DecisionProfiles } from '../../src/decision/store/profiles.js'
 import { DecisionCases } from '../../src/decision/store/cases.js'
 import { DecisionAttempts, attemptOf } from '../../src/decision/store/attempts.js'
 import { CURRENT_SCHEMA_VERSION } from '../../src/decision/store/schema.js'
+import { insertSnapshot } from './p3-fixtures.js'
 
 function question(text = 'Which?') {
   return { id: 'q', question: text, options: [{ label: 'A' }, { label: 'B' }] }
@@ -115,7 +116,7 @@ test('Broker open/evaluate/flush uses real retrieval and persists only actual me
   for (const key of ['tools', 'sessionId']) assert.equal(key in f.requests[0], false)
 
   const attempt = f.broker.attempts.forCase(verdict.caseId)[0]
-  assert.equal(attempt.pins.promptVersion, 'evaluator-contract/2')
+  assert.equal(attempt.pins.promptVersion, 'evaluator-contract/3')
   assert.equal(attempt.pins.evaluatorVersion, 'sidecar/1')
   assert.equal(attempt.pins.memorySnapshotId, null)
   assert.deepEqual(attempt.packManifest.memory, {
@@ -191,6 +192,69 @@ test('Broker applies full pre-trim conflictPairs when the actual pack contains o
   assert.equal(attempt.packManifest.evidenceIds.length, 1)
   assert.equal(attempt.gates.g4, false)
   assert.ok(attempt.gates.gaps.some(gap => gap.gate === 'G4' && fixed.conflictPairs[0].every(id => gap.evidenceId.includes(id))))
+})
+
+test('Broker pins and cites actual source-bound L2 without rewriting history on rollback', async t => {
+  const f = await fixture(t)
+  const source = await seedUserDecision(f, 'broker-l2-source', 'A')
+  const scope = { workspaces: [f.workspace] }
+  const ref = await f.broker.evidence.add({
+    agentId: f.profile.agentId, source: 'user_decision', locator: { kind: 'case', caseId: source.caseId }, scope,
+  })
+  insertSnapshot(f, 'ms_broker_l2', 1, 'published', {
+    principles: [{ principleId: 'pr_broker', text: 'Prefer the reviewed decision', scope, sources: [source.caseId], state: 'active' }],
+  })
+  f.respond(pack => ({
+    outcome: 'answer', claims: [{ text: 'Use the actual L5 source.', evidenceIds: [ref.evidenceId] }],
+    answers: pack.L4.request.questions.map(item => ({ id: item.id, selected: ['A'] })),
+  }))
+
+  const verdict = await f.broker.hook({ agent: f.agent, request: { questions: [question('Use reviewed memory')] } })
+  assert.equal(verdict.kind, 'answer')
+  const wire = packOf(f.requests[0])
+  assert.deepEqual(wire.L2.map(item => item.principleId), ['pr_broker'])
+  assert.deepEqual(wire.L2[0].evidenceIds, [ref.evidenceId])
+  const attempt = f.broker.attempts.forCase(verdict.caseId)[0]
+  assert.equal(attempt.pins.memorySnapshotId, 'ms_broker_l2')
+  assert.equal(attempt.pins.memorySnapshotRevision, 1)
+  assert.match(attempt.pins.memorySnapshotHash, /^[a-f0-9]{64}$/)
+  assert.deepEqual(attempt.citedEvidenceIds, [ref.evidenceId])
+  assert.deepEqual(attempt.packManifest.memory.L2.principleIds, ['pr_broker'])
+  assert.deepEqual(attempt.packManifest.memory.L2.items[0].evidenceIds, [ref.evidenceId])
+  assert.equal(attempt.packManifest.evidenceIds.includes('pr_broker'), false)
+  const before = JSON.stringify(f.broker.store.db.prepare('SELECT * FROM attempts WHERE attempt_id=?').get(attempt.attemptId))
+
+  await f.broker.learning.rollback('ms_broker_l2', 1)
+  assert.equal(JSON.stringify(f.broker.store.db.prepare('SELECT * FROM attempts WHERE attempt_id=?').get(attempt.attemptId)), before)
+  const after = await f.broker.hook({ agent: f.agent, request: { questions: [question('After Snapshot rollback')] } })
+  assert.equal(after.kind, 'answer')
+  const afterAttempt = f.broker.attempts.forCase(after.caseId)[0]
+  assert.equal(afterAttempt.pins.memorySnapshotId, null)
+  assert.equal(packOf(f.requests[1]).L2, '')
+})
+
+test('Broker source recheck rejects evidence deleted after an L2 pack was sent', async t => {
+  const f = await fixture(t)
+  const source = await seedUserDecision(f, 'broker-l2-stale-source', 'A')
+  const scope = { workspaces: [f.workspace] }
+  const ref = await f.broker.evidence.add({
+    agentId: f.profile.agentId, source: 'user_decision', locator: { kind: 'case', caseId: source.caseId }, scope,
+  })
+  insertSnapshot(f, 'ms_broker_stale', 1, 'published', {
+    principles: [{ principleId: 'pr_stale', text: 'Reviewed but still source-bound', scope, sources: [source.caseId], state: 'active' }],
+  })
+  f.respond(() => {
+    f.broker.store.db.prepare("UPDATE evidence SET status='deleted' WHERE evidence_id=?").run(ref.evidenceId)
+    return { outcome: 'answer', claims: [{ text: 'Try to use the stale source.', evidenceIds: [ref.evidenceId] }], answers: [{ id: 'q', selected: ['A'] }] }
+  })
+  const verdict = await f.broker.hook({ agent: f.agent, request: { questions: [question('Recheck the L2 source')] } })
+  assert.equal(verdict.kind, 'pass')
+  assert.equal(verdict.code, 'STALE_EVIDENCE')
+  const attempt = f.broker.attempts.forCase(verdict.caseId)[0]
+  assert.equal(attempt.outcome, 'return')
+  assert.equal(attempt.gates.g3, false)
+  assert.equal(attempt.pins.memorySnapshotId, 'ms_broker_stale')
+  assert.deepEqual(attempt.packManifest.memory.L2.principleIds, ['pr_stale'])
 })
 
 test('global disable, Off, excluded authority, no-route, and capacity never invoke retrieval', async t => {

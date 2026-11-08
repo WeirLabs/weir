@@ -46,7 +46,7 @@ test('answered consultation includes evidence and pins; explicit Agent is one-sh
   assert.equal(result.outcome, 'answered')
   assert.deepEqual(result.answer, { id: 'question', selected: ['B'] })
   assert.deepEqual(result.evidence.map(item => item.evidenceId), [ref.evidenceId])
-  assert.equal(result.pins.promptVersion, 'evaluator-contract/2')
+  assert.equal(result.pins.promptVersion, 'evaluator-contract/3')
   assert.equal(f.broker.cases.getCase(result.caseId).closing, 'answered')
   assert.deepEqual(f.broker.selector('root'), { mode: 'agent', agentId: f.a.agentId })
   assert.equal(f.broker.store.db.prepare('SELECT mode,chosen FROM route_decisions WHERE case_id=?').get(result.caseId).mode, 'explicit')

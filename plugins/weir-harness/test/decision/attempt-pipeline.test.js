@@ -47,7 +47,7 @@ test('pipeline returns answer only after all seven gates and preserves pins/usag
   assert.equal(result.outcome, 'answer')
   assert.deepEqual(result.answers, output.answers)
   assert.equal(result.gates.gaps.length, 0)
-  assert.equal(result.pins.promptVersion, 'evaluator-contract/2')
+  assert.equal(result.pins.promptVersion, 'evaluator-contract/3')
   assert.equal(result.inputTokens, 10)
   assert.equal(result.outputTokens, 5)
   assert.deepEqual(ctx.calls, { stream: 1, tools: 0, session: 0, otherModel: 0 })
@@ -112,7 +112,7 @@ test('L3 reaches the model as neutral context but cannot authorize an answer or 
     assert.equal(result.packManifest.evidenceIds.length, 0)
     const body = JSON.parse(sent.messages[0].content[0].text)
     assert.equal(body.L3[0].sourceCaseId, 'dc_neutral')
-    assert.match(sent.system, /Decision evaluator contract v2/)
+    assert.match(sent.system, /Decision evaluator contract v3/)
     assert.deepEqual(ctx.calls, { stream: 1, tools: 0, session: 0, otherModel: 0 })
   }
 

@@ -38,7 +38,7 @@ test('pins, profile/correction ordering and contextPackHash are deterministic', 
   assert.deepEqual(value.pins, {
     agentProfileRevision: 7, userDescriptionRevision: 3, generatedDescriptionRevision: 0,
     memorySnapshotId: null, memorySnapshotRevision: null, memorySnapshotHash: null,
-    promptVersion: 'evaluator-contract/2', evaluatorVersion: 'sidecar/1',
+    promptVersion: 'evaluator-contract/3', evaluatorVersion: 'sidecar/1',
     modelRoute: { kind: 'inherited' }, budgetTokens: 24000,
   })
   assert.deepEqual(value.packManifest.evidenceIds, ['ev_correction', 'ev_profile', 'ev_user'])

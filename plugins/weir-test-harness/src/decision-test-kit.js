@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { IT_ROOT } from './mock-kit.js'
 
-export const DECISION_CONTRACTS = Object.freeze(['Decision evaluator contract v1', 'Decision evaluator contract v2'])
+export const DECISION_CONTRACTS = Object.freeze(['Decision evaluator contract v1', 'Decision evaluator contract v2', 'Decision evaluator contract v3'])
 export const DECISION_EVENTS = join(IT_ROOT, 'decision-integration-events.jsonl')
 
 // The Hook scenario retains the canonical default path; later scenarios get
@@ -18,7 +18,7 @@ export function decisionPack(obs) {
 }
 
 export function observeDecision(obs) {
-  const evaluator = DECISION_CONTRACTS.some(contract => obs.system.includes(contract))
+  const evaluator = DECISION_CONTRACTS.includes(obs.system.split('\n', 1)[0])
   const pack = evaluator ? decisionPack(obs) : undefined
   return {
     decisionEvaluator: evaluator,

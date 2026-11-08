@@ -510,6 +510,35 @@ describe('decision evaluator v2 mock dispatch', () => {
   })
 })
 
+describe('decision evaluator v3 and consolidation v1 mock dispatch', () => {
+  it('uses exact first-line contracts and keeps the two strict JSON brains separate', async () => {
+    const previous = process.env.WEIR_IT_SCENARIO
+    process.env.WEIR_IT_SCENARIO = 'decision-hook'
+    try {
+      const { planRequest } = await import('../src/mock-llm.js')
+      const evaluatorOptions = userOptions(JSON.stringify({
+        L2: [{ principleId: 'pr_reviewed', evidenceIds: ['ev_v3'] }],
+        L4: { request: { questions: [{ id: 'decision-hook-answer', options: [{ label: 'Native fallback' }, { label: 'Concise' }] }] } },
+        L5: [{ evidenceId: 'ev_v3', source: 'user_profile' }],
+      }), { system: 'Decision evaluator contract v3\nL2 is reviewed and non-authoritative.' })
+      const evaluated = JSON.parse(blockEnds(planRequest(evaluatorOptions).out)[0].text)
+      assert.equal(evaluated.outcome, 'answer')
+      assert.deepEqual(evaluated.claims[0].evidenceIds, ['ev_v3'])
+      assert.equal(byId('decision-hook').observe(extract(evaluatorOptions)).decisionEvaluator, true)
+
+      const consolidationOptions = userOptions(JSON.stringify({ cases: [], feedback: [], parentSnapshot: null }), {
+        system: 'Decision consolidation contract v1\nProduce only one JSON object.',
+      })
+      const consolidated = JSON.parse(blockEnds(planRequest(consolidationOptions).out)[0].text)
+      assert.deepEqual(consolidated, { operations: [] })
+      assert.equal(byId('decision-hook').observe(extract(consolidationOptions)).decisionEvaluator, false)
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_SCENARIO
+      else process.env.WEIR_IT_SCENARIO = previous
+    }
+  })
+})
+
 describe('decision-memory P2 brain', () => {
   it('registers the real scoped-memory acceptance scenario', () => {
     assert.equal(byId('decision-memory')?.id, 'decision-memory')
