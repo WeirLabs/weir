@@ -69,7 +69,7 @@ export async function createPageHarness(options = {}) {
   const requireStub = name => name === 'react' ? runtime.react : { jsx, jsxs: jsx }
   const model = (await loadClientChunk('lib/client.decision-model.js')).exports
   const ui = (await loadClientChunk('lib/client.decision-ui.js', requireStub)).exports
-  const learning = (await loadClientChunk('lib/client.decision-learning.js')).exports
+  const learning = (await loadClientChunk('lib/client.decision-learning.js', requireStub)).exports
   const page = (await loadClientChunk('lib/client.decision-page.js', requireStub)).exports
   let currentProps = {
     sessionId: options.sessionId === undefined ? 'root' : options.sessionId,

@@ -51,7 +51,7 @@ window.__ModuleLoader__.load({
     function errorKey(error) {
       const code = text(error?.code);
       if (["FORBIDDEN", "PERMISSION_DENIED", "UNAUTHORIZED", "WORKSPACE_MISMATCH", "ROOT_SESSION_MISMATCH"].includes(code)) return "decisionNoPermission";
-      if (["REVISION_CONFLICT", "STALE_LEARNING_RUN", "STALE_SOURCE", "SNAPSHOT_STATE_CONFLICT"].includes(code)) return "decisionErrorConflict";
+      if (["REVISION_CONFLICT", "STALE_LEARNING_RUN", "STALE_SOURCE", "STALE_PARENT_SNAPSHOT", "SNAPSHOT_STATE_CONFLICT"].includes(code)) return "decisionErrorConflict";
       if (["OFF", "DECISION_OFF", "AGENT_UNAVAILABLE", "LEARNING_RUN_ACTIVE"].includes(code)) return "decisionErrorUnavailable";
       return "decisionFailed";
     }
@@ -364,6 +364,9 @@ window.__ModuleLoader__.load({
         decisionNeutralEpisodes: "L3 neutral episodes (non-authoritative context, not evidence)", decisionNoMemory: "No L2/L3 memory use is recorded for this Attempt.",
         decisionLayerSizes: "Layer sizes", decisionOmissions: "Omissions",
         decisionLearningGovernance: "Principle review", decisionConsolidate: "Review new principles", decisionPublish: "Apply changes", decisionReject: "Discard candidate", decisionRollback: "Restore previous version",
+        decisionLearningIdle: "No review has been run yet.", decisionLearningNoChanges: "No new principles were found in this review.", decisionLearningStartUnavailable: "This assistant is unavailable for a new principle review.", decisionLearningStartRunning: "A review is already in progress.", decisionLearningStartCandidate: "Review the pending candidate before starting another review.", decisionLearningWorking: "Another decision action is in progress.", decisionPrincipleVersion: "Version",
+        decisionLearningReadFailed: "The candidate details could not be loaded. Your review is preserved; retry the read.", decisionCandidateLoading: "Loading the complete candidate…", decisionCandidateNotReady: "The candidate details are incomplete or no longer match. Reload before making changes.", decisionSourceCase: "Decision source", decisionSourceCorrection: "Correction source",
+        decisionApplyTitle: "Apply these principle changes?", decisionApplyConfirmation: "The candidate will become the current reviewed principle version.", decisionApplyChangeCount: "Principle changes", decisionApplyReplaceCurrent: "Replaces", decisionApplyFutureOnly: "Only future decisions are affected; existing records and history remain unchanged.", decisionDiscardCandidateTitle: "Discard this candidate?", decisionDiscardCandidateConfirmation: "The candidate will not affect future decisions. Its review and source history remain available.", decisionRollbackTitle: "Restore a previous principle version?", decisionRollbackConfirmation: "The current version remains in read-only history. Future decisions will use the most recent earlier approved version, or no reviewed principles if none exists.",
         decisionCurrentSnapshot: "Current principle version", decisionNoCurrentSnapshot: "No current published principle version.",
         decisionLearningRuns: "Learning Runs", decisionNoLearningRuns: "No Learning Runs recorded.", decisionSnapshots: "Snapshots", decisionNoSnapshots: "No Snapshots recorded.",
         decisionLearningDetail: "Learning Run detail (read-only)", decisionNoLearningDetail: "Select a Learning Run or Snapshot to inspect its read-only details.",
@@ -408,6 +411,9 @@ window.__ModuleLoader__.load({
         decisionNeutralEpisodes: "L3 中性情节（非权威上下文，不是证据）", decisionNoMemory: "此 Attempt 未记录 L2/L3 记忆使用。",
         decisionLayerSizes: "层大小", decisionOmissions: "省略项",
         decisionLearningGovernance: "原则审阅", decisionConsolidate: "整理新原则", decisionPublish: "采用变化", decisionReject: "放弃候选", decisionRollback: "恢复前序版本",
+        decisionLearningIdle: "尚未整理过原则。", decisionLearningNoChanges: "这次没有可整理的新原则。", decisionLearningStartUnavailable: "当前助手不可用，无法开始新的原则整理。", decisionLearningStartRunning: "已有一次整理正在进行。", decisionLearningStartCandidate: "请先审阅待审候选，再开始新的整理。", decisionLearningWorking: "另一项决策操作正在进行。", decisionPrincipleVersion: "版本",
+        decisionLearningReadFailed: "候选详情读取失败。审阅现场已保留，请重试读取。", decisionCandidateLoading: "正在加载完整候选…", decisionCandidateNotReady: "候选详情不完整或已不再匹配，请重新读取后再操作。", decisionSourceCase: "判断来源", decisionSourceCorrection: "纠正来源",
+        decisionApplyTitle: "采用这些原则变化？", decisionApplyConfirmation: "该候选将成为当前的经审阅原则版本。", decisionApplyChangeCount: "原则变化数量", decisionApplyReplaceCurrent: "将替代", decisionApplyFutureOnly: "只影响之后的新判断；既有记录和历史保持不变。", decisionDiscardCandidateTitle: "放弃这个候选？", decisionDiscardCandidateConfirmation: "该候选不会影响之后的判断，其审阅和来源历史仍会保留。", decisionRollbackTitle: "恢复前序原则版本？", decisionRollbackConfirmation: "当前版本会保留在只读历史中。之后的判断将使用最近的前序已审版本；若没有，则不使用经审阅原则。",
         decisionCurrentSnapshot: "当前原则版本", decisionNoCurrentSnapshot: "当前没有已发布的原则版本。",
         decisionLearningRuns: "Learning Run", decisionNoLearningRuns: "暂无 Learning Run。", decisionSnapshots: "Snapshot", decisionNoSnapshots: "暂无 Snapshot。",
         decisionLearningDetail: "Learning Run 详情（只读）", decisionNoLearningDetail: "选择 Learning Run 或 Snapshot 以查看只读详情。",
