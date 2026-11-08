@@ -21,9 +21,10 @@ window.__ModuleLoader__.load({
         ? candidateReadiness({ agent, detail: candidateDetail, error })
         : { ready: false, reason: candidateRun && candidate ? "loading" : "candidate" };
       const inspection = detail?.inspection ?? candidateDetail;
-      const noChanges = !candidateRun && latestRun?.outcome === "published"
-        && inspection?.run?.learningRunId === latestRun.learningRunId
+      const emptyInspection = latestRun && inspection?.run?.learningRunId === latestRun.learningRunId
         && Array.isArray(inspection.run.operations) && inspection.run.operations.length === 0 && !inspection.snapshot;
+      const noChanges = !candidateRun && emptyInspection
+        && (latestRun.outcome === "published" || latestRun.outcome === "failed" && inspection.run.replay?.detail === "NO_CANDIDATE_CHANGES");
       const startBlockKey = agent.state !== "enabled" ? "decisionLearningStartUnavailable"
         : typeof pending === "string" ? "decisionLearningWorking"
         : loading ? "decisionCandidateLoading"

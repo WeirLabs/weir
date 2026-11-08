@@ -76,6 +76,13 @@ test('learning projection exposes ordinary idle, running, no-change, candidate, 
     assert.equal(typeof model.dictionaries.zh[key], 'string', `zh ${key}`)
   }
   assert.equal(noChanges.pendingReview, false)
+  const actualNoCandidate = learning.learningView({
+    agent: { ...base, learningRuns: [{ learningRunId: 'lr_no_candidate', outcome: 'failed', revision: 3 }] },
+    detail: { agentId: 'a', inspection: { run: { learningRunId: 'lr_no_candidate', agentId: 'a', outcome: 'failed', operations: [], replay: { passed: false, detail: 'NO_CANDIDATE_CHANGES' } }, snapshot: null, parentSnapshot: null } },
+    candidateReadiness: model.candidateReadiness,
+  })
+  assert.equal(actualNoCandidate.statusKey, 'decisionLearningNoChanges')
+  assert.equal(actualNoCandidate.canStart, true)
 })
 
 test('Agent details use the learning chunk product surface instead of legacy buttons and default raw JSON', async () => {
