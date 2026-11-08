@@ -70,6 +70,10 @@ test('selector projection never guesses Off and pins an unavailable selection ho
   assert.equal(failed.selected, 'a')
   assert.equal(failed.error.message, 'offline')
   assert.deepEqual(model.selectorView({ phase: 'ready', selector: { mode: 'off' }, agents: [] }).options.map(option => option.value), ['off'])
+  const globalOff = model.selectorView({ phase: 'ready', status: { enabled: false, reason: 'disabled' }, selector: { mode: 'agent', agentId: 'a' }, agents })
+  assert.equal(globalOff.globalOff, true)
+  assert.equal(globalOff.selected, 'a')
+  assert.deepEqual(globalOff.options.map(option => option.value), ['off', 'a'])
 })
 
 test('record summaries and card evidence follow the current Attempt only', async () => {

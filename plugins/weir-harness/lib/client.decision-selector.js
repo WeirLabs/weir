@@ -7,51 +7,193 @@ window.__ModuleLoader__.load({
     const react = require("react");
     const jsx = require("react/jsx-runtime");
     const SELECTOR_ID = "weir-decision-selector";
+    const PANEL_ID = "weir-da-selector-panel";
+    const TITLE_ID = "weir-da-selector-title";
 
     function DecisionSelector(props) {
-      const t = props.t ?? ((key) => key === "decisionSelector" ? "Decision Agent" : key);
-      const [options, setOptions] = react.useState([{ value: "off", mode: "off", label: "Off" }]);
-      const [selected, setSelected] = react.useState("off");
+      const t = props.t ?? (key => key);
+      const ui = props.ui;
+      const [snapshot, setSnapshot] = react.useState({ phase: "loading", selector: null, agents: [], status: null, error: null });
+      const [open, setOpen] = react.useState(false);
       const [pending, setPending] = react.useState(false);
-      const [error, setError] = react.useState(null);
+      const [readRevision, setReadRevision] = react.useState(0);
+      const [failedTarget, setFailedTarget] = react.useState(null);
+      const rootRef = react.useRef(null);
+      const triggerRef = react.useRef(null);
+      const panelRef = react.useRef(null);
+      const savingRef = react.useRef(false);
+      const sessionRef = react.useRef(props.sessionId);
+      const loadedSessionRef = react.useRef(null);
+      sessionRef.current = props.sessionId;
+
       react.useEffect(() => {
         let alive = true;
-        if (!props.sessionId) return undefined;
-        Promise.resolve(props.decisionRpc(props.connection, "overview", { sessionId: props.sessionId })).then(value => {
+        const sessionChanged = loadedSessionRef.current !== props.sessionId;
+        loadedSessionRef.current = props.sessionId;
+        if (sessionChanged) {
+          savingRef.current = false;
+          setOpen(false);
+          setPending(false);
+          setSnapshot({ phase: "loading", selector: null, agents: [], status: null, error: null });
+        } else {
+          setSnapshot(current => ({ ...current, phase: "loading", error: null }));
+        }
+        setFailedTarget(null);
+        if (!props.sessionId) return () => { alive = false; };
+        Promise.resolve().then(() => props.decisionRpc(props.connection, "overview", { sessionId: props.sessionId })).then(value => {
           if (!alive) return;
-          setOptions(props.selectorOptions(value));
-          setSelected(value?.selector?.mode === "agent" ? value.selector.agentId : "off");
-          setError(null);
-        }).catch(reason => { if (alive) setError(reason instanceof Error ? reason.message : String(reason)); });
+          setSnapshot({ phase: "ready", selector: value?.selector ?? null, agents: Array.isArray(value?.agents) ? value.agents : [], status: value?.status ?? null, error: null });
+        }).catch(reason => {
+          if (!alive) return;
+          const error = reason instanceof Error ? reason : new Error(String(reason));
+          setSnapshot(current => ({ ...current, phase: "error", error }));
+        });
         return () => { alive = false; };
-      }, [props.sessionId]);
+      }, [props.sessionId, readRevision]);
 
-      const change = async event => {
-        const value = event.target.value;
-        const previous = selected;
+      const close = () => {
+        if (savingRef.current) return;
+        setOpen(false);
+        triggerRef.current?.focus?.();
+      };
+      react.useEffect(() => {
+        const hostDocument = globalThis.document;
+        if (!open || !hostDocument) return undefined;
+        const onPointerDown = event => {
+          if (rootRef.current?.contains(event.target) === true) return;
+          close();
+        };
+        const onKeyDown = event => {
+          if (event.key !== "Escape") return;
+          event.preventDefault?.();
+          close();
+        };
+        hostDocument.addEventListener("pointerdown", onPointerDown);
+        hostDocument.addEventListener("keydown", onKeyDown);
+        return () => {
+          hostDocument.removeEventListener("pointerdown", onPointerDown);
+          hostDocument.removeEventListener("keydown", onKeyDown);
+        };
+      }, [open]);
+      react.useEffect(() => {
+        if (open) panelRef.current?.focus?.();
+      }, [open]);
+
+      const view = props.selectorView({
+        phase: pending ? "saving" : snapshot.phase,
+        selector: snapshot.selector, agents: snapshot.agents, status: snapshot.status, error: snapshot.error,
+      });
+      const choose = async option => {
+        if (!option || savingRef.current || pending || !props.sessionId) return;
+        if (view.selected === option.value) { close(); return; }
+        const sessionId = props.sessionId;
+        savingRef.current = true;
         setPending(true);
-        setError(null);
+        setFailedTarget(null);
+        setSnapshot(current => ({ ...current, error: null }));
         try {
-          await props.decisionRpc(props.connection, "setSelector", value === "off" ? { sessionId: props.sessionId, mode: "off" } : { sessionId: props.sessionId, mode: "agent", agentId: value });
-          setSelected(value);
+          const args = option.value === "off"
+            ? { sessionId, mode: "off" }
+            : { sessionId, mode: "agent", agentId: option.value };
+          const result = await props.decisionRpc(props.connection, "setSelector", args);
+          if (sessionRef.current !== sessionId) return;
+          const selector = result?.mode === "off" || result?.mode === "agent"
+            ? result
+            : option.value === "off" ? { mode: "off" } : { mode: "agent", agentId: option.value };
+          setSnapshot(current => ({ ...current, phase: "ready", selector, error: null }));
+          savingRef.current = false;
+          setPending(false);
+          close();
         } catch (reason) {
-          setSelected(previous);
-          setError(reason instanceof Error ? reason.message : String(reason));
-        } finally {
+          if (sessionRef.current !== sessionId) return;
+          const error = reason instanceof Error ? reason : new Error(String(reason));
+          setSnapshot(current => ({ ...current, phase: "error", error }));
+          setFailedTarget(option);
+          savingRef.current = false;
           setPending(false);
         }
       };
-      return jsx.jsxs("span", { style: { display: "inline-flex", alignItems: "center", gap: "6px" }, children: [
-        jsx.jsx("select", {
-          value: selected, onChange: change, disabled: pending,
-          "aria-label": t("decisionSelector"), "data-weir-decision-selector": SELECTOR_ID,
-          style: { color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "3px 6px" },
-          children: options.map(option => jsx.jsx("option", { value: option.value, children: option.label }, option.value)),
-        }, "select"),
-        error ? jsx.jsx("span", { role: "alert", style: { color: "var(--dsw-alias-state-error-primary)" }, children: error }, "error") : null,
-      ] });
-    }
+      const bridge = callback => {
+        callback?.();
+        close();
+      };
+      const retryRead = () => {
+        setSnapshot(current => ({ ...current, phase: "loading", error: null }));
+        setFailedTarget(null);
+        setReadRevision(value => value + 1);
+      };
 
+      if (!props.sessionId || !ui) return null;
+      const triggerText = view.selectedName
+        ? `${t("decisionSelector")} · ${view.selectedName}`
+        : `${t("decisionSelector")} · ${t(view.triggerKey ?? "decisionSelector")}`;
+      const triggerLabel = view.unavailable ? `${triggerText} · ${t("decisionSelectionUnavailable")}` : triggerText;
+      const optionRow = option => jsx.jsxs("label", {
+        className: "weir-da-selector-option", "data-selected": view.selected === option.value,
+        children: [
+          jsx.jsx("input", {
+            type: "radio", name: "weir-da-selector-choice", value: option.value,
+            checked: view.selected === option.value, disabled: pending,
+            onChange: () => choose(option), "aria-label": option.label,
+          }, "input"),
+          jsx.jsx("span", { children: option.label }, "label"),
+        ],
+      }, option.value);
+      const errorText = snapshot.error ? `${t(view.errorKey ?? "decisionFailed")} ${snapshot.error.message ?? String(snapshot.error)}` : "";
+      const panel = open ? jsx.jsxs("section", {
+        ref: panelRef, id: PANEL_ID, className: "weir-da-overlay weir-da-selector-panel",
+        role: "dialog", "aria-modal": false, "aria-labelledby": TITLE_ID,
+        "aria-describedby": "weir-da-selector-safety", tabIndex: -1,
+        "aria-busy": pending,
+        children: [
+          jsx.jsx("h2", { id: TITLE_ID, className: "weir-da-selector-title", children: t("decisionSelectTitle") }, "title"),
+          jsx.jsx("p", { id: "weir-da-selector-safety", className: "weir-da-caption", children: t("decisionSelectorSafety") }, "safety"),
+          view.globalOff ? jsx.jsxs(ui.EmptyState, { children: [
+            jsx.jsx("strong", { children: t("decisionGlobalOff") }, "title"),
+            jsx.jsx("div", { children: t("decisionGlobalOffHint") }, "hint"),
+          ] }, "global-off") : null,
+          view.unavailable ? jsx.jsx(ui.Badge, { variant: "warn", children: `${view.selectedName ?? t("decisionSelector")} · ${t("decisionSelectionUnavailable")}` }, "unavailable") : null,
+          view.phase === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") }, "loading") : null,
+          view.phase === "error" && !failedTarget ? jsx.jsxs(ui.ErrorState, { children: [
+            jsx.jsx("span", { children: errorText }, "message"),
+            jsx.jsx(ui.Button, { variant: "secondary", onClick: retryRead, children: t("decisionRetry") }, "retry"),
+          ] }, "read-error") : null,
+          failedTarget ? jsx.jsxs(ui.ErrorState, { children: [
+            jsx.jsx("span", { children: errorText }, "message"),
+            jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => choose(failedTarget), children: t("decisionRetry") }, "retry"),
+          ] }, "save-error") : null,
+          view.phase !== "loading" && view.options.length > 0 ? jsx.jsx("div", {
+            role: "radiogroup", "aria-label": t("decisionSelectTitle"), className: "weir-da-selector-options",
+            children: view.options.map(optionRow),
+          }, "options") : null,
+          pending ? jsx.jsx("div", { role: "status", "aria-live": "polite", className: "weir-da-caption", children: t("decisionSaving") }, "saving") : null,
+          view.emptyKey ? jsx.jsx(ui.EmptyState, { children: t(view.emptyKey) }, "empty") : null,
+          jsx.jsxs("div", { className: "weir-da-actions weir-da-selector-footer", children: [
+            view.emptyKey ? jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => bridge(props.onCreate), children: t("decisionCreateAgent") }, "create") : null,
+            jsx.jsx(ui.Button, { variant: "ghost", disabled: pending, onClick: () => bridge(props.onManage), children: t("decisionManageAgents") }, "manage"),
+          ] }, "footer"),
+        ],
+      }) : null;
+      return jsx.jsxs("span", {
+        ref: rootRef, className: "weir-da-selector", "data-weir-decision-selector": SELECTOR_ID,
+        children: [
+          jsx.jsx(ui.DecisionStyles, {}, "styles"),
+          jsx.jsxs("button", {
+            ref: triggerRef, type: "button", className: "weir-da-selector-trigger",
+            "data-weir-decision-trigger": SELECTOR_ID, "data-unavailable": view.unavailable,
+            "aria-label": triggerLabel, "aria-haspopup": "dialog", "aria-expanded": open,
+            "aria-controls": open ? PANEL_ID : undefined, disabled: pending,
+            onClick: () => open ? close() : setOpen(true),
+            children: [
+              jsx.jsx(ui.DecisionIcon, { name: view.unavailable ? "warning" : "branch-check", size: 14 }, "icon"),
+              jsx.jsx("span", { className: "weir-da-selector-trigger-label", children: triggerText }, "label"),
+              jsx.jsx("span", { "aria-hidden": "true", children: open ? "⌃" : "⌄" }, "chevron"),
+            ],
+          }, "trigger"),
+          panel,
+        ],
+      });
+    }
 
     exports.SELECTOR_ID = SELECTOR_ID;
     exports.DecisionSelector = DecisionSelector;
