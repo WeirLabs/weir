@@ -119,7 +119,10 @@ test('Broker open/evaluate/flush uses real retrieval and persists only actual me
   assert.equal(attempt.pins.evaluatorVersion, 'sidecar/1')
   assert.equal(attempt.pins.memorySnapshotId, null)
   assert.deepEqual(attempt.packManifest.memory, {
-    L2: { schemaVersion: 1, status: 'empty', snapshotId: null },
+    L2: {
+      schemaVersion: 1, status: 'empty', snapshotId: null, snapshotRevision: null, snapshotHash: null,
+      principleIds: [], items: [], exclusions: [],
+    },
     L3: { schemaVersion: 1, sourceCaseIds: [source.current.caseId] },
   })
   const attached = f.broker.store.db.prepare(`SELECT evidence.locator_json FROM attempt_evidence

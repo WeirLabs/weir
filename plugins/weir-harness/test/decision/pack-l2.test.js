@@ -68,6 +68,9 @@ test('source-bound L2 pins and actual-only manifest/hash preserve the reviewed p
   const changedMapping = pack({ ...withBoth, memory: { L2: { ...L2, items: [{ ...principle, evidenceIds: ['ev_other'] }] }, L3: [] } })
   assert.notEqual(originalMapping.contextPackHash, changedMapping.contextPackHash)
   assert.notEqual(value.contextPackHash, pack({ memory: { L2: { ...L2, snapshotHash: 'b'.repeat(64) }, L3: [] } }).contextPackHash)
+  const cleaned = pack({ memory: { L2: { ...L2, items: [{ ...principle, sessionLog: 'SESSION-MUST-NOT-LEAK' }] }, L3: [] } })
+  assert.deepEqual(cleaned.layers.L2, [principle])
+  assert.equal(JSON.stringify(cleaned.messages).includes('SESSION-MUST-NOT-LEAK'), false)
 })
 
 test('budget trimming is L3 then whole L2 then L5 and never leaves an L2 principle source outside the pack', () => {
@@ -77,13 +80,14 @@ test('budget trimming is L3 then whole L2 then L5 and never leaves an L2 princip
   const secondPrinciple = { ...principle, principleId: 'pr_two', text: `Second principle ${'p'.repeat(300)}`, sources: ['dc_second'], evidenceIds: ['ev_second'] }
   const episode = {
     schemaVersion: 1, kind: 'neutral_agent_answer', sourceCaseId: 'dc_neutral', sourceRevision: 1,
-    scope, excerpt: `Answer q: ${'n'.repeat(600)}`, createdAt: 1, closedAt: 2,
+    scope, excerpt: `Answer q: ${'n'.repeat(590)}`, createdAt: 1, closedAt: 2,
   }
   const input = {
     evidence: [source, secondSource, thirdSource], criticalEvidenceIds: [],
     memory: { L2: { ...L2, items: [principle, secondPrinciple] }, L3: [episode] },
   }
   const l2Trimmed = findPack(item => item.packManifest.omissions.includes('L2_PRINCIPLE_OMITTED')
+    && Array.isArray(item.layers.L2) && item.layers.L2.length === 1
     && !item.packManifest.omissions.some(code => code.startsWith('L5_')), input)
   assert.equal(l2Trimmed.layers.L3, '')
   assert.ok(l2Trimmed.layers.L2.length < 2)
@@ -96,4 +100,54 @@ test('budget trimming is L3 then whole L2 then L5 and never leaves an L2 princip
   for (const item of Array.isArray(l5Trimmed.layers.L2) ? l5Trimmed.layers.L2 : []) {
     for (const evidenceId of item.evidenceIds) assert.ok(l5Trimmed.packManifest.evidenceIds.includes(evidenceId))
   }
+})
+
+test('fixed overflow is decided with trimmable L2/L3/L5 empty, not by rejecting a trimmable L2 principle', () => {
+  let fixedBudget
+  const emptyCurrent = { ...L2, status: 'empty', items: [] }
+  for (let budgetTokens = 1; budgetTokens <= 6_000; budgetTokens++) {
+    const fixed = pack({ budgetTokens, evidence: [], memory: { L2: emptyCurrent, L3: [] } })
+    if (fixed.outcome === 'ready') { fixedBudget = budgetTokens; break }
+  }
+  assert.ok(fixedBudget, 'the fixture must find a budget that exactly fits fixed layers')
+  const value = pack({ budgetTokens: fixedBudget, evidence: [source], criticalEvidenceIds: [] })
+  assert.equal(value.outcome, 'ready')
+  assert.equal(value.layers.L2, '')
+  assert.ok(value.packManifest.omissions.includes('L2_PRINCIPLE_OMITTED'))
+  assert.equal(value.packManifest.memory.L2.snapshotId, 'ms_one')
+  assert.deepEqual(value.packManifest.memory.L2.principleIds, [])
+})
+
+test('a pinned Snapshot with no actual L2 hit stays distinct from usage in manifest and hash', () => {
+  const pinnedEmpty = pack({ memory: { L2: { ...L2, status: 'empty', items: [] }, L3: [] } })
+  assert.equal(pinnedEmpty.outcome, 'ready')
+  assert.equal(pinnedEmpty.layers.L2, '')
+  assert.equal(pinnedEmpty.pins.memorySnapshotId, 'ms_one')
+  assert.equal(pinnedEmpty.packManifest.layerSizes.L2, 0)
+  assert.deepEqual(pinnedEmpty.packManifest.memory.L2.principleIds, [])
+  assert.deepEqual(pinnedEmpty.packManifest.memory.L2.items, [])
+  assert.deepEqual(pinnedEmpty.packManifest.memory.L2.exclusions, L2.exclusions)
+  const noSnapshot = pack({
+    memory: { L2: { schemaVersion: 1, status: 'empty', snapshotId: null, items: [] }, L3: [] },
+  })
+  assert.notEqual(pinnedEmpty.contextPackHash, noSnapshot.contextPackHash)
+})
+
+test('budget scans never emit an L2 principle whose mapped evidence was lost during L5 trimming', () => {
+  const largeOther = { ...source, evidenceId: 'ev_other', locator: { kind: 'case', caseId: 'dc_other' }, excerpt: 'Other '.repeat(500), createdAt: 1 }
+  let sawL5Trim = false
+  for (let budgetTokens = 100; budgetTokens <= 6_000; budgetTokens += 5) {
+    const value = pack({ budgetTokens, evidence: [source, largeOther], criticalEvidenceIds: [] })
+    const items = Array.isArray(value.layers.L2) ? value.layers.L2 : []
+    const evidenceIds = value.layers.L5.map(item => item.evidenceId)
+    for (const item of items) {
+      for (const evidenceId of item.evidenceIds) assert.ok(evidenceIds.includes(evidenceId), `orphaned ${item.principleId} at budget ${budgetTokens}`)
+    }
+    assert.deepEqual(value.packManifest.memory.L2.principleIds, items.map(item => item.principleId))
+    if (value.packManifest.omissions.includes('L5_EVIDENCE_OMITTED')) {
+      sawL5Trim = true
+      assert.equal(items.length, 0, 'L5 source loss must not leave a live L2 principle')
+    }
+  }
+  assert.equal(sawL5Trim, true)
 })

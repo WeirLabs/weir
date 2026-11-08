@@ -5,6 +5,9 @@ import { evaluatorVersion, promptVersion, renderEvaluatorContract } from './cont
 
 const L4_CONTEXT_LIMIT = 2048
 const L3_EXCERPT_LIMIT = 600
+const L2_TEXT_LIMIT = 600
+const L2_EXCLUSION_REASONS = Object.freeze(['NOT_ACTIVE', 'OUT_OF_SCOPE', 'SOURCE_UNAVAILABLE'])
+const HEX_256 = /^[a-f0-9]{64}$/
 
 /**
  * @param {{profile:any,request:any,evidence?:any[],memory?:{L2?:any,L3?:any[]},modelRoute?:object,budgetTokens:number,criticalEvidenceIds?:string[]}} input
@@ -24,30 +27,32 @@ export function buildContextPack(input) {
   }
   const request = normalizeRequest(input.request, omissions)
   const L4 = { entry: input.request.entry, request }
+  const ordered = orderEvidence(input.evidence ?? [])
+  const memoryL2 = normalizeL2(input.memory?.L2, ordered)
   const pins = {
     agentProfileRevision: input.profile.revision,
     userDescriptionRevision: input.profile.userDescription?.revision ?? 1,
     generatedDescriptionRevision: 0,
-    memorySnapshotId: null,
+    memorySnapshotId: memoryL2.snapshotId,
+    memorySnapshotRevision: memoryL2.snapshotRevision,
+    memorySnapshotHash: memoryL2.snapshotHash,
     promptVersion,
     evaluatorVersion,
     modelRoute: input.modelRoute ?? { kind: 'inherited' },
     budgetTokens: input.budgetTokens,
   }
-  const L2 = normalizeL2(input.memory?.L2)
+  let L2 = memoryL2.items
   let L3 = normalizeL3(input.memory?.L3)
-  const ordered = orderEvidence(input.evidence ?? [])
   let L5 = ordered.map(evidence => sanitizeEvidence(evidence, false))
-  const critical = new Set(input.criticalEvidenceIds ?? ordered
-    .filter(evidence => evidence.source === 'user_correction' || evidence.source === 'user_profile')
-    .map(evidence => evidence.evidenceId))
 
-  const fixedLength = packLength({ L0, L1, L2, L3: '', L4, L5: [] })
+  // Fixed overflow is independent of every trimmable layer. A large L2 hit is
+  // not a fixed-profile failure: it can still be omitted whole below.
+  const fixedLength = packLength({ L0, L1, L2: '', L3: '', L4, L5: [] })
   if (fixedLength > budgetCharacters) {
     return earlyResult('escalate', {
       hint: 'Reduce the fixed profile or Case context before retrying.',
       missing: ['The fixed L0/L1/L4 layers exceed the pinned context budget.'],
-    }, { L0, L1, L2, L3: '', L4, L5: [] }, pins, omissions)
+    }, { L0, L1, L2: '', L3: '', L4, L5: [] }, pins, omissions, memoryL2.exclusions)
   }
 
   // Neutral memory has the lowest retention priority: remove whole episodes in
@@ -56,6 +61,22 @@ export function buildContextPack(input) {
     L3.pop()
     if (!omissions.includes('L3_EPISODE_OMITTED')) omissions.push('L3_EPISODE_OMITTED', 'L3_EPISODE_TRUNCATED')
   }
+
+  // Reviewed principles are also trimmed as whole entries, after L3 and before
+  // any L5 excerpt/evidence loss. Snapshot pins deliberately survive this trim.
+  while (L2.length && packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
+    L2.pop()
+    if (!omissions.includes('L2_PRINCIPLE_OMITTED')) omissions.push('L2_PRINCIPLE_OMITTED', 'L2_PRINCIPLE_TRUNCATED')
+  }
+
+  // Every source needed by a retained principle inherits critical-evidence
+  // behavior. L5 can never silently strand a live L2 principle without sources.
+  const critical = new Set([
+    ...(input.criticalEvidenceIds ?? ordered
+      .filter(evidence => evidence.source === 'user_correction' || evidence.source === 'user_profile')
+      .map(evidence => evidence.evidenceId)),
+    ...L2.flatMap(principle => principle.evidenceIds),
+  ])
 
   if (packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
     const hadExcerpts = L5.some(evidence => typeof evidence.excerpt === 'string')
@@ -68,33 +89,114 @@ export function buildContextPack(input) {
     const [dropped] = L5.splice(oldest, 1)
     if (!omissions.includes('L5_EVIDENCE_OMITTED')) omissions.push('L5_EVIDENCE_OMITTED', 'L5_EVIDENCE_TRUNCATED')
     if (critical.has(dropped.evidenceId)) {
+      const retained = L2.filter(principle => principle.evidenceIds.every(id => L5.some(ref => ref.evidenceId === id)))
+      if (retained.length !== L2.length) {
+        L2 = retained
+        if (!omissions.includes('L2_PRINCIPLE_OMITTED')) omissions.push('L2_PRINCIPLE_OMITTED', 'L2_PRINCIPLE_TRUNCATED')
+      }
       return earlyResult('return', {
         reasonCode: 'MISSING_CONTEXT',
         hint: `Increase the context budget or reduce evidence so critical evidence ${dropped.evidenceId} fits.`,
         missing: [`Critical evidence ${dropped.evidenceId} did not fit the pinned context budget.`],
-      }, { L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }, pins, omissions)
+      }, { L0, L1, L2: L2.length ? L2 : '', L3: L3.length ? L3 : '', L4, L5 }, pins, omissions, memoryL2.exclusions)
     }
   }
 
-  const layers = { L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }
+  const layers = { L0, L1, L2: L2.length ? L2 : '', L3: L3.length ? L3 : '', L4, L5 }
   if (packLength(layers) > budgetCharacters) {
     return earlyResult('escalate', {
       hint: 'Reduce the fixed profile or Case context before retrying.',
       missing: ['The bounded context envelope exceeds the pinned budget after evidence omission.'],
-    }, layers, pins, omissions)
+    }, layers, pins, omissions, memoryL2.exclusions)
   }
-  return result('ready', layers, pins, omissions)
+  return result('ready', layers, pins, omissions, memoryL2.exclusions)
+}
+
+/**
+ * @param {any} value
+ * @param {any[]} evidence
+ */
+function normalizeL2(value, evidence) {
+  if (value === undefined) return emptyL2()
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 1 || !['empty', 'populated'].includes(value.status)
+    || !Array.isArray(value.items) || value.items.length > 128
+    || (value.exclusions !== undefined && (!Array.isArray(value.exclusions) || value.exclusions.length > 128))
+    || (value.status === 'empty') !== (value.items.length === 0)) {
+    throw invalidL2('L2 memory must be a bounded versioned empty/populated adapter result')
+  }
+  const snapshotId = value.snapshotId
+  if (snapshotId !== null && (typeof snapshotId !== 'string' || !snapshotId || snapshotId.length > 200)) {
+    throw invalidL2('L2 snapshotId must be null or a bounded id')
+  }
+  if (snapshotId === null && value.items.length !== 0) throw invalidL2('L2 items require a current Snapshot pin')
+  const snapshotRevision = value.snapshotRevision ?? null
+  const snapshotHash = value.snapshotHash ?? null
+  if (snapshotId === null) {
+    if (snapshotRevision !== null || snapshotHash !== null) throw invalidL2('Empty no-Snapshot L2 must have null pins')
+  } else {
+    if (!Number.isSafeInteger(snapshotRevision) || snapshotRevision < 1 || typeof snapshotHash !== 'string' || !HEX_256.test(snapshotHash)) {
+      throw invalidL2('A pinned Snapshot requires a positive revision and SHA-256 content hash')
+    }
+  }
+  const evidenceIds = new Set(evidence.map(item => item.evidenceId))
+  const items = value.items.map(item => sanitizePrinciple(item, evidenceIds))
+  const exclusions = (value.exclusions ?? []).map(sanitizeL2Exclusion)
+  return { snapshotId, snapshotRevision, snapshotHash, items, exclusions }
+}
+
+function emptyL2() {
+  return { snapshotId: null, snapshotRevision: null, snapshotHash: null, items: [], exclusions: [] }
+}
+
+/** @param {any} principle @param {Set<string>} availableEvidenceIds */
+function sanitizePrinciple(principle, availableEvidenceIds) {
+  if (!principle || typeof principle !== 'object' || Array.isArray(principle)
+    || principle.schemaVersion !== 1 || principle.kind !== 'reviewed_principle'
+    || !boundedId(principle.principleId) || typeof principle.text !== 'string'
+    || !principle.text || principle.text.length > L2_TEXT_LIMIT) {
+    throw invalidL2('L2 items must be complete bounded reviewed_principle projections')
+  }
+  const sources = boundedIdArray(principle.sources, 'sources')
+  const evidenceIds = boundedIdArray(principle.evidenceIds, 'evidenceIds')
+  if (evidenceIds.some(id => !availableEvidenceIds.has(id))) throw invalidL2('L2 evidenceIds must refer to the supplied eligible L5 set')
+  return {
+    schemaVersion: 1,
+    kind: 'reviewed_principle',
+    principleId: principle.principleId,
+    text: principle.text,
+    scope: sanitizeScope(principle.scope),
+    sources,
+    evidenceIds,
+  }
+}
+
+/** @param {any} exclusion */
+function sanitizeL2Exclusion(exclusion) {
+  if (!exclusion || typeof exclusion !== 'object' || Array.isArray(exclusion)
+    || !boundedId(exclusion.principleId) || !L2_EXCLUSION_REASONS.includes(exclusion.reason)) {
+    throw invalidL2('L2 exclusions must use bounded principle ids and closed reasons')
+  }
+  return { principleId: exclusion.principleId, reason: exclusion.reason }
+}
+
+/** @param {any} value @param {string} label */
+function boundedIdArray(value, label) {
+  if (!Array.isArray(value) || value.length > 256 || value.some(item => !boundedId(item))
+    || new Set(value).size !== value.length) {
+    throw invalidL2(`L2 ${label} must be a bounded unique id array`)
+  }
+  return [...value]
 }
 
 /** @param {any} value */
-function normalizeL2(value) {
-  if (value === undefined) return ''
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || value.schemaVersion !== 1 || value.status !== 'empty' || value.snapshotId !== null
-    || !Array.isArray(value.items) || value.items.length !== 0) {
-    throw new DecisionContractError('INVALID_MEMORY_INPUT', 'P2 L2 memory must be the versioned empty adapter result')
-  }
-  return ''
+function boundedId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 200
+}
+
+/** @param {string} detail */
+function invalidL2(detail) {
+  return new DecisionContractError('INVALID_MEMORY_INPUT', detail)
 }
 
 /** @param {any} value */
@@ -130,13 +232,13 @@ function sanitizeEpisode(episode) {
 function sanitizeScope(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || !Array.isArray(value.workspaces)
     || value.workspaces.length === 0 || value.workspaces.some(item => typeof item !== 'string' || !item)) {
-    throw new DecisionContractError('INVALID_MEMORY_INPUT', 'L3 Episode scope must contain workspace strings')
+    throw new DecisionContractError('INVALID_MEMORY_INPUT', 'Memory scope must contain workspace strings')
   }
   const result = { workspaces: [...value.workspaces] }
   for (const key of ['paths', 'tags', 'authorizationClasses']) {
     if (value[key] === undefined) continue
     if (!Array.isArray(value[key]) || value[key].some(item => typeof item !== 'string' || !item)) {
-      throw new DecisionContractError('INVALID_MEMORY_INPUT', `L3 Episode scope.${key} must be a string array`)
+      throw new DecisionContractError('INVALID_MEMORY_INPUT', `Memory scope.${key} must be a string array`)
     }
     result[key] = [...value[key]]
   }
@@ -198,16 +300,33 @@ function packLength(layers) {
   return Object.values(layers).reduce((sum, layer) => sum + (typeof layer === 'string' ? layer.length : JSON.stringify(layer).length), 0)
 }
 
-/** @param {'ready'|'answer'|'return'|'escalate'} outcome @param {Record<string,any>} layers @param {any} pins @param {string[]} omissions */
-function result(outcome, layers, pins, omissions, extra = {}) {
+/**
+ * @param {'ready'|'answer'|'return'|'escalate'} outcome
+ * @param {Record<string,any>} layers
+ * @param {any} pins
+ * @param {string[]} omissions
+ * @param {any[]} l2Exclusions
+ * @param {object} [extra]
+ */
+function result(outcome, layers, pins, omissions, l2Exclusions, extra = {}) {
   const evidenceIds = layers.L5.map(evidence => evidence.evidenceId)
   const correctionIds = layers.L5.filter(evidence => evidence.source === 'user_correction').map(evidence => evidence.evidenceId)
+  const actualL2 = Array.isArray(layers.L2) ? layers.L2 : []
   const packManifest = {
     layerSizes: Object.fromEntries(Object.entries(layers).map(([key, value]) => [key, typeof value === 'string' ? value.length : JSON.stringify(value).length])),
     evidenceIds,
     correctionIds,
     memory: {
-      L2: { schemaVersion: 1, status: 'empty', snapshotId: null },
+      L2: {
+        schemaVersion: 1,
+        status: actualL2.length ? 'populated' : 'empty',
+        snapshotId: pins.memorySnapshotId ?? null,
+        snapshotRevision: pins.memorySnapshotRevision ?? null,
+        snapshotHash: pins.memorySnapshotHash ?? null,
+        principleIds: actualL2.map(item => item.principleId),
+        items: actualL2.map(item => ({ principleId: item.principleId, sources: [...item.sources], evidenceIds: [...item.evidenceIds] })),
+        exclusions: l2Exclusions.map(item => ({ principleId: item.principleId, reason: item.reason })),
+      },
       L3: { schemaVersion: 1, sourceCaseIds: typeof layers.L3 === 'string' ? [] : layers.L3.map(episode => episode.sourceCaseId) },
     },
     omissions: [...omissions],
@@ -228,7 +347,14 @@ function result(outcome, layers, pins, omissions, extra = {}) {
   }
 }
 
-/** @param {'return'|'escalate'} outcome @param {object} extra @param {Record<string,any>} layers @param {any} pins @param {string[]} omissions */
-function earlyResult(outcome, extra, layers, pins, omissions) {
-  return result(outcome, layers, pins, omissions, extra)
+/**
+ * @param {'return'|'escalate'} outcome
+ * @param {object} extra
+ * @param {Record<string,any>} layers
+ * @param {any} pins
+ * @param {string[]} omissions
+ * @param {any[]} l2Exclusions
+ */
+function earlyResult(outcome, extra, layers, pins, omissions, l2Exclusions) {
+  return result(outcome, layers, pins, omissions, l2Exclusions, extra)
 }
