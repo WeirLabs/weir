@@ -349,7 +349,9 @@ function budgetPlan(request) {
     const targetFull = targetFixed + length(pack.L2) + length(pack.L3) + length(pack.L5)
     const withoutL3 = targetFull - length(pack.L3)
     const withoutL2 = withoutL3 - length(pack.L2)
-    budgets[phase] = Math.ceil((phase === 'budget-l3' ? withoutL3 : phase === 'budget-l2' ? withoutL2 : targetFixed + length(l5NoExcerpt)) / 4)
+    budgets[phase] = phase === 'budget-l5'
+      ? Math.floor((targetFixed + length(l5NoExcerpt) - 1) / 4)
+      : Math.ceil((phase === 'budget-l3' ? withoutL3 : withoutL2) / 4)
     fixedByPhase[phase] = { fixed: targetFixed, full: targetFull, withoutL3, withoutL2, l5NoExcerptCharacters: targetFixed + length(l5NoExcerpt) }
   }
   return { budgets, fixed, full, fixedByPhase }

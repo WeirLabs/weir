@@ -118,6 +118,36 @@ test('fixed overflow is decided with trimmable L2/L3/L5 empty, not by rejecting 
   assert.deepEqual(value.packManifest.memory.L2.principleIds, [])
 })
 
+test('empty L2 uses its final wire length at the exact L5 budget boundary', () => {
+  for (let padding = 0; padding < 16; padding++) {
+    const paddedSource = { ...source, excerpt: `${source.excerpt}${'p'.repeat(padding)}` }
+    const input = { evidence: [paddedSource], criticalEvidenceIds: [] }
+    const reference = pack(input)
+    assert.equal(reference.outcome, 'ready')
+    assert.deepEqual(reference.layers.L5[0].excerpt, paddedSource.excerpt)
+
+    const finalCharacters = ['L0', 'L1', 'L4', 'L5']
+      .reduce((sum, layer) => sum + reference.packManifest.layerSizes[layer], 0)
+    if (finalCharacters % 4 !== 3) continue
+
+    const budgetTokens = Math.ceil(finalCharacters / 4)
+    const budgetCharacters = budgetTokens * 4
+    const populatedCharacters = Object.values(reference.packManifest.layerSizes)
+      .reduce((sum, size) => sum + size, 0)
+    assert.ok(populatedCharacters > budgetCharacters, 'populated L2 must not fit the exact-boundary budget')
+
+    const value = pack({ ...input, budgetTokens })
+    assert.equal(value.outcome, 'ready')
+    assert.equal(value.layers.L2, '')
+    assert.ok(value.packManifest.omissions.includes('L2_PRINCIPLE_OMITTED'))
+    assert.deepEqual(value.layers.L5, reference.layers.L5)
+    assert.equal(value.packManifest.omissions.some(code => code.startsWith('L5_')), false)
+    assert.equal(Object.values(value.packManifest.layerSizes).reduce((sum, size) => sum + size, 0), finalCharacters)
+    return
+  }
+  throw new Error('No bounded padding produced a final Pack length congruent to 3 modulo 4')
+})
+
 test('a pinned Snapshot with no actual L2 hit stays distinct from usage in manifest and hash', () => {
   const pinnedEmpty = pack({ memory: { L2: { ...L2, status: 'empty', items: [] }, L3: [] } })
   assert.equal(pinnedEmpty.outcome, 'ready')

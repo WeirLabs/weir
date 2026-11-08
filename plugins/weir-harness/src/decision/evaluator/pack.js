@@ -78,13 +78,13 @@ export function buildContextPack(input) {
     ...L2.flatMap(principle => principle.evidenceIds),
   ])
 
-  if (packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
+  if (packLength({ L0, L1, L2: L2.length ? L2 : '', L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
     const hadExcerpts = L5.some(evidence => typeof evidence.excerpt === 'string')
     L5 = L5.map(evidence => sanitizeEvidence(evidence, true))
     if (hadExcerpts) omissions.push('L5_EXCERPT_OMITTED')
   }
 
-  while (L5.length && packLength({ L0, L1, L2, L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
+  while (L5.length && packLength({ L0, L1, L2: L2.length ? L2 : '', L3: L3.length ? L3 : '', L4, L5 }) > budgetCharacters) {
     const oldest = oldestIndex(L5)
     const [dropped] = L5.splice(oldest, 1)
     if (!omissions.includes('L5_EVIDENCE_OMITTED')) omissions.push('L5_EVIDENCE_OMITTED', 'L5_EVIDENCE_TRUNCATED')
