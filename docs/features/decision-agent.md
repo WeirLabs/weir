@@ -6,17 +6,17 @@
 
 Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一个已启用且被会话明确选择的 Agent，只有在证据、范围、当前状态、权限和答案形状都通过结构闸门时，才用原问题的选项直接回答；不能回答时交还原生提问，而不是凭印象补答案。
 
-当前交付覆盖 P0 契约、P1 可用核心、P2 独立受限检索/L2/L3 接口与 P3 手动语义整合/MemorySnapshot 生命周期：多个本地 Agent、独立证据命名空间、自动 Hook、显式咨询、原生升级、持久历史、轻量反馈、中性情节、候选审阅和四个管理视图。P4–P5 的 Auto Router、跨工作区共享及数据导出仍未交付；自动定时/阈值整合、自动发布和 `generatedDescription` 学习也未启用。
+当前交付覆盖 P0 契约、P1 可用核心、P2 独立受限检索/L2/L3 接口、P3 手动语义整合/MemorySnapshot 生命周期，以及完整的产品化 UIUX：多个本地 Agent、独立证据命名空间、自动 Hook、显式咨询、原生升级、持久历史、轻量反馈、中性情节、候选审阅和四个逻辑管理视图。普通用户默认看到“决策助手 / 待你决定 / 判断记录 / 判断依据 / 原则版本”等任务语言，技术实体与原始 JSON 收进高级诊断。P4–P5 的 Auto Router、跨工作区共享及数据导出仍未交付；自动定时/阈值整合、自动发布和 `generatedDescription` 学习也未启用。
 
 ## 用户可见行为
 
 ### Agent 与选择器
 
-- 管理页可创建、编辑、停用和归档 Agent。每个 Agent 有自己的名称、scope、授权类、模型路由和 `userDescription` 版本历史；同一工作区内名称大小写不敏感唯一。
+- 管理页可创建、编辑、停用和归档 Agent。默认表单只需名称与可选的普通语言判断偏好，创建沿用当前 workspace 的默认 scope 并继承会话模型；完整 scope、授权类、模型路由和 `userDescription` 版本历史在高级设置/诊断中维护。同一工作区内名称大小写不敏感唯一。
 - `generatedDescription` 在当前 P0–P3 恒为 `{revision: 0, text: ''}`，只读且没有生成或写入入口；它为空不妨碍决策。P3 只把用户裁决、有效纠正和已赞回答整合为可审阅原则，不生成画像。
-- 会话输入框右侧的选择器只有 `Off` 和当前工作区已启用的具体 Agent，没有 `Auto`。新会话默认 `Off`，选择按根会话持久化，子会话解析到同一根会话。
+- 会话输入框右侧使用紧凑触发器与专用选择面板，不再是原生下拉框。面板只有 `Off` 和当前工作区已启用的具体 Agent，选择即保存并关闭，没有 `Auto` 或额外确认。新会话默认 `Off`，选择按根会话持久化，子会话解析到同一根会话；读取中不会伪装成 `Off`，保存失败保留先前有效选择。
 - 总开关 `decisionAgentsEnabled` 默认关闭。全局关闭或会话 `Off` 时，Hook 不拦截、咨询明确失败，不创建 Case、路由样本或数据库文件。
-- 钉选 Agent 不可用时不会静默改派；显式咨询指定其他 Agent 只影响该次调用。修订会重新校验目标 Agent 并记录新路由。
+- 钉选 Agent 不可用时，选择面板保留其名称并明确标为不可用，不静默改派或显示为正常可选；显式咨询指定其他 Agent 只影响该次调用。修订会重新校验目标 Agent 并记录新路由。
 
 ### 自动 Hook 与显式咨询
 
@@ -30,8 +30,8 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - G1–G7 分别检查主张引用、scope/授权类、证据当前有效性、冲突、当前观测、权限和答案形状；模型自评置信度不参与放行。
 - 用户裁决和已点赞的 Agent 回答会展开为“答案在前、问题在后”的有界摘录。未评分回答没有独立正向证据资格；窄路径/标签证据不能授权更宽请求。
 - 文件 evidence hints 只读刷新为当次 `current_observation`，记录 hash/version/observedAt；越界、过期或无法读取时失败关闭。相同题面在同一 scope 下存在不同裁决时，引用冲突任一侧都会阻止回答。
-- 点赞只验证原 scope，并在反馈事务内创建 `agent_record`。点踩无需理由，立即变为 `disputed / needsReview`，失去独立自动回答资格；撤销追加事实但不删除旧事件。不会从点踩反推相反答案。
-- 评论不改变状态或后续行为。纠正必须包含 `direction`、`scope`、`supersedes`，立即成为后续 Attempt 的 User Override；目标必须属于同一 Agent/workspace，旧回答不被回写。
+- 界面以“认可 / 不认可”表达赞/踩。认可只验证原 scope，并在反馈事务内创建 `agent_record`；不认可无需理由，立即变为 `disputed / needsReview`，失去独立自动回答资格。只有 `validated` 显示“撤销认可”，只有 `disputed` 显示“撤销不认可”，未评分状态不显示撤销；撤销追加事实但不删除旧事件，也不会反推相反答案。
+- 备注不改变状态或后续行为，纠正必须包含 `direction`、`scope`、`supersedes` 并立即成为后续 Attempt 的 User Override。两者使用独立入口与按会话/Case 隔离的草稿；纠正提交前显示范围、取代目标和“只影响之后判断”的说明，写失败保留草稿，旧回答不被回写。
 
 ### 受限检索、语义记忆与中性情节
 
@@ -44,10 +44,10 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ### 管理页与恢复
 
-- 左侧栏管理页保持四个可用视图：Agent 档案、决策记录、待办收件箱、指标。Agent 详情提供真实的手动整合、Learning Run/Snapshot 历史、候选操作与原则 diff、来源记录、结构重放以及发布/拒绝/回滚；没有自动整合/发布或自动路由按钮。
-- 决策记录支持 Agent、Case 状态、Attempt 结局、返回原因、scope、反馈状态六维过滤；详情只读拼装 Case、Attempts/Evidence/Feedback 和 RouteDecision。每条 Attempt 的 Context Pack 折叠区显示真实 Snapshot pin、L2 原则/L5 来源、L3 非权威来源、排除/省略与层大小；旧 P1/P2 manifest 和 pinned-empty 均显示真实空状态。
-- 会话卡与收件箱显示 Agent、状态、真实 claim/原因、证据与出处、记录版本、暂定建议和逐题结论。赞、踩、撤销、评论、纠正、裁决、改派、取消和重试都经 Host 远端动作写入权威库，并校验调用方根会话与 workspace。
-- 学习来源审阅使用 Agent/workspace 授权的有界只读投影：Case 为答案在前、最多 600 字符的摘录，correction 显示 direction/scope/supersedes；可审阅其他根会话中同 Agent/workspace 的合格来源，但通用根会话历史 reader 的隔离不变。当前 Snapshot 即使超出最近 20 条摘要也保留真实 revision 和回滚入口。
+- 左侧栏使用专用图标进入管理页，默认显示“待你决定”；主导航只有待你决定、判断记录、助手管理，指标位于高级区域。待办直接提供单选/多选/文本回答、建议填入和次级恢复动作；记录以题面摘要、助手、状态和时间的可读列表呈现，桌面双栏、窄屏钻进详情，分页追加并去重。
+- 决策记录仍支持 Agent、Case 状态、Attempt 结局、返回原因、scope、反馈状态六维过滤；详情只读拼装 Case/Attempts/Evidence/Feedback 和 RouteDecision。默认只显示当前 Attempt 的证据，历史 Attempt 各自分组；Snapshot pin、L2/L3/L5、层大小、省略项和原始 JSON 仅在高级诊断展示，旧 P1/P2 manifest 与 pinned-empty 不伪造命中。
+- 会话卡与收件箱以真实问题、答案、理由和当前依据为中心，每个区域至多一个主操作。Hook 原生提问保持唯一主回答面，卡片不复制第二套表单；无原生回答面的显式咨询复用同一回答组件。赞、踩、撤销、备注、纠正、裁决、改派、取消和重试都经既有 Host 远端动作写入权威库并校验根会话/workspace，写后重读，重复点击受 pending guard 约束。
+- Agent 详情把学习治理收敛为“整理新原则 → 审阅变化/来源/结构校验 → 采用或放弃”，当前版本可明确恢复前序版本。只有匹配的候选 Run、Snapshot、父版本（存在时）、diff 和最新 revision 全部加载后才允许写入；候选摘要、加载失败或过期详情不能触发生命周期操作。跨根来源以授权的有界摘录就地展示，只有当前根 record reader 确认可读才导航；当前 Snapshot 超出最近 20 条摘要仍保留真实 revision 和恢复入口。
 - 运行层失败在预算内重试，耗尽后进入可恢复待办。显式 retry/reassign 每次只授权一个新 Attempt，并重新校验 Agent；重复传输不新增 Attempt。重启保留等待状态和选择器，未完成 Attempt 标为 `interrupted`，不会变成答案。
 
 ## 配置
@@ -80,7 +80,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - 整合器使用独立英文 `consolidation-contract/1`，评估器使用 `evaluator-contract/3`；二者均为无状态、无工具的受限调用，省略 `temperature`，模型调用不进入 SQLite 写事务。
 - 评估器直接调用 `ctx.llm.stream`，使用严格文本 JSON、有限上下文包和 G1–G7；不使用工具、会话历史或自评置信度。所有路由都省略显式 `temperature`，沿用 DSH 与供应商的兼容默认值，避免固定采样参数模型被拒绝。意外异常持久化为通用失败 Attempt，不泄漏异常正文。
 - 浏览器只通过 `/api` 的 `weirDecision/<method>` 读写；P3 新增 learningStart/learningRun/snapshotPublish/snapshotReject/snapshotRollback/memorySnapshot 六个 bare-args 方法。所有 Case/Profile/学习/Snapshot 动作都解析调用方根会话/workspace 并检查目标归属；越界拒绝写审计。审计镜像不含原则、评论、题面或证据正文。
-- 决策卡是权威记录的只读投影，不写自定义 Session 事件、不使用 `session.append` 或 `commands.execute`，不靠定时轮询刷新。审计镜像尽力而为，不含题面、证据正文或用户画像正文。
+- Client 由包内共享视觉组件、纯投影模型和选择器/页面/会话卡/学习 chunk 组成，所有 chunk 在组合根并行加载。界面使用宿主主题 token、locale 和响应式/键盘/读屏契约；诊断与指标按需读取，迟到响应不会覆盖新会话或筛选。决策卡仍是权威记录的只读投影，不写自定义 Session 事件、不使用 `session.append` 或 `commands.execute`，不靠定时轮询刷新。审计镜像尽力而为，不含题面、证据正文或用户画像正文。
 
 ## 边界与失败语义
 
@@ -97,7 +97,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ## 测试
 
-- 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client，以及 P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、五类操作、结构 replay、父版本/来源发布栅栏、回滚、恢复、sourceRecords、L2 展开/裁剪和真实 pins/manifest/hash。整改后完整 Decision 套件 **253/253**。
+- 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。当前完整 Decision 套件 **315/315**；Weir 全包 **3423 PASS / 0 FAIL / 1 既有平台跳过**，checkJs 与 33 个 Client chunks 构建通过。
 - headless 集成：`decision-hook`、`decision-consult`、`decision-batch`、`decision-route`、`decision-recovery`、`decision-feedback`、`decision-isolation`、`decision-ui-remote`、`decision-memory` 与 `decision-learning`，合计 **69/69**。learning 场景以 31 个真实进程阶段（含一次 exact-PID SIGKILL）检查生命周期、DB/wire、对抗输入、恢复、预算、历史不可变和 P1/P2/schema-v1 兼容。
 - 真实隔离 Desktop GUI：保留既有 A/B/C 与 P2 memory 验收；P3 主生命周期 run `8wkaN8` **18/18**，整改 run `Tc4Mks` **10/10**，覆盖手动整合、候选 diff/来源/结构重放、发布、只读 Attempt L2、回滚/拒绝、重启、>20 历史、correction/cross-root 来源及 exact-PID/端口清理。测试只启动独立临时 profile/进程，不操作用户当前 App 或其存储。
-- 五项关键安全逻辑均有真实 mutation-red、字节恢复和 GREEN 证据；独立审查先发现两个治理 blocker，修复并经真实 Desktop 证明后复审 **APPROVE**。
+- 既有五项关键安全逻辑均有真实 mutation-red、字节恢复和 GREEN 证据。产品化 UX 的独立审查另行发现并修复了重复可写咨询卡、已有当前版本时的无变化误报、筛选/分页状态混用、文案降级和冲突重读问题；最终代码/组合复审 **APPROVE**，真实 Desktop 视觉验收单独记录，不以组件测试替代。
