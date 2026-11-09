@@ -257,3 +257,18 @@ test('product visual audit waits for target computed colors and retains strict z
   const zoomLoop = driver.match(/for \(const width of \[360, 768, 1440\]\) \{\s*await instance\.cdp\.setViewport\(width, 900, true\)[\s\S]*?await instance\.cdp\.setPageZoom\(1\)/)?.[0] ?? ''
   assert.ok(zoomLoop.includes('await instance.cdp.setPageZoom(2)'), '200% uses the real mobile-enabled CDP page-scale mechanism')
 })
+
+test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
+  assert.ok(keyboard360, 'both existing keyboard flows run together at 360px')
+  const longAsk = driver.indexOf('const longCase = await askLongNative(sessionId)')
+  const themeAudit = driver.indexOf("for (const theme of ['light', 'dark'])", longAsk)
+  const zoomAudit = driver.indexOf('await layoutAudit(`zoom200-${width}`', longAsk)
+  const answer = driver.indexOf("await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')", longAsk)
+  assert.ok(longAsk > keyboard360.index, 'the keyboard-only flow finishes before native pending hides the composer')
+  assert.ok(!driver.slice(longAsk).includes('await keyboardSelector('), 'no selector keyboard audit is retried against the hidden composer')
+  assert.ok(themeAudit > longAsk && zoomAudit > themeAudit && answer > zoomAudit, 'the same pending long Case retains every visual audit before its intended answer')
+  assert.equal(driver.match(/const longCase = await askLongNative\(sessionId\)/g)?.length, 1, 'the scenario neither closes nor recreates the long Case to pass')
+  assert.match(driver, /pending native question hides the composer/i, 'the ordering documents the verified host contract')
+})
