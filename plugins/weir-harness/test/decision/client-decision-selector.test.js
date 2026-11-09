@@ -136,6 +136,7 @@ const textOf = tree => JSON.stringify(tree)
 
 const enabledOverview = {
   status: { available: true, enabled: true }, selector: { mode: 'off' },
+  auto: { answerClasses: ['A', 'C'], shadow: true },
   agents: [
     { agentId: 'a', name: 'A very long assistant name that must remain readable', state: 'enabled' },
     { agentId: 'b', name: 'Beta', state: 'enabled' },
@@ -144,7 +145,7 @@ const enabledOverview = {
   ],
 }
 
-test('selector opens a non-modal radio panel with only Off and enabled assistants', async t => {
+test('selector opens a non-modal radio panel with Off, truthful Auto, and enabled assistants', async t => {
   const h = await load(t, enabledOverview)
   let tree = h.render()
   let trigger = triggerOf(tree)
@@ -165,12 +166,15 @@ test('selector opens a non-modal radio panel with only Off and enabled assistant
   assert.equal(panel['aria-modal'], false)
   assert.equal(panel['aria-labelledby'], 'weir-da-selector-title')
   assert.equal(h.document.activeElement, panel.ref.current)
-  assert.deepEqual(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').map(node => node.value), ['off', 'a', 'b'])
+  assert.deepEqual(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').map(node => node.value), ['off', 'auto', 'a', 'b'])
   assert.ok(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').every(node => node.name === 'weir-da-selector-choice'))
-  assert.ok(findAll(panel, node => node.type === 'label' && node.className?.includes('weir-da-selector-option')).length === 3)
+  assert.ok(findAll(panel, node => node.type === 'label' && node.className?.includes('weir-da-selector-option')).length === 4)
   assert.equal(textOf(panel).includes('Disabled'), false)
   assert.equal(textOf(panel).includes('Archived'), false)
-  assert.equal(textOf(panel).includes('Auto'), false)
+  assert.equal(textOf(panel).includes('Auto'), true)
+  assert.equal(textOf(panel).includes('decisionAutoWhitelist'), true)
+  assert.equal(textOf(panel).includes('A, C'), true)
+  assert.equal(textOf(panel).includes('decisionAutoShadowOn'), true)
   assert.equal(findAll(tree, node => node.type === h.props.ui.DecisionStyles).length, 1)
 })
 
@@ -303,7 +307,7 @@ test('unavailable, zero-agent, and globally disabled views never silently reassi
   assert.equal(textOf(triggerOf(tree)).includes('decisionSelectionUnavailable'), true)
   triggerOf(tree).onClick()
   tree = h.render()
-  assert.deepEqual(findAll(panelOf(tree), node => node.type === 'input' && node.inputType === 'radio').map(node => node.value), ['off', 'a'])
+  assert.deepEqual(findAll(panelOf(tree), node => node.type === 'input' && node.inputType === 'radio').map(node => node.value), ['off', 'auto', 'a'])
   assert.equal(radioOf(tree, 'archived'), undefined)
   assert.equal(textOf(panelOf(tree)).includes('Pinned archive'), true)
   assert.equal(textOf(panelOf(tree)).includes('decisionSelectionUnavailable'), true)
@@ -332,6 +336,74 @@ test('unavailable, zero-agent, and globally disabled views never silently reassi
   assert.equal(textOf(panelOf(tree)).includes('decisionGlobalOff'), true)
   assert.equal(textOf(panelOf(tree)).includes('decisionGlobalOffHint'), true)
   assert.equal(radioOf(tree, 'a').checked, true)
+})
+
+test('Auto selection saves once with no agent id and accepts the persisted Auto result', async t => {
+  let release
+  const emptyAuto = { ...enabledOverview, auto: { answerClasses: [], shadow: false } }
+  const h = await load(t, emptyAuto, { setSelector: () => new Promise(resolve => { release = resolve }) })
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  assert.equal(textOf(panelOf(tree)).includes('decisionAutoEmptyWhitelist'), true)
+  assert.equal(textOf(panelOf(tree)).includes('decisionAutoShadowOff'), true)
+  const choose = radioOf(tree, 'auto').onChange
+  choose()
+  choose()
+  assert.deepEqual(h.calls.filter(call => call.method === 'setSelector'), [{ method: 'setSelector', args: { sessionId: 'root', mode: 'auto' } }])
+  release({ mode: 'auto', agentId: null })
+  await h.flush()
+  tree = h.render()
+  assert.equal(panelOf(tree), undefined)
+  assert.equal(textOf(triggerOf(tree)).includes('decisionAuto'), true)
+  assert.equal(textOf(triggerOf(tree)).includes('decisionSelectionUnavailable'), false)
+})
+
+test('Auto save failure preserves the prior valid mode and retries Auto without a second submit', async t => {
+  let fail = true
+  const h = await load(t, enabledOverview, { setSelector: () => { if (fail) throw new Error('offline'); return { mode: 'auto', agentId: null } } })
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  radioOf(tree, 'auto').onChange()
+  await h.flush()
+  tree = h.render()
+  assert.equal(radioOf(tree, 'off').checked, true)
+  assert.equal(radioOf(tree, 'auto').checked, false)
+  assert.ok(panelOf(tree))
+  fail = false
+  buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
+  await h.flush()
+  tree = h.render()
+  assert.equal(panelOf(tree), undefined)
+  assert.deepEqual(h.calls.filter(call => call.method === 'setSelector').map(call => call.args), [
+    { sessionId: 'root', mode: 'auto' }, { sessionId: 'root', mode: 'auto' },
+  ])
+})
+
+test('root and child session reads restore their own persisted Auto selection', async t => {
+  const h = await load(t, enabledOverview)
+  h.render()
+  await h.flush()
+  h.props.sessionId = 'child'
+  h.props.decisionRpc = async (_connection, method, args) => {
+    h.calls.push({ method, args })
+    if (method === 'overview') return { ...enabledOverview, selector: { mode: 'auto', agentId: null } }
+    return { mode: args.mode }
+  }
+  h.render()
+  let tree = h.render()
+  assert.equal(textOf(triggerOf(tree)).includes('decisionLoadingShort'), true)
+  await h.flush()
+  tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  assert.equal(radioOf(tree, 'auto').checked, true)
+  assert.equal(h.calls.filter(call => call.method === 'overview').at(-1).args.sessionId, 'child')
 })
 
 test('outside click and Escape close without saving and return focus to the trigger', async t => {

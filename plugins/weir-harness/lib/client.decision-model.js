@@ -20,8 +20,17 @@ window.__ModuleLoader__.load({
     function selectorOptions(payload) {
       const value = okValue(payload) ?? payload;
       const agents = array(value?.agents).filter(agent => agent && agent.state === "enabled" && typeof agent.agentId === "string");
+      const autoValue = object(value?.auto);
+      const known = autoValue !== null && Array.isArray(autoValue.answerClasses) && typeof autoValue.shadow === "boolean";
+      const answerClasses = known ? [...new Set(autoValue.answerClasses.filter(item => ["A", "B", "C"].includes(item)))] : [];
+      const auto = { known, answerClasses, shadow: known ? autoValue.shadow : false, ready: known && answerClasses.length > 0 };
       return [
         { value: "off", mode: "off", label: "Off" },
+        {
+          value: "auto", mode: "auto", label: "Auto", auto,
+          descriptionKey: !known ? "decisionAutoReadinessUnknown" : auto.ready ? "decisionAutoWhitelist" : "decisionAutoEmptyWhitelist",
+          shadowKey: auto.shadow ? "decisionAutoShadowOn" : "decisionAutoShadowOff",
+        },
         ...agents.map(agent => ({ value: agent.agentId, mode: "agent", label: text(agent.name, agent.agentId), agent })),
       ];
     }
@@ -208,13 +217,15 @@ window.__ModuleLoader__.load({
       const selector = object(value.selector);
       const selected = phase !== "loading" && selector?.mode === "agent" && typeof selector.agentId === "string"
         ? selector.agentId
-        : phase !== "loading" && selector?.mode === "off" ? "off" : null;
-      const selectedAgent = selected && selected !== "off" ? agents.find(agent => agent?.agentId === selected) ?? null : null;
-      const unavailable = selected !== null && selected !== "off" && selectedAgent?.state !== "enabled";
-      const options = phase === "loading" || (phase === "error" && !selector) ? [] : selectorOptions({ agents });
+        : phase !== "loading" && selector?.mode === "auto" ? "auto"
+          : phase !== "loading" && selector?.mode === "off" ? "off" : null;
+      const selectedAgent = selected && selected !== "off" && selected !== "auto" ? agents.find(agent => agent?.agentId === selected) ?? null : null;
+      const unavailable = selected !== null && selected !== "off" && selected !== "auto" && selectedAgent?.state !== "enabled";
+      const options = phase === "loading" || (phase === "error" && !selector) ? [] : selectorOptions({ agents, auto: value.auto });
       const triggerKey = phase === "loading" ? "decisionLoadingShort"
         : phase === "saving" ? "decisionSaving"
         : selected === "off" ? "decisionOff"
+        : selected === "auto" ? "decisionAuto"
         : selected === null ? "decisionSelector" : null;
       return {
         phase,
@@ -225,7 +236,7 @@ window.__ModuleLoader__.load({
         unavailableKey: unavailable ? "decisionSelectionUnavailable" : null,
         options,
         triggerKey,
-        emptyKey: phase === "ready" && options.length === 1 ? "decisionNoAgents" : null,
+        emptyKey: phase === "ready" && !options.some(option => option.mode === "agent") ? "decisionNoAgents" : null,
         error: value.error ?? null,
         errorKey: value.error ? errorKey(value.error) : null,
       };
@@ -358,6 +369,7 @@ window.__ModuleLoader__.load({
         decisionUp: "Confirm", decisionDown: "Dispute", decisionUndo: "Undo rating", decisionUndoUp: "Undo confirmation", decisionUndoDown: "Undo dispute", decisionComment: "Note", decisionCorrect: "Correction", decisionConfirmConsequence: "Confirmation supports this answer only within its original scope.", decisionDisputeConsequence: "Dispute immediately stops this answer from being used alone for automatic answers; it does not infer the opposite answer.",
         decisionDecide: "Submit decision", decisionReassign: "Reassign", decisionCancel: "Cancel", decisionRetry: "Retry", decisionSave: "Save", decisionUseSuggestions: "Use suggestions", decisionAnswersIncomplete: "Answer every question before submitting.",
         decisionSelectTitle: "Choose a decision assistant", decisionSelectorSafety: "Only this session; approvals and high-risk actions still ask you.", decisionManageAgents: "Manage assistants", decisionCreateAgent: "New assistant",
+        decisionAuto: "Auto", decisionAutoWhitelist: "Auto routes only these allowed authorization classes:", decisionAutoEmptyWhitelist: "The Auto authorization-class whitelist is empty. New Auto requests will not be answered automatically.", decisionAutoReadinessUnknown: "Auto readiness could not be verified; no automatic-answer capability is assumed.", decisionAutoShadowOn: "Shadow diagnostics are on; they never change the real route or answer.", decisionAutoShadowOff: "Shadow diagnostics are off.",
         decisionGlobalOff: "Decision assistants are off globally.", decisionGlobalOffHint: "No automatic decisions are made. Enable them in Settings → Weir → Decision assistants.",
         decisionAdvancedDiagnostics: "Advanced diagnostics", decisionStructuralQualityWarning: "Structural validation does not guarantee content quality.", decisionRateNotQuality: "Automatic answer rate is not a quality metric.", decisionHistoricalNotEvidence: "Historical context is not evidence for a decision.",
         decisionSelectionUnavailable: "The current selection is unavailable.", decisionErrorConflict: "The record changed. Reload the latest version before retrying.", decisionErrorUnavailable: "The selected assistant is unavailable. Choose another assistant or Off.",
@@ -405,6 +417,7 @@ window.__ModuleLoader__.load({
         decisionUp: "认可", decisionDown: "不认可", decisionUndo: "撤销评分", decisionUndoUp: "撤销认可", decisionUndoDown: "撤销不认可", decisionComment: "备注", decisionCorrect: "纠正", decisionConfirmConsequence: "认可仅在原适用范围内支持此回答作为依据。", decisionDisputeConsequence: "不认可会立即停止此回答单独用于自动回答，但不会反推相反答案。",
         decisionDecide: "提交决定", decisionReassign: "改派", decisionCancel: "取消", decisionRetry: "重试", decisionSave: "保存", decisionUseSuggestions: "使用建议", decisionAnswersIncomplete: "请回答全部问题后再提交。",
         decisionSelectTitle: "选择决策助手", decisionSelectorSafety: "仅当前会话；审批和高风险操作仍会询问你。", decisionManageAgents: "管理助手", decisionCreateAgent: "新建助手",
+        decisionAuto: "Auto", decisionAutoWhitelist: "Auto 只路由以下已允许的授权类：", decisionAutoEmptyWhitelist: "Auto 授权类白名单为空。新的 Auto 请求不会被自动回答。", decisionAutoReadinessUnknown: "无法核实 Auto 的就绪状态；不假定其具备自动回答能力。", decisionAutoShadowOn: "Shadow 诊断已开启；它不会改变真实路由或答案。", decisionAutoShadowOff: "Shadow 诊断已关闭。",
         decisionGlobalOff: "决策助手已在全局关闭。", decisionGlobalOffHint: "当前不会自动决策。可在“设置 → Weir → 决策助手”中开启。",
         decisionAdvancedDiagnostics: "高级诊断", decisionStructuralQualityWarning: "结构校验通过不代表内容质量。", decisionRateNotQuality: "自动回答率不是质量指标。", decisionHistoricalNotEvidence: "历史参考不是判断依据。",
         decisionSelectionUnavailable: "当前选择的助手不可用。", decisionErrorConflict: "记录已变化，请先读取最新版本再重试。", decisionErrorUnavailable: "当前助手不可用，请选择其他助手或关闭。",

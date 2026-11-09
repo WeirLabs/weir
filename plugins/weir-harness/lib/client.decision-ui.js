@@ -51,7 +51,8 @@ window.__ModuleLoader__.load({
 .weir-da-selector-option:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .weir-da-selector-option[data-selected="true"] { border-color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, var(--dsw-alias-bg-overlay)); }
 .weir-da-selector-option input { flex: none; margin: 3px 0 0; }
-.weir-da-selector-option span { min-width: 0; }
+.weir-da-selector-option > span { min-width: 0; display: grid; gap: 2px; }
+.weir-da-selector-option .weir-da-caption { display: block; }
 .weir-da-selector-footer { padding-top: 8px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
 .weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
