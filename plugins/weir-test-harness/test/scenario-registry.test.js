@@ -83,6 +83,7 @@ EXPECTED_ORDER.push('decision-isolation')
 EXPECTED_ORDER.push('decision-ui-remote')
 EXPECTED_ORDER.push('decision-memory')
 EXPECTED_ORDER.push('decision-learning')
+EXPECTED_ORDER.push('decision-auto-route')
 if (process.env.WEIR_IT_DECISION_GUI === '1') EXPECTED_ORDER.push('decision-gui')
 
 describe('scenario registry', () => {

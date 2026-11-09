@@ -664,6 +664,110 @@ describe('decision-route P1 brain', () => {
   })
 })
 
+describe('decision-auto-route P4 brain and Router mock dispatch', () => {
+  const classificationOptions = (question, system = 'Auto request classification contract: router-classification-contract/1\nClassify only this request.') => userOptions(JSON.stringify({
+    contract: 'router-classification-contract/1',
+    questions: [{ id: question.id, question: question.question, options: question.options }],
+    context: '',
+  }), { system })
+  const routeOptions = (question, system = 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.') => userOptions(JSON.stringify({
+    contract: 'router-contract/1',
+    questions: [{ ...question, authorizationClass: 'A' }],
+    context: '',
+    candidates: [
+      { agentId: 'ag_a', name: 'Auto A', userDescription: 'A owns the selected fixture.', scope: { workspaces: ['/repo'], authorizationClasses: ['A'] } },
+      { agentId: 'ag_b', name: 'Auto B', userDescription: 'B owns another fixture.', scope: { workspaces: ['/repo'], authorizationClasses: ['A', 'B'] } },
+    ],
+  }), { system })
+  const materialize = async stream => {
+    const chunks = []
+    for await (const chunk of stream) chunks.push(chunk)
+    return chunks
+  }
+  const withMockScenario = async (scenarioId, suffix, callback) => {
+    const previous = process.env.WEIR_IT_SCENARIO
+    process.env.WEIR_IT_SCENARIO = scenarioId
+    try {
+      const mock = await import(`../src/mock-llm.js?auto-router-${suffix}`)
+      return await callback(mock)
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_SCENARIO
+      else process.env.WEIR_IT_SCENARIO = previous
+    }
+  }
+
+  it('registers the scenario and begins with real Broker Auto setup then an unclassified stock Hook', () => {
+    const scenario = byId('decision-auto-route')
+    assert.ok(scenario, 'decision-auto-route must be registered')
+    const setup = blockEnds(run(scenario.id, userOptions('decision-auto-route-probe')))[0]
+    assert.equal(setup.name, 'decision_integration_probe')
+    assert.equal(JSON.parse(setup.arguments).op, 'auto-setup')
+    const stock = blockEnds(run(scenario.id, toolOptions('decision-auto-route-probe', 'DECISION_TEST done auto-setup:{"agentA":"ag_a","agentB":"ag_b"}')))[0]
+    assert.equal(stock.name, 'ask_user_question')
+    const args = JSON.parse(stock.arguments)
+    assert.equal(args.questions[0].id, 'decision-auto-selected')
+    assert.equal(Object.hasOwn(args.questions[0], 'authorizationClass'), false)
+    assert.equal(Object.hasOwn(args.questions[0], 'authorization_class'), false)
+  })
+
+  it('dispatches both exact first-line contracts to controllable classification and route brains', async () => {
+    const question = { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }, { label: 'Other' }] }
+    await withMockScenario('decision-auto-route', 'dispatch', ({ planRequest }) => {
+      const classified = JSON.parse(blockEnds(planRequest(classificationOptions(question)).out)[0].text)
+      assert.deepEqual(classified, {
+        contract: 'router-classification-contract/1',
+        classes: [{ id: question.id, authorizationClass: 'A' }],
+      })
+      const routed = JSON.parse(blockEnds(planRequest(routeOptions(question)).out)[0].text)
+      assert.deepEqual(routed, { contract: 'router-contract/1', outcome: 'selected', agentId: 'ag_a', reason: 'Auto A owns this evidenced fixture' })
+    })
+  })
+
+  it('supports none, substantive ambiguity, invalid output, and stream-held timeout controls', async () => {
+    const base = { id: 'decision-auto-none', question: 'AUTO_NONE: no candidate matches', options: [{ label: 'Native none' }] }
+    await withMockScenario('decision-auto-route', 'outcomes', async ({ planRequest, streamScenario }) => {
+      const route = question => JSON.parse(blockEnds(planRequest(routeOptions(question)).out)[0].text)
+      assert.deepEqual(route(base), { contract: 'router-contract/1', outcome: 'none', reason: 'No eligible Agent matches this request' })
+      const ambiguous = route({ ...base, id: 'decision-auto-ambiguous', question: 'AUTO_AMBIGUOUS: overlapping candidates' })
+      assert.equal(ambiguous.outcome, 'ambiguous')
+      assert.deepEqual(ambiguous.ambiguity.candidates, ['ag_a', 'ag_b'])
+      assert.ok(ambiguous.ambiguity.conflict.length > 0)
+      const invalid = blockEnds(planRequest(routeOptions({ ...base, id: 'decision-auto-invalid', question: 'AUTO_INVALID: invalid router output' })).out)[0].text
+      assert.equal(invalid, '{"contract":"router-contract/1","outcome":"selected","agentId":"ag_not_eligible","reason":"Unknown candidate must be rejected"}')
+
+      const controller = new AbortController()
+      const timeoutOptions = routeOptions({ ...base, id: 'decision-auto-timeout', question: 'AUTO_TIMEOUT: hold the router stream' })
+      timeoutOptions.signal = controller.signal
+      const collecting = materialize(streamScenario(timeoutOptions))
+      setTimeout(() => controller.abort(new Error('test deadline')), 5)
+      const chunks = await collecting
+      assert.equal(blockEnds(chunks).length, 0, 'a held Router must not emit a fake text response')
+      assert.equal(chunks.at(-1).reason.kind, 'aborted')
+    })
+  })
+
+  it('fails loudly for missing Router brains and validates tool schemas before dispatch', async () => {
+    const question = { id: 'q', question: 'Classify without a brain', options: [{ label: 'Native' }] }
+    await withMockScenario('decision-route', 'missing-brain', async ({ planRequest, streamScenario }) => {
+      assert.throws(() => planRequest(classificationOptions(question)), /decision-route has no Auto classification brain/)
+      assert.throws(() => planRequest(routeOptions(question)), /decision-route has no Auto Router brain/)
+      const invalidSchema = classificationOptions(question)
+      invalidSchema.tools = [{ name: 'bad_tool', parameters: {} }]
+      await assert.rejects(materialize(streamScenario(invalidSchema)), /Invalid schema for function 'bad_tool'/)
+    })
+  })
+
+  it('does not dispatch a contract that is not the exact first line', async () => {
+    const question = { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }] }
+    await withMockScenario('decision-auto-route', 'exact-first-line', ({ planRequest }) => {
+      const options = classificationOptions(question, `Not a Router contract\nAuto request classification contract: router-classification-contract/1`)
+      const [block] = blockEnds(planRequest(options).out)
+      assert.equal(block.name, 'decision_integration_probe')
+      assert.equal(JSON.parse(block.arguments).op, 'auto-setup')
+    })
+  })
+})
+
 describe('decision-recovery P1 brain', () => {
   it('replays the persisted consult after restart, then verifies recovery', () => {
     const previous = process.env.WEIR_IT_DECISION_PHASE
