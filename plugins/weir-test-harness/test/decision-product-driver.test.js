@@ -338,3 +338,73 @@ test('keyboard selector treats directional native selection as the complete acti
   const arrow = body.indexOf('await instance.cdp.key(direction)')
   assert.ok(enter >= 0 && escape > enter && tab > escape && arrow > tab, 'Enter/Escape/Tab precede native directional activation')
 })
+
+// Run JxliG6 regression anchor: the long native question outlived the inbox decision that
+// closed its Case and kept the composer occupied, so GUI_LEARNING_SOURCE never landed. The
+// driver now finishes that card with the rendered native Skip, which the Hook routes through
+// hookUserAborted — a no-op on the already closed record — and rethrows the native cancel.
+test('long native Skip retires the leftover question without touching the closed record', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const answered = driver.indexOf("await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')")
+  const skipped = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)')
+  const reopened = driver.indexOf('await openSession(instance, sessionId)', skipped)
+  const marker = driver.indexOf("await submitMarker(instance, 'GUI_LEARNING_SOURCE')")
+  assert.ok(answered >= 0, 'the long inbox decision remains the acceptance step')
+  assert.equal(driver.match(/answerInboxWithSuggestions\(sessionId, longCase\.caseId/g)?.length, 1, 'the long Case keeps its one inbox decision')
+  assert.ok(skipped > answered, 'the native Skip finishes the Case that the inbox decision closed')
+  assert.ok(reopened > skipped && marker > reopened, 'the learning source marker only runs after the native card is retired')
+
+  const step = driver.match(/async function skipLongNativeStep\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(step, 'skipLongNativeStep exists')
+  assert.equal(step.match(/instance\.cdp\.evaluate\(/g)?.length, 1, 'one real CDP action per skipped question')
+  assert.ok(!/setTimeout|sleep\(|delay\(/.test(step), 'the Skip waits by polling, never by an arbitrary sleep')
+  assert.ok(step.includes("[data-question-key]"), 'the Skip reads the rendered native question cards')
+  assert.match(step, /el\.offsetParent!==null/, 'the click is scoped to the currently visible card')
+  assert.match(step, /!el\.disabled/, 'a disabled control is never clicked')
+  assert.ok(step.includes('/^(跳过|Skip)$/i'), 'only the real localized Skip control is clicked')
+  assert.ok(!/提交|Submit|下一题|Next/.test(step), 'the Skip never falls back to a submit or next control')
+
+  // The extracted expression is real browser code: a leftover hidden card must stay untouched.
+  const template = step.match(/instance\.cdp\.evaluate\(`([^`]*)`\)/)?.[1] ?? ''
+  assert.ok(template.includes("document.querySelectorAll('[data-question-key]')"), 'the action expression queries the rendered question cards')
+  const action = new Function('document', `return (${template})`)
+  const control = (text, { visible = true, disabled = false } = {}) => ({ textContent: text, offsetParent: visible ? {} : null, disabled, clicks: 0, click() { this.clicks += 1 } })
+  const card = (visible, buttons) => ({ offsetParent: visible ? {} : null, querySelectorAll: () => buttons })
+  const page = (...cards) => ({ querySelectorAll: () => cards })
+
+  const hiddenCardSkip = control('跳过')
+  assert.equal(action(page(card(false, [hiddenCardSkip]))), 'gone', 'a hidden old card reports no visible native card')
+  assert.equal(hiddenCardSkip.clicks, 0, 'a hidden old card is never clicked')
+  const disabledSkip = control('Skip', { disabled: true })
+  assert.equal(action(page(card(true, [disabledSkip]))), 'busy', 'a busy native card is not clicked')
+  assert.equal(disabledSkip.clicks, 0, 'a disabled Skip is never clicked')
+  const submit = control('提交')
+  const liveSkip = control('跳过')
+  assert.equal(action(page(card(true, [submit, liveSkip]))), 'skipped', 'the visible card reports its actionable Skip')
+  assert.equal(liveSkip.clicks, 1, 'the visible Skip is clicked exactly once')
+  assert.equal(submit.clicks, 0, 'the Skip never activates the submit control')
+  const staleSkip = control('跳过')
+  const currentSkip = control('Skip')
+  assert.equal(action(page(card(false, [staleSkip]), card(true, [currentSkip]))), 'skipped')
+  assert.deepEqual([staleSkip.clicks, currentSkip.clicks], [0, 1], 'the click lands on the visible card, never on a hidden old one')
+
+  const finish = driver.match(/async function finishLongNativeWithSkip\(sessionId, caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(finish, 'finishLongNativeWithSkip exists')
+  const before = finish.indexOf("const before = await record(sessionId, 'long-native-skip-before', caseId)")
+  const firstSkip = finish.indexOf('await skipLongNativeStep()')
+  const after = finish.indexOf("const after = await record(sessionId, 'long-native-skip-after', caseId)")
+  assert.ok(before >= 0 && firstSkip > before && after > firstSkip, 'the authoritative record is saved before the Skip and reread after it')
+  assert.match(finish, /requireEvidence\(before\.case\.state === 'closed'/, 'the Skip only finishes an already decided Case')
+  assert.match(finish, /requireEvidence\(steps\.length < \d+/, 'the Skip loop is bounded instead of unbounded')
+  assert.match(finish, /const next = await nativeState\(\); return !next\.pending/, 'the driver waits for the real pending state to clear')
+  assert.match(finish, /value === 'skipped' \|\| value === 'gone' \? value : null/, 'only a real click or a vanished card ends the wait')
+  assert.match(finish, /if \(outcome === 'gone'\) break/, 'a card that disappears mid-wait ends the loop instead of clicking nothing')
+  assert.ok(finish.includes('window.__decisionProductLong; return state?.settled===true?state:null'), 'the native ask promise must settle before the record is compared')
+  assert.match(finish, /after\.case\.state === 'closed'/, 'the Case is still closed after the Skip')
+  assert.match(finish, /after\.case\.revision === before\.case\.revision/, 'the revision is unchanged')
+  assert.match(finish, /JSON\.stringify\(after\) === JSON\.stringify\(before\)/, 'the whole record is byte-identical across the no-op')
+  assert.ok(finish.includes("check('longNativeSkipKeepsClosedRecord'"), 'the no-op has exactly one named acceptance check')
+  assert.match(finish, /await shot\('18b-long-native-skip-closed'\)/, 'the finished card is captured as real PNG evidence')
+  assert.ok(!/hookUserAborted\(|broker\.|\.dismiss\(/.test(finish), 'the driver never bypasses the rendered Skip with a broker or store call')
+  assert.ok(!/await rpc\(sessionId, [^)]*'(decide|cancel|discard|reopen)'/.test(finish), 'no direct RPC mutation finishes the card')
+})
