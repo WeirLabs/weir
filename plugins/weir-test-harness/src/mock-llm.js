@@ -140,6 +140,20 @@ async function* streamScenario(options) {
       return
     }
   }
+  if (record.autoRouterHold === 'singleflight') {
+    const ready = join(IT_ROOT, 'decision-auto-singleflight.ready')
+    const release = join(IT_ROOT, 'decision-auto-singleflight.release')
+    writeFileSync(ready, JSON.stringify({ pid: process.pid, at: Date.now() }) + '\n')
+    const deadline = Date.now() + 10_000
+    while (!options.signal?.aborted && !existsSync(release)) {
+      if (Date.now() >= deadline) throw new Error('decision-auto-route single-flight hold timed out')
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    if (options.signal?.aborted) {
+      yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: 'single-flight Router stream aborted' } } }
+      return
+    }
+  }
   if (record.autoRouterHold === 'timeout') {
     await new Promise((resolve) => {
       if (options.signal?.aborted) return resolve()

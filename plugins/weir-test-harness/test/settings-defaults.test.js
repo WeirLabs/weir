@@ -14,7 +14,8 @@ function rowEntries(file, id) {
   return new Map([...row.matchAll(/^ {8}(\w+): (.+)$/gm)].map((match) => [match[1], match[2]]))
 }
 
-function scalar(raw) {
+function scalar(raw, env = {}) {
+  if (raw?.startsWith('!!js ')) return Function('process', `return (${raw.slice(5)})`)({ env })
   if (raw === 'true') return true
   if (raw === 'false') return false
   if (raw === "'[]'") return '[]'
@@ -32,4 +33,14 @@ test('production and headless settings overlays mirror the conservative Auto def
   assert.equal(production.get('decisionAgentSelectorDefault'), 'off')
   assert.equal(production.get('decisionAgentAutoShadow'), 'false')
   assert.equal(production.get('decisionAgentAutoAnswerClasses'), "'[]'")
+})
+
+test('scenario Auto overrides are opt-in and unset values retain conservative field defaults', () => {
+  const headless = rowEntries('../cordis.patch.yml', 'weir-it-settings')
+  assert.equal(scalar(headless.get('decisionAgentAutoAnswerClasses')), FIELD_DEFAULTS.decisionAgentAutoAnswerClasses)
+  assert.equal(scalar(headless.get('decisionAgentAutoAnswerClasses'), { WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]' }), '["A","B","C"]')
+  assert.equal(scalar(headless.get('decisionAgentAnswerTimeoutMs')), FIELD_DEFAULTS.decisionAgentAnswerTimeoutMs)
+  assert.equal(scalar(headless.get('decisionAgentAnswerTimeoutMs'), { WEIR_IT_DECISION_TIMEOUT_MS: '100' }), 100)
+  assert.equal(scalar(headless.get('decisionAgentMaxAttemptsPerCase')), FIELD_DEFAULTS.decisionAgentMaxAttemptsPerCase)
+  assert.equal(scalar(headless.get('decisionAgentMaxAttemptsPerCase'), { WEIR_IT_DECISION_MAX_ATTEMPTS: '8' }), 8)
 })

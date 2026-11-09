@@ -1,5 +1,5 @@
 // Live Decision Agent integration fixtures. Dev-only; never mount in a real profile.
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export const name = 'weir-it-decision-integration-probe'
@@ -92,6 +92,120 @@ async function learningSeed(broker, agent) {
   return fixture
 }
 
+async function autoSetup(broker, agent) {
+  const workspaceKey = realpathSync(agent.session.header.cwd)
+  const base = { workspaces: [workspaceKey] }
+  const agentA = await broker.profileUpsert({
+    workspaceKey, name: 'Decision Auto A', scope: { ...base, authorizationClasses: ['A'] },
+    userDescription: 'Auto A private profile body: select the evidenced A answer.', modelRoute: { chain: [] },
+  })
+  const agentB = await broker.profileUpsert({
+    workspaceKey, name: 'Decision Auto B', scope: { ...base, authorizationClasses: ['A', 'B'] },
+    userDescription: 'Auto B private profile body: select the evidenced B answer.', modelRoute: { chain: [] },
+  })
+  await broker.setSelector(agent.id, 'auto')
+  return { completed: true, op: 'auto-setup', agentA: agentA.agentId, agentB: agentB.agentId, workspaceKey, rootSessionId: agent.id, selector: broker.selector(agent.id) }
+}
+
+async function waitForFile(path, signal, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(path)) {
+    if (signal?.aborted) throw new Error(`Auto probe aborted while waiting for ${path}`)
+    if (Date.now() >= deadline) throw new Error(`Auto probe timed out waiting for ${path}`)
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
+function autoCaseCounts(broker, caseId) {
+  return {
+    cases: caseId ? 1 : 0,
+    routes: caseId ? broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions WHERE case_id=?').get(caseId).n : 0,
+    attempts: caseId ? broker.store.db.prepare('SELECT COUNT(*) AS n FROM attempts WHERE case_id=?').get(caseId).n : 0,
+  }
+}
+
+async function autoSingleflight(broker, agent, signal) {
+  const root = process.env.WEIR_IT_ROOT
+  if (!root) throw new Error('WEIR_IT_ROOT is required for the Auto single-flight handshake')
+  const ready = join(root, 'decision-auto-singleflight.ready')
+  const release = join(root, 'decision-auto-singleflight.release')
+  rmSync(ready, { force: true })
+  rmSync(release, { force: true })
+  const args = {
+    question: 'AUTO_SINGLEFLIGHT: join this classless consultation',
+    options: [{ label: 'Joined B' }, { label: 'Other' }], request_id: 'auto-singleflight',
+  }
+  const publish = broker.publishConsult.bind(broker)
+  let publishes = 0
+  let firstSettled = false
+  let replaySettled = false
+  broker.publishConsult = current => { publishes++; return publish(current) }
+  try {
+    const first = broker.consult({ agent, args, signal }).then(value => { firstSettled = true; return value })
+    const replay = broker.consult({ agent, args, signal }).then(value => { replaySettled = true; return value })
+    await waitForFile(ready, signal)
+    const row = broker.store.db.prepare("SELECT case_id,state FROM cases WHERE json_extract(request_json,'$.questions[0].question')=?").get(args.question)
+    const caseId = row?.case_id
+    const before = {
+      ...autoCaseCounts(broker, caseId), received: row?.state === 'received' ? 1 : 0,
+      firstSettled, replaySettled, publishes, flights: broker.autoFlights.size,
+    }
+    writeFileSync(release, JSON.stringify({ at: Date.now() }) + '\n')
+    const [firstResult, replayResult] = await Promise.all([first, replay])
+    const current = broker.cases.getCase(caseId)
+    const after = {
+      ...autoCaseCounts(broker, caseId), sameResult: JSON.stringify(firstResult) === JSON.stringify(replayResult),
+      outcome: firstResult.outcome, state: current.state, agentId: current.agentId,
+      publishes, flights: broker.autoFlights.size,
+    }
+    return { completed: true, op: 'auto-singleflight', caseId, before, after }
+  } finally {
+    broker.publishConsult = publish
+    writeFileSync(release, JSON.stringify({ at: Date.now(), cleanup: true }) + '\n')
+  }
+}
+
+async function autoReplay(broker, agent) {
+  const workspaceKey = realpathSync(agent.session.header.cwd)
+  const original = {
+    question: 'AUTO_REPLAY: original classless question',
+    options: [{ label: 'Replay original' }, { label: 'Other' }],
+    context: 'AUTO_REPLAY context secret', request_id: 'auto-replay',
+  }
+  const first = await broker.consult({ agent, args: original })
+  const initialCase = broker.cases.getCase(first.caseId)
+  const initialQuestion = initialCase.request.questions[0]
+  const initial = {
+    caseId: first.caseId, outcome: first.outcome, state: initialCase.state, flights: broker.autoFlights.size,
+    derivedClass: initialQuestion.authorizationClass, derivedSource: initialQuestion.authorizationClassSource,
+    ...autoCaseCounts(broker, first.caseId),
+  }
+  const replayResult = await broker.consult({ agent, args: original })
+  const replay = {
+    sameResult: JSON.stringify(replayResult) === JSON.stringify(first),
+    state: broker.cases.getCase(first.caseId).state,
+    ...autoCaseCounts(broker, first.caseId),
+  }
+  const changes = [
+    ['question', current => ({ ...current, question: 'AUTO_REPLAY: changed question' })],
+    ['context', current => ({ ...current, context: 'AUTO_REPLAY context changed' })],
+    ['options', current => ({ ...current, options: [{ label: 'Replay revised option' }] })],
+    ['scope', current => ({ ...current, scope: { workspaces: [workspaceKey], paths: ['src'] } })],
+  ]
+  const revisions = []
+  let currentArgs = original
+  for (const [field, change] of changes) {
+    currentArgs = change(currentArgs)
+    const result = await broker.consult({ agent, args: currentArgs })
+    const current = broker.cases.getCase(first.caseId)
+    revisions.push({
+      field, outcome: result.outcome, state: current.state, sameAgent: current.agentId === initialCase.agentId,
+      ...autoCaseCounts(broker, first.caseId),
+    })
+  }
+  return { completed: true, op: 'auto-replay', caseId: first.caseId, initial, replay, revisions }
+}
+
 export function apply(ctx, config = {}) {
   if (config.enabled !== true) return
   ctx.tools.register({
@@ -100,7 +214,7 @@ export function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['setup', 'record', 'route-setup', 'disable-a', 'case-for-call', 'feedback', 'correction', 'isolation-setup', 'select', 'cross-consult', 'learning-seed', 'delete-source'] },
+        op: { type: 'string', enum: ['setup', 'record', 'route-setup', 'disable-a', 'case-for-call', 'feedback', 'correction', 'isolation-setup', 'select', 'cross-consult', 'learning-seed', 'delete-source', 'auto-setup', 'auto-singleflight', 'auto-replay'] },
         caseId: { type: 'string' }, agentId: { type: 'string' }, verb: { type: 'string' }, text: { type: 'string' },
         direction: { type: 'string' }, scope: { type: 'object' }, supersedes: { type: 'array', items: { type: 'string' } },
         questions: { type: 'array', items: { type: 'object' } },
@@ -114,6 +228,9 @@ export function apply(ctx, config = {}) {
         const broker = ctx.get('weirDecisionBroker')
         const agent = exec.agent
         if (!broker || !agent?.id) throw new Error('Decision Broker and execution Agent are required')
+        if (args.op === 'auto-setup') return await autoSetup(broker, agent)
+        if (args.op === 'auto-singleflight') return await autoSingleflight(broker, agent, exec.signal)
+        if (args.op === 'auto-replay') return await autoReplay(broker, agent)
         if (args.op === 'learning-seed') return await learningSeed(broker, agent)
         if (args.op === 'delete-source') {
           const deleted = await broker.store.write(db => {
