@@ -57,6 +57,9 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | `decisionAgentsEnabled` | `false` | 总开关；关闭等价于所有会话 `Off` |
+| `decisionAgentSelectorDefault` | `'off'` | 仅允许 `off\|auto`；默认 Off。`auto` 的 fresh-root 初始化由后续选择器任务接入，非法存储值按 Off；当前不改变既有/恢复会话的 Off 行为 |
+| `decisionAgentAutoShadow` | `false` | Shadow 诊断的保守开关；仅布尔 `true` 启用。执行接入属于后续 P4 任务，当前默认且不采样 |
+| `decisionAgentAutoAnswerClasses` | `'[]'` | Active Auto 的 A/B/C JSON 白名单；保存时校验、有效值去重，非法存储值运行时归为空。默认空且 Active Auto 尚未接入 |
 | `decisionAgentAnswerTimeoutMs` | `60000` | 单次 Attempt 硬超时 |
 | `decisionAgentMaxAttemptsPerCase` | `3` | 自动评估、修订与重试的默认合计上限；用户显式恢复每次只追加一次 |
 | `decisionAgentContextBudgetTokens` | `24000` | 当前 Case 与证据包的有界预算 |
@@ -66,7 +69,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 | `decisionAgentRetentionDays` | `0` | 仅启动时清理无裁决/反馈的旧关闭记录；0 表示永久保留 |
 | `decisionAgentStorePath` | `''` | 绝对路径覆盖目录；留空使用 profile 私有存储 |
 
-不存在 Auto/AutoShadow、整合计划、跨工作区共享或自动画像学习设置键。
+上述三个 Auto 键只是本轮交付的保守配置、页面镜像与失败关闭解析，不宣称选择器 Auto、Shadow 或 Active Auto 已可用。不存在整合计划、跨工作区共享或自动画像学习设置键。
 
 ## 设计细节
 
@@ -97,7 +100,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ## 测试
 
-- 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。当前完整 Decision 套件 **323/323**；Weir 全包 **3431 PASS / 0 FAIL / 1 既有平台跳过**（共 3432 项），checkJs 与 33 个 Client chunks 构建通过。
+- 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。本轮新增版本化 Router 枚举、不可变 `auto`/`auto_shadow` RouteDecision 与 Broker 保守配置解析契约；当前完整 Decision 套件 **327/327**；Weir 全包 **3431 PASS / 0 FAIL / 1 既有平台跳过**（共 3432 项）的历史基线保留，最终全包计数待本批结束后重算；checkJs 与 33 个 Client chunks 构建通过。
 - headless 集成：`decision-hook`、`decision-consult`、`decision-batch`、`decision-route`、`decision-recovery`、`decision-feedback`、`decision-isolation`、`decision-ui-remote`、`decision-memory` 与 `decision-learning`，最终完整矩阵 **923/923**。learning 场景以 31 个真实进程阶段（含一次 exact-PID SIGKILL）检查生命周期、DB/wire、对抗输入、恢复、预算、历史不可变和 P1/P2/schema-v1 兼容。
 - 真实隔离 Desktop GUI：保留既有 A/B/C 与 P2 memory 验收；P3 主生命周期 run `8wkaN8` **18/18**，整改 run `Tc4Mks` **10/10**，覆盖手动整合、候选 diff/来源/结构重放、发布、只读 Attempt L2、回滚/拒绝、重启、>20 历史、correction/cross-root 来源及 exact-PID/端口清理。测试只启动独立临时 profile/进程，不操作用户当前 App 或其存储。
 - 产品化 UX 的真实隔离 Desktop 最新验收 run `bPxzdF` **72/72 PASS**：54 张真实截图、526 条原始网络 RPC、94 条权威直读，覆盖完整生命周期、360/768/1440 CSS px、明暗主题、真实 200% 缩放、96 组键盘交互与六组持久化 Accessibility 证据；held `decision_consult` 卡已验证只有一个紧随卡头的回答表单，没有重复 `.weir-da-record-answers` 或 `.weir-da-suggestion-review` 内容，次级证据/历史/恢复/反馈/诊断均位于表单下方。三个隔离实例均完成 exact-PID/端口清理，运行异常、console error、Slot crash 与加载失败均为零，Attempt/Snapshot 历史内容对照无改写。
