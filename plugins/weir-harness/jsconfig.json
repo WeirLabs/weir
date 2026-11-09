@@ -30,6 +30,7 @@
     "src/context-guard/pressure.js",
     "src/context-guard/compaction-outcome.js",
     "src/settings/index.js",
+    "src/decision/router.js",
     // The narrow Node platform contract behind the checked graph's global
     // `process`, `node:fs/promises`, timers and `Buffer`: it used to ride in as
     // a `/// <reference>` from a deleted edit-lock module, so the dependency is

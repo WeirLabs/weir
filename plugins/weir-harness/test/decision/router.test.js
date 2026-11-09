@@ -33,7 +33,7 @@ function profile(agentId, extra = {}) {
   }
 }
 
-function fakeLlm(value) {
+function fakeLlm(value, { finishReason = 'stop', failureCode } = {}) {
   const calls = []
   return {
     calls,
@@ -41,7 +41,7 @@ function fakeLlm(value) {
       calls.push(options)
       return (async function * () {
         yield { type: 'text-delta', text: typeof value === 'string' ? value : JSON.stringify(value) }
-        yield { type: 'finish', reason: { kind: 'stop' } }
+        yield { type: 'finish', reason: { kind: finishReason, ...(failureCode ? { failure: { code: failureCode } } : {}) } }
       })()
     },
   }
@@ -168,5 +168,191 @@ describe('Auto deterministic admission and candidate planning', () => {
     assert.equal(limited.reason, 'failure:candidate_limit')
     assert.equal(limited.candidates.length, 33)
     assert.equal(noModel.calls.length, 0)
+  })
+})
+
+describe('Auto bounded packs and closed sidecar contracts', () => {
+  const classificationQuestions = () => [question('provided', 'B'), question('missing-a'), question('missing-c')]
+  const validClassification = () => ({
+    contract: 'router-classification-contract/1',
+    classes: [{ id: 'missing-a', authorizationClass: 'A' }, { id: 'missing-c', authorizationClass: 'C' }],
+  })
+  const validRoute = () => ({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Relevant preference' })
+
+  async function classifyOutput(output, options = {}) {
+    const llm = fakeLlm(output, options)
+    const result = await classifyAutoRequest({ request: request(classificationQuestions()), ...input(llm, options) })
+    return { result, llm }
+  }
+
+  async function routeOutput(output, options = {}) {
+    const llm = fakeLlm(output, options)
+    const result = await routeAuto({
+      request: request([question('q', 'A')]), scope: scope(), workspaceKey: WORKSPACE,
+      profiles: [profile('agent-a'), profile('agent-b')], ...input(llm, options),
+    })
+    return { result, llm }
+  }
+
+  it('rejects duplicate, omitted, provided, unknown, and extra-field classification output', async () => {
+    const valid = validClassification()
+    const cases = [
+      { ...valid, classes: [valid.classes[0], valid.classes[0]] },
+      { ...valid, classes: [valid.classes[0]] },
+      { ...valid, classes: [...valid.classes, { id: 'provided', authorizationClass: 'A' }] },
+      { ...valid, classes: [{ id: 'unknown-id', authorizationClass: 'A' }, valid.classes[1]] },
+      { ...valid, confidence: 0.9 },
+      { ...valid, answer: 'A' },
+      { ...valid, scope: {} },
+      { ...valid, classes: [{ ...valid.classes[0], confidence: 0.9 }, valid.classes[1]] },
+      { ...valid, classes: [{ id: 'missing-a', authorizationClass: 'G' }, valid.classes[1]] },
+      { ...valid, contract: 'router-classification-contract/2' },
+      'not-json',
+    ]
+    for (const output of cases) {
+      const { result } = await classifyOutput(output)
+      assert.equal(result.kind, 'failed', JSON.stringify(output))
+      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
+    }
+  })
+
+  it('accepts the complete classification vocabulary but fails closed to authority outside A/B/C', async () => {
+    for (const authorizationClass of ['D', 'E', 'F', 'unknown']) {
+      const output = validClassification()
+      output.classes[0].authorizationClass = authorizationClass
+      const { result } = await classifyOutput(output)
+      assert.equal(result.kind, 'authority')
+      assert.equal(result.reason, 'unknown_class')
+      assert.equal(result.request.questions[1].authorizationClassSource, 'auto_classifier')
+    }
+  })
+
+  it('distinguishes truncated classification JSON and max-token finishes', async () => {
+    for (const [output, options] of [
+      ['{"contract":"router-classification-contract/1","classes":[', {}],
+      [validClassification(), { finishReason: 'max-tokens' }],
+    ]) {
+      const { result } = await classifyOutput(output, options)
+      assert.deepEqual(result, { kind: 'failed', reason: 'failure:truncated' })
+    }
+  })
+
+  it('rejects unknown agents, extra answer/scope/confidence fields, and invalid ambiguity', async () => {
+    const valid = validRoute()
+    const ambiguous = {
+      contract: 'router-contract/1', outcome: 'ambiguous', reason: 'Overlapping preferences',
+      ambiguity: { candidates: ['agent-a', 'agent-b'], conflict: 'Both claim this judgment' },
+    }
+    const cases = [
+      { ...valid, agentId: 'agent-unknown' },
+      { ...valid, confidence: 0.8 },
+      { ...valid, answer: 'A' },
+      { ...valid, scope: { workspaces: ['*'] } },
+      { ...valid, extra: true },
+      { ...valid, reason: '' },
+      { ...valid, reason: 'x'.repeat(201) },
+      { ...ambiguous, ambiguity: { candidates: [], conflict: 'Empty set' } },
+      { ...ambiguous, ambiguity: { candidates: ['agent-a', 'agent-a'], conflict: 'Duplicate is not a subset' } },
+      { ...ambiguous, ambiguity: { candidates: ['agent-unknown'], conflict: 'Unknown id' } },
+      { ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: '' } },
+      { ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: 'x'.repeat(201) } },
+      { ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: 'Conflict', extra: true } },
+      { contract: 'router-contract/1', outcome: 'none', reason: 'No match', agentId: 'agent-a' },
+      { ...valid, contract: 'router-contract/2' },
+      'not-json',
+    ]
+    for (const output of cases) {
+      const { result } = await routeOutput(output)
+      assert.equal(result.kind, 'failed', JSON.stringify(output))
+      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
+    }
+  })
+
+  it('returns strict none and ambiguity outcomes with the existing candidate projection', async () => {
+    const none = await routeOutput({ contract: 'router-contract/1', outcome: 'none', reason: 'No suitable preference' })
+    assert.deepEqual(none.result, {
+      kind: 'none', candidates: [{ agentId: 'agent-a', enabled: true }, { agentId: 'agent-b', enabled: true }], reason: 'No suitable preference',
+    })
+    const ambiguous = await routeOutput({
+      contract: 'router-contract/1', outcome: 'ambiguous', reason: 'Material overlap',
+      ambiguity: { candidates: ['agent-b'], conflict: 'The same preference has two owners' },
+    })
+    assert.deepEqual(ambiguous.result, {
+      kind: 'ambiguous', candidates: [{ agentId: 'agent-a', enabled: true }, { agentId: 'agent-b', enabled: true }],
+      reason: 'Material overlap', ambiguity: { candidates: ['agent-b'], conflict: 'The same preference has two owners' },
+    })
+  })
+
+  it('distinguishes truncated router JSON and max-token finishes', async () => {
+    for (const [output, options] of [
+      ['{"contract":"router-contract/1"', {}],
+      [validRoute(), { finishReason: 'max-tokens' }],
+    ]) {
+      const { result } = await routeOutput(output, options)
+      assert.equal(result.kind, 'failed')
+      assert.equal(result.reason, 'failure:truncated')
+    }
+  })
+
+  it('fails closed before invocation when either sidecar exceeds its context budget', async () => {
+    const classification = await classifyOutput(validClassification(), { contextBudgetTokens: 1 })
+    assert.deepEqual(classification.result, { kind: 'failed', reason: 'failure:context_budget' })
+    assert.equal(classification.llm.calls.length, 0)
+    const routing = await routeOutput(validRoute(), { contextBudgetTokens: 1 })
+    assert.equal(routing.result.kind, 'failed')
+    assert.equal(routing.result.reason, 'failure:context_budget')
+    assert.equal(routing.llm.calls.length, 0)
+  })
+
+  it('bounds Unicode text without dropping fixed ids, authorization metadata, or candidates', async () => {
+    const long = '界'.repeat(5000)
+    const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
+    const req = request([{ ...question('fixed-id', 'A', long), header: long, detail: long }], { context: long })
+    const profiles = [
+      profile('agent-a', { name: long, userDescription: { revision: 2, text: long } }),
+      profile('agent-b', { name: long, userDescription: { revision: 3, text: long } }),
+    ]
+    const result = await routeAuto({ request: req, scope: scope(), workspaceKey: WORKSPACE, profiles, ...input(llm, { contextBudgetTokens: 8000 }) })
+    assert.equal(result.kind, 'none')
+    const call = llm.calls[0]
+    const raw = call.messages[0].content[0].text
+    const payload = userPayload(call)
+    assert.equal(payload.questions[0].id, 'fixed-id')
+    assert.equal(payload.questions[0].authorizationClass, 'A')
+    assert.equal(payload.questions[0].question.length, 4000)
+    assert.equal(payload.questions[0].header.length, 4000)
+    assert.equal(payload.questions[0].detail.length, 4000)
+    assert.equal(payload.context.length, 4000)
+    assert.equal(payload.candidates.length, 2)
+    for (const candidate of payload.candidates) {
+      assert.equal(candidate.name.length, 200)
+      assert.equal(candidate.userDescription.length, 2000)
+    }
+    assert.equal(call.system.length + raw.length <= 8000 * 4, true)
+    assert.equal(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(raw), false)
+  })
+
+  it('keeps generated memory, evidence hints, history, full sessions, and foreign profiles out of packs', async () => {
+    const req = request([{ ...question('q', 'A'), candidateProfile: 'FORBIDDEN_CANDIDATE_CLASS' }], {
+      evidence: [{ path: 'secret', excerpt_hint: 'FORBIDDEN_EVIDENCE_HINT' }],
+      history: 'FORBIDDEN_HISTORY', sessionLog: 'FORBIDDEN_FULL_SESSION',
+    })
+    const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
+    await routeAuto({
+      request: req, scope: scope(), workspaceKey: WORKSPACE,
+      profiles: [
+        profile('agent-a', { memorySnapshot: 'FORBIDDEN_SNAPSHOT', L2: 'FORBIDDEN_L2', L3: 'FORBIDDEN_L3' }),
+        profile('agent-b'), profile('foreign', { workspaceKey: '/workspace-two', name: 'FORBIDDEN_FOREIGN_NAME' }),
+      ],
+      ...input(llm),
+    })
+    const wire = JSON.stringify(llm.calls[0])
+    for (const forbidden of ['FORBIDDEN_', 'generatedDescription', 'L2', 'L3', 'Snapshot', 'history', 'sessionLog', 'foreign']) {
+      assert.equal(wire.includes(forbidden), false, `${forbidden} leaked into router pack`)
+    }
+    const classification = await classifyOutput(validClassification())
+    const classificationWire = JSON.stringify(classification.llm.calls[0])
+    assert.equal(classificationWire.includes('candidates'), false)
+    assert.equal(classificationWire.includes('FORBIDDEN_'), false)
   })
 })

@@ -64,7 +64,7 @@ export async function streamDecision(input) {
     return winner.value
   } catch (error) {
     if (input.signal?.aborted || controller.signal.aborted) return failure('aborted')
-    return failure('model_error', error?.code)
+    return failure('model_error', /** @type {any} */ (error)?.code)
   } finally {
     if (timer) clearTimeout(timer)
     input.signal?.removeEventListener('abort', onAbort)
