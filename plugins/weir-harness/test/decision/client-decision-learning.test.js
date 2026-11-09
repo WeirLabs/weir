@@ -589,10 +589,42 @@ test('current Snapshot detail automatically resolves even when its run is outsid
   }
   const harness = await createPageHarness({ actions })
   await openAgentDetail(harness)
-  assert.deepEqual(calls, [['learningRun', 'lr_current'], ['memorySnapshot', 'ms_current']])
+  assert.deepEqual(calls.map(call => call.join(':')).sort(), ['learningRun:lr_current', 'learningRun:lr_rejected_22', 'memorySnapshot:ms_current', 'memorySnapshot:ms_rejected_22'].sort(), 'latest inspection and out-of-cap current detail both load')
   const rendered = renderedLearning(harness)
   assert.equal(findAll(rendered, node => node.type === harness.ui.Button && node['data-action'] === 'learning-rollback')[0].disabled, false)
   harness.unmount()
+})
+
+test('latest failed inspection reports only real no-change outcomes while preserving current version and rollback', async () => {
+  for (const [replayDetail, expectedStatus] of [['NO_CANDIDATE_CHANGES', 'decisionLearningNoChanges'], ['MODEL_OUTPUT_INVALID', 'decisionLearningOutcome_failed']]) {
+    const calls = []
+    const agent = {
+      agentId: 'a', name: 'A', state: 'enabled', currentSnapshotId: 'ms_current',
+      learningRuns: [{ learningRunId: 'lr_latest_failed', outcome: 'failed', revision: 6 }, { learningRunId: 'lr_current', outcome: 'published', revision: 5 }],
+      snapshots: [{ snapshotId: 'ms_current', state: 'published', version: 3, revision: 7, learningRunId: 'lr_current', parentSnapshotId: null }],
+    }
+    const harness = await createPageHarness({ actions: {
+      agents: async () => [agent], inbox: async () => [], agent: async () => agent,
+      learningRun: async id => {
+        calls.push(['learningRun', id])
+        if (id === 'lr_latest_failed') return { learningRunId: id, agentId: 'a', outcome: 'failed', revision: 6, operations: [], inputFrozen: { parentSnapshotId: 'ms_current' }, replay: { passed: false, detail: replayDetail }, sourceRecords: [] }
+        return { learningRunId: id, agentId: 'a', outcome: 'published', revision: 5, operations: [{ op: 'add' }], inputFrozen: { parentSnapshotId: null }, replay: { passed: true } }
+      },
+      memorySnapshot: async id => { calls.push(['memorySnapshot', id]); return { snapshotId: id, agentId: 'a', learningRunId: 'lr_current', state: 'published', version: 3, revision: 7, parentSnapshotId: null, principles: [] } },
+    } })
+    await openAgentDetail(harness)
+    assert.ok(calls.some(call => call[0] === 'learningRun' && call[1] === 'lr_latest_failed'), 'the latest real run is inspected')
+    assert.ok(calls.some(call => call[0] === 'memorySnapshot' && call[1] === 'ms_current'), 'current Snapshot detail stays loaded')
+    const rendered = renderedLearning(harness)
+    const text = textOf(rendered)
+    assert.ok(text.includes(expectedStatus), `${replayDetail} projects ${expectedStatus}`)
+    assert.ok(text.includes('decisionPrincipleVersion 3'))
+    assert.equal(text.includes(expectedStatus === 'decisionLearningNoChanges' ? 'decisionLearningOutcome_failed' : 'decisionLearningNoChanges'), false)
+    const rollback = findAll(rendered, node => node.type === harness.ui.Button && node['data-action'] === 'learning-rollback')[0]
+    assert.equal(rollback.disabled, false)
+    assert.equal(findAll(rendered, node => node.type === harness.ui.Button && ['learning-publish', 'learning-reject'].includes(node['data-action'])).length, 0)
+    harness.unmount()
+  }
 })
 
 test('learning review renders bounded Case and correction excerpts without exposing unrelated source content', async () => {

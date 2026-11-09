@@ -543,7 +543,7 @@ window.__ModuleLoader__.load({
         const snapshots = learningRows(agentValue?.snapshots);
         const candidateRun = runs.find(run => run.outcome === "candidate") ?? null;
         const currentSummary = snapshots.find(snapshot => snapshot.snapshotId === agentValue?.currentSnapshotId) ?? null;
-        const selectedRunId = learningRunId ?? candidateRun?.learningRunId ?? currentSummary?.learningRunId ?? runs[0]?.learningRunId ?? null;
+        const selectedRunId = learningRunId ?? candidateRun?.learningRunId ?? runs[0]?.learningRunId ?? currentSummary?.learningRunId ?? null;
         if (valid("learning", token, epoch, requestSession)) setLearningError(null);
         if (!selectedRunId && !currentSummary) { if (valid("learning", token, epoch, requestSession)) setLearningDetail(null); return; }
         if (valid("learning", token, epoch, requestSession)) setLearningLoading(true);
