@@ -415,6 +415,15 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
 }
 
 async function layoutAudit(name, theme = 'light', zoom = 1) {
+  const expectedColors = {
+    light: { background: 'rgb(255, 255, 255)', color: 'rgb(15, 17, 21)' },
+    dark: { background: 'rgb(21, 21, 23)', color: 'rgb(249, 250, 251)' },
+  }[theme]
+  if (!expectedColors) throw new Error(`unsupported visual audit theme: ${theme}`)
+  await waitFor(async () => {
+    const colors = await instance.cdp.evaluate(`(() => { const page=document.querySelector('.weir-da-page'); return page?{background:getComputedStyle(page).backgroundColor,color:getComputedStyle(page).color}:null })()`)
+    return colors?.background === expectedColors.background && colors?.color === expectedColors.color ? colors : null
+  }, 10_000)
   const audit = await instance.cdp.evaluate(`(() => {
     const visible=el=>Boolean(el&&el.offsetParent!==null)
     const nameOf=el=>el.getAttribute('aria-label')||el.innerText?.trim()||[...(el.labels??[])].map(label=>label.innerText).join(' ')||el.closest('label')?.innerText||''
@@ -436,7 +445,7 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
   const row = { name, theme, zoom, audit, problems }
   visualAudits.push(row)
   writeJson(join(out, 'visual-audits.json'), visualAudits)
-  check(`visual-${name}`, problems.length === 0 && Math.abs((audit.viewport.scale ?? 1) - zoom) < 0.01, { problems, viewport: audit.viewport, colors: audit.colors })
+  check(`visual-${name}`, problems.length === 0 && audit.colors?.background===expectedColors.background && audit.colors?.color===expectedColors.color && Math.abs((audit.viewport.scale ?? 1) - zoom) < 0.01, { problems, viewport: audit.viewport, colors: audit.colors })
   await shot(`visual-${name}`)
   return row
 }
@@ -729,7 +738,7 @@ try {
   check('lightDarkProduceDifferentComputedSurfaces', visualAudits.find(item => item.name === 'light-1440')?.audit.colors?.background !== visualAudits.find(item => item.name === 'dark-1440')?.audit.colors?.background, { light: visualAudits.find(item => item.name === 'light-1440')?.audit.colors, dark: visualAudits.find(item => item.name === 'dark-1440')?.audit.colors })
   await instance.cdp.setColorScheme('light')
   for (const width of [360, 768, 1440]) {
-    await instance.cdp.setViewport(width)
+    await instance.cdp.setViewport(width, 900, true)
     await instance.cdp.setPageZoom(2)
     await layoutAudit(`zoom200-${width}`, 'light', 2)
   }
