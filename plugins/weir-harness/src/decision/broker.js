@@ -41,6 +41,9 @@ export class DecisionBroker {
     this.learningJobs = new Set()
     this.learningJobKeys = new Map()
     this.consultWaiters = new Set()
+    this.autoFlights = new Map()
+    this.routingControllers = new Map()
+    this.routingJobs = new Set()
   }
 
   /** @returns {{available:boolean,enabled:boolean,reason?:string}} */
@@ -73,7 +76,8 @@ export class DecisionBroker {
     for (const waiter of [...this.consultWaiters]) waiter.abort(new Error('Decision Broker flushed'))
     for (const controller of this.attemptControllers.values()) controller.abort(new Error('Decision Broker flushed'))
     for (const controller of this.learningControllers.values()) controller.abort(new Error('Decision Broker flushed'))
-    await Promise.allSettled([...this.evaluationJobs, ...this.learningJobs])
+    for (const controller of this.routingControllers.values()) controller.abort(new Error('Decision Broker flushed'))
+    await Promise.allSettled([...this.evaluationJobs, ...this.learningJobs, ...this.routingJobs])
     this.store?.close()
     this.store = undefined
     this.cases = undefined
@@ -206,8 +210,8 @@ export class DecisionBroker {
     const explicit = typeof args.agent_id === 'string' && args.agent_id.length > 0
     const automatic = !explicit && selector.mode === 'auto'
     const selected = explicit ? args.agent_id : selector.agentId
-    this.assertAttemptCapacity()
-    await this.ensureStore()
+    if (!automatic) this.assertAttemptCapacity()
+    if (!automatic) await this.ensureStore()
     let profile
     if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Explicit failure / persisted no_route below. */ }
     if (explicit && (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey)) {
@@ -226,38 +230,72 @@ export class DecisionBroker {
     const idempotencyKey = args.request_id
       ? `consult:${origin.rootSessionId}:${args.request_id}`
       : decisionIdempotencyKey({ rootSessionId: origin.rootSessionId, agentId: selected, request: canonicalJson({ question, scope, context: args.context }) })
-    const opened = await this.cases.createCase({ ...origin, entry: 'consult', agentId: selected, request, scope, idempotencyKey, maxAttempts: this.config().decisionAgentMaxAttemptsPerCase ?? 3 })
-    if (!opened.created) {
-      const current = opened.case
-      if (automatic) return this.consultResult(current)
-      if (current.state === 'awaiting_revision' && consultFingerprint(current.request, current.scope) !== consultFingerprint(request, scope)) {
-        const revisionProfile = this.profiles.getProfile(selected)
-        if (revisionProfile.state !== 'enabled' || revisionProfile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
-        if (selected !== current.agentId) await this.cases.recordRoute({ caseId: current.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: explicit ? 'Explicit agent_id for a revised consultation' : 'Pinned by root session selector for a revised consultation' })
-        const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'evaluating', agentId: selected, request, scope })
-        const revised = await this.evaluateCase(evaluating, agent, signal)
-        return this.consultResult(this.cases.getCase(revised.caseId), revised)
+    const openAndConsult = async flightSignal => {
+      if (automatic) await this.ensureStore()
+      const opened = await this.cases.createCase({ ...origin, entry: 'consult', agentId: selected, request, scope, idempotencyKey, maxAttempts: this.config().decisionAgentMaxAttemptsPerCase ?? 3 })
+      if (!opened.created) {
+        const current = opened.case
+        if (automatic && current.state === 'received') throw new DecisionContractError('DECISION_UNAVAILABLE', 'The previous Auto route did not commit')
+        if (!explicit && this.hasAutoRoute(current)) {
+          return this.consultAutoReplay({ current, request, scope, agent, signal: flightSignal, heldSlot: automatic })
+        }
+        if (automatic) return this.consultResult(current)
+        if (current.state === 'awaiting_revision' && consultFingerprint(current.request, current.scope) !== consultFingerprint(request, scope)) {
+          const revisionProfile = this.profiles.getProfile(selected)
+          if (revisionProfile.state !== 'enabled' || revisionProfile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
+          if (selected !== current.agentId) await this.cases.recordRoute({ caseId: current.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: explicit ? 'Explicit agent_id for a revised consultation' : 'Pinned by root session selector for a revised consultation' })
+          const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'evaluating', agentId: selected, request, scope })
+          const revised = await this.evaluateCase(evaluating, agent, flightSignal)
+          return this.consultResult(this.cases.getCase(revised.caseId), revised)
+        }
+        return this.consultResult(current)
       }
-      return this.consultResult(current)
+      if (automatic) return this.consultAuto({ current: opened.case, request, scope, origin, agent, signal: flightSignal, heldSlot: true })
+      try {
+        await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: profile?.state === 'enabled' }], chosen: profile?.state === 'enabled' ? selected : undefined, reason: explicit ? 'Explicit agent_id for one consultation' : 'Pinned by root session selector' })
+        if (explicit) this.audit('case-open', { caseId: opened.case.caseId, entry: 'consult', agentId: selected, explicit: true })
+        if (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey) {
+          const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable'] } })
+          return this.consultResult(waiting)
+        }
+        if (excludedRequest(request)) {
+          const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'authority', escalation: { missing: ['This consultation requires native user authority'] } })
+          return this.consultResult(waiting)
+        }
+        const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
+        const verdict = await this.evaluateCase(evaluating, agent, flightSignal)
+        return this.consultResult(this.cases.getCase(verdict.caseId), verdict)
+      } catch (error) {
+        return this.recoverUnexpected(opened.case, error)
+      }
     }
-    if (automatic) return this.consultAuto({ current: opened.case, request, scope, origin, agent, signal })
-    try {
-      await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: profile?.state === 'enabled' }], chosen: profile?.state === 'enabled' ? selected : undefined, reason: explicit ? 'Explicit agent_id for one consultation' : 'Pinned by root session selector' })
-      if (explicit) this.audit('case-open', { caseId: opened.case.caseId, entry: 'consult', agentId: selected, explicit: true })
-      if (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey) {
-        const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable'] } })
-        return this.consultResult(waiting)
-      }
-      if (excludedRequest(request)) {
-        const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'authority', escalation: { missing: ['This consultation requires native user authority'] } })
-        return this.consultResult(waiting)
-      }
-      const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
-      const verdict = await this.evaluateCase(evaluating, agent, signal)
-      return this.consultResult(this.cases.getCase(verdict.caseId), verdict)
-    } catch (error) {
-      return this.recoverUnexpected(opened.case, error)
+    if (automatic) {
+      return this.runAutoFlight({
+        rootSessionId: origin.rootSessionId, idempotencyKey, signal,
+        onBusy: () => this.assertAttemptCapacity(),
+      }, openAndConsult)
     }
+    return openAndConsult(signal)
+  }
+
+  hasAutoRoute(current) {
+    return Boolean(this.store.db.prepare("SELECT 1 FROM route_decisions WHERE case_id=? AND mode='auto' LIMIT 1").get(current.caseId))
+  }
+
+  async consultAutoReplay({ current, request, scope, agent, signal, heldSlot }) {
+    if (current.state === 'awaiting_revision'
+      && callerRevisionFingerprint(current.request, current.scope) !== callerRevisionFingerprint(request, scope)) {
+      const selected = current.agentId
+      if (typeof selected !== 'string' || !selected) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Auto Case requires explicit reassignment')
+      const profile = this.profiles.getProfile(selected)
+      if (profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) {
+        this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
+      }
+      const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'evaluating', agentId: selected, request, scope })
+      const revised = await this.evaluateCase(evaluating, agent, signal, { heldSlot })
+      return this.consultResult(this.cases.getCase(revised.caseId), revised)
+    }
+    return this.consultResult(current)
   }
 
   consultResult(current, verdict = undefined) {
@@ -294,39 +332,59 @@ export class DecisionBroker {
       this.audit('bypass', { rootSessionId: origin.rootSessionId, reason: 'excluded' })
       return { kind: 'pass', why: 'bypass' }
     }
-    if (!this.hasAttemptCapacity()) {
+    const automatic = selector.mode === 'auto'
+    if (!automatic && !this.hasAttemptCapacity()) {
       this.audit('bypass', { rootSessionId: origin.rootSessionId, reason: 'concurrency_limit' })
       return { kind: 'pass', why: 'bypass' }
     }
-    await this.ensureStore()
+    if (!automatic) await this.ensureStore()
     const selected = selector.agentId
-    const automatic = selector.mode === 'auto'
+    const idempotencyKey = decisionIdempotencyKey({
+      rootSessionId: origin.rootSessionId, callId: request.wait?.callId,
+      questions: (request.questions ?? []).map(question => ({ id: question.id, question: question.question })),
+    })
     let profile
     if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Persist no_route below. */ }
     const usable = profile?.state === 'enabled' && profile.workspaceKey === origin.workspaceKey
-    const opened = await this.cases.createCase({
-      ...origin, entry: 'hook', agentId: selected,
-      request: { entry: 'hook', questions: request.questions ?? [] },
-      scope: { workspaces: [origin.workspaceKey] },
-      callId: request.wait?.callId,
-      maxAttempts: this.config().decisionAgentMaxAttemptsPerCase ?? 3,
-    })
-    if (!opened.created) return this.persistedVerdict(opened.case)
-    if (automatic) return this.hookAuto({ current: opened.case, request: opened.case.request, scope: opened.case.scope, origin, agent, signal })
-    try {
-      if (!usable) {
-        await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'none', candidates: [{ agentId: selected, enabled: false, rejectedBecause: 'pinned_agent_unavailable' }], reason: 'Pinned Agent is unavailable' })
-        const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable; choose a route or answer the original question.'] } })
-        this.audit('case-open', { caseId: waiting.caseId, entry: 'hook', outcome: 'no_route' })
-        return { kind: 'pass', caseId: waiting.caseId, why: 'awaiting_user' }
+    const openAndHook = async flightSignal => {
+      if (automatic) await this.ensureStore()
+      const opened = await this.cases.createCase({
+        ...origin, entry: 'hook', agentId: selected,
+        request: { entry: 'hook', questions: request.questions ?? [] },
+        scope: { workspaces: [origin.workspaceKey] },
+        callId: request.wait?.callId, idempotencyKey,
+        maxAttempts: this.config().decisionAgentMaxAttemptsPerCase ?? 3,
+      })
+      if (!opened.created) {
+        if (automatic && opened.case.state === 'received') return { kind: 'pass', why: 'bypass' }
+        return this.persistedVerdict(opened.case)
       }
-      await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: 'Pinned by user' })
-      const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
-      this.audit('case-open', { caseId: evaluating.caseId, entry: 'hook', agentId: selected })
-      return this.evaluateCase(evaluating, agent, signal)
-    } catch (error) {
-      return this.recoverUnexpected(opened.case, error)
+      if (automatic) return this.hookAuto({ current: opened.case, request: opened.case.request, scope: opened.case.scope, origin, agent, signal: flightSignal, heldSlot: true })
+      try {
+        if (!usable) {
+          await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'none', candidates: [{ agentId: selected, enabled: false, rejectedBecause: 'pinned_agent_unavailable' }], reason: 'Pinned Agent is unavailable' })
+          const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable; choose a route or answer the original question.'] } })
+          this.audit('case-open', { caseId: waiting.caseId, entry: 'hook', outcome: 'no_route' })
+          return { kind: 'pass', caseId: waiting.caseId, why: 'awaiting_user' }
+        }
+        await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: 'Pinned by user' })
+        const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
+        this.audit('case-open', { caseId: evaluating.caseId, entry: 'hook', agentId: selected })
+        return this.evaluateCase(evaluating, agent, flightSignal)
+      } catch (error) {
+        return this.recoverUnexpected(opened.case, error)
+      }
     }
+    if (automatic) {
+      return this.runAutoFlight({
+        rootSessionId: origin.rootSessionId, idempotencyKey, signal,
+        onBusy: () => {
+          this.audit('bypass', { rootSessionId: origin.rootSessionId, reason: 'concurrency_limit' })
+          return { kind: 'pass', why: 'bypass' }
+        },
+      }, openAndHook)
+    }
+    return openAndHook(signal)
   }
 
   async hookUserAnswer({ caseId, answer }) {
@@ -342,9 +400,12 @@ export class DecisionBroker {
     const current = this.cases.getCase(caseId)
     if (current.state === 'closed') return current
     this.attemptControllers.get(caseId)?.abort(new Error('Decision Case cancelled'))
+    this.routingControllers.get(`${current.rootSessionId}\0${current.idempotencyKey}`)?.abort(new Error('Decision Case cancelled'))
     await this.attempts.interruptOpen(caseId)
-    const closed = await this.cases.transition({ caseId, expectedState: current.state, expectedRevision: current.revision, state: 'closed', closing: 'cancelled', decision: { kind: 'cancelled', at: this.now() } })
-    this.audit('cancel', { caseId, from: current.state })
+    const latest = this.cases.getCase(caseId)
+    if (latest.state === 'closed') return latest
+    const closed = await this.cases.transition({ caseId, expectedState: latest.state, expectedRevision: latest.revision, state: 'closed', closing: 'cancelled', decision: { kind: 'cancelled', at: this.now() } })
+    this.audit('cancel', { caseId, from: latest.state })
     return closed
   }
 
@@ -353,17 +414,20 @@ export class DecisionBroker {
     return { kind: 'pass', caseId: current.caseId, why: current.state === 'awaiting_revision' ? 'awaiting_revision' : current.state === 'closed' ? current.closing : 'awaiting_user' }
   }
 
-  async consultAuto({ current, request, scope, origin, agent, signal }) {
+  async consultAuto({ current, request, scope, origin, agent, signal, heldSlot }) {
     const routed = await this.routeAutoCase({ current, request, scope, origin, agent, signal })
-    if (routed.state !== 'evaluating') return this.consultResult(routed)
-    const verdict = await this.evaluateCase(routed, agent, signal)
+    const latest = this.cases.getCase(routed.caseId)
+    if (latest.state !== 'evaluating') return this.consultResult(latest)
+    const verdict = await this.evaluateCase(latest, agent, signal, { heldSlot })
     return this.consultResult(this.cases.getCase(verdict.caseId), verdict)
   }
 
-  async hookAuto({ current, request, scope, origin, agent, signal }) {
+  async hookAuto({ current, request, scope, origin, agent, signal, heldSlot }) {
     const routed = await this.routeAutoCase({ current, request, scope, origin, agent, signal })
-    if (routed.state !== 'evaluating') return { kind: 'pass', caseId: routed.caseId, why: 'awaiting_user' }
-    return this.evaluateCase(routed, agent, signal)
+    const latest = this.cases.getCase(routed.caseId)
+    if (latest.state === 'closed') return this.persistedVerdict(latest)
+    if (latest.state !== 'evaluating') return { kind: 'pass', caseId: latest.caseId, why: 'awaiting_user' }
+    return this.evaluateCase(latest, agent, signal, { heldSlot })
   }
 
   async routeAutoCase({ current, request, scope, origin, agent, signal }) {
@@ -409,16 +473,24 @@ export class DecisionBroker {
   }
 
   async commitAutoRoute({ current, request, scope, route, awaitingReason }) {
+    const latest = this.cases.getCase(current.caseId)
+    if (latest.state === 'closed' && latest.closing === 'cancelled') return latest
     const selected = route.kind === 'selected'
-    return this.cases.transitionWithRoute({
-      caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
-      state: selected ? 'evaluating' : 'awaiting_user', request, scope,
-      ...(selected ? { agentId: route.chosen } : { awaitingReason }),
-    }, {
-      caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto',
-      candidates: route.candidates, ...(selected ? { chosen: route.chosen } : {}),
-      reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
-    })
+    try {
+      return await this.cases.transitionWithRoute({
+        caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
+        state: selected ? 'evaluating' : 'awaiting_user', request, scope,
+        ...(selected ? { agentId: route.chosen } : { awaitingReason }),
+      }, {
+        caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto',
+        candidates: route.candidates, ...(selected ? { chosen: route.chosen } : {}),
+        reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
+      })
+    } catch (error) {
+      const afterFailure = this.cases.getCase(current.caseId)
+      if (afterFailure.state === 'closed' && afterFailure.closing === 'cancelled') return afterFailure
+      throw error
+    }
   }
 
   async recoverUnexpected(initial, error) {
@@ -434,12 +506,38 @@ export class DecisionBroker {
     return current.entry === 'consult' ? this.consultResult(waiting) : this.persistedVerdict(waiting)
   }
 
-  evaluateCase(initial, agent, signal) {
-    this.assertAttemptCapacity()
-    this.activeEvaluations++
-    const job = this.evaluateCaseWithinSlot(initial, agent, signal).catch(error => this.recoverUnexpected(initial, error)).finally(() => { this.activeEvaluations-- })
+  evaluateCase(initial, agent, signal, { heldSlot = false } = {}) {
+    if (!heldSlot) this.assertAttemptCapacity()
+    if (!heldSlot) this.activeEvaluations++
+    const job = this.evaluateCaseWithinSlot(initial, agent, signal).catch(error => this.recoverUnexpected(initial, error)).finally(() => { if (!heldSlot) this.activeEvaluations-- })
     this.evaluationJobs.add(job)
     job.then(() => this.evaluationJobs.delete(job), () => this.evaluationJobs.delete(job))
+    return job
+  }
+
+  runAutoFlight({ rootSessionId, idempotencyKey, signal, onBusy }, task) {
+    const key = `${rootSessionId}\0${idempotencyKey}`
+    const existing = this.autoFlights.get(key)
+    if (existing) return existing
+    const controller = new AbortController()
+    const onAbort = () => controller.abort(signal?.reason)
+    if (signal?.aborted) controller.abort(signal.reason)
+    else signal?.addEventListener('abort', onAbort, { once: true })
+    const job = Promise.resolve().then(async () => {
+      if (!this.hasAttemptCapacity()) return onBusy()
+      this.activeEvaluations++
+      try { return await task(controller.signal) } finally { this.activeEvaluations-- }
+    })
+    this.autoFlights.set(key, job)
+    this.routingControllers.set(key, controller)
+    this.routingJobs.add(job)
+    const cleanup = () => {
+      this.autoFlights.delete(key)
+      this.routingControllers.delete(key)
+      this.routingJobs.delete(job)
+      signal?.removeEventListener('abort', onAbort)
+    }
+    job.then(cleanup, cleanup)
     return job
   }
 
@@ -463,6 +561,8 @@ export class DecisionBroker {
       const retrieval = this.retriever.retrieve({ agentId: profile.agentId, workspaceKey: current.workspaceKey, scope: current.scope, attemptStartedAt, excludeCaseId: current.caseId })
       const candidates = retrieval.L5
       const packed = buildContextPack({ profile, request: current.request, evidence: candidates, memory: { L2: retrieval.L2, L3: retrieval.L3 }, modelRoute, budgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000 })
+      const beforeAttempt = this.cases.getCase(current.caseId)
+      if (beforeAttempt.state === 'closed' && beforeAttempt.closing === 'cancelled') return this.persistedVerdict(beforeAttempt)
       const attempt = await this.attempts.start({ caseId: current.caseId, agentId: profile.agentId, pins: packed.pins, contextPackHash: packed.contextPackHash, packManifest: packed.packManifest })
       current = this.cases.getCase(current.caseId)
       const controller = new AbortController()
@@ -986,4 +1086,13 @@ export class DecisionBroker {
 }
 function consultFingerprint(request, scope) {
   return canonicalJson({ questions: request.questions, context: request.context, taskSummary: request.taskSummary, evidence: request.evidence, scope })
+}
+
+function callerRevisionFingerprint(request, scope) {
+  const questions = (request.questions ?? []).map(question => {
+    if (question?.authorizationClassSource !== 'auto_classifier' || !Object.hasOwn(question, 'authorizationClass')) return question
+    const { authorizationClass, authorizationClassSource, ...callerQuestion } = question
+    return callerQuestion
+  })
+  return canonicalJson({ questions, context: request.context, taskSummary: request.taskSummary, evidence: request.evidence, scope })
 }
