@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
       const triggerRef = react.useRef(null);
       const panelRef = react.useRef(null);
       const savingRef = react.useRef(false);
+      const restoreFocusRef = react.useRef(false);
       const sessionRef = react.useRef(props.sessionId);
       const loadedSessionRef = react.useRef(null);
       sessionRef.current = props.sessionId;
@@ -53,8 +54,8 @@ window.__ModuleLoader__.load({
 
       const close = () => {
         if (savingRef.current) return;
+        restoreFocusRef.current = true;
         setOpen(false);
-        triggerRef.current?.focus?.();
       };
       react.useEffect(() => {
         const hostDocument = globalThis.document;
@@ -78,6 +79,11 @@ window.__ModuleLoader__.load({
       react.useEffect(() => {
         if (open) panelRef.current?.focus?.();
       }, [open]);
+      react.useEffect(() => {
+        if (open || pending || !restoreFocusRef.current) return;
+        restoreFocusRef.current = false;
+        triggerRef.current?.focus?.();
+      }, [open, pending]);
 
       const view = props.selectorView({
         phase: pending ? "saving" : snapshot.phase,
