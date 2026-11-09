@@ -562,6 +562,36 @@ async function answerInboxWithSuggestions(sessionId, caseId, shotName) {
   return closed
 }
 
+// Run JxliG6 regression anchor: the long native question outlives the inbox decision that
+// closed its Case, so the composer stays occupied and the next marker never lands. The
+// rendered Skip control is the only finish left; the Hook answers the settled native ask
+// through hookUserAborted, which returns the already closed Case unchanged.
+async function skipLongNativeStep() {
+  return instance.cdp.evaluate(`(() => { const visible=el=>Boolean(el&&el.offsetParent!==null); const pending=[...document.querySelectorAll('[data-question-key]')].find(visible); if(!pending)return 'gone'; const button=[...pending.querySelectorAll('button')].find(el=>visible(el)&&!el.disabled&&/^(跳过|Skip)$/i.test(el.textContent.trim())); if(!button)return 'busy'; button.click(); return 'skipped' })()`)
+}
+
+async function finishLongNativeWithSkip(sessionId, caseId) {
+  const before = await record(sessionId, 'long-native-skip-before', caseId)
+  requireEvidence(before.case.state === 'closed', 'the long inbox decision closed the Case before the native Skip')
+  await shot('18a-long-native-skip-before')
+  const steps = []
+  let native = await nativeState()
+  while (native.pending) {
+    requireEvidence(steps.length < 4, 'the visible native card exposes a bounded number of Skip steps')
+    const previous = native.text
+    const outcome = await waitFor(async () => { const value = await skipLongNativeStep(); return value === 'skipped' || value === 'gone' ? value : null }, 30_000)
+    if (outcome === 'gone') break
+    await waitFor(async () => { const next = await nativeState(); return !next.pending || next.text !== previous }, 30_000)
+    steps.push(previous)
+    native = await nativeState()
+  }
+  const settled = await waitFor(() => instance.cdp.evaluate(`(() => { const state=window.__decisionProductLong; return state?.settled===true?state:null })()`), 30_000)
+  const after = await record(sessionId, 'long-native-skip-after', caseId)
+  writeJson(join(out, 'long-native-skip.json'), { caseId, steps, native: settled, before: before.case, after: after.case })
+  await shot('18b-long-native-skip-closed')
+  check('longNativeSkipKeepsClosedRecord', after.case.state === 'closed' && after.case.revision === before.case.revision && JSON.stringify(after) === JSON.stringify(before), { caseId, revision: after.case.revision, skipSteps: steps.length, nativeSettled: settled.settled, nativeError: settled.error ?? null })
+}
+
 function writeReport(verdict, error = null) {
   const exceptionCount = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown').length
   const slotCrashCount = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event))).length
@@ -807,6 +837,9 @@ try {
   await instance.cdp.setPageZoom(1)
   await instance.cdp.setViewport(1440)
   await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')
+  // The decided long Case leaves its native question pending, and a pending native question
+  // occupies the composer; finish it with the rendered Skip before any later marker.
+  await finishLongNativeWithSkip(sessionId, longCase.caseId)
   accessibility.longRecord = await instance.cdp.accessibility(`article[data-case-id="${longCase.caseId}"]`).catch(() => null)
   await openPage('metrics')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("[data-metrics-view]"))'), 30_000)
