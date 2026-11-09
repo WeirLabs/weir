@@ -68,6 +68,39 @@ test('reassign uses only an enabled target, records route and evaluates a new At
   assert.equal(f.broker.store.db.prepare("SELECT mode FROM route_decisions WHERE case_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1").get(current.caseId).mode, 'manual_reassign')
 })
 
+test('reassign rolls back Case ownership and state when the manual route write fails', async t => {
+  const f = await fixture(t)
+  const { current } = await f.open('reassign-atomic')
+  f.broker.store.db.exec(`CREATE TRIGGER reject_manual_reassign BEFORE INSERT ON route_decisions WHEN NEW.mode='manual_reassign' BEGIN SELECT RAISE(ABORT,'forced manual route failure'); END;`)
+
+  await assert.rejects(f.broker.reassign({ caseId: current.caseId, agentId: f.b.agentId }), /forced manual route failure/)
+  assert.deepEqual(f.broker.cases.getCase(current.caseId), current)
+  assert.deepEqual(f.broker.store.db.prepare('SELECT mode,chosen FROM route_decisions WHERE case_id=? ORDER BY rowid').all(current.caseId).map(row => ({ ...row })), [{ mode: 'pinned', chosen: f.a.agentId }])
+  assert.equal(f.broker.attempts.forCase(current.caseId).length, 1)
+})
+
+test('unowned reassignment derives from no authoritative choice and appends an immutable target label', async t => {
+  const f = await fixture(t)
+  await f.broker.setSelector('root', 'auto')
+  const waiting = await f.broker.consult({ agent: f.agent, args: { question: 'Choose a route?', request_id: 'unowned-reassign' } })
+  assert.equal(waiting.outcome, 'awaiting_user')
+  assert.equal(f.broker.cases.getCase(waiting.caseId).agentId, null)
+  const before = f.broker.store.db.prepare('SELECT mode,chosen,reason FROM route_decisions WHERE case_id=? ORDER BY rowid').all(waiting.caseId).map(row => ({ ...row }))
+  const authorityBefore = before.filter(route => ['pinned', 'explicit', 'auto', 'manual_reassign'].includes(route.mode) && route.chosen)
+  assert.equal(authorityBefore.at(-1)?.chosen ?? null, null)
+
+  await f.broker.reassign({ caseId: waiting.caseId, agentId: f.b.agentId })
+  const current = f.broker.cases.getCase(waiting.caseId)
+  const after = f.broker.store.db.prepare('SELECT mode,chosen,reason FROM route_decisions WHERE case_id=? ORDER BY rowid').all(waiting.caseId).map(row => ({ ...row }))
+  assert.deepEqual(after.slice(0, before.length), before)
+  assert.deepEqual(after.map(route => route.mode), ['auto', 'manual_reassign'])
+  assert.equal(after.at(-1).chosen, f.b.agentId)
+  assert.equal(current.agentId, f.b.agentId)
+  assert.equal(current.attemptCount, 1)
+  assert.deepEqual(f.broker.attempts.forCase(current.caseId).map(attempt => attempt.agentId), [f.b.agentId])
+  assert.equal(f.broker.store.db.prepare("SELECT COUNT(*) AS n FROM evidence WHERE source='user_decision' AND json_extract(locator_json,'$.caseId')=?").get(current.caseId).n, 0)
+})
+
 test('cancel interrupts an in-flight Attempt and duplicate delivery never revives it', async t => {
   const f = await fixture(t)
   const { current, request } = await f.open('cancel')

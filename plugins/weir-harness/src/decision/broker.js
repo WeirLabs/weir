@@ -114,6 +114,15 @@ export class DecisionBroker {
     this.query = new DecisionQuery(store, { now: this.now })
     this.retriever = new DecisionContextRetriever(store, this.evidence)
     this.learning = new DecisionLearning(store, { now: this.now, evidence: this.evidence })
+    const incompleteIntake = store.db.prepare("SELECT case_id FROM cases WHERE state='received' AND agent_id IS NULL").all()
+    for (const row of incompleteIntake) {
+      const current = this.cases.getCase(row.case_id)
+      await this.cases.transition({
+        caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
+        state: 'awaiting_user', awaitingReason: 'interrupted',
+      })
+    }
+    this.audit('recover', { recoveredIntake: incompleteIntake.length })
     const recovered = await this.attempts.recoverInterrupted()
     this.audit('recover', recovered)
     const recoveredLearning = await this.learning.recoverInterrupted()
@@ -722,8 +731,14 @@ export class DecisionBroker {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be reassigned')
         const target = this.profiles.getProfile(input.agentId)
         if (target.state !== 'enabled' || target.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: target.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: input.agentId })
-        const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', agentId: target.agentId, ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })
-        await this.cases.recordRoute({ caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'manual_reassign', candidates: [{ agentId: target.agentId, enabled: true }], chosen: target.agentId, reason: 'User reassigned the Case' })
+        const evaluating = await this.cases.transitionWithRoute({
+          caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision,
+          state: 'evaluating', agentId: target.agentId,
+          ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}),
+        }, {
+          caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'manual_reassign',
+          candidates: [{ agentId: target.agentId, enabled: true }], chosen: target.agentId, reason: 'User reassigned the Case',
+        })
         this.audit('outcome', { caseId: current.caseId, action: 'reassign', agentId: target.agentId })
         return evaluating
       }
