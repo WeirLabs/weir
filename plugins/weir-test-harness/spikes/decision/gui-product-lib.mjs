@@ -1,0 +1,93 @@
+// Pure guards shared by the real Desktop product-UX driver and focused tests.
+// No DOM implementation lives here: layout/accessibility facts come from CDP.
+
+export function parseDecisionRequest(url, postData) {
+  if (!String(url).includes('/api/weirDecision/')) return null
+  let body
+  try { body = JSON.parse(postData) } catch { return { method: null, args: null, rpcId: null, raw: postData } }
+  const args = body?.payload?.args?.args ?? body?.payload?.args ?? body?.args ?? null
+  return {
+    method: typeof body?.method === 'string' ? body.method.split('/').at(-1) : String(url).split('/').at(-1),
+    args,
+    rpcId: body?.rpcId ?? body?.id ?? null,
+    request: body,
+  }
+}
+
+function same(left, right) {
+  if (Object.is(left, right)) return true
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  const a = Array.isArray(left) ? left : Object.keys(left).sort()
+  const b = Array.isArray(right) ? right : Object.keys(right).sort()
+  if (a.length !== b.length) return false
+  if (Array.isArray(left)) return left.every((value, index) => same(value, right[index]))
+  return a.every((key, index) => key === b[index] && same(left[key], right[key]))
+}
+
+export function exactArgs(left, right) { return same(left, right) }
+
+export function exactMutation(entries, method, args) {
+  const matches = entries.filter(entry => entry.method === method && same(entry.args, args))
+  if (matches.length !== 1) throw new Error(`Expected exactly one ${method} RPC with exact args; found ${matches.length}`)
+  const entry = matches[0]
+  if (!entry.rpcId || !entry.response) throw new Error(`${method} lacks raw rpcId or response evidence`)
+  return entry
+}
+
+export function layoutProblems(audit) {
+  const problems = []
+  if (!audit || audit.viewport?.width <= 0) problems.push('missing real viewport')
+  if (audit?.document?.horizontalOverflow) problems.push('document horizontal overflow')
+  for (const item of audit?.surfaceOverflow ?? []) problems.push(`surface horizontal overflow: ${item}`)
+  for (const item of audit?.clippedPrimary ?? []) problems.push(`clipped primary action: ${item}`)
+  for (const item of audit?.unnamedControls ?? []) problems.push(`unnamed control: ${item}`)
+  for (const item of audit?.internalVocabulary ?? []) problems.push(`default-view internal vocabulary: ${item}`)
+  return problems
+}
+
+export function recordProjectionProblems(detail, dom) {
+  const problems = []
+  const current = detail?.case
+  if (!current || !dom) return ['missing authoritative record or rendered projection']
+  if (dom.caseId !== current.caseId) problems.push('rendered record caseId differs')
+  for (const question of current.request?.questions ?? []) {
+    if (!dom.defaultText.includes(question.question)) problems.push(`missing question ${question.id}`)
+    const answer = current.decision?.answers?.find(item => item.id === question.id)
+    for (const value of [...(answer?.selected ?? []), ...(answer?.custom ? [answer.custom] : [])]) {
+      if (!dom.defaultText.includes(value)) problems.push(`missing answer ${question.id}:${value}`)
+    }
+  }
+  const currentAttempt = (current.decision?.attemptId
+    ? detail.attempts?.find(attempt => attempt.attemptId === current.decision.attemptId)
+    : null) ?? detail.attempts?.at(-1)
+  for (const evidence of currentAttempt?.evidence ?? []) {
+    if (evidence.excerpt && !dom.currentEvidence.includes(evidence.excerpt)) problems.push(`missing current evidence ${evidence.evidenceId}`)
+  }
+  if (dom.defaultText.includes(current.caseId)) problems.push('default view leaks caseId')
+  if (!dom.advancedText.includes(current.caseId)) problems.push('advanced diagnostics omit caseId')
+  return problems
+}
+
+export function immutableChanges(phases) {
+  const attempts = new Map()
+  const snapshotContent = new Map()
+  const changes = []
+  for (const phase of phases) {
+    for (const row of phase.rows?.attempts ?? []) {
+      const value = JSON.stringify(row)
+      if (attempts.has(row.attempt_id) && attempts.get(row.attempt_id) !== value) changes.push({ kind: 'attempt', id: row.attempt_id, phase: phase.phase })
+      attempts.set(row.attempt_id, value)
+    }
+    for (const row of phase.rows?.memory_snapshots ?? []) {
+      const value = JSON.stringify({
+        version: row.version, parent_snapshot_id: row.parent_snapshot_id,
+        principles_json: row.principles_json, generated_description_json: row.generated_description_json,
+        learning_run_id: row.learning_run_id, created_at: row.created_at, schema_version: row.schema_version,
+      })
+      if (snapshotContent.has(row.snapshot_id) && snapshotContent.get(row.snapshot_id) !== value) changes.push({ kind: 'snapshot-content', id: row.snapshot_id, phase: phase.phase })
+      snapshotContent.set(row.snapshot_id, value)
+    }
+  }
+  return changes
+}

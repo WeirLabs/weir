@@ -53,6 +53,31 @@ export async function connectCdp(port) {
       await request('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
       await request('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
     },
+    async setViewport(width, height = 900) {
+      await request('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+    },
+    async setPageZoom(scale = 1) {
+      await request('Emulation.setPageScaleFactor', { pageScaleFactor: scale })
+    },
+    async setColorScheme(scheme) {
+      if (!['light', 'dark'].includes(scheme)) throw new Error(`unsupported color scheme: ${scheme}`)
+      await request('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] })
+    },
+    async key(key, modifiers = 0) {
+      const codes = { Enter: 13, Escape: 27, Tab: 9, Space: 32, ArrowDown: 40, ArrowUp: 38 }
+      const code = codes[key] ?? key.charCodeAt(0)
+      const type = key === 'Tab' || key === 'Escape' || key.startsWith('Arrow') ? 'rawKeyDown' : 'keyDown'
+      await request('Input.dispatchKeyEvent', { type, key, code: key === 'Space' ? 'Space' : key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code, modifiers })
+      await request('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key === 'Space' ? 'Space' : key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code, modifiers })
+    },
+    async accessibility(selector) {
+      const { root } = await request('DOM.getDocument', { depth: 0 })
+      const { nodeId } = await request('DOM.querySelector', { nodeId: root.nodeId, selector })
+      if (!nodeId) throw new Error(`Accessibility target not found: ${selector}`)
+      const { node } = await request('DOM.describeNode', { nodeId })
+      const result = await request('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: false })
+      return result.nodes.map(item => ({ role: item.role?.value ?? null, name: item.name?.value ?? null, ignored: item.ignored === true, properties: Object.fromEntries((item.properties ?? []).map(property => [property.name, property.value?.value])) }))
+    },
     close() { ws.close() },
   }
 }

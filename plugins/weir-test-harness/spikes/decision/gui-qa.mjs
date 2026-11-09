@@ -72,6 +72,7 @@ function appEnvironment(paths, out, enabled) {
     WEIR_IT_TRACE: join(out, 'mock-trace.jsonl'),
     WEIR_DECISION_GUI_OUT: out,
     WEIR_DECISION_GUI_ENABLED: enabled ? '1' : '0',
+    WEIR_DECISION_PRODUCT_UX: process.env.WEIR_DECISION_PRODUCT_UX,
   }
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key]
   return env
@@ -180,11 +181,14 @@ function composerVisible(instance) {
   return instance.cdp.evaluate(`Boolean([...document.querySelectorAll('textarea,[contenteditable="true"]')].find(el => el.offsetParent !== null))`)
 }
 
+function decisionTriggerExpression() {
+  return `Boolean(document.querySelector(${JSON.stringify('[data-weir-decision-trigger="weir-decision-selector"]')}))`
+}
 async function createSession(instance, cwd = LANE) {
   const created = await instance.cdp.evaluate(`window.__decisionQA.createSession(${JSON.stringify({ cwd, prompt: 'GUI_SESSION_BOOTSTRAP' })})`)
   if (!created?.sessionId) throw new Error(`Session creation failed: ${JSON.stringify(created)}`)
   await waitFor(() => composerVisible(instance), 60_000)
-  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("select[data-weir-decision-selector]"))'), 60_000)
+  await waitFor(() => instance.cdp.evaluate(decisionTriggerExpression()), 60_000)
   return created
 }
 
@@ -196,7 +200,7 @@ async function openSession(instance, sessionId) {
     } catch { return null }
   }, 60_000)
   await waitFor(() => composerVisible(instance), 60_000)
-  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("select[data-weir-decision-selector]"))'), 60_000)
+  await waitFor(() => instance.cdp.evaluate(decisionTriggerExpression()), 60_000)
 }
 
 async function setInput(instance, selector, value) {
@@ -409,7 +413,7 @@ export {
   startInstance, stopInstance, cdpScreenshot, decision, createSession, openSession,
   setInput, click, clickButton, selectDecisionTab, createAgent, setSelector,
   selectorState, submitMarker, records, findCase, waitCase, exportRecord, cardState,
-  runtimeProblems, composerVisible,
+  runtimeProblems, composerVisible, decisionTriggerExpression,
 }
 
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) {
