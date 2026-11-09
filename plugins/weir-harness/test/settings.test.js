@@ -50,6 +50,30 @@ describe('settings Config schema', () => {
     expect(validate({ hashlineHideStockEdit: 'yes' }).issues).not.toBe(undefined)
   })
 
+  it('validates Auto selector, Shadow, and answer-class settings at save time', () => {
+    expect(validate({
+      decisionAgentSelectorDefault: 'auto', decisionAgentAutoShadow: true,
+      decisionAgentAutoAnswerClasses: '["A","A","C"]',
+    }).issues).toBe(undefined)
+    for (const fields of [
+      { decisionAgentSelectorDefault: 'agent' },
+      { decisionAgentSelectorDefault: 'AUTO' },
+      { decisionAgentAutoShadow: 'true' },
+      { decisionAgentAutoAnswerClasses: 'not-json' },
+      { decisionAgentAutoAnswerClasses: '{}' },
+      { decisionAgentAutoAnswerClasses: '["A","D"]' },
+      { decisionAgentAutoAnswerClasses: '["A",1]' },
+      { decisionAgentAutoAnswerClasses: '["unknown"]' },
+    ]) expect(validate(fields).issues?.length > 0).toBe(true)
+  })
+
+  it('normalizes valid classes and fails closed to an empty runtime whitelist', () => {
+    expect(computeSections({ decisionAgentAutoAnswerClasses: '["A","A","C"]' }).decisionAgent.autoAnswerClasses).toEqual(['A', 'C'])
+    for (const raw of ['not-json', '{}', '["A","D"]', '["A",1]', '["unknown"]', '', '   ']) {
+      expect(computeSections({ decisionAgentAutoAnswerClasses: raw }).decisionAgent.autoAnswerClasses).toEqual([])
+    }
+  })
+
   it('rejects invalid guard threshold saves through the Loader standard validator', () => {
     for (const fields of [
       { guardSoftThreshold: 0 }, { guardHardThreshold: 1 },

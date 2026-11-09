@@ -118,7 +118,7 @@ test('remote apply is idempotent and self-heals missing endpoints', () => {
 test('Broker plugin maps settings, provides one service and flushes on dispose', async t => {
   const home = mkdtempSync(join(tmpdir(), 'weir-decision-plugin-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
-  const settings = { enabled: false, answerTimeoutMs: 10, maxAttemptsPerCase: 2, contextBudgetTokens: 1000, maxOutputTokens: 100, maxConcurrentAttempts: 1, chains: { ag: [] }, retentionDays: 0, storePath: '' }
+  const settings = { enabled: false, answerTimeoutMs: 10, maxAttemptsPerCase: 2, contextBudgetTokens: 1000, maxOutputTokens: 100, maxConcurrentAttempts: 1, chains: { ag: [] }, retentionDays: 0, storePath: '', selectorDefault: 'auto', autoShadow: true, autoAnswerClasses: ['A', 'B'] }
   const provided = []
   let dispose
   const ctx = {
@@ -134,8 +134,31 @@ test('Broker plugin maps settings, provides one service and flushes on dispose',
   const config = decisionBrokerConfig(ctx)
   assert.equal(config.decisionAgentAnswerTimeoutMs, 10)
   assert.deepEqual(config.decisionAgentChains, { ag: [] })
+  assert.equal(config.decisionAgentSelectorDefault, 'auto')
+  assert.equal(config.decisionAgentAutoShadow, true)
+  assert.deepEqual(config.decisionAgentAutoAnswerClasses, ['A', 'B'])
   await dispose()
   assert.equal(broker.store, undefined)
+})
+
+test('Broker Auto settings default conservatively and malformed stored values fail closed', () => {
+  const withSection = (section) => ({
+    get: name => name === 'weirSettings' ? { get: () => section } : undefined,
+  })
+  assert.deepEqual(
+    (({ decisionAgentSelectorDefault, decisionAgentAutoShadow, decisionAgentAutoAnswerClasses }) => ({ decisionAgentSelectorDefault, decisionAgentAutoShadow, decisionAgentAutoAnswerClasses }))(decisionBrokerConfig(withSection(undefined))),
+    { decisionAgentSelectorDefault: 'off', decisionAgentAutoShadow: false, decisionAgentAutoAnswerClasses: [] },
+  )
+  for (const selectorDefault of ['agent', 'AUTO', true, null, {}]) {
+    assert.equal(decisionBrokerConfig(withSection({ selectorDefault })).decisionAgentSelectorDefault, 'off')
+  }
+  for (const autoShadow of [1, 'true', null, {}]) {
+    assert.equal(decisionBrokerConfig(withSection({ autoShadow })).decisionAgentAutoShadow, false)
+  }
+  assert.deepEqual(decisionBrokerConfig(withSection({ autoAnswerClasses: '["A","A","C"]' })).decisionAgentAutoAnswerClasses, ['A', 'C'])
+  for (const autoAnswerClasses of ['not-json', '{}', '["A","D"]', '["A",1]', ['A', 'D'], ['A', 1], null, {}]) {
+    assert.deepEqual(decisionBrokerConfig(withSection({ autoAnswerClasses })).decisionAgentAutoAnswerClasses, [])
+  }
 })
 
 test('waitForToolCall keeps bare JSON args and forwards RPC cancellation to the Broker', async () => {

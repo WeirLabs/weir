@@ -131,6 +131,9 @@
         intentGateProvider: mock
         intentGateModel: mock-1
         decisionAgentsEnabled: true
+        decisionAgentSelectorDefault: off
+        decisionAgentAutoShadow: false
+        decisionAgentAutoAnswerClasses: '[]'
         decisionAgentStorePath: !!js process.env.WEIR_IT_DECISION_STORE_PATH || ''
     # Decision Agents: profile Broker + inert/self-healing Host remote.
     - id: weir-it-decision-broker

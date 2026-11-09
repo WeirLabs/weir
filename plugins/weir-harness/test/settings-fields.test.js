@@ -86,7 +86,7 @@ describe('CONFIG_FACE_ONLY_KEYS (config-face-only settings declaration)', () => 
 })
 
 // FIELD_DEFAULTS（产品默认值的唯一声明，sections.js）：四层对拍——
-// ① 声明本体（33 键、冻结、unset 有语义的键无条目）；② ↔ 可导入的模块
+// ① 声明本体（45 键、冻结、unset 有语义的键无条目）；② ↔ 可导入的模块
 // 常量（源头）；③ ↔ 客户端 chunk 手维护镜像（ModuleLoader 同包同步
 // require 不可能的既定代价，raw 文本提取）；④ ↔ cordis.patch.yml
 // weir-settings 行（raw 文本提取，不引入 yaml 依赖）。
@@ -103,6 +103,7 @@ function coerceRowValue(raw) {
   if (raw === 'true') return true
   if (raw === 'false') return false
   if (raw === "''") return ''
+  if (raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1).replaceAll("''", "'")
   if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw)
   return raw
 }
@@ -130,9 +131,9 @@ function chunkFieldDefaults() {
 }
 
 describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
-  it('declares exactly the 42 concrete defaults, frozen, with no entry where unset is meaningful', () => {
+  it('declares exactly the 45 concrete defaults, frozen, with no entry where unset is meaningful', () => {
     expect(Object.isFrozen(FIELD_DEFAULTS)).toBe(true)
-    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(42)
+    expect(Object.keys(FIELD_DEFAULTS)).toHaveLength(45)
     for (const key of NO_DEFAULT_KEYS) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `${key} must stay unset-meaningful (no default entry)`).toBe(false)
     }
@@ -184,19 +185,19 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
 
   it('the patch row mirrors it: every row key is a FIELD_DEFAULTS key with the same value', () => {
     const entries = patchRowEntries()
-    // the 29 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
+    // the 41 row keys are a subset of FIELD_DEFAULTS keys; the deliberate
     // absences (whitelist tables, defaultsPath/Reload) are covered by the
     // dedicated tests above, not required here
-    expect(entries.size).toBe(38)
+    expect(entries.size).toBe(41)
     for (const [key, raw] of entries) {
       expect(Object.hasOwn(FIELD_DEFAULTS, key), `patch row key ${key} has no FIELD_DEFAULTS entry`).toBe(true)
       expect(FIELD_DEFAULTS[key], `patch row value of ${key} drifted from FIELD_DEFAULTS`).toEqual(coerceRowValue(raw))
     }
   })
 
-  it('the boolean subset is exactly the 12 switch defaults the patch row declares', () => {
+  it('the boolean subset is exactly the 13 switch defaults the patch row declares', () => {
     const booleans = Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === 'boolean')
-    expect(booleans).toHaveLength(12)
+    expect(booleans).toHaveLength(13)
     const row = patchRowEntries()
     for (const [key, value] of booleans) {
       expect(row.get(key), `${key} must ride the patch row as a boolean product default`).toBe(String(value))
@@ -292,9 +293,24 @@ describe('worktreeAutoApprove (worktree auto-approve mode)', () => {
   })
 })
 
-describe('Decision Agent P1 settings boundary', () => {
-  it('does not declare P2–P5 Auto, consolidation, sharing, or export knobs', () => {
-    for (const key of ['decisionAgentDefaultMode', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswerClasses', 'decisionAgentConsolidationSchedule', 'decisionAgentCrossWorkspace', 'decisionAgentExport']) {
+describe('Decision Agent Auto settings boundary', () => {
+  it('declares exactly the three conservative Auto keys and keeps unrelated future knobs absent', () => {
+    const selector = FIELDS.find(row => row.key === 'decisionAgentSelectorDefault')
+    const shadow = FIELDS.find(row => row.key === 'decisionAgentAutoShadow')
+    const classes = FIELDS.find(row => row.key === 'decisionAgentAutoAnswerClasses')
+    expect(selector?.section).toBe('decisionAgent')
+    expect(selector?.field).toBe('selectorDefault')
+    expect(selector?.type).toEqual({ union: ['off', 'auto'] })
+    expect(shadow?.section).toBe('decisionAgent')
+    expect(shadow?.field).toBe('autoShadow')
+    expect(shadow?.type).toBe('boolean')
+    expect(classes?.section).toBe('decisionAgent')
+    expect(classes?.field).toBe('autoAnswerClasses')
+    expect(classes?.type).toBe('string')
+    expect(FIELD_DEFAULTS.decisionAgentSelectorDefault).toBe('off')
+    expect(FIELD_DEFAULTS.decisionAgentAutoShadow).toBe(false)
+    expect(FIELD_DEFAULTS.decisionAgentAutoAnswerClasses).toBe('[]')
+    for (const key of ['decisionAgentDefaultMode', 'decisionAgentConsolidationSchedule', 'decisionAgentCrossWorkspace', 'decisionAgentExport']) {
       expect(FIELDS.some(row => row.key === key)).toBe(false)
       expect(Object.hasOwn(FIELD_DEFAULTS, key)).toBe(false)
     }
