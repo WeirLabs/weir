@@ -221,6 +221,10 @@ test('Off, global-off, Active Auto, explicit, unavailable, and excluded requests
   const excludedConsult = await f.broker.consult({ agent: f.agent, args: { question: 'Native authority?', authorization_class: 'D', request_id: 'excluded-consult' } })
   assert.deepEqual(routesFor(f, excludedConsult.caseId).map(route => route.mode), ['pinned'])
 
+  f.broker.store.db.exec(`CREATE TRIGGER disable_pin_during_intake AFTER INSERT ON cases BEGIN UPDATE agent_profiles SET state='disabled' WHERE agent_id='${f.pinned.agentId}'; END;`)
+  const stalePin = await f.broker.hook({ agent: f.agent, request: hookRequest('stale-pin-during-intake') })
+  assert.deepEqual(routesFor(f, stalePin.caseId).map(route => route.mode), ['pinned'])
+
   assert.equal(f.broker.store.db.prepare("SELECT COUNT(*) AS n FROM route_decisions WHERE mode='auto_shadow'").get().n, 0)
   assert.equal(callsOf(f, 'router-classification-contract/1').length, 0)
   assert.equal(callsOf(f, 'router-contract/1').length, 1)

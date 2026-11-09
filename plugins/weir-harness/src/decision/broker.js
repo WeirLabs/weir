@@ -451,6 +451,8 @@ export class DecisionBroker {
       contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
     }
     try {
+      const pinned = this.profiles.getProfile(current.agentId)
+      if (pinned.state !== 'enabled' || pinned.workspaceKey !== current.workspaceKey) return
       const classified = await classifyAutoRequest({ request, ...sidecar })
       let route
       if (classified.kind === 'failed') {
