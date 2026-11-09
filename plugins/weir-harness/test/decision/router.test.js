@@ -356,3 +356,119 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
     assert.equal(classificationWire.includes('FORBIDDEN_'), false)
   })
 })
+
+describe('Auto shared sidecar routing and failure mapping', () => {
+  function classificationCall(llm, extra = {}) {
+    return classifyAutoRequest({ request: request([question('missing')]), ...input(llm, extra) })
+  }
+
+  function routeCall(llm, extra = {}) {
+    return routeAuto({
+      request: request([question('q', 'A')]), scope: scope(), workspaceKey: WORKSPACE,
+      profiles: [profile('agent-a'), profile('agent-b')], ...input(llm, extra),
+    })
+  }
+
+  function hangingLlm() {
+    const calls = []
+    return {
+      calls,
+      stream(options) {
+        calls.push(options)
+        return (async function * () { await new Promise(() => {}) })()
+      },
+    }
+  }
+
+  function throwingLlm() {
+    const calls = []
+    return {
+      calls,
+      stream(options) { calls.push(options); throw Object.assign(new Error('upstream failed'), { code: 'UPSTREAM_429' }) },
+    }
+  }
+
+  function assertFailure(result, reason) {
+    assert.equal(result.kind, 'failed')
+    assert.equal(result.reason, reason)
+  }
+
+  it('inherits only the stock session route and omits tools, purpose, and temperature', async () => {
+    const classificationLlm = fakeLlm({
+      contract: 'router-classification-contract/1', classes: [{ id: 'missing', authorizationClass: 'A' }],
+    })
+    assert.equal((await classificationCall(classificationLlm)).kind, 'classified')
+    const routeLlm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
+    assert.equal((await routeCall(routeLlm)).kind, 'none')
+    for (const call of [...classificationLlm.calls, ...routeLlm.calls]) {
+      assert.equal(call.provider, SESSION_ROUTE.provider)
+      assert.equal(call.model, SESSION_ROUTE.model)
+      assert.equal(call.reasoningEffort, SESSION_ROUTE.reasoningEffort)
+      assert.equal(call.maxTokens, 1600)
+      for (const key of ['tools', 'purpose', 'temperature', 'sessionId']) assert.equal(key in call, false)
+    }
+  })
+
+  it('skips classification when the whitelist is empty or no classes are missing', async () => {
+    const llm = unusedLlm()
+    const classless = request([question('missing')])
+    const admission = autoAdmission(classless, [])
+    assert.deepEqual(admission, { ok: false, reason: 'missing_class' })
+    if (admission.ok) await classifyAutoRequest({ request: classless, ...input(llm) })
+    const provided = request([question('provided', 'A')])
+    const classified = await classifyAutoRequest({ request: provided, ...input(llm) })
+    assert.equal(classified.kind, 'classified')
+    assert.deepEqual(classified.request, provided)
+    assert.equal(llm.calls.length, 0)
+  })
+
+  it('maps timeout and model errors for both sidecars without leaking provider detail', async () => {
+    for (const run of [classificationCall, routeCall]) {
+      const timedLlm = hangingLlm()
+      assertFailure(await run(timedLlm, { timeoutMs: 5 }), 'failure:timeout')
+      const failedLlm = throwingLlm()
+      assertFailure(await run(failedLlm), 'failure:model_error')
+      assert.equal(JSON.stringify(failedLlm.calls).includes('UPSTREAM_429'), false)
+    }
+  })
+
+  it('maps route unavailability before model invocation for both sidecars', async () => {
+    for (const run of [classificationCall, routeCall]) {
+      const llm = unusedLlm()
+      assertFailure(await run(llm, { sessionRoute: undefined }), 'failure:route_unavailable')
+      assert.equal(llm.calls.length, 0)
+    }
+  })
+
+  it('maps an in-flight external abort instead of waiting for the hard timeout', async () => {
+    for (const run of [classificationCall, routeCall]) {
+      const llm = hangingLlm()
+      const controller = new AbortController()
+      const pending = run(llm, { timeoutMs: 30, signal: controller.signal })
+      setTimeout(() => controller.abort(new Error('caller cancelled')), 2)
+      assertFailure(await pending, 'failure:aborted')
+      assert.equal(llm.calls.length, 1)
+    }
+  })
+
+  it('never reads generated descriptions, candidate model routes, domain memory, or history', async () => {
+    const req = request([question('q', 'A')])
+    for (const key of ['evidence', 'history', 'sessionLog']) {
+      Object.defineProperty(req, key, { get() { throw new Error(`forbidden request read: ${key}`) } })
+    }
+    const guarded = (id) => {
+      const value = profile(id)
+      for (const key of ['generatedDescription', 'modelRoute', 'memorySnapshot', 'L2', 'L3']) {
+        Object.defineProperty(value, key, { get() { throw new Error(`forbidden profile read: ${key}`) } })
+      }
+      return value
+    }
+    const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Current user preference' })
+    const result = await routeAuto({
+      request: req, scope: scope(), workspaceKey: WORKSPACE,
+      profiles: [guarded('agent-a'), guarded('agent-b')], ...input(llm),
+    })
+    assert.equal(result.kind, 'selected')
+    assert.equal(result.chosen, 'agent-b')
+  })
+})

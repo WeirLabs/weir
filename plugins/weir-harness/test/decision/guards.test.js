@@ -28,6 +28,16 @@ test('Decision source has no session events, command channel, static host import
   assert.ok(files.length >= 15)
 })
 
+test('Auto Router depends only on pure contracts, pure scope, and the existing sidecar', () => {
+  const source = readFileSync(join(root, 'router.js'), 'utf8')
+  const imports = [...source.matchAll(/from '([^']+)'/g)].map(match => match[1]).sort()
+  assert.deepEqual(imports, ['./contracts.js', './evaluator/sidecar.js', './scope.js'])
+  assert.equal(source.includes('setTimeout'), false)
+  for (const forbidden of ['evaluateCase', 'DecisionContextRetriever', 'createAttempt', 'attempts.']) {
+    assert.equal(source.includes(forbidden), false)
+  }
+})
+
 test('disabled Hook and tool fail while remote overview stays read-only without creating a decisions directory', async t => {
   const home = mkdtempSync(join(tmpdir(), 'weir-decision-guards-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
