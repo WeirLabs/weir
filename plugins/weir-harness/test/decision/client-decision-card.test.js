@@ -7,6 +7,7 @@ function makeReact() {
   const hooks = []
   let cursor = 0
   const react = {
+    cloneElement: (element, props) => ({ ...element, ...props }),
     useState(initial) {
       const index = cursor++
       if (!hooks[index]) hooks[index] = { value: initial }
@@ -146,6 +147,18 @@ test('answered card presents real questions and answers with one primary action 
   assert.ok(advanced)
   assert.equal(typeof advanced.children, 'function')
   assert.match(textContent(advanced.children()), /dc-current/)
+})
+
+test('production card fallback uses the active locale for an unavailable assistant', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const detail = {
+    case: { ...answeredDetail.case, agentId: 'missing', request: { questions: [] } },
+    attempts: [], feedback: [], routeDecisions: [],
+  }
+  const mounted = await mount(detail, { props: { t: key => model.dictionaries.zh[key] } })
+  const text = textContent(mounted.render())
+  assert.match(text, /决策助手/)
+  assert.equal(text.includes('Decision assistant'), false)
 })
 
 test('card status variants retain localized state and a single primary action', async () => {

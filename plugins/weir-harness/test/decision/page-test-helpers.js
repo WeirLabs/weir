@@ -29,6 +29,7 @@ export function makeReactRuntime() {
   const hooks = []
   let cursor = 0
   const react = {
+    cloneElement: (element, props) => ({ ...element, ...props }),
     useState(initial) {
       const index = cursor++
       if (!hooks[index]) hooks[index] = { value: typeof initial === 'function' ? initial() : initial }
@@ -83,7 +84,7 @@ export async function createPageHarness(options = {}) {
     narrowInbox: model.narrowInbox,
     ui,
     learning,
-    t: key => key,
+    t: options.t ?? (key => key),
     consumeOpenCase: options.consumeOpenCase,
     consumeAgentDestination: options.consumeAgentDestination,
     panelInfo: options.panelInfo,

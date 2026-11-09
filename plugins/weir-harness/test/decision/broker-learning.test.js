@@ -76,6 +76,52 @@ test('publish/reject/rollback enforce expectedRevision, target-state idempotency
   assert.equal(f.requests.length, 2)
 })
 
+test('agents exposes additive read-only current-version and pending-review summaries through real lifecycle reads', async t => {
+  const f = await brokerFixture(t)
+  const input = { sessionId: 'root', agentId: f.profile.agentId }
+  let [summary] = await f.broker.agents({ sessionId: 'root' })
+  assert.equal(summary.currentSnapshotId, null)
+  assert.equal(summary.currentSnapshotVersion, null)
+  assert.equal(summary.pendingReview, false)
+
+  const firstSource = await seedUserDecision(f, 'summary-first-source')
+  f.respond(() => ({ operations: [validAdd(f, [firstSource.caseId])] }))
+  const firstCandidate = await f.broker.learningStart({ ...input, requestId: 'req-summary-first' })
+  ;[summary] = await f.broker.agents({ sessionId: 'root' })
+  assert.equal(summary.currentSnapshotId, null)
+  assert.equal(summary.pendingReview, true)
+
+  const firstSnapshotId = snapshotForRun(f, firstCandidate.learningRunId).snapshot_id
+  const firstDraft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: firstSnapshotId })
+  await f.broker.snapshotPublish({ sessionId: 'root', snapshotId: firstSnapshotId, expectedRevision: firstDraft.revision })
+  ;[summary] = await f.broker.agents({ sessionId: 'root' })
+  assert.equal(summary.currentSnapshotId, firstSnapshotId)
+  assert.equal(summary.currentSnapshotVersion, 1)
+  assert.equal(summary.pendingReview, false)
+
+  const secondSource = await seedUserDecision(f, 'summary-second-source')
+  f.respond(() => ({ operations: [validAdd(f, [secondSource.caseId], { principleId: 'temporary-add-second', text: 'Prefer the second reviewed direction' })] }))
+  const secondCandidate = await f.broker.learningStart({ ...input, requestId: 'req-summary-second' })
+  ;[summary] = await f.broker.agents({ sessionId: 'root' })
+  assert.equal(summary.currentSnapshotId, firstSnapshotId)
+  assert.equal(summary.currentSnapshotVersion, 1)
+  assert.equal(summary.pendingReview, true)
+  assert.equal(summary.name, 'A')
+  assert.equal('learningRuns' in summary, false)
+  assert.equal('snapshots' in summary, false)
+  assert.equal('descriptionHistory' in summary, false)
+  assert.equal('cleaned' in summary, false)
+  assert.equal('retentionState' in summary, false)
+
+  const secondSnapshotId = snapshotForRun(f, secondCandidate.learningRunId).snapshot_id
+  const secondDraft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: secondSnapshotId })
+  await f.broker.snapshotReject({ sessionId: 'root', snapshotId: secondSnapshotId, expectedRevision: secondDraft.revision })
+  ;[summary] = await f.broker.agents({ sessionId: 'root' })
+  assert.equal(summary.currentSnapshotId, firstSnapshotId)
+  assert.equal(summary.currentSnapshotVersion, 1)
+  assert.equal(summary.pendingReview, false, 'a terminal rejected candidate no longer awaits review')
+})
+
 test('restart marks a persisted running Learning Run INTERRUPTED without candidate creation or model replay', async t => {
   const f = await brokerFixture(t)
   insertLearningRun(f, 'lr_interrupted', 'running')

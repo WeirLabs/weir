@@ -43,7 +43,8 @@ function makeReact() {
 
 async function load(react = {}) {
   const jsx = (type, props) => ({ ...props, type, inputType: props?.type })
-  const { exports } = await loadClientChunk('lib/client.decision-ui.js', name => name === 'react' ? react : { jsx, jsxs: jsx })
+  const runtime = { cloneElement: (element, props) => ({ ...element, ...props }), ...react }
+  const { exports } = await loadClientChunk('lib/client.decision-ui.js', name => name === 'react' ? runtime : { jsx, jsxs: jsx })
   return exports
 }
 
@@ -56,7 +57,10 @@ test('shared atoms use theme tokens, explicit action hierarchy, and readable sta
   const badge = ui.Badge({ variant: 'warn', children: 'Needs attention' })
   assert.equal(badge.role, 'status')
   assert.ok(findAll(badge, node => node.type === ui.DecisionIcon).length > 0)
-  const field = ui.Field({ id: 'preference', label: 'Decision preference', hint: 'Optional', children: { type: 'textarea', id: 'preference' } })
+  const field = ui.Field({ id: 'preference', label: 'Decision preference', hint: 'Optional', children: { type: 'textarea', id: 'preference', 'aria-describedby': 'existing-help' } })
+  const control = findAll(field, node => node.type === 'textarea')[0]
+  assert.equal(control['aria-describedby'], 'existing-help preference-hint')
+  assert.equal(findAll(field, node => node.id === 'preference-hint')[0].children, 'Optional')
   const label = findAll(field, node => node.type === 'label')[0]
   assert.equal(label.htmlFor, 'preference')
   assert.equal(label.children, 'Decision preference')
@@ -158,6 +162,12 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   assert.equal(checkboxes.length, 2)
   assert.ok(checkboxes.every(node => node.inputType === 'checkbox'))
   const textarea = findAll(tree, node => node.type === 'textarea')[0]
+  const incomplete = findAll(tree, node => node.role === 'alert' && node.children === 'decisionAnswersIncomplete')[0]
+  assert.equal(textarea['aria-describedby'], incomplete.id)
+  for (const questionId of ['single', 'multi']) {
+    const group = findAll(tree, node => node.type === 'fieldset' && node['data-question-id'] === questionId)[0]
+    assert.equal(group['aria-describedby'], incomplete.id)
+  }
   assert.equal(textarea['aria-label'], 'Explain why')
   assert.ok(findAll(tree, node => node.type === 'label').some(node => JSON.stringify(node.children).includes('First choice')))
   let submit = findAll(tree, node => node.type === ui.Button && node.children === 'decisionDecide')[0]
@@ -169,6 +179,9 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   assert.equal(submissions.length, 0)
   assert.deepEqual(changes.at(-1), { single: { selected: ['Alpha'] }, multi: { selected: ['One', 'Two'] }, free: { selected: [], custom: 'Because' } })
   tree = render()
+  assert.equal(findAll(tree, node => node.role === 'alert' && node.children === 'decisionAnswersIncomplete').length, 0)
+  assert.equal(findAll(tree, node => node.type === 'textarea')[0]['aria-describedby'], undefined)
+  assert.ok(findAll(tree, node => node.type === 'fieldset').every(node => node['aria-describedby'] === undefined))
   submit = findAll(tree, node => node.type === ui.Button && node.children === 'decisionDecide')[0]
   assert.equal(submit.disabled, false)
   assert.equal(tree['aria-busy'], false)
@@ -210,6 +223,8 @@ test('DecisionAnswers scopes accessible ids per form instance', async () => {
   const firstError = findAll(first, node => node.id?.endsWith('-incomplete'))[0]
   const secondError = findAll(second, node => node.id?.endsWith('-incomplete'))[0]
   assert.notEqual(firstError.id, secondError.id)
+  assert.equal(firstInput['aria-describedby'], firstError.id)
+  assert.equal(secondInput['aria-describedby'], secondError.id)
 })
 
 test('Disclosure opens lazily and notifies the owner without rendering hidden diagnostic content', async () => {

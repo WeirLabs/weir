@@ -265,6 +265,8 @@ test('Apply, Discard, and Restore use distinct confirmations, exact latest revis
       let currentAgent = initial
       let agentReads = 0
       const actionCalls = []
+      let beforeReads = 0
+      let refreshFailure = null
       const readRun = async id => {
         const summary = currentAgent.learningRuns.find(run => run.learningRunId === id) ?? (id === 'lr_candidate' ? candidateRun : currentRun)
         return { learningRunId: id, agentId: 'a', outcome: summary.outcome, revision: summary.revision, operations: [], inputFrozen: { parentSnapshotId: id === 'lr_candidate' ? 'ms_current' : null, ...(id === 'lr_candidate' ? { parentSnapshotRevision: 11 } : {}) }, replay: { passed: true } }
@@ -277,7 +279,7 @@ test('Apply, Discard, and Restore use distinct confirmations, exact latest revis
         }
       }
       const harness = await createPageHarness({ actions: {
-        agents: async () => [currentAgent], inbox: async () => [], agent: async () => { agentReads += 1; return currentAgent },
+        agents: async () => [currentAgent], inbox: async () => [], agent: async () => { agentReads += 1; if (fails && refreshFailure && agentReads > beforeReads) await refreshFailure.promise; return currentAgent },
         learningRun: readRun, memorySnapshot: readSnapshot,
         [scenario.method]: async (...args) => {
           actionCalls.push(args)
@@ -289,7 +291,7 @@ test('Apply, Discard, and Restore use distinct confirmations, exact latest revis
         },
       } })
       await openAgentDetail(harness)
-      const beforeReads = agentReads
+      beforeReads = agentReads
       const button = findAll(productLearning(harness), node => node.type === harness.ui.Button && node['data-action'] === scenario.action)[0]
       assert.equal(button.disabled, false, `${scenario.method} fails=${fails}`)
       await button.onClick()
@@ -298,14 +300,27 @@ test('Apply, Discard, and Restore use distinct confirmations, exact latest revis
       assert.ok(dialog, scenario.dialog)
       assert.equal(dialog.title, scenario.title)
       assert.ok(textOf(dialog.body).includes(scenario.body), scenario.body)
-      await dialog.onConfirm()
+      if (fails) {
+        refreshFailure = deferred()
+        const confirmation = dialog.onConfirm()
+        await harness.flush()
+        assert.ok(agentReads > beforeReads, 'failed Snapshot writes reread the authoritative Agent before settling')
+        assert.ok(textOf(harness.render()).includes('decisionErrorConflict'), 'the original write failure remains visible during refresh')
+        const blocked = findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === scenario.action)
+        assert.equal(blocked.length === 0 || blocked[0].disabled, true, 'Snapshot actions stay disabled while authoritative detail reloads')
+        refreshFailure.resolve()
+        await confirmation
+      } else {
+        await dialog.onConfirm()
+      }
       await harness.flush()
       assert.deepEqual(actionCalls, [[scenario.snapshotId, scenario.revision]])
       if (fails) {
-        assert.equal(agentReads, beforeReads, 'failed writes do not automatically reread or retry')
+        assert.ok(agentReads > beforeReads, 'failed writes reread without retrying the mutation')
         const review = productLearning(harness)
-        assert.ok(findAll(review, node => node.type === harness.ui.Button && node['data-action'] === scenario.action)[0])
-        assert.ok(textOf(harness.render()).includes('decisionErrorConflict'))
+        const action = findAll(review, node => node.type === harness.ui.Button && node['data-action'] === scenario.action)[0]
+        assert.equal(action.disabled, false, 'actions re-enable only after authoritative detail arrives')
+        assert.ok(textOf(harness.render()).includes('decisionErrorConflict'), 'rereading never erases the write failure')
       } else {
         assert.ok(agentReads > beforeReads, 'successful writes reread the authoritative Agent')
       }
@@ -313,6 +328,48 @@ test('Apply, Discard, and Restore use distinct confirmations, exact latest revis
       assert.equal(actionCalls.length, 1, 'no automatic retry')
       harness.unmount()
     }
+  }
+})
+
+test('failed Snapshot refreshes preserve the write error and never re-enable stale actions', async () => {
+  for (const failureAt of ['agent', 'detail']) {
+    const agent = {
+      agentId: 'a', name: 'A', state: 'enabled', currentSnapshotId: 'ms_current',
+      learningRuns: [{ learningRunId: 'lr_candidate', outcome: 'candidate', revision: 4 }, { learningRunId: 'lr_current', outcome: 'published', revision: 5 }],
+      snapshots: [
+        { snapshotId: 'ms_candidate', state: 'draft', version: 4, revision: 2, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' },
+        { snapshotId: 'ms_current', state: 'published', version: 3, revision: 11, learningRunId: 'lr_current', parentSnapshotId: null },
+      ],
+    }
+    let failRefresh = false
+    let mutations = 0
+    const harness = await createPageHarness({ actions: {
+      agents: async () => [agent], inbox: async () => [],
+      agent: async () => { if (failRefresh && failureAt === 'agent') throw Object.assign(new Error('Agent refresh offline'), { code: 'NETWORK' }); return agent },
+      learningRun: async id => {
+        if (failRefresh && failureAt === 'detail') throw Object.assign(new Error('detail refresh offline'), { code: 'NETWORK' })
+        const candidate = id === 'lr_candidate'
+        return { learningRunId: id, agentId: 'a', outcome: candidate ? 'candidate' : 'published', revision: candidate ? 4 : 5, operations: [], inputFrozen: { parentSnapshotId: candidate ? 'ms_current' : null, ...(candidate ? { parentSnapshotRevision: 11 } : {}) }, replay: { passed: true } }
+      },
+      memorySnapshot: async id => {
+        const candidate = id === 'ms_candidate'
+        return { snapshotId: id, agentId: 'a', learningRunId: candidate ? 'lr_candidate' : 'lr_current', state: candidate ? 'draft' : 'published', version: candidate ? 4 : 3, revision: candidate ? 9 : 11, parentSnapshotId: candidate ? 'ms_current' : null, principles: [] }
+      },
+      snapshotPublish: async () => { mutations += 1; throw Object.assign(new Error('stale source'), { code: 'STALE_SOURCE' }) },
+    } })
+    await openAgentDetail(harness)
+    const publish = findAll(productLearning(harness), node => node.type === harness.ui.Button && node['data-action'] === 'learning-publish')[0]
+    assert.equal(publish.disabled, false)
+    await publish.onClick()
+    const dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-learning-publish')[0]
+    failRefresh = true
+    await dialog.onConfirm()
+    await harness.flush()
+    assert.equal(mutations, 1, 'refresh failure never retries the Snapshot mutation')
+    assert.ok(textOf(harness.render()).includes('decisionErrorConflict'))
+    const buttons = findAll(harness.render(), node => node.type === harness.ui.Button && ['learning-publish', 'learning-reject', 'learning-rollback'].includes(node['data-action']))
+    assert.ok(buttons.every(button => button.disabled), `${failureAt} refresh leaves every Snapshot action blocked`)
+    harness.unmount()
   }
 })
 
@@ -589,10 +646,42 @@ test('current Snapshot detail automatically resolves even when its run is outsid
   }
   const harness = await createPageHarness({ actions })
   await openAgentDetail(harness)
-  assert.deepEqual(calls, [['learningRun', 'lr_current'], ['memorySnapshot', 'ms_current']])
+  assert.deepEqual(calls.map(call => call.join(':')).sort(), ['learningRun:lr_current', 'learningRun:lr_rejected_22', 'memorySnapshot:ms_current', 'memorySnapshot:ms_rejected_22'].sort(), 'latest inspection and out-of-cap current detail both load')
   const rendered = renderedLearning(harness)
   assert.equal(findAll(rendered, node => node.type === harness.ui.Button && node['data-action'] === 'learning-rollback')[0].disabled, false)
   harness.unmount()
+})
+
+test('latest failed inspection reports only real no-change outcomes while preserving current version and rollback', async () => {
+  for (const [replayDetail, expectedStatus] of [['NO_CANDIDATE_CHANGES', 'decisionLearningNoChanges'], ['MODEL_OUTPUT_INVALID', 'decisionLearningOutcome_failed']]) {
+    const calls = []
+    const agent = {
+      agentId: 'a', name: 'A', state: 'enabled', currentSnapshotId: 'ms_current',
+      learningRuns: [{ learningRunId: 'lr_latest_failed', outcome: 'failed', revision: 6 }, { learningRunId: 'lr_current', outcome: 'published', revision: 5 }],
+      snapshots: [{ snapshotId: 'ms_current', state: 'published', version: 3, revision: 7, learningRunId: 'lr_current', parentSnapshotId: null }],
+    }
+    const harness = await createPageHarness({ actions: {
+      agents: async () => [agent], inbox: async () => [], agent: async () => agent,
+      learningRun: async id => {
+        calls.push(['learningRun', id])
+        if (id === 'lr_latest_failed') return { learningRunId: id, agentId: 'a', outcome: 'failed', revision: 6, operations: [], inputFrozen: { parentSnapshotId: 'ms_current' }, replay: { passed: false, detail: replayDetail }, sourceRecords: [] }
+        return { learningRunId: id, agentId: 'a', outcome: 'published', revision: 5, operations: [{ op: 'add' }], inputFrozen: { parentSnapshotId: null }, replay: { passed: true } }
+      },
+      memorySnapshot: async id => { calls.push(['memorySnapshot', id]); return { snapshotId: id, agentId: 'a', learningRunId: 'lr_current', state: 'published', version: 3, revision: 7, parentSnapshotId: null, principles: [] } },
+    } })
+    await openAgentDetail(harness)
+    assert.ok(calls.some(call => call[0] === 'learningRun' && call[1] === 'lr_latest_failed'), 'the latest real run is inspected')
+    assert.ok(calls.some(call => call[0] === 'memorySnapshot' && call[1] === 'ms_current'), 'current Snapshot detail stays loaded')
+    const rendered = renderedLearning(harness)
+    const text = textOf(rendered)
+    assert.ok(text.includes(expectedStatus), `${replayDetail} projects ${expectedStatus}`)
+    assert.ok(text.includes('decisionPrincipleVersion 3'))
+    assert.equal(text.includes(expectedStatus === 'decisionLearningNoChanges' ? 'decisionLearningOutcome_failed' : 'decisionLearningNoChanges'), false)
+    const rollback = findAll(rendered, node => node.type === harness.ui.Button && node['data-action'] === 'learning-rollback')[0]
+    assert.equal(rollback.disabled, false)
+    assert.equal(findAll(rendered, node => node.type === harness.ui.Button && ['learning-publish', 'learning-reject'].includes(node['data-action'])).length, 0)
+    harness.unmount()
+  }
 })
 
 test('learning review renders bounded Case and correction excerpts without exposing unrelated source content', async () => {

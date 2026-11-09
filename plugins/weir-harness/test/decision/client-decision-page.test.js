@@ -391,6 +391,99 @@ test('a late response for old record filters cannot replace the new filter resul
   assert.deepEqual(rows.map(row => row['data-case-id']), ['dc-new-filter'])
   harness.unmount()
 })
+test('load more uses the applied result-set filter rather than an unapplied draft', async () => {
+  const calls = []
+  const waiting = caseId => ({ caseId, agentId: 'a', state: 'awaiting_user', request: { questions: [{ id: 'q', question: caseId }] } })
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    records: async (filter, cursor) => {
+      calls.push({ filter, cursor })
+      return cursor ? { records: [waiting('dc-waiting-2')], nextCursor: null } : { records: [waiting('dc-waiting')], nextCursor: 'cursor-all' }
+    },
+  } })
+  await harness.settle()
+  let tree = await openRecords(harness)
+  recordFilter(harness, tree, 'state').onChange({ target: { value: 'closed' } })
+  tree = harness.render()
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true)[0].onClick()
+  await harness.flush()
+  assert.deepEqual(calls[1], { filter: {}, cursor: { after: 'cursor-all' } })
+  const rows = findAll(harness.render(), node => node.type === harness.ui.Button && node['data-case-id'])
+  assert.deepEqual(rows.map(row => row['data-case-id']), ['dc-waiting', 'dc-waiting-2'])
+  harness.unmount()
+})
+
+test('applying filters resets old pagination busy and error state and ignores stale settlement', async () => {
+  const stalePage = deferred()
+  const calls = []
+  const waiting = { caseId: 'dc-waiting', agentId: 'a', state: 'awaiting_user', request: { questions: [{ id: 'q', question: 'Waiting result' }] } }
+  const closed = { caseId: 'dc-closed', agentId: 'a', state: 'closed', closing: 'answered', request: { questions: [{ id: 'q', question: 'Closed result' }] } }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    records: async (filter, cursor) => {
+      calls.push({ filter, cursor })
+      if (cursor?.after === 'cursor-all') return stalePage.promise
+      if (cursor?.after === 'cursor-closed') throw Object.assign(new Error('pagination offline'), { code: 'NETWORK' })
+      return filter.state === 'closed' ? { records: [closed], nextCursor: 'cursor-closed' } : { records: [waiting], nextCursor: 'cursor-all' }
+    },
+  } })
+  await harness.settle()
+  let tree = await openRecords(harness)
+  const oldMore = findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true)[0].onClick()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true)[0]['aria-busy'], true)
+
+  recordFilter(harness, tree, 'state').onChange({ target: { value: 'closed' } })
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node.children === 'decisionApplyFilters')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  let more = findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true)[0]
+  assert.equal(more.disabled, false)
+  assert.equal(more['aria-busy'], false)
+
+  stalePage.resolve({ records: [waiting], nextCursor: 'stale-cursor' })
+  await oldMore
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(findAll(tree, node => node.type === harness.ui.Button && node['data-case-id']).map(row => row['data-case-id']), ['dc-closed'])
+  more = findAll(tree, node => node.type === harness.ui.Button && node['data-load-more'] === true)[0]
+  assert.equal(more.disabled, false)
+  assert.equal(more['aria-busy'], false)
+
+  await more.onClick()
+  await harness.flush()
+  assert.equal(textOf(harness.render()).includes('decisionReadFailed'), true)
+  tree = harness.render()
+  recordFilter(harness, tree, 'state').onChange({ target: { value: 'awaiting_user' } })
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node.children === 'decisionApplyFilters')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(textOf(tree).includes('decisionReadFailed'), false, 'a new result set clears the old pagination error')
+  assert.deepEqual(findAll(tree, node => node.type === harness.ui.Button && node['data-case-id']).map(row => row['data-case-id']), ['dc-waiting'])
+  assert.ok(calls.some(call => call.filter.state === 'closed' && call.cursor === undefined))
+  harness.unmount()
+})
+
+test('production record summaries pass the active locale to fallback text', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const record = { caseId: 'dc-unavailable-agent', agentId: 'missing', state: 'closed', closing: 'answered', request: { questions: [] } }
+  const harness = await createPageHarness({
+    t: key => model.dictionaries.zh[key],
+    actions: { agents: async () => [], inbox: async () => [], records: async () => ({ records: [record], nextCursor: null }) },
+  })
+  await harness.settle()
+  const tree = await openRecords(harness)
+  const row = findAll(tree, node => node.type === harness.ui.Button && node['data-case-id'] === record.caseId)[0]
+  const text = textOf(row)
+  assert.ok(text.includes('判断记录'))
+  assert.ok(text.includes('决策助手'))
+  assert.equal(text.includes('Decision assistant'), false)
+  assert.equal(text.includes('Decision record'), false)
+  harness.unmount()
+})
+
 test('Attempt Context Pack details show actual neutral sources and truthful legacy empty states', async () => {
   const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({ jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }) }));
   const render = attempt => exports.AttemptContextPack({ attempt, t: key => key });
@@ -495,6 +588,28 @@ const assistantDetail = {
   currentSnapshotId: 'ms-current', learningRuns: [{ learningRunId: 'lr-candidate', outcome: 'candidate', revision: 1 }],
   snapshots: [{ snapshotId: 'ms-current', version: 3, state: 'published', revision: 4, learningRunId: 'lr-current' }],
 }
+
+test('assistant list renders Broker learning summary fields without opening detail', async () => {
+  const summary = {
+    agentId: 'ag_summary', name: 'Summary assistant', state: 'enabled',
+    userDescription: { revision: 1, text: 'Use reviewed guidance' },
+    currentSnapshotId: 'ms-current', currentSnapshotVersion: 3, pendingReview: true,
+  }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [summary], inbox: async () => [],
+    agent: async () => { throw new Error('list summary must not require an Agent detail read') },
+  } })
+  await harness.settle()
+  const tree = await openAgents(harness)
+  const card = findAll(tree, node => node['data-agent-summary'] === 'ag_summary')[0]
+  const text = textOf(card)
+  assert.ok(text.includes('decisionCurrentSnapshot: v3'))
+  assert.ok(text.includes('decisionPendingReview'))
+  assert.equal(text.includes('decisionVersionUnavailable'), false)
+  assert.equal(text.includes('decisionPrincipleDetailsOnOpen'), false)
+  assert.equal(findAll(tree, node => node['data-agent-detail']).length, 0)
+  harness.unmount()
+})
 
 test('assistant summaries are read-only and simple create preserves defaults, dirty drafts, and cancel confirmation', async () => {
   const calls = []

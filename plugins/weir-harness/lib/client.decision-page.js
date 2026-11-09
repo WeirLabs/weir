@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
     function RecordDetail(props) {
       const { detail, model, ui, t, draft } = props;
       const agents = Array.isArray(props.agents) ? props.agents : [];
-      const view = model.cardView(detail, agents);
+      const view = model.cardView(detail, agents, t);
       const current = detail.case;
       const questions = Array.isArray(current.request?.questions) ? current.request.questions : [];
       const answers = Array.isArray(current.decision?.answers) ? current.decision.answers : [];
@@ -127,13 +127,13 @@ window.__ModuleLoader__.load({
     function InboxItem(props) {
       const current = props.item;
       const { t, ui, model, draft } = props;
-      const summary = model.recordSummary(current, props.agents);
+      const summary = model.recordSummary(current, props.agents, t);
       const questions = Array.isArray(current.request?.questions) ? current.request.questions : [];
       const pending = typeof props.pending === "string";
       const suggestions = Array.isArray(current.escalation?.suggestion) ? current.escalation.suggestion : [];
       const perQuestion = Array.isArray(current.escalation?.perQuestion) ? current.escalation.perQuestion : [];
       const detail = props.evidence?.value;
-      const evidenceView = detail ? model.cardView(detail, props.agents) : null;
+      const evidenceView = detail ? model.cardView(detail, props.agents, t) : null;
       return jsx.jsxs("article", { className: "weir-da-card weir-da-inbox-card", "data-case-id": current.caseId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [
@@ -231,7 +231,9 @@ window.__ModuleLoader__.load({
     function AgentSummary(props) {
       const agent = props.detail?.agentId === props.agent.agentId ? props.detail : props.agent;
       const current = learningRows(agent.snapshots).find(snapshot => snapshot.snapshotId === agent.currentSnapshotId);
-      const pendingReview = learningRows(agent.learningRuns).some(run => run.outcome === "candidate");
+      const currentVersion = Number.isInteger(agent.currentSnapshotVersion) ? agent.currentSnapshotVersion : current?.version;
+      const pendingReview = typeof agent.pendingReview === "boolean" ? agent.pendingReview : learningRows(agent.learningRuns).some(run => run.outcome === "candidate");
+      const hasLearningSummary = typeof agent.pendingReview === "boolean" || agent.currentSnapshotVersion !== undefined || Array.isArray(agent.learningRuns) || Array.isArray(agent.snapshots);
       return jsx.jsxs("article", { key: props.agent.agentId, className: "weir-da-card weir-da-agent-summary", "data-agent-summary": props.agent.agentId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsx("h2", { children: agent.name }, "name"),
@@ -239,8 +241,8 @@ window.__ModuleLoader__.load({
         ] }, "header"),
         jsx.jsx("p", { children: agent.userDescription?.text || props.t("decisionNoPreference") }, "preference"),
         jsx.jsx("p", { className: "weir-da-caption", children: agent.currentSnapshotId
-          ? `${props.t("decisionCurrentSnapshot")}: ${current ? `v${current.version ?? "—"}` : props.t("decisionVersionUnavailable")}`
-          : Array.isArray(agent.learningRuns) ? props.t("decisionNoCurrentSnapshot") : props.t("decisionPrincipleDetailsOnOpen") }, "principles"),
+          ? `${props.t("decisionCurrentSnapshot")}: ${currentVersion !== undefined ? `v${currentVersion ?? "—"}` : props.t("decisionVersionUnavailable")}`
+          : hasLearningSummary ? props.t("decisionNoCurrentSnapshot") : props.t("decisionPrincipleDetailsOnOpen") }, "principles"),
         pendingReview ? jsx.jsx(props.ui.Badge, { variant: "warn", children: props.t("decisionPendingReview") }, "pending") : null,
         jsx.jsx(props.ui.Button, { "data-action": "open-agent", onClick: () => props.onOpen(props.agent.agentId), children: props.t("decisionViewAssistant") }, "open"),
       ] });
@@ -420,6 +422,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = react.useState("inbox");
       const [resources, setResources] = react.useState(emptyResources);
       const [filter, setFilter] = react.useState({});
+      const [appliedFilter, setAppliedFilter] = react.useState({});
       const [selectedCaseId, setSelectedCaseId] = react.useState(null);
       const [drillIn, setDrillIn] = react.useState(false);
       const [pending, setPending] = react.useState(null);
@@ -436,10 +439,10 @@ window.__ModuleLoader__.load({
       const epochRef = react.useRef(0);
       const requestsRef = react.useRef({ agents: 0, inbox: 0, records: 0, metrics: 0, agent: 0, learning: 0, details: {} });
       const tabRef = react.useRef(tab);
-      const filterRef = react.useRef(filter);
+      const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
       tabRef.current = tab;
-      filterRef.current = filter;
+      filterRef.current = appliedFilter;
       selectedCaseRef.current = selectedCaseId;
       const view = model.pageView({ tab, agents: resources.agents.value, records: resources.records.value, inbox: resources.inbox.value, metrics: resources.metrics.value });
       const updateDraft = (caseId, field, value) => setDrafts(current => model.draftsReducer(current, { type: "update", sessionId, caseId, field, value }));
@@ -466,10 +469,10 @@ window.__ModuleLoader__.load({
           if (valid("inbox", token, epoch, requestSession)) patchResource("inbox", { status: "ready", value, error: null });
         } catch (reason) { if (valid("inbox", token, epoch, requestSession)) patchResource("inbox", { status: "error", error: asError(reason) }); }
       };
-      const loadRecords = async (nextFilter = filter, requestSession = sessionId, epoch = epochRef.current) => {
+      const loadRecords = async (nextFilter = appliedFilter, requestSession = sessionId, epoch = epochRef.current) => {
         if (!requestSession) return;
         const token = ++requestsRef.current.records;
-        patchResource("records", { status: "loading", error: null, value: [], nextCursor: null });
+        patchResource("records", { status: "loading", error: null, value: [], nextCursor: null, loadingMore: false, loadMoreError: null });
         try {
           const page = model.narrowRecords(await actions.records(nextFilter));
           if (valid("records", token, epoch, requestSession)) patchResource("records", { status: "ready", value: page.records, nextCursor: page.nextCursor, error: null });
@@ -483,7 +486,7 @@ window.__ModuleLoader__.load({
         const token = ++requestsRef.current.records;
         patchResource("records", { loadingMore: true, loadMoreError: null });
         try {
-          const page = model.narrowRecords(await actions.records(filter, { after: cursor }));
+          const page = model.narrowRecords(await actions.records(appliedFilter, { after: cursor }));
           if (valid("records", token, epoch, requestSession)) {
             setResources(current => {
               const appended = model.appendRecordPage(current.records.value, page);
@@ -532,7 +535,7 @@ window.__ModuleLoader__.load({
         const value = await readRecord(caseId, { force: true, sessionId: requestSession, epoch });
         if (!value || value.case?.caseId !== caseId || epochRef.current !== epoch || sessionId !== requestSession) return null;
         setTab("records"); setSelectedCaseId(caseId); setDrillIn(true);
-        if (resources.records.status === "idle" || resources.records.status === "error") loadRecords(filter, requestSession, epoch);
+        if (resources.records.status === "idle" || resources.records.status === "error") loadRecords(appliedFilter, requestSession, epoch);
         return value;
       };
       const readLearning = async (agentValue, learningRunId) => {
@@ -543,7 +546,7 @@ window.__ModuleLoader__.load({
         const snapshots = learningRows(agentValue?.snapshots);
         const candidateRun = runs.find(run => run.outcome === "candidate") ?? null;
         const currentSummary = snapshots.find(snapshot => snapshot.snapshotId === agentValue?.currentSnapshotId) ?? null;
-        const selectedRunId = learningRunId ?? candidateRun?.learningRunId ?? currentSummary?.learningRunId ?? runs[0]?.learningRunId ?? null;
+        const selectedRunId = learningRunId ?? candidateRun?.learningRunId ?? runs[0]?.learningRunId ?? currentSummary?.learningRunId ?? null;
         if (valid("learning", token, epoch, requestSession)) setLearningError(null);
         if (!selectedRunId && !currentSummary) { if (valid("learning", token, epoch, requestSession)) setLearningDetail(null); return; }
         if (valid("learning", token, epoch, requestSession)) setLearningLoading(true);
@@ -639,7 +642,13 @@ window.__ModuleLoader__.load({
           setActionError(null);
           return result;
         } catch (reason) {
-          if (epochRef.current === epoch && sessionId === requestSession) setActionError(asError(reason, "DECISION_ACTION_FAILED"));
+          if (epochRef.current === epoch && sessionId === requestSession) {
+            setActionError(asError(reason, "DECISION_ACTION_FAILED"));
+            if (["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(method)) {
+              const selected = resources.agent.value;
+              if (selected) await selectAgent(selected.agentId);
+            }
+          }
           return undefined;
         } finally { if (epochRef.current === epoch && sessionId === requestSession) { pendingRef.current = false; setPending(null); } }
       };
@@ -677,13 +686,13 @@ window.__ModuleLoader__.load({
         return run("profileUpsert", payload);
       };
       const filterField = (key, value) => setFilter(current => ({ ...current, [key]: value || undefined }));
-      const applyFilters = () => { setSelectedCaseId(null); setDrillIn(false); loadRecords(filter); };
+      const applyFilters = () => { setSelectedCaseId(null); setDrillIn(false); setAppliedFilter(filter); loadRecords(filter); };
       const navigate = (next, force = false) => {
         if (!force && tab === "agents" && next !== "agents" && editorDirty()) { setConfirm({ kind: "discard-editor", after: () => navigate(next, true) }); return; }
         setTab(next);
         if (next === "records") {
           setDrillIn(false);
-          if (resources.records.status === "idle" || resources.records.status === "error") loadRecords(filter);
+          if (resources.records.status === "idle" || resources.records.status === "error") loadRecords();
         } else if (next === "agents" && (resources.agents.status === "idle" || resources.agents.status === "error")) loadAgents();
         else if (next === "inbox" && (resources.inbox.status === "idle" || resources.inbox.status === "error")) loadInbox();
         else if (next === "metrics" && resources.metrics.status !== "loading" && resources.metrics.status !== "ready") loadMetrics();
@@ -696,7 +705,7 @@ window.__ModuleLoader__.load({
         pendingRef.current = false;
         learningIntentRef.current = null;
         setPending(null); setActionError(null); setResources(emptyResources());
-        setSelectedCaseId(null); setDrillIn(false); setFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
+        setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
         if (sessionId) {
@@ -737,16 +746,16 @@ window.__ModuleLoader__.load({
             draft: model.readDraft(drafts, sessionId, selectedCaseId), updateDraft: (field, value) => updateDraft(selectedCaseId, field, value),
           })
         : jsx.jsx(ui.EmptyState, { children: t("decisionSelectRecord") });
-      const listBody = resources.records.status === "error" ? retryState(resources.records, () => loadRecords(filter))
+      const listBody = resources.records.status === "error" ? retryState(resources.records, () => loadRecords())
         : resources.records.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.records.value.length ? resources.records.value.map(record => {
-          const summary = model.recordSummary(record, resources.agents.value);
+          const summary = model.recordSummary(record, resources.agents.value, t);
           return jsx.jsxs(ui.Button, { className: "weir-da-record-row", "data-case-id": record.caseId, "aria-pressed": selectedCaseId === record.caseId, onClick: () => readRecord(record.caseId, { select: true }), children: [
             jsx.jsx("strong", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("span", { children: `${summary?.agentName ?? t("decisionSelector")} · ${t(summary?.statusKey ?? "decisionStatusUnknown")}` }, "meta"),
             summary?.time ? jsx.jsx("time", { children: readableTime(summary.time) }, "time") : null,
           ] }, record.caseId);
-        }) : jsx.jsx(ui.EmptyState, { children: t(model.recordEmptyState({ sessionId, filtered: Object.values(filter).some(Boolean) })) });
+        }) : jsx.jsx(ui.EmptyState, { children: t(model.recordEmptyState({ sessionId, filtered: Object.values(appliedFilter).some(Boolean) })) });
       const recordsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-records-view", children: [
         RecordFilters({ filter, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters }),
         jsx.jsxs("div", { className: "weir-da-records-layout", "data-drill-in": drillIn, children: [

@@ -85,17 +85,24 @@ window.__ModuleLoader__.load({
       }).filter(Boolean).join("; ");
     }
 
+    function translator(locale) {
+      if (typeof locale === "function") return locale;
+      const normalized = typeof locale === "string" ? locale.toLowerCase() : "en";
+      const dictionary = normalized === "zh" || normalized.startsWith("zh-") ? dictionaries.zh : dictionaries.en;
+      return key => dictionary[key] ?? dictionaries.en[key] ?? key;
+    }
+
     function recordSummary(current, agents = [], locale = "en") {
       if (!current || typeof current !== "object" || typeof current.caseId !== "string") return null;
       const agent = array(agents).find(item => item?.agentId === current.agentId);
-      const dictionary = locale === "zh" ? dictionaries.zh : dictionaries.en;
+      const t = translator(locale);
       const status = statusProjection(current);
       return {
         caseId: current.caseId,
-        title: questionSummary(current) || dictionary.decisionRecord,
+        title: questionSummary(current) || t("decisionRecord"),
         answerSummary: answerSummary(current.decision),
         agentId: text(current.agentId),
-        agentName: text(agent?.name, dictionary.decisionSelector),
+        agentName: text(agent?.name, t("decisionSelector")),
         variant: status.variant,
         statusKey: status.statusKey,
         reasonKey: reasonKey(current.awaitingReason ?? current.decision?.code),
@@ -104,7 +111,7 @@ window.__ModuleLoader__.load({
       };
     }
 
-    function cardView(detail, agents = []) {
+    function cardView(detail, agents = [], locale = "en") {
       if (!detail || typeof detail !== "object" || !detail.case || typeof detail.case.caseId !== "string") return null;
       const current = detail.case;
       const agent = array(agents).find(item => item.agentId === current.agentId);
@@ -121,7 +128,7 @@ window.__ModuleLoader__.load({
       return {
         caseId: current.caseId,
         agentId: text(current.agentId),
-        agentName: text(agent?.name, "Decision assistant"),
+        agentName: text(agent?.name, translator(locale)("decisionSelector")),
         state: current.state,
         closing: current.closing,
         outcome: current.closing ?? current.state,

@@ -30,6 +30,11 @@ function makeReact(document) {
       if (!hooks[index]) hooks[index] = { current: initial }
       return hooks[index]
     },
+    useId() {
+      const index = cursor++
+      if (!hooks[index]) hooks[index] = { value: `selector-test-${index}` }
+      return hooks[index].value
+    },
     useEffect(fn, deps) {
       const index = cursor++
       const previous = hooks[index]
@@ -160,7 +165,7 @@ test('selector opens a non-modal radio panel with only Off and enabled assistant
 
 test('initial read failure is not Off and an explicit retry loads the real selection', async t => {
   let fail = true
-  const h = await load(t, enabledOverview, { overview: () => { if (fail) throw new Error('read offline'); return enabledOverview } })
+  const h = await load(t, enabledOverview, { overview: () => { if (fail) throw Object.assign(new Error('read offline'), { code: 'NETWORK' }); return enabledOverview } })
   let tree = h.render()
   assert.equal(textOf(triggerOf(tree)).includes('decisionOff'), false)
   await h.flush()
@@ -168,7 +173,11 @@ test('initial read failure is not Off and an explicit retry loads the real selec
   triggerOf(tree).onClick()
   tree = h.render()
   assert.equal(textOf(panelOf(tree)).includes('decisionFailed'), true)
-  assert.equal(textOf(panelOf(tree)).includes('read offline'), true)
+  assert.equal(textOf(panelOf(tree)).includes('read offline'), false)
+  const readDiagnostics = findAll(panelOf(tree), node => node.type === h.props.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.ok(readDiagnostics)
+  assert.equal(textOf(readDiagnostics.children()).includes('read offline'), true)
+  assert.equal(textOf(readDiagnostics.children()).includes('NETWORK'), true)
   assert.equal(findAll(panelOf(tree), node => node.inputType === 'radio').length, 0)
   fail = false
   buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
@@ -210,7 +219,7 @@ test('selection saves exactly once and closes without confirmation', async t => 
 test('failed save preserves the prior selection and retries the requested target', async t => {
   let fail = true
   const selected = { ...enabledOverview, selector: { mode: 'agent', agentId: 'a' } }
-  const h = await load(t, selected, { setSelector: () => { if (fail) throw new Error('remote offline'); return { mode: 'off' } } })
+  const h = await load(t, selected, { setSelector: () => { if (fail) throw Object.assign(new Error('remote offline'), { code: 'NETWORK' }); return { mode: 'off' } } })
   h.render()
   await h.flush()
   let tree = h.render()
@@ -223,7 +232,11 @@ test('failed save preserves the prior selection and retries the requested target
   assert.equal(radioOf(tree, 'a').checked, true)
   assert.equal(radioOf(tree, 'off').checked, false)
   assert.equal(textOf(panelOf(tree)).includes('decisionFailed'), true)
-  assert.equal(textOf(panelOf(tree)).includes('remote offline'), true)
+  assert.equal(textOf(panelOf(tree)).includes('remote offline'), false)
+  const saveDiagnostics = findAll(panelOf(tree), node => node.type === h.props.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.ok(saveDiagnostics)
+  assert.equal(textOf(saveDiagnostics.children()).includes('remote offline'), true)
+  assert.equal(textOf(saveDiagnostics.children()).includes('NETWORK'), true)
   fail = false
   const retry = findAll(panelOf(tree), node => (node.type === 'button' || node.type === h.props.ui.Button) && node.children === 'decisionRetry')[0]
   retry.onClick()
