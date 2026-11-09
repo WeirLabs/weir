@@ -51,10 +51,10 @@ function decideConsolidation(options, obs) {
   const successor = Boolean(projection.parentSnapshot)
   const text = rejecting
     ? 'Rejected GUI candidate: this principle must never become current.'
-    : correction
-      ? 'Reviewed GUI correction principle: prefer the corrected cross-root answer.'
-      : successor
-        ? 'Reviewed GUI successor principle: prefer the second source-backed answer.'
+    : successor
+      ? 'Reviewed GUI successor principle: prefer the second source-backed answer.'
+      : correction
+        ? 'Reviewed GUI correction principle: prefer the corrected cross-root answer.'
         : 'Reviewed GUI principle: prefer the source-backed answer.'
   return textChunks(JSON.stringify({ operations: [{
     op: 'add', principleId: 'temporary-gui-learning', text,
