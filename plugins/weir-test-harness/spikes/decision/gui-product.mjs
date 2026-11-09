@@ -723,6 +723,12 @@ try {
   const correctedDetail = await record(sessionId, 'corrected-answer', correctedAnswer.caseId)
   check('correctionAffectsOnlyFutureAnswer', correctedAnswer.decision?.answers?.[0]?.selected?.[0] === 'Use Long' && correctedDetail.attempts.at(-1).evidence.some(ref => ref.source === 'user_correction'))
 
+  // A pending native question hides the composer, so finish keyboard-only selector
+  // coverage at 360px before creating the long native Case.
+  await instance.cdp.setViewport(360)
+  await keyboardSelector(sessionId, secondary.agentId)
+  await keyboardSelector(sessionId, primary.agentId)
+
   const longCase = await askLongNative(sessionId)
   await openPage('inbox')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('article[data-case-id=${JSON.stringify(longCase.caseId)}]'))`), 30_000)
@@ -743,9 +749,6 @@ try {
     await layoutAudit(`zoom200-${width}`, 'light', 2)
   }
   await instance.cdp.setPageZoom(1)
-  await instance.cdp.setViewport(360)
-  await keyboardSelector(sessionId, secondary.agentId)
-  await keyboardSelector(sessionId, primary.agentId)
   await instance.cdp.setViewport(1440)
   await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')
   accessibility.longRecord = await instance.cdp.accessibility(`article[data-case-id="${longCase.caseId}"]`).catch(() => null)
