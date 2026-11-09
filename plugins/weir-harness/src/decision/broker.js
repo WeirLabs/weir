@@ -102,9 +102,9 @@ export class DecisionBroker {
   async open(path) {
     const store = openDecisionDatabase(path)
     this.store = store
-    this.cases = new DecisionCases(store, { now: this.now, audit: this.audit })
-    this.attempts = new DecisionAttempts(store, { now: this.now })
     this.profiles = new DecisionProfiles(store, { now: this.now })
+    this.cases = new DecisionCases(store, { now: this.now, audit: this.audit, profiles: this.profiles })
+    this.attempts = new DecisionAttempts(store, { now: this.now })
     this.evidence = new DecisionEvidence(store, { now: this.now })
     this.feedbackStore = new DecisionFeedback(store, { now: this.now, audit: this.audit })
     this.query = new DecisionQuery(store, { now: this.now })
@@ -410,15 +410,14 @@ export class DecisionBroker {
 
   async commitAutoRoute({ current, request, scope, route, awaitingReason }) {
     const selected = route.kind === 'selected'
-    await this.cases.recordRoute({
-      caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto',
-      candidates: route.candidates, ...(selected ? { chosen: route.chosen } : {}),
-      reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
-    })
-    return this.cases.transition({
+    return this.cases.transitionWithRoute({
       caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
       state: selected ? 'evaluating' : 'awaiting_user', request, scope,
       ...(selected ? { agentId: route.chosen } : { awaitingReason }),
+    }, {
+      caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto',
+      candidates: route.candidates, ...(selected ? { chosen: route.chosen } : {}),
+      reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
     })
   }
 

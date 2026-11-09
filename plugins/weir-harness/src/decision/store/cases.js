@@ -3,6 +3,8 @@ import { createHash, randomUUID } from 'node:crypto'
 import { assertSupportedSchemaVersion, CASE_CLOSINGS, CASE_STATES, ROUTE_MODES, DecisionContractError } from '../contracts.js'
 import { insertEvidence } from './evidence.js'
 import { DecisionStoreError } from './db.js'
+import { DecisionProfiles } from './profiles.js'
+import { scopeCovers } from '../scope.js'
 
 export class IllegalTransition extends DecisionStoreError {
   /** @param {string} detail */ constructor(detail) { super('ILLEGAL_TRANSITION', detail) }
@@ -25,11 +27,12 @@ const ALLOWED = {
 }
 
 export class DecisionCases {
-  /** @param {import('./db.js').DecisionDatabase} store @param {{now?:()=>number,audit?:(kind:string,value:object)=>void}} [options] */
+  /** @param {import('./db.js').DecisionDatabase} store @param {{now?:()=>number,audit?:(kind:string,value:object)=>void,profiles?:DecisionProfiles}} [options] */
   constructor(store, options = {}) {
     this.store = store
     this.now = options.now ?? Date.now
     this.audit = options.audit ?? (() => {})
+    this.profiles = options.profiles ?? new DecisionProfiles(store, { now: this.now })
   }
 
   /** @param {Record<string, any>} input */
@@ -124,6 +127,64 @@ export class DecisionCases {
     return this.getCase(change.caseId)
   }
 
+  /** Commit one route fact and its guarded Case transition in the same write. */
+  async transitionWithRoute(change, route) {
+    if (!ROUTE_MODES.includes(route.mode)) throw new DecisionContractError('INVALID_ROUTE_MODE', route.mode)
+    const now = this.now()
+    const routeId = `rd_${randomUUID()}`
+    await this.store.write(db => {
+      const row = db.prepare('SELECT * FROM cases WHERE case_id=?').get(change.caseId)
+      if (!row) throw new DecisionContractError('CASE_NOT_FOUND', change.caseId)
+      const current = caseOf(row)
+      if (current.revision !== change.expectedRevision) throw new RevisionConflict(change.caseId)
+      if ((route.caseId ?? current.caseId) !== current.caseId || route.rootSessionId !== current.rootSessionId) {
+        throw new DecisionContractError('ROUTE_CASE_MISMATCH', change.caseId)
+      }
+
+      let next = change
+      let fact = route
+      if (route.mode === 'auto' && change.state === 'evaluating') {
+        let profile
+        if (typeof route.chosen === 'string') {
+          try { profile = this.profiles.getProfile(route.chosen) } catch (error) {
+            if (error?.code !== 'PROFILE_NOT_FOUND') throw error
+          }
+        }
+        if (!autoTargetEligible(profile, current, change, route.chosen)) {
+          next = { ...change, state: 'awaiting_user', awaitingReason: 'no_route', agentId: null }
+          fact = { ...route, chosen: undefined, reason: 'none:no_candidates' }
+        }
+      }
+      if (next.state !== 'evaluating') fact = { ...fact, chosen: undefined }
+      if (!CASE_STATES.includes(next.state)) throw new DecisionContractError('INVALID_CASE_STATE', next.state)
+      if (next.state === 'closed') {
+        if (!next.closing || !CASE_CLOSINGS.includes(next.closing)) throw new DecisionContractError('INVALID_CASE_CLOSING', String(next.closing))
+        if (!ALLOWED[current.state]?.closed?.includes(next.closing)) return this.rejectTransition(current, `closed(${next.closing})`)
+      } else if (!ALLOWED[current.state]?.[next.state]) {
+        return this.rejectTransition(current, next.state)
+      }
+
+      insertRoute(db, fact, now, routeId)
+      if (next.state === 'closed' && next.closing === 'escalated' && next.decision?.kind === 'user_decision') {
+        insertEvidence(db, { agentId: next.agentId ?? current.agentId, source: 'user_decision', locator: { kind: 'case', caseId: current.caseId }, scope: current.scope }, now)
+      }
+      const result = db.prepare(`UPDATE cases SET state=?,closing=?,awaiting_reason=?,decision_json=?,escalation_json=?,agent_id=?,request_json=?,scope_json=?,max_attempts=?,closed_at=?,revision=revision+1,updated_at=?
+        WHERE case_id=? AND state=? AND revision=?`).run(
+        next.state, next.closing ?? null, next.awaitingReason ?? null,
+        next.decision === undefined ? current.decision ? JSON.stringify(current.decision) : null : JSON.stringify(next.decision),
+        next.escalation === undefined ? current.escalation ? JSON.stringify(current.escalation) : null : JSON.stringify(next.escalation),
+        Object.hasOwn(next, 'agentId') ? next.agentId : current.agentId,
+        next.request === undefined ? JSON.stringify(current.request) : JSON.stringify(next.request),
+        next.scope === undefined ? JSON.stringify(current.scope) : JSON.stringify(next.scope),
+        next.maxAttempts ?? current.maxAttempts,
+        next.state === 'closed' ? now : null, now,
+        next.caseId, next.expectedState, next.expectedRevision,
+      )
+      if (result.changes !== 1) throw new RevisionConflict(change.caseId)
+    })
+    return this.getCase(change.caseId)
+  }
+
   rejectTransition(current, target) {
     const error = new IllegalTransition(`${current.state} -> ${target}`)
     this.audit('illegal-transition', { caseId: current.caseId, from: current.state, target })
@@ -135,15 +196,31 @@ export class DecisionCases {
     if (!ROUTE_MODES.includes(input.mode)) throw new DecisionContractError('INVALID_ROUTE_MODE', input.mode)
     const now = this.now()
     const id = `rd_${randomUUID()}`
-    await this.store.write(db => {
-      db.prepare(`INSERT INTO route_decisions(route_decision_id,case_id,root_session_id,mode,candidates_json,chosen,reason,ambiguity_json,created_at,updated_at,revision,schema_version)
-        VALUES(?,?,?,?,?,?,?,?,?,?,1,1)`).run(
-        id, input.caseId ?? null, input.rootSessionId, input.mode, JSON.stringify(input.candidates ?? []),
-        input.chosen ?? null, input.reason, input.ambiguity ? JSON.stringify(input.ambiguity) : null, now, now,
-      )
-    })
+    await this.store.write(db => { insertRoute(db, input, now, id) })
     return id
   }
+}
+
+/** @param {import('node:sqlite').DatabaseSync} db @param {any} input @param {number} now @param {string} id */
+function insertRoute(db, input, now, id) {
+  db.prepare(`INSERT INTO route_decisions(route_decision_id,case_id,root_session_id,mode,candidates_json,chosen,reason,ambiguity_json,created_at,updated_at,revision,schema_version)
+    VALUES(?,?,?,?,?,?,?,?,?,?,1,1)`).run(
+    id, input.caseId ?? null, input.rootSessionId, input.mode, JSON.stringify(input.candidates ?? []),
+    input.chosen ?? null, input.reason, input.ambiguity ? JSON.stringify(input.ambiguity) : null, now, now,
+  )
+}
+
+/** Re-read Auto selection authority against the final normalized request. */
+function autoTargetEligible(profile, current, change, chosen) {
+  if (!profile || change.agentId !== chosen || profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) return false
+  const request = change.request ?? current.request
+  const scope = change.scope ?? current.scope
+  const questions = Array.isArray(request?.questions) ? request.questions : []
+  const classes = questions.map(question => question?.authorizationClass)
+  return questions.length > 0
+    && classes.every(value => ['A', 'B', 'C'].includes(value))
+    && scopeCovers(profile.scope, scope, current.workspaceKey)
+    && classes.every(value => profile.scope?.authorizationClasses?.includes(value))
 }
 
 /** @param {any} row */

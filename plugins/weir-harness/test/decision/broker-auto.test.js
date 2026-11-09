@@ -247,3 +247,52 @@ test('multiple eligible candidates come only from the current workspace and sele
   assert.equal(f.broker.attempts.forCase(result.caseId)[0].agentId, b.agentId)
   assert.equal(callsOf(f, 'router-classification-contract/1').length, 0)
 })
+
+test('Auto route commit failure never enters domain evaluation', async t => {
+  const f = await fixture(t)
+  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
+  f.classifyWith({ contract: 'router-classification-contract/1', classes: [{ id: 'commit-failure', authorizationClass: 'A' }] })
+  f.broker.cases.transitionWithRoute = async () => { throw new Error('route commit failed') }
+  let evaluations = 0
+  f.broker.evaluateCase = () => { evaluations++; throw new Error('domain evaluation must not run') }
+  const request = hookRequest('commit-failure')
+  await assert.rejects(f.broker.hook({ agent: f.agent, request }), /route commit failed/)
+  const current = f.broker.cases.byIdempotencyKey(f.broker.store.db.prepare('SELECT idempotency_key FROM cases').get().idempotency_key)
+  assert.equal(current.state, 'received')
+  assert.equal(current.agentId, null)
+  assert.equal(evaluations, 0)
+  assert.equal(attemptCount(f), 0)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions').get().n, 0)
+})
+
+test('Auto revalidates a model-selected target after model return and before any Attempt', async t => {
+  const f = await fixture(t)
+  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'A' })
+  const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'B' })
+  f.routeWith({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'Selected before disable' })
+  const stream = f.broker.ctx.llm.stream
+  f.broker.ctx.llm.stream = options => {
+    if (!options.system.includes('router-contract/1')) return stream(options)
+    return (async function * () {
+      await f.broker.profileSetState(selected.agentId, 'disabled')
+      yield * stream(options)
+    })()
+  }
+  let evaluations = 0
+  f.broker.evaluateCase = () => { evaluations++; throw new Error('stale target must not evaluate') }
+  const request = hookRequest('stale-selected-target')
+  request.questions[0].authorizationClass = 'A'
+  const snapshot = structuredClone(request)
+  const verdict = await f.broker.hook({ agent: f.agent, request })
+  const current = f.broker.cases.getCase(verdict.caseId)
+  const route = routeFor(f, verdict.caseId)
+  assert.equal(verdict.why, 'awaiting_user')
+  assert.equal(current.state, 'awaiting_user')
+  assert.equal(current.awaitingReason, 'no_route')
+  assert.equal(current.agentId, null)
+  assert.equal(route.chosen, null)
+  assert.equal(route.reason, 'none:no_candidates')
+  assert.equal(evaluations, 0)
+  assert.equal(attemptCount(f), 0)
+  assert.deepEqual(request, snapshot)
+})
