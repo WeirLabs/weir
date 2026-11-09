@@ -640,7 +640,13 @@ window.__ModuleLoader__.load({
           setActionError(null);
           return result;
         } catch (reason) {
-          if (epochRef.current === epoch && sessionId === requestSession) setActionError(asError(reason, "DECISION_ACTION_FAILED"));
+          if (epochRef.current === epoch && sessionId === requestSession) {
+            setActionError(asError(reason, "DECISION_ACTION_FAILED"));
+            if (["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(method)) {
+              const selected = resources.agent.value;
+              if (selected) await selectAgent(selected.agentId);
+            }
+          }
           return undefined;
         } finally { if (epochRef.current === epoch && sessionId === requestSession) { pendingRef.current = false; setPending(null); } }
       };
