@@ -2,7 +2,7 @@
 export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
 export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
-  'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'caseForCall', 'caseForToolCall',
+  'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
   'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'profileUpsert', 'profileSetState',
   'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
 ])
@@ -12,7 +12,7 @@ const LEARNING_MUTATIONS = new Set(['learningStart', 'snapshotPublish', 'snapsho
 /** @param {{broker:()=>any,ensureRegistered?:()=>boolean}} dependencies */
 export function createDecisionRemoteService(dependencies) {
   const ensure = dependencies.ensureRegistered ?? (() => true)
-  async function invoke(method, args) {
+  async function invoke(method, args, signal) {
     try {
       if (!ensure()) return { ok: false, error: { code: 'CHANNEL_UNAVAILABLE', message: 'Decision remote is not registered' } }
       const broker = dependencies.broker()
@@ -24,13 +24,14 @@ export function createDecisionRemoteService(dependencies) {
       else if (method === 'profileSetState') value = await broker.profileSetState(args.agentId, args.state, context.workspaceKey)
       else if (method === 'profileUpsert') value = await broker.profileUpsert({ ...args, workspaceKey: context.workspaceKey })
       else if (CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
+      else if (method === 'waitForToolCall') value = await broker[method](args, signal)
       else value = await broker[method](args)
       return { ok: true, value: value === undefined ? null : value }
     } catch (error) {
       return { ok: false, error: { code: typeof error?.code === 'string' ? error.code : 'DECISION_REMOTE_FAILED', message: String(error?.message ?? 'Decision remote failed').slice(0, 200) } }
     }
   }
-  return Object.fromEntries(DECISION_REMOTE_METHODS.map(method => [method, args => invoke(method, args ?? {})]))
+  return Object.fromEntries(DECISION_REMOTE_METHODS.map(method => [method, (args, signal) => invoke(method, args ?? {}, signal)]))
 }
 
 /** Hand-written src-json contribution with no scope or agent-lookup parameter. */
@@ -45,6 +46,7 @@ export function decisionRemoteContribution() {
       method,
       invocation: { kind: 'direct' },
       parameters: [{ name: 'args', wire: 'args', source: 'json', codec: { mode: 'src-json' } }],
+      ...(method === 'waitForToolCall' ? { cancellation: { parameter: 'signal' } } : {}),
       result: { mode: 'src-json' },
     })),
   }

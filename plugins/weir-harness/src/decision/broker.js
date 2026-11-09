@@ -39,6 +39,7 @@ export class DecisionBroker {
     this.learningControllers = new Map()
     this.learningJobs = new Set()
     this.learningJobKeys = new Map()
+    this.consultWaiters = new Set()
   }
 
   /** @returns {{available:boolean,enabled:boolean,reason?:string}} */
@@ -68,6 +69,7 @@ export class DecisionBroker {
   }
 
   async flush() {
+    for (const waiter of [...this.consultWaiters]) waiter.abort(new Error('Decision Broker flushed'))
     for (const controller of this.attemptControllers.values()) controller.abort(new Error('Decision Broker flushed'))
     for (const controller of this.learningControllers.values()) controller.abort(new Error('Decision Broker flushed'))
     await Promise.allSettled([...this.evaluationJobs, ...this.learningJobs])
@@ -238,6 +240,7 @@ export class DecisionBroker {
   }
 
   consultResult(current, verdict = undefined) {
+    this.publishConsult(current)
     const attempts = this.attempts.forCase(current.caseId)
     const latest = attempts.at(-1)
     if (current.state === 'closed' && current.closing === 'answered') {
@@ -634,11 +637,54 @@ export class DecisionBroker {
     return found ? this.query.record({ caseId: found.case_id, sessionId: context.rootSessionId }) : null
   }
 
+  consultCaseForToolCall(rootSessionId, toolCallId) {
+    const row = this.store.db.prepare("SELECT case_id FROM cases WHERE root_session_id=? AND entry='consult' AND json_extract(request_json,'$.toolCallId')=? ORDER BY created_at DESC,case_id DESC LIMIT 1").get(rootSessionId, toolCallId)
+    return row ? this.cases.getCase(row.case_id) : null
+  }
+
   async caseForToolCall(input) {
     if (!this.store) return null
     const context = await this.sessionContext(input.sessionId)
-    const row = this.store.db.prepare("SELECT case_id FROM cases WHERE root_session_id=? AND entry='consult' AND json_extract(request_json,'$.toolCallId')=? ORDER BY created_at DESC,case_id DESC LIMIT 1").get(context.rootSessionId, input.toolCallId)
-    return row ? this.query.record({ caseId: row.case_id, sessionId: context.rootSessionId }) : null
+    const current = this.consultCaseForToolCall(context.rootSessionId, input.toolCallId)
+    return current ? this.query.record({ caseId: current.caseId, sessionId: context.rootSessionId }) : null
+  }
+
+  async waitForToolCall(input, signal) {
+    if (!this.store) return null
+    const context = await this.sessionContext(input.sessionId)
+    const existing = this.consultCaseForToolCall(context.rootSessionId, input.toolCallId)
+    if (existing && existing.state !== 'received' && existing.state !== 'evaluating') {
+      return { caseId: existing.caseId, revision: existing.revision, state: existing.state }
+    }
+    // After sessionContext there is deliberately no await before registration:
+    // an outcome cannot slip between this authoritative check and the waiter.
+    return new Promise((resolve, reject) => {
+      const waiter = { rootSessionId: context.rootSessionId, toolCallId: input.toolCallId, notify: null, abort: null }
+      const onAbort = () => waiter.abort(signal.reason)
+      const cleanup = () => {
+        this.consultWaiters.delete(waiter)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      waiter.notify = current => {
+        cleanup()
+        resolve({ caseId: current.caseId, revision: current.revision, state: current.state })
+      }
+      waiter.abort = reason => {
+        cleanup()
+        reject(reason instanceof Error ? reason : new Error(String(reason ?? 'Decision wait aborted')))
+      }
+      this.consultWaiters.add(waiter)
+      signal?.addEventListener('abort', onAbort, { once: true })
+      if (signal?.aborted) waiter.abort(signal.reason)
+    })
+  }
+
+  publishConsult(current) {
+    const toolCallId = current.request?.toolCallId
+    if (!toolCallId || current.state === 'received' || current.state === 'evaluating') return
+    for (const waiter of [...this.consultWaiters]) {
+      if (waiter.rootSessionId === current.rootSessionId && waiter.toolCallId === toolCallId) waiter.notify(current)
+    }
   }
 
   async learningStart(input) {

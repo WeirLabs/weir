@@ -104,3 +104,23 @@ test('Broker plugin maps settings, provides one service and flushes on dispose',
   await dispose()
   assert.equal(broker.store, undefined)
 })
+
+test('waitForToolCall keeps bare JSON args and forwards RPC cancellation to the Broker', async () => {
+  const invocation = decisionRemoteContribution().invocations.find(row => row.method === 'waitForToolCall')
+  assert.ok(invocation)
+  assert.equal(invocation.mode, undefined)
+  assert.deepEqual(invocation.parameters, [{ name: 'args', wire: 'args', source: 'json', codec: { mode: 'src-json' } }])
+  assert.deepEqual(invocation.cancellation, { parameter: 'signal' })
+
+  const controller = new AbortController()
+  const calls = []
+  const broker = {
+    status: () => ({ available: true }),
+    waitForToolCall: async (args, signal) => { calls.push([args, signal]); return { caseId: 'dc-wait', revision: 4, state: 'awaiting_user' } },
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  const result = await service.waitForToolCall({ sessionId: 'child', toolCallId: 'call' }, controller.signal)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.value, { caseId: 'dc-wait', revision: 4, state: 'awaiting_user' })
+  assert.deepEqual(calls, [[{ sessionId: 'child', toolCallId: 'call' }, controller.signal]])
+})
