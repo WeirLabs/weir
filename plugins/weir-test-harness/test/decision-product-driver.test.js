@@ -360,7 +360,7 @@ test('keyboard selector audits precede native pending and retain long-case visua
 // a subsequent Space confirmation has no target and is not part of the product contract.
 test('keyboard selector treats directional native selection as the complete activation path', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const body = driver.match(/async function keyboardSelector\(sessionId, agentId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const body = driver.match(/async function keyboardSelector\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(body, 'keyboardSelector exists')
   assert.ok(!/\.focus\(|\.click\(/.test(body), 'the keyboard audit never substitutes programmatic focus or click')
   assert.match(body, /document\.activeElement\?\.checked/, 'Tab stops at the native radio group current item')
@@ -368,11 +368,12 @@ test('keyboard selector treats directional native selection as the complete acti
   assert.match(body, /const expectedValue = navigation\.values\[expectedIndex\]/, 'each arrow predicts the native selection it must produce')
   assert.match(body, /await instance\.cdp\.key\(direction\)/)
   assert.ok(!body.includes("await instance.cdp.key('Space')"), 'native arrow selection requires no second Space confirmation')
-  assert.match(body, /await expectMutation\('setSelector', expectedValue === 'off'/, 'every native selection has exactly one matching raw mutation')
+  assert.match(body, /await expectMutation\('setSelector', selectorEnvelope\(sessionId, expectedMode, expectedAgentId\)\)/, 'every native selection has exactly one matching raw mutation')
   assert.match(body, /selected\.selector/, 'the authoritative selector is reread after every native selection')
   assert.match(body, /!document\.querySelector\('#weir-da-selector-panel'\).*document\.activeElement===document\.querySelector/, 'panel closure and trigger focus are observed together')
-  assert.ok(body.includes("check('keyboardReachesAgentRadio'"), 'the existing target keyboard assertion remains')
-  assert.ok(body.includes("check('keyboardSelectionAndFocusReturn'"), 'the existing authority and focus-return assertion remains')
+  assert.ok(body.includes("mode === 'agent' ? 'keyboardReachesAgentRadio'"), 'the existing Agent keyboard assertion remains')
+  assert.ok(body.includes("mode === 'auto' ? 'keyboardReachesAutoRadio'"), 'Auto has the same native keyboard assertion')
+  assert.ok(body.includes("mode === 'agent' ? 'keyboardSelectionAndFocusReturn'"), 'the existing authority and focus-return assertion remains')
   const enter = body.indexOf("await instance.cdp.key('Enter')")
   const escape = body.indexOf("await instance.cdp.key('Escape')")
   const tab = body.lastIndexOf("await instance.cdp.key('Tab')")
@@ -503,8 +504,10 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   assert.ok(enabled.includes('restartedAgent.currentSnapshotId === candidateV1.snapshot.snapshotId'), 'the original current-snapshot assertion remains')
   assert.ok(enabled.includes('JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail)'), 'the original whole-record persistence assertion remains')
 
-  assert.deepEqual([...driver.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true'], 'the successful path owns enabled, disabled, then fresh enabled instances')
-  assert.deepEqual([...driver.matchAll(/await stopOwned\('process-(\d)'\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
+  const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(matrix, 'the original matrix is separate from preflight-only startup')
+  assert.deepEqual([...matrix.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true'], 'the successful path owns enabled, disabled, then fresh enabled instances')
+  assert.deepEqual([...matrix.matchAll(/await stopOwned\('process-(\d)'\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
   assert.match(driver, /check\(`\$\{label\}ExactOwnedCleanup`, receipt\.pass/, 'each owned cleanup retains its named acceptance check')
   for (const log of ['desktop-enabled.log', 'desktop-disabled.log']) assert.ok(driver.includes(`'${log}'`), `${log} is included in the import scan`)
   assert.match(driver, /const importFailures = desktopLogs\.flatMap\(/, 'runtime import failures are scanned across both log modes')
@@ -527,4 +530,112 @@ test('product driver persists and validates all six AX evidence groups', () => {
   const captured = driver.indexOf("await captureAccessibility('longRecord'", answered)
   const finished = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)', captured)
   assert.ok(answered >= 0 && opened > answered && captured > opened && finished > captured, 'longRecord AX reads the still-rendered authoritative record after inbox closure')
+})
+
+test('P4 Desktop settings default closed and forward only explicit isolated overrides', t => {
+  const keys = ['WEIR_DECISION_GUI_SELECTOR_DEFAULT', 'WEIR_DECISION_GUI_SHADOW', 'WEIR_DECISION_GUI_AUTO_CLASSES']
+  const original = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+  t.after(() => { for (const key of keys) { if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key] } })
+  const paths = { home: '/isolated/root/home', profile: '/isolated/root/home/profiles/desktop', electronData: '/isolated/root/electron-data' }
+  for (const key of keys) delete process.env[key]
+  const conservative = appEnvironment(paths, '/isolated/root/out', true)
+  assert.equal(conservative.WEIR_DECISION_GUI_SELECTOR_DEFAULT, 'off')
+  assert.equal(conservative.WEIR_DECISION_GUI_SHADOW, '0')
+  assert.equal(conservative.WEIR_DECISION_GUI_AUTO_CLASSES, '[]')
+  process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT = 'auto'
+  process.env.WEIR_DECISION_GUI_SHADOW = '1'
+  process.env.WEIR_DECISION_GUI_AUTO_CLASSES = '["A","C"]'
+  const enabled = appEnvironment(paths, '/isolated/root/out', true)
+  assert.equal(enabled.WEIR_DECISION_GUI_SELECTOR_DEFAULT, 'auto')
+  assert.equal(enabled.WEIR_DECISION_GUI_SHADOW, '1')
+  assert.equal(enabled.WEIR_DECISION_GUI_AUTO_CLASSES, '["A","C"]')
+  const patch = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/cordis.patch.yml'), 'utf8')
+  for (const token of ['decisionAgentSelectorDefault', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswerClasses', 'WEIR_DECISION_GUI_SELECTOR_DEFAULT', 'WEIR_DECISION_GUI_SHADOW', 'WEIR_DECISION_GUI_AUTO_CLASSES']) assert.ok(patch.includes(token), token)
+})
+
+test('selector requests and authoritative rereads distinguish Off Auto and Agent exactly', async () => {
+  const lib = await import('../spikes/decision/gui-product-lib.mjs')
+  assert.equal(typeof lib.selectorEnvelope, 'function')
+  assert.equal(typeof lib.selectorMatches, 'function')
+  assert.deepEqual(lib.selectorEnvelope('root', 'off'), { sessionId: 'root', mode: 'off' })
+  assert.deepEqual(lib.selectorEnvelope('root', 'auto'), { sessionId: 'root', mode: 'auto' })
+  assert.deepEqual(lib.selectorEnvelope('root', 'agent', 'ag_1'), { sessionId: 'root', mode: 'agent', agentId: 'ag_1' })
+  assert.throws(() => lib.selectorEnvelope('root', 'agent'), /agentId/)
+  assert.throws(() => lib.selectorEnvelope('root', 'other'), /mode/)
+  assert.equal(lib.selectorMatches({ mode: 'auto' }, 'auto'), true)
+  assert.equal(lib.selectorMatches({ mode: 'auto', agentId: null }, 'auto'), true)
+  assert.equal(lib.selectorMatches({ mode: 'auto', agentId: 'ag_wrong' }, 'auto'), false)
+  assert.equal(lib.selectorMatches({ mode: 'agent', agentId: 'ag_1' }, 'agent', 'ag_1'), true)
+  assert.equal(lib.selectorMatches({ mode: 'off', agentId: 'ag_stale' }, 'off'), false)
+})
+
+test('immutable audit rejects RouteDecision rewrites and disappearance across SQLite phases', () => {
+  const route = { route_decision_id: 'rd_1', case_id: 'dc_1', root_session_id: 'root', mode: 'auto', chosen: 'ag_1', reason: 'selected', candidates_json: '[]', ambiguity_json: null }
+  const before = { phase: 'before', rows: { route_decisions: [route] } }
+  assert.deepEqual(immutableChanges([before, { phase: 'same', rows: { route_decisions: [route] } }]), [])
+  assert.deepEqual(immutableChanges([before, { phase: 'rewrite', rows: { route_decisions: [{ ...route, chosen: 'ag_2' }] } }]), [{ kind: 'route', id: 'rd_1', phase: 'rewrite' }])
+  assert.deepEqual(immutableChanges([before, { phase: 'missing', rows: { route_decisions: [] } }]), [{ kind: 'route-missing', id: 'rd_1', phase: 'missing' }])
+})
+
+test('P4 driver exposes native Auto selection routing review and classless stock evidence seams', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  const selector = driver.match(/async function selectorChoose\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const keyboard = driver.match(/async function keyboardSelector\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  for (const body of [selector, keyboard]) {
+    assert.ok(body.includes('selectorEnvelope('), 'both native selector paths share exact envelopes')
+    assert.ok(body.includes('selectorMatches('), 'both native selector paths use the authoritative predicate')
+  }
+  assert.ok(!/expectedValue === 'off' \? 'off' : 'agent'/.test(`${selector}\n${keyboard}`), 'Auto is not misclassified as Agent')
+  assert.ok(driver.includes("'routingReview'"), 'authorized read-only RPC includes routingReview')
+  assert.ok(driver.includes("'route_decisions'"), 'SQLite snapshots include immutable RouteDecision rows')
+  for (const selector of ['section[data-routing-review]', 'select[data-routing-window]', '[data-routing-status]', 'article[data-routing-case]', '[data-routing-record]', '[data-routing-load-more]', '.weir-da-route-history']) assert.ok(driver.includes(selector), selector)
+  assert.ok(fixture.includes("'decisionConfig'"), 'fixture reads effective Decision settings')
+  assert.ok(fixture.includes('stock-tool-calls.jsonl'), 'raw pre-Hook stock tool arguments are durable')
+  assert.ok(fixture.includes('event.data'), 'session scans retain raw stock tool-call evidence')
+  assert.ok(!/fixture\('askNative'[\s\S]{0,300}GUI_AUTO_/.test(driver), 'stock Auto proof never uses fixture askNative')
+})
+
+test('startup isolation contract rejects current App P0 roots ports and foreign Decision stores', async () => {
+  const qa = await import('../spikes/decision/gui-qa.mjs')
+  assert.equal(typeof qa.startupIsolationProblems, 'function')
+  const root = '/lane/.weir/decision-product-ux/desktop-fresh'
+  const valid = {
+    root, port: 9468, mainPid: 100, databasePath: `${root}/home/weir/profiles/desktop/decisions/decision.db`,
+    paths: { home: `${root}/home`, profile: `${root}/home/profiles/desktop`, electronData: `${root}/electron-data` },
+    host: { pid: 101, parentPid: 100, profile: { home: `${root}/home`, name: 'desktop' }, env: { HOME: `${root}/home`, DSH_HOME: `${root}/home` } },
+    processArgs: '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness --remote-debugging-port=9468 --remote-debugging-address=127.0.0.1 --user-data-dir=/lane/.weir/decision-product-ux/desktop-fresh/electron-data',
+  }
+  assert.deepEqual(qa.startupIsolationProblems(valid), [])
+  for (const port of [9442, 9451, 52011]) assert.match(qa.startupIsolationProblems({ ...valid, port, processArgs: valid.processArgs.replace('9468', String(port)) }).join('\n'), /forbidden.*port/i)
+  assert.match(qa.startupIsolationProblems({ ...valid, root: '/current/app' }, { currentRoots: ['/current/app'] }).join('\n'), /current App/i)
+  assert.match(qa.startupIsolationProblems({ ...valid, root: '/lane/.weir/decision-qa/desktop-a' }).join('\n'), /P0/i)
+  assert.match(qa.startupIsolationProblems({ ...valid, databasePath: '/current/app/decision.db' }).join('\n'), /Decision DB/i)
+  assert.match(qa.startupIsolationProblems({ ...valid, host: { ...valid.host, parentPid: 999 } }).join('\n'), /owned Host/i)
+})
+
+test('minimal P4 startup smoke keeps provenance runtime gates and exact owned cleanup', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes('WEIR_DECISION_PRODUCT_PREFLIGHT_ONLY'))
+  assert.ok(driver.includes("runStartupPreflight"), 'a separate minimal mode avoids running the 9.2–9.3 matrix')
+  const smoke = driver.match(/async function runStartupPreflight\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  for (const token of ['preflight.json', 'host.json', 'instance.json', 'runtime-scan.json', 'stopOwned(', 'noRuntimeExceptionsConsoleErrorsOrSlotCrashes']) assert.ok(driver.includes(token), token)
+  assert.ok(smoke.includes("stopOwned('preflight')"), 'the smoke has an exact-PID/port cleanup receipt')
+  assert.ok(!smoke.includes('submitMarker('), 'startup proof does not masquerade as the behavioral matrix')
+})
+
+test('record route history compares authoritative count and immutable timestamps', async () => {
+  const lib = await import('../spikes/decision/gui-product-lib.mjs')
+  assert.equal(typeof lib.routeHistoryProblems, 'function')
+  const detail = { case: { caseId: 'dc_1' }, routeDecisions: [
+    { routeDecisionId: 'rd_1', createdAt: '2026-01-01T00:00:00.000Z' },
+    { routeDecisionId: 'rd_2', createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }
+  const dom = { routeHistory: [
+    { text: 'Auto · selected', createdAt: '2026-01-01T00:00:00.000Z' },
+    { text: 'Manual reassign · selected', createdAt: '2026-01-02T00:00:00.000Z' },
+  ] }
+  assert.deepEqual(lib.routeHistoryProblems(detail, dom), [])
+  assert.match(lib.routeHistoryProblems(detail, { ...dom, routeHistory: dom.routeHistory.slice(1) }).join('\n'), /count/)
+  assert.match(lib.routeHistoryProblems(detail, { ...dom, routeHistory: [dom.routeHistory[0], { ...dom.routeHistory[1], createdAt: '2026-01-03T00:00:00.000Z' }] }).join('\n'), /timestamp/)
 })

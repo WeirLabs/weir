@@ -34,6 +34,18 @@ function same(left, right) {
 
 export function exactArgs(left, right) { return same(left, right) }
 
+export function selectorEnvelope(sessionId, mode, agentId = null) {
+  if (!['off', 'auto', 'agent'].includes(mode)) throw new Error(`unsupported selector mode: ${mode}`)
+  if (mode === 'agent' && (typeof agentId !== 'string' || !agentId)) throw new Error('agent selector mode requires agentId')
+  return mode === 'agent' ? { sessionId, mode, agentId } : { sessionId, mode }
+}
+
+export function selectorMatches(selector, mode, agentId = null) {
+  if (mode === 'agent') return selector?.mode === 'agent' && selector?.agentId === agentId
+  if (mode === 'off' || mode === 'auto') return selector?.mode === mode && (selector?.agentId ?? null) === null
+  return false
+}
+
 export function exactMutation(entries, method, args) {
   const matches = entries.filter(entry => entry.method === method && same(entry.args, args))
   if (matches.length !== 1) throw new Error(`Expected exactly one ${method} RPC with exact args; found ${matches.length}`)
@@ -94,15 +106,44 @@ export function correctionPreviewProblems(preview) {
     .map(({ fact }) => `correction preview omits ${fact}`)
 }
 
+export function routeHistoryProblems(detail, dom) {
+  const expected = Array.isArray(detail?.routeDecisions) ? detail.routeDecisions : []
+  const actual = Array.isArray(dom?.routeHistory) ? dom.routeHistory : []
+  const problems = []
+  if (expected.length !== actual.length) problems.push(`route history count ${actual.length} != ${expected.length}`)
+  for (let index = 0; index < Math.min(expected.length, actual.length); index += 1) {
+    if (expected[index]?.createdAt !== actual[index]?.createdAt) problems.push(`route history timestamp ${index} differs`)
+    if (!String(actual[index]?.text ?? '').trim()) problems.push(`route history row ${index} is not readable`)
+  }
+  return problems
+}
+
 export function immutableChanges(phases) {
   const attempts = new Map()
   const snapshotContent = new Map()
+  const routes = new Map()
+  const missingRoutes = new Set()
   const changes = []
   for (const phase of phases) {
     for (const row of phase.rows?.attempts ?? []) {
       const value = JSON.stringify(row)
       if (attempts.has(row.attempt_id) && attempts.get(row.attempt_id) !== value) changes.push({ kind: 'attempt', id: row.attempt_id, phase: phase.phase })
       attempts.set(row.attempt_id, value)
+    }
+    const presentRoutes = new Set()
+    for (const row of phase.rows?.route_decisions ?? []) {
+      const value = JSON.stringify(row)
+      presentRoutes.add(row.route_decision_id)
+      if (routes.has(row.route_decision_id) && routes.get(row.route_decision_id) !== value) changes.push({ kind: 'route', id: row.route_decision_id, phase: phase.phase })
+      routes.set(row.route_decision_id, value)
+    }
+    if (Array.isArray(phase.rows?.route_decisions)) {
+      for (const id of routes.keys()) {
+        if (!presentRoutes.has(id) && !missingRoutes.has(id)) {
+          changes.push({ kind: 'route-missing', id, phase: phase.phase })
+          missingRoutes.add(id)
+        }
+      }
     }
     for (const row of phase.rows?.memory_snapshots ?? []) {
       const value = JSON.stringify({

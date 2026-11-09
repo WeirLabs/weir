@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorEnvelope, selectorMatches } from './gui-product-lib.mjs'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
 const BASE_HEAD = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: LANE, encoding: 'utf8' }).stdout.trim()
@@ -161,7 +161,7 @@ async function collectNetwork(value = instance) {
 }
 
 async function rpc(sessionId, phase, method, args = {}) {
-  if (!['overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'learningRun', 'memorySnapshot', 'caseForCall', 'caseForToolCall'].includes(method)) {
+  if (!['overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'routingReview', 'learningRun', 'memorySnapshot', 'caseForCall', 'caseForToolCall'].includes(method)) {
     throw new Error(`Direct Decision RPC is read-only; refused ${method}`)
   }
   const transport = await instance.cdp.evaluate(`window.__decisionQA.decision(${JSON.stringify(method)}, ${JSON.stringify({ sessionId, ...args })})`)
@@ -309,7 +309,8 @@ async function selectorOpen() {
 }
 
 async function selectorChoose(sessionId, mode, agentId = null) {
-  const value = mode === 'off' ? 'off' : agentId
+  const value = mode === 'agent' ? agentId : mode
+  selectorEnvelope(sessionId, mode, agentId)
   for (let step = 0; step < 8; step += 1) {
     await selectorOpen()
     const target = await waitFor(() => instance.cdp.evaluate(`(() => { const input=document.querySelector('#weir-da-selector-panel input[type="radio"][value=${JSON.stringify(value)}]'); return input&&!input.disabled?{checked:input.checked}:null })()`), 30_000)
@@ -317,6 +318,7 @@ async function selectorChoose(sessionId, mode, agentId = null) {
       await keyboardKey('Close unchanged decision assistant selector', 'Escape', { value })
       await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel")'), 30_000)
       const current = await rpc(sessionId, 'selector-unchanged', 'overview')
+      requireEvidence(selectorMatches(current.selector, mode, agentId), 'unchanged selector still matches authority')
       return current.selector
     }
     await keyboardFocus('Current decision assistant radio', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
@@ -324,11 +326,12 @@ async function selectorChoose(sessionId, mode, agentId = null) {
     requireEvidence(navigation.activeIndex >= 0 && navigation.targetIndex >= 0 && navigation.activeIndex !== navigation.targetIndex, 'selector radio keyboard navigation is available')
     const direction = navigation.targetIndex > navigation.activeIndex ? 'ArrowDown' : 'ArrowUp'
     const expectedValue = navigation.values[navigation.activeIndex + (direction === 'ArrowDown' ? 1 : -1)]
+    const expectedMode = expectedValue === 'off' || expectedValue === 'auto' ? expectedValue : 'agent'
+    const expectedAgentId = expectedMode === 'agent' ? expectedValue : null
     await keyboardKey('Select decision assistant with native radio navigation', direction, { fromValue: navigation.activeValue, expectedValue })
     await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel")'), 30_000)
-    const expectedMode = expectedValue === 'off' ? 'off' : 'agent'
-    const overview = await waitFor(async () => { const current = await rpc(sessionId, 'selector', 'overview'); return current.selector?.mode === expectedMode && (expectedMode === 'off' || current.selector?.agentId === expectedValue) ? current : null }, 30_000)
-    await expectMutation('setSelector', expectedValue === 'off' ? { sessionId, mode: 'off' } : { sessionId, mode: 'agent', agentId: expectedValue })
+    const overview = await waitFor(async () => { const current = await rpc(sessionId, 'selector', 'overview'); return selectorMatches(current.selector, expectedMode, expectedAgentId) ? current : null }, 30_000)
+    await expectMutation('setSelector', selectorEnvelope(sessionId, expectedMode, expectedAgentId))
     if (expectedValue === value) return overview.selector
   }
   throw new Error(`Keyboard selector did not reach ${value}`)
@@ -393,6 +396,63 @@ async function waitCase(sessionId, marker, predicate = () => true) {
   return waitFor(async () => { const page = await records(sessionId); const item = page.records.find(value => value.request?.questions?.some(question => question.id === marker || String(question.question).includes(marker))); return item && predicate(item) ? item : null }, 90_000)
 }
 async function record(sessionId, phase, caseId) { return rpc(sessionId, phase, 'record', { caseId }) }
+
+async function routingReview(sessionId, phase, window = 'all', cursor = undefined) {
+  return rpc(sessionId, phase, 'routingReview', { window, ...(cursor === undefined ? {} : { cursor }) })
+}
+
+async function decisionConfig(phase) {
+  const value = await instance.cdp.evaluate('window.__decisionQA.fixture("decisionConfig", {})')
+  writeJson(join(out, `decision-config-${phase}.json`), value)
+  return value
+}
+
+async function routingReviewDom() {
+  return instance.cdp.evaluate(`(() => {
+    const root=document.querySelector('section[data-routing-review]')
+    if(!root)return null
+    const more=root.querySelector('[data-routing-load-more]')
+    return {
+      window:root.querySelector('select[data-routing-window]')?.value??null,
+      status:root.querySelector('[data-routing-status]')?.textContent??'',
+      text:root.innerText,
+      items:[...root.querySelectorAll('article[data-routing-case]')].map(article=>({caseId:article.getAttribute('data-routing-case'),text:article.innerText,recordCaseId:article.querySelector('[data-routing-record]')?.getAttribute('data-routing-record')??null})),
+      loadMore:more?{disabled:more.disabled,busy:more.getAttribute('aria-busy')}:null,
+    }
+  })()`)
+}
+
+async function compareRoutingReview(sessionId, phase, authority) {
+  const dom = await waitFor(async () => { const value=await routingReviewDom(); return value?.items.length===authority.items.length?value:null }, 30_000)
+  const problems = []
+  if (dom.window !== authority.window) problems.push(`window ${dom.window} != ${authority.window}`)
+  if (!dom.status.includes(String(authority.items.length))) problems.push('routing status omits the authoritative shown count')
+  authority.items.forEach((item, index) => {
+    const rendered = dom.items[index]
+    if (rendered?.caseId !== item.caseId) problems.push(`routing case ${index} differs`)
+    if (item.title && !rendered?.text.includes(item.title)) problems.push(`routing title ${item.caseId} is missing`)
+    if ((rendered?.recordCaseId ?? null) !== (item.recordCaseId ?? null)) problems.push(`record link ${item.caseId} differs`)
+  })
+  comparisons.push({ phase, kind: 'routing', authority, dom, problems })
+  writeJson(join(out, 'rpc-ui-comparisons.json'), comparisons)
+  check(`${phase}RoutingReviewMatchesRpc`, problems.length === 0, { items: authority.items.length, nextCursor: authority.nextCursor, problems })
+  return dom
+}
+
+async function openRoutingRecord(sessionId, caseId) {
+  await keyboardActivate('Open routing decision record', '[data-routing-record]', { scope: `article[data-routing-case="${caseId}"]` })
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-record-detail=${JSON.stringify(caseId)}]'))`), 30_000)
+  return record(sessionId, 'routing-record-open', caseId)
+}
+
+async function routingLoadMore(sessionId, authority) {
+  requireEvidence(authority.nextCursor, 'routing pagination requires an authoritative next cursor')
+  await keyboardActivate('Load more routing history', '[data-routing-load-more]', { scope: 'section[data-routing-review]' })
+  const next = await routingReview(sessionId, 'routing-load-more', authority.window, authority.nextCursor)
+  const combined = { ...next, items: [...authority.items, ...next.items] }
+  await compareRoutingReview(sessionId, 'routing-paginated', combined)
+  return combined
+}
 
 async function cardState(caseId) {
   return instance.cdp.evaluate(`(() => {
@@ -459,16 +519,26 @@ async function openDisclosure(id) {
 }
 
 async function recordDom(caseId) {
-  return instance.cdp.evaluate(`(() => { const detail=document.querySelector('[data-record-detail=${JSON.stringify(caseId)}]'); if(!detail)return null; const advanced=detail.querySelector('.weir-da-advanced-record'); return {caseId:detail.getAttribute('data-record-detail'),defaultText:[...detail.childNodes].filter(node=>!(node instanceof HTMLElement&&node.classList.contains('weir-da-disclosure'))).map(node=>node.textContent).join('\\n'),text:detail.innerText,currentEvidence:detail.querySelector('[data-current-evidence]')?.innerText??'',advancedText:advanced?.innerText??'',editableHistory:detail.querySelector('.weir-da-record-answers')?.querySelectorAll('input,textarea,[contenteditable="true"]').length??-1} })()`)
+  return instance.cdp.evaluate(`(() => {
+    const detail=document.querySelector('[data-record-detail=${JSON.stringify(caseId)}]')
+    if(!detail)return null
+    const advanced=detail.querySelector('.weir-da-advanced-record')
+    const routeHistory=[...detail.querySelectorAll('.weir-da-route-history li')].map(item=>({text:item.innerText,createdAt:item.querySelector('time')?.getAttribute('dateTime')??null}))
+    return {caseId:detail.getAttribute('data-record-detail'),defaultText:[...detail.childNodes].filter(node=>!(node instanceof HTMLElement&&node.classList.contains('weir-da-disclosure'))).map(node=>node.textContent).join('\\n'),text:detail.innerText,currentEvidence:detail.querySelector('[data-current-evidence]')?.innerText??'',advancedText:advanced?.innerText??'',routeHistory,editableHistory:detail.querySelector('.weir-da-record-answers')?.querySelectorAll('input,textarea,[contenteditable="true"]').length??-1}
+  })()`)
 }
 
 async function compareRecord(sessionId, phase, caseId, advanced = false) {
   const authority = await record(sessionId, phase, caseId)
-  const dom = await recordDom(caseId)
+  let dom = await recordDom(caseId)
+  if (authority.routeDecisions?.length) {
+    await openDisclosure(`weir-da-record-routes-${caseId}`)
+    dom = await recordDom(caseId)
+  }
   if (advanced) await openDisclosure(`weir-da-record-advanced-${caseId}`)
   const withAdvanced = advanced ? await recordDom(caseId) : { ...dom, advancedText: JSON.stringify(authority) }
-  const problems = recordProjectionProblems(authority, withAdvanced)
-  comparisons.push({ phase, kind: 'record', caseId, revision: authority.case.revision, state: authority.case.state, closing: authority.case.closing, answers: authority.case.decision?.answers ?? null, dom, advanced, problems })
+  const problems = [...recordProjectionProblems(authority, withAdvanced), ...routeHistoryProblems(authority, withAdvanced)]
+  comparisons.push({ phase, kind: 'record', caseId, revision: authority.case.revision, state: authority.case.state, closing: authority.case.closing, answers: authority.case.decision?.answers ?? null, routeDecisions: authority.routeDecisions ?? [], dom: withAdvanced, advanced, problems })
   writeJson(join(out, 'rpc-ui-comparisons.json'), comparisons)
   check(`${phase}RecordMatchesRpc`, problems.length === 0 && withAdvanced.editableHistory === 0, { caseId, revision: authority.case.revision, problems })
   return { authority, dom: withAdvanced }
@@ -488,7 +558,7 @@ function sqliteSnapshot(phase) {
   requireEvidence(databasePath.startsWith(`${root}/`) && existsSync(databasePath), 'isolated Decision DB exists')
   const db = new DatabaseSync(databasePath, { readOnly: true })
   try {
-    const tables = ['agent_profiles', 'agent_profile_revisions', 'cases', 'attempts', 'evidence', 'attempt_evidence', 'feedback', 'corrections', 'learning_runs', 'memory_snapshots', 'selectors']
+    const tables = ['agent_profiles', 'agent_profile_revisions', 'cases', 'attempts', 'evidence', 'attempt_evidence', 'feedback', 'corrections', 'learning_runs', 'memory_snapshots', 'selectors', 'route_decisions']
     const raw = { phase, path: databasePath, schemaVersion: db.prepare('PRAGMA user_version').get().user_version, integrity: db.prepare('PRAGMA integrity_check').get().integrity_check, rows: Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])) }
     requireEvidence(raw.schemaVersion === 1 && raw.integrity === 'ok', `${phase} SQLite v1 integrity`)
     sqlitePhases.push(raw)
@@ -593,8 +663,12 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
   return row
 }
 
-async function keyboardSelector(sessionId, agentId) {
-  const audit = { agentId, steps: [] }
+async function keyboardSelector(sessionId, modeOrAgent, agentId = null) {
+  const mode = modeOrAgent === 'off' || modeOrAgent === 'auto' ? modeOrAgent : 'agent'
+  const targetAgentId = mode === 'agent' ? agentId ?? modeOrAgent : null
+  const value = mode === 'agent' ? targetAgentId : mode
+  selectorEnvelope(sessionId, mode, targetAgentId)
+  const audit = { mode, agentId: targetAgentId, value, steps: [] }
   keyboardAudits.push(audit)
   const saveAudit = saveKeyboardAudits
   await openSession(instance, sessionId)
@@ -606,14 +680,14 @@ async function keyboardSelector(sessionId, agentId) {
   }, 30_000).catch(() => false)
   audit.triggerReached = triggerReached
   saveAudit()
-  check('keyboardReachesSelectorTrigger', triggerReached, { agentId })
+  check('keyboardReachesSelectorTrigger', triggerReached, { mode, agentId: targetAgentId })
   await captureAccessibility('selectorTrigger', '[data-weir-decision-trigger="weir-decision-selector"]')
   await instance.cdp.key('Enter')
   await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&document.activeElement===panel) })()`), 30_000)
   audit.enterPanel = true
   saveAudit()
   await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
-  await shot(`keyboard-selector-open-${agentId}`)
+  await shot(`keyboard-selector-open-${value}`)
   await instance.cdp.key('Escape')
   await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel') && document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
   audit.escapeReturnsTrigger = true
@@ -629,12 +703,12 @@ async function keyboardSelector(sessionId, agentId) {
       await instance.cdp.key('Tab')
       return null
     }, 15_000).catch(() => false)
-    check('keyboardReachesCheckedRadio', groupReached, { agentId, step })
-    const navigation = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); const radios=panel?[...panel.querySelectorAll('[role="radiogroup"] input[type="radio"]')].filter(radio=>!radio.disabled):[]; return {values:radios.map(radio=>radio.value),activeValue:document.activeElement?.value??null,activeIndex:radios.indexOf(document.activeElement),targetIndex:radios.findIndex(radio=>radio.value===${JSON.stringify(agentId)})} })()`)
+    check('keyboardReachesCheckedRadio', groupReached, { mode, agentId: targetAgentId, step })
+    const navigation = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); const radios=panel?[...panel.querySelectorAll('[role="radiogroup"] input[type="radio"]')].filter(radio=>!radio.disabled):[]; return {values:radios.map(radio=>radio.value),activeValue:document.activeElement?.value??null,activeIndex:radios.indexOf(document.activeElement),targetIndex:radios.findIndex(radio=>radio.value===${JSON.stringify(value)})} })()`)
     if (navigation.values.length < 2 || navigation.activeIndex < 0 || navigation.targetIndex < 0) {
-      check('keyboardNavigationOrderAvailable', false, { agentId, step, navigation })
+      check('keyboardNavigationOrderAvailable', false, { mode, agentId: targetAgentId, step, navigation })
     }
-    const setup = navigation.activeValue === agentId
+    const setup = navigation.activeValue === value
     let direction
     if (setup) {
       const destinationIndex = navigation.activeIndex > 0 ? navigation.activeIndex - 1 : 1
@@ -644,34 +718,37 @@ async function keyboardSelector(sessionId, agentId) {
     }
     const expectedIndex = navigation.activeIndex + (direction === 'ArrowDown' ? 1 : -1)
     const expectedValue = navigation.values[expectedIndex]
-    await shot(`keyboard-selector-before-arrow-${agentId}-${step}`)
+    const expectedMode = expectedValue === 'off' || expectedValue === 'auto' ? expectedValue : 'agent'
+    const expectedAgentId = expectedMode === 'agent' ? expectedValue : null
+    await shot(`keyboard-selector-before-arrow-${value}-${step}`)
     await instance.cdp.key(direction)
     await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel') && document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
-    const expectedMode = expectedValue === 'off' ? 'off' : 'agent'
     const selected = await waitFor(async () => {
-      const value = await rpc(sessionId, 'keyboard', 'overview')
-      return value.selector?.mode === expectedMode && (expectedMode === 'off' || value.selector?.agentId === expectedValue) ? value : null
+      const current = await rpc(sessionId, 'keyboard', 'overview')
+      return selectorMatches(current.selector, expectedMode, expectedAgentId) ? current : null
     }, 30_000)
-    await expectMutation('setSelector', expectedValue === 'off' ? { sessionId, mode: 'off' } : { sessionId, mode: 'agent', agentId: expectedValue })
+    await expectMutation('setSelector', selectorEnvelope(sessionId, expectedMode, expectedAgentId))
     const focusReturned = await instance.cdp.evaluate(`document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`)
     const stepEvidence = { step, setup, fromValue: navigation.activeValue, direction, expectedValue, selected: selected.selector, focusReturned }
     audit.steps.push(stepEvidence)
     saveAudit()
-    check(`keyboardNativeArrowStep:${agentId}:${step}`, selected.selector?.mode === expectedMode && (expectedMode === 'off' || selected.selector?.agentId === expectedValue) && focusReturned, stepEvidence)
-    if (expectedValue === agentId) {
-      const targetSteps = audit.steps.filter(item => !item.setup && item.expectedValue === agentId)
+    check(`keyboardNativeArrowStep:${value}:${step}`, selectorMatches(selected.selector, expectedMode, expectedAgentId) && focusReturned, stepEvidence)
+    if (expectedValue === value) {
+      const targetSteps = audit.steps.filter(item => !item.setup && item.expectedValue === value)
       audit.reached = !setup && targetSteps.length === 1
       audit.focusReturned = focusReturned
       saveAudit()
-      check('keyboardReachesAgentRadio', audit.reached, { agentId, direction, fromValue: navigation.activeValue })
-      check('keyboardSelectionAndFocusReturn', selected.selector.agentId === agentId && focusReturned && targetSteps.length === 1, { agentId, direction, mutation: 'setSelector', targetSteps: targetSteps.length })
-      await shot(`keyboard-selector-return-${agentId}`)
+      const reachedCheck = mode === 'agent' ? 'keyboardReachesAgentRadio' : mode === 'auto' ? 'keyboardReachesAutoRadio' : 'keyboardReachesOffRadio'
+      const focusCheck = mode === 'agent' ? 'keyboardSelectionAndFocusReturn' : `${mode}KeyboardSelectionAndFocusReturn`
+      check(reachedCheck, audit.reached, { mode, agentId: targetAgentId, direction, fromValue: navigation.activeValue })
+      check(focusCheck, selectorMatches(selected.selector, mode, targetAgentId) && focusReturned && targetSteps.length === 1, { mode, agentId: targetAgentId, direction, mutation: 'setSelector', targetSteps: targetSteps.length })
+      await shot(`keyboard-selector-return-${value}`)
       return
     }
     await instance.cdp.key('Enter')
     await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&document.activeElement===panel) })()`), 30_000)
   }
-  check('keyboardReachesAgentRadio', false, { agentId, steps: audit.steps })
+  check(mode === 'agent' ? 'keyboardReachesAgentRadio' : mode === 'auto' ? 'keyboardReachesAutoRadio' : 'keyboardReachesOffRadio', false, { mode, agentId: targetAgentId, steps: audit.steps })
 }
 
 async function askLongNative(sessionId) {
@@ -792,6 +869,63 @@ function writeReport(verdict, error = null) {
   writeFileSync(join(GUI, 'evidence-zh.md'), `${lines.join('\n')}\n`)
 }
 
+async function runStartupPreflight() {
+  const phase = 'GUI-product-P4-9.1-preflight'
+  try {
+    check('portInitiallyFree', await portFree() && !portListeners())
+    writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running', scope: '9.1-preflight' })
+    prepareProfile(root, PORT)
+    instance = await startDesktop(true)
+    const preflight = JSON.parse(readFileSync(join(out, 'preflight.json'), 'utf8'))
+    check('startupPreflightIsolated', preflight.pass && preflight.root === root && preflight.owner?.root === root && preflight.portProbe?.freeBeforeSpawn === true && preflight.databasePath === databasePath && preflight.databaseExists === false, preflight)
+    check('startupProvenanceArtifacts', ['host.json', 'instance.json', 'preflight.json'].every(path => existsSync(join(out, path))))
+    const expectedClasses = process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]'
+    const expectedConfig = value => value.effective?.decisionAgentsEnabled === true && value.effective?.decisionAgentSelectorDefault === (process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off') && value.effective?.decisionAgentAutoShadow === (process.env.WEIR_DECISION_GUI_SHADOW === '1') && JSON.stringify(value.effective?.decisionAgentAutoAnswerClasses) === JSON.stringify(JSON.parse(expectedClasses))
+    const config = await waitFor(async () => { const value = await decisionConfig('preflight'); return expectedConfig(value) ? value : null }, 30_000)
+    check('startupEffectiveDecisionConfig', expectedConfig(config), config)
+    const slots = await instance.cdp.evaluate('window.__decisionQA.getState()')
+    writeJson(join(out, 'slots.json'), slots)
+    check('newSlotsActive', slots.sidebar.includes('weir-decisions') && slots.main.includes('weir-decisions') && slots.composer.includes('weir-decision-selector') && slots.toolviews.includes('ask_user_question') && slots.toolviews.includes('decision_consult'), slots)
+    await shot('preflight-isolated-desktop')
+    await stopOwned('preflight')
+    const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')
+    const consoleErrors = runtimeEvents.filter(item => item.event.method === 'Runtime.consoleAPICalled' && item.event.params?.type === 'error')
+    const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
+    const desktopLog = readFileSync(join(out, 'desktop-enabled.log'), 'utf8')
+    const importFailures = desktopLog.split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line))
+    writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, importFailures, scannedLogs: ['desktop-enabled.log'] })
+    check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && slotCrashes.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, slotCrashes: slotCrashes.length, importFailures })
+    result = {
+      phase, verdict: 'PASS', pass: true, scope: 'Task 9.1 startup preflight only; tasks 9.2–9.3 were not run',
+      runId, root, out, port: PORT, checks, checkDetails,
+      cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)),
+      artifacts: { host: join(out, 'host.json'), instance: join(out, 'instance.json'), preflight: join(out, 'preflight.json'), config: join(out, 'decision-config-preflight.json'), slots: join(out, 'slots.json'), runtime: join(out, 'runtime-scan.json'), cleanup: join(out, 'preflight-exact-pid-cleanup.json'), screenshot: join(out, 'preflight-isolated-desktop.png') },
+    }
+    writeJson(join(out, 'result.json'), result)
+    writeJson(join(GUI, 'result.json'), result)
+  } catch (error) {
+    failure = error
+    if (instance?.cdp) {
+      await shot('failure').catch(() => {})
+      writeJson(join(out, 'failure-dom.json'), await instance.cdp.evaluate('({text:document.body.innerText,html:document.body.innerHTML})').catch(() => null))
+      collectRuntime(instance, 'failure')
+    }
+  } finally {
+    if (instance) {
+      try { await stopOwned('failure-cleanup') } catch (cleanupError) { failure ??= cleanupError }
+    }
+    writeJson(join(out, 'runtime-events.json'), runtimeEvents)
+    if (failure) {
+      result = { phase, verdict: 'BLOCKED', pass: false, scope: 'Task 9.1 startup preflight only; tasks 9.2–9.3 were not run', runId, root, out, port: PORT, checks, checkDetails, error: failure?.message ?? String(failure), cleanup: cleanups }
+      writeJson(join(out, 'result.json'), result)
+      writeJson(join(GUI, 'result.json'), result)
+      writeJson(join(out, 'driver-error.json'), { message: failure?.message ?? String(failure), stack: failure?.stack ?? null, checks, checkDetails, cleanups })
+    }
+    writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: failure ? 'blocked' : 'passed', scope: '9.1-preflight', result: join(out, 'result.json') })
+  }
+}
+
+async function runProductMatrix() {
 try {
   check('portInitiallyFree', await portFree() && !portListeners())
   writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running' })
@@ -1136,7 +1270,10 @@ try {
   }
   writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: failure ? 'blocked' : 'passed', result: join(out, 'result.json'), report: join(out, 'evidence-zh.md') })
 }
+}
 
+if (process.env.WEIR_DECISION_PRODUCT_PREFLIGHT_ONLY === '1') await runStartupPreflight()
+else await runProductMatrix()
 if (failure) {
   console.error(failure)
   process.exitCode = 1

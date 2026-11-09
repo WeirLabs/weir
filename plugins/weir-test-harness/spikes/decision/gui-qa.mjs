@@ -1,9 +1,11 @@
 // Real isolated Desktop QA for Decision P1. Only the spawned child PIDs are
 // signalled; this script never addresses the user's App or the old P0 instance.
 import { spawn, execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createServer } from 'node:net'
 import { connectCdp, waitFor } from './cdp.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -32,7 +34,63 @@ function guardedRemove(target, expected) {
   rmSync(resolved, { recursive: true, force: true })
 }
 
+const FORBIDDEN_CDP_PORTS = new Set([9442, 9451, 52011])
+const P0_ROOT = /(?:^|\/)\.weir\/decision-qa\/desktop-(?:a|b|c)(?:-off)?$/
+
+function startupTargetProblems(root, port, options = {}) {
+  const problems = []
+  const resolvedRoot = resolve(root)
+  const currentRoots = options.currentRoots ?? [process.env.HOME, process.env.DSH_HOME]
+  if (currentRoots.filter(Boolean).some(current => resolve(current) === resolvedRoot)) problems.push('root points at the current App storage')
+  if (P0_ROOT.test(resolvedRoot)) problems.push('root is a legacy P0 Desktop store')
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) problems.push('CDP port is invalid')
+  if (FORBIDDEN_CDP_PORTS.has(port)) problems.push(`forbidden current App/P0 port ${port}`)
+  return problems
+}
+
+function startupIsolationProblems({ root, port, mainPid, databasePath, paths, host, processArgs }, options = {}) {
+  const problems = startupTargetProblems(root, port, options)
+  const expected = {
+    home: join(root, 'home'), profile: join(root, 'home', 'profiles', 'desktop'),
+    electronData: join(root, 'electron-data'),
+    databasePath: join(root, 'home', 'weir', 'profiles', 'desktop', 'decisions', 'decision.db'),
+  }
+  if (paths?.home !== expected.home) problems.push('HOME is outside the fresh isolated root')
+  if (paths?.profile !== expected.profile) problems.push('profile is outside the fresh isolated root')
+  if (paths?.electronData !== expected.electronData) problems.push('Electron user-data root is outside the isolated root')
+  if (databasePath !== expected.databasePath) problems.push('Decision DB is outside the isolated profile')
+  if (!Number.isInteger(mainPid) || mainPid <= 0) problems.push('owned main PID is missing')
+  if (!host || !Number.isInteger(host.pid) || !(host.pid === mainPid || host.parentPid === mainPid)) problems.push('owned Host parentage is missing')
+  if (host?.profile?.home !== expected.home || host.profile?.name !== 'desktop') problems.push('Host profile does not match the isolated profile')
+  if (host?.env?.HOME !== expected.home || host.env?.DSH_HOME !== expected.home) problems.push('Host HOME/DSH_HOME do not match the isolated root')
+  if (!String(processArgs ?? '').includes(BINARY)) problems.push('main process argv does not identify the managed Desktop binary')
+  if (!String(processArgs ?? '').includes(`--user-data-dir=${expected.electronData}`)) problems.push('main process argv lacks the isolated Electron user-data root')
+  if (!String(processArgs ?? '').includes(`--remote-debugging-port=${port}`)) problems.push('main process argv lacks the owned CDP port')
+  if (!String(processArgs ?? '').includes('--remote-debugging-address=127.0.0.1')) problems.push('CDP is not bound to loopback')
+  return [...new Set(problems)]
+}
+
+async function provePortFree(port) {
+  const problems = startupTargetProblems('/', port, { currentRoots: [] })
+  if (problems.length) throw new Error(problems.join('; '))
+  await new Promise((resolveProbe, reject) => {
+    const server = createServer()
+    server.unref()
+    server.once('error', error => reject(new Error(`Refusing occupied CDP port ${port}: ${error.message}`)))
+    server.listen(port, '127.0.0.1', () => {
+      server.close(error => error ? reject(error) : resolveProbe())
+    })
+  })
+  return { port, address: '127.0.0.1', freeBeforeSpawn: true }
+}
+
 function prepareProfile(root, port) {
+  const targetProblems = startupTargetProblems(root, port)
+  if (targetProblems.length) throw new Error(`Unsafe Desktop startup target: ${targetProblems.join('; ')}`)
+  if (existsSync(root) && readdirSync(root).length > 0) throw new Error(`Desktop root must be fresh and empty: ${root}`)
+  mkdirSync(root, { recursive: true })
+  const owner = { token: randomUUID(), root: resolve(root), createdAt: new Date().toISOString() }
+  writeJson(join(root, 'desktop-owner.json'), owner)
   const home = join(root, 'home')
   const profile = join(home, 'profiles', 'desktop')
   const electronData = join(root, 'electron-data')
@@ -55,7 +113,7 @@ function prepareProfile(root, port) {
   writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
   writeFileSync(join(profile, 'cordis.patch.yml'), '[]\n')
   execFileSync(process.execPath, [PNPM, 'install', '--reporter', 'silent'], { cwd: profile, stdio: 'inherit' })
-  return { home, profile, electronData }
+  return { home, profile, electronData, owner }
 }
 
 function appEnvironment(paths, out, enabled) {
@@ -72,6 +130,9 @@ function appEnvironment(paths, out, enabled) {
     WEIR_IT_TRACE: join(out, 'mock-trace.jsonl'),
     WEIR_DECISION_GUI_OUT: out,
     WEIR_DECISION_GUI_ENABLED: enabled ? '1' : '0',
+    WEIR_DECISION_GUI_SELECTOR_DEFAULT: process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off',
+    WEIR_DECISION_GUI_SHADOW: process.env.WEIR_DECISION_GUI_SHADOW === '1' ? '1' : '0',
+    WEIR_DECISION_GUI_AUTO_CLASSES: process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]',
     WEIR_DECISION_PRODUCT_UX: process.env.WEIR_DECISION_PRODUCT_UX,
   }
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key]
@@ -124,6 +185,11 @@ async function stopInstance(instance, receiptPath) {
 }
 
 async function startInstance({ root, out, port, enabled }) {
+  const targetProblems = startupTargetProblems(root, port)
+  if (targetProblems.length) throw new Error(`Unsafe Desktop startup target: ${targetProblems.join('; ')}`)
+  const owner = readJson(join(root, 'desktop-owner.json'))
+  if (owner.root !== resolve(root) || typeof owner.token !== 'string' || !owner.token) throw new Error(`Desktop root lacks its per-run ownership marker: ${root}`)
+  const portProbe = await provePortFree(port)
   const paths = {
     home: join(root, 'home'),
     profile: join(root, 'home', 'profiles', 'desktop'),
@@ -144,7 +210,7 @@ async function startInstance({ root, out, port, enabled }) {
   app.stdout.pipe(log)
   app.stderr.pipe(log)
   const instance = { app, log, paths, out, port, cdp: null, args }
-  writeJson(join(out, 'instance.json'), { mainPid: app.pid, port, home: paths.home, profile: paths.profile, electronData: paths.electronData, args })
+  writeJson(join(out, 'instance.json'), { mainPid: app.pid, port, home: paths.home, profile: paths.profile, electronData: paths.electronData, args, owner, environment: { HOME: paths.home, DSH_HOME: paths.home, DSH_AGENTS_HOME: join(paths.home, 'agents-home') } })
   try {
     await waitFor(() => {
       if (!existsSync(join(out, 'host.json'))) return null
@@ -156,6 +222,14 @@ async function startInstance({ root, out, port, enabled }) {
     }, 90_000)
     instance.cdp = cdp
     await waitFor(() => cdp.evaluate('Boolean(window.__decisionQA)'), 90_000)
+    const host = await cdp.evaluate('window.__decisionQA.fixture("hostState", {})')
+    const processArgs = execFileSync('ps', ['-p', String(app.pid), '-o', 'args='], { encoding: 'utf8' }).trim()
+    const databasePath = join(paths.home, 'weir', 'profiles', 'desktop', 'decisions', 'decision.db')
+    const preflight = { root, port, mainPid: app.pid, paths, host, processArgs, databasePath, databaseExists: existsSync(databasePath), owner, portProbe, cdpTarget: cdp.target }
+    preflight.problems = startupIsolationProblems(preflight)
+    preflight.pass = preflight.problems.length === 0
+    writeJson(join(out, 'preflight.json'), preflight)
+    if (!preflight.pass) throw new Error(`Desktop startup isolation failed: ${preflight.problems.join('; ')}`)
     const workspaceSelection = await cdp.chooseDefaultWorkspace()
     writeJson(join(out, 'workspace-selection.json'), workspaceSelection)
     return instance
@@ -409,7 +483,7 @@ async function runA() {
 }
 
 export {
-  LANE, QA, PHASES, writeJson, readJson, guardedRemove, prepareProfile, appEnvironment,
+  LANE, QA, PHASES, writeJson, readJson, guardedRemove, prepareProfile, appEnvironment, startupIsolationProblems, provePortFree,
   startInstance, stopInstance, cdpScreenshot, decision, createSession, openSession,
   setInput, click, clickButton, selectDecisionTab, createAgent, setSelector,
   selectorState, submitMarker, records, findCase, waitCase, exportRecord, cardState,
