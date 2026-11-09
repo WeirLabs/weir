@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 
 test('product fixture gives each emitted tool call a unique real identity', () => {
@@ -99,6 +99,35 @@ test('record projection compares question answers current evidence and advanced 
   assert.deepEqual(recordProjectionProblems(detail, dom), [])
   assert.match(recordProjectionProblems(detail, { ...dom, currentEvidence: 'stale excerpt' }).join('\n'), /missing current evidence/)
   assert.match(recordProjectionProblems(detail, { ...dom, defaultText: 'dc_1 Choose A' }).join('\n'), /leaks caseId/)
+})
+
+const realCorrectionPreview = '适用于: /Users/young/Documents/Orrery\n取代以下问题的答案: Choose a genuinely new GUI direction\n只影响之后的判断，原回答保留不变。'
+const correctionPreview = (...lines) => lines.filter(line => line !== null).join('\n')
+
+test('correction preview accepts real localized scope target and future-only wording', () => {
+  assert.deepEqual(correctionPreviewProblems(realCorrectionPreview), [])
+  // Run wab8MC regression anchor: the old oracle demanded the literal label 适用范围.
+  assert.equal(/scope|适用范围/i.test(realCorrectionPreview), false)
+  const legacy = correctionPreview('适用范围: /Users/young/Documents/Orrery', '取代以下问题的答案: Choose a direction', '只影响之后的判断，原回答保留不变。')
+  assert.deepEqual(correctionPreviewProblems(legacy), [])
+  const english = correctionPreview('Applies to: /Users/young/Documents/Orrery', 'Supersedes the answer to: Choose a direction', 'Only future decisions are affected; the original answer remains unchanged.')
+  assert.deepEqual(correctionPreviewProblems(english), [])
+})
+
+test('correction preview rejects missing scope target or future-only consequence', () => {
+  const scope = '适用于: /Users/young/Documents/Orrery'
+  const target = '取代以下问题的答案: Choose a genuinely new GUI direction'
+  const future = '只影响之后的判断，原回答保留不变。'
+  assert.match(correctionPreviewProblems(correctionPreview(null, target, future)).join('\n'), /omits scope/)
+  assert.match(correctionPreviewProblems(correctionPreview(scope, null, future)).join('\n'), /omits superseded answer/)
+  assert.match(correctionPreviewProblems(correctionPreview(scope, target, null)).join('\n'), /omits future-only consequence/)
+  for (const empty of ['', '   ', null, undefined]) assert.match(correctionPreviewProblems(empty).join('\n'), /missing correction preview/)
+})
+
+test('product driver consumes the shared correction preview guard', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes('correctionPreviewProblems(preview)'))
+  assert.ok(!driver.includes('/scope|适用范围/i.test(preview)'))
 })
 
 test('immutable audit allows lifecycle revisions but rejects Attempt or Snapshot content rewrites', () => {
