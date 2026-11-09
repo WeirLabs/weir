@@ -7,7 +7,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   LANE, writeJson, prepareProfile, startInstance, stopInstance,
-  createSession, openSession, setInput, submitMarker,
+  createSession, openSession, submitMarker,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
 import { answerFormExpression, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from './gui-product-lib.mjs'
@@ -34,6 +34,14 @@ const sqlitePhases = []
 const comparisons = []
 const visualAudits = []
 const accessibility = {}
+const accessibilityRequirements = {
+  selectorTrigger: { role: 'button', name: /决策助手|Decision/i },
+  selectorPanel: { role: 'dialog', name: /选择决策助手|Select.*assistant/i },
+  longRecord: { role: 'article', name: '' },
+  snapshotPublishDialog: { role: 'dialog', name: /采用这些原则变化|Apply these principle changes/i },
+  snapshotRejectDialog: { role: 'dialog', name: /放弃这个候选|Discard this candidate/i },
+  snapshotRollbackDialog: { role: 'dialog', name: /恢复前序原则版本|Restore a previous principle version/i },
+}
 const keyboardAudits = []
 const mutationCounts = new Map()
 let instance = null
@@ -78,6 +86,24 @@ async function shot(name) {
   requireEvidence(bytes.length > 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), `${name} is a real non-empty PNG`)
   screenshots.push({ name, path, bytes: bytes.length })
   writeJson(join(out, 'screenshots.json'), screenshots)
+}
+
+async function captureAccessibility(name, selector) {
+  accessibility[name] = await instance.cdp.accessibility(selector)
+  writeJson(join(out, 'accessibility.json'), accessibility)
+  return accessibility[name]
+}
+
+function validateAccessibility() {
+  const accessibilityProblems = Object.entries(accessibilityRequirements).flatMap(([name, expected]) => {
+    const nodes = accessibility[name]
+    if (!Array.isArray(nodes) || nodes.length === 0) return [`${name}: missing or empty AX tree`]
+    const root = nodes.find(node => !node.ignored && node.role === expected.role)
+    if (!root) return [`${name}: expected role ${expected.role}`]
+    const nameMatches = expected.name instanceof RegExp ? expected.name.test(root.name ?? '') : root.name === expected.name
+    return nameMatches ? [] : [`${name}: unexpected accessible name ${JSON.stringify(root.name)}`]
+  })
+  check('completeAccessibilityEvidence', accessibilityProblems.length === 0 && Object.keys(accessibility).length === 6, { problems: accessibilityProblems, groups: Object.keys(accessibility) })
 }
 
 function collectRuntime(value, phase) {
@@ -195,62 +221,137 @@ async function stopOwned(label) {
   return receipt
 }
 
-// Clicking races the product's own pending guard: the rendered control can exist while the
-// authoritative reread/loadInbox/finally clearing is still settling. Wait for the real target
-// to be present, visible and enabled, then click once inside that same CDP expression.
-async function click(selector) {
-  try {
-    await waitFor(() => instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el||el.offsetParent===null||el.disabled)return false; el.click(); return true })()`), 30_000)
-  } catch (error) {
-    throw new Error(`Rendered click target unavailable: ${selector} (${error.message})`)
-  }
+function saveKeyboardAudits() {
+  writeJson(join(out, 'keyboard-interactions.json'), keyboardAudits)
 }
 
-async function clickText(scope, labels) {
-  const clicked = await instance.cdp.evaluate(`(() => { const root=document.querySelector(${JSON.stringify(scope)}); if(!root)return false; const labels=${JSON.stringify(labels)}; const el=[...root.querySelectorAll('button')].find(button=>button.offsetParent!==null&&labels.includes(button.textContent.trim())&&!button.disabled); if(!el)return false; el.click(); return true })()`)
-  if (!clicked) throw new Error(`Rendered button not found in ${scope}: ${labels.join('/')}`)
+async function keyboardSnapshot(selector, options = {}) {
+  return instance.cdp.evaluate(`(() => {
+    const scope=${JSON.stringify(options.scope ?? null)}
+    const labels=${JSON.stringify(options.labels ?? null)}
+    const describe=el=>{
+      if(!el)return null
+      const labelled=(el.getAttribute?.('aria-labelledby')??'').split(/\\s+/).filter(Boolean).map(id=>document.getElementById(id)?.textContent??'').join(' ')
+      const labelText=[...(el.labels??[])].map(label=>label.textContent).join(' ')
+      const text=el===document.body||el===document.documentElement?'':el.innerText??''
+      return {tag:el.tagName?.toLowerCase()??null,id:el.id||null,role:el.getAttribute?.('role')??null,accessibleName:String(el.getAttribute?.('aria-label')||labelled||labelText||text||el.value||'').trim().slice(0,500),value:typeof el.value==='string'?el.value:null}
+    }
+    const active=describe(document.activeElement)
+    const root=scope?document.querySelector(scope):document
+    if(!root)return {ready:false,reached:false,active,direction:'Tab'}
+    const candidates=[...root.querySelectorAll(${JSON.stringify(selector)})]
+    const target=candidates.find(el=>el.offsetParent!==null&&!el.disabled&&(!labels||labels.includes(el.textContent.trim())))
+    if(!target)return {ready:false,reached:false,active,direction:'Tab'}
+    const items=[...document.querySelectorAll('button,input,textarea,select,a[href],[tabindex],[role="button"],[role="radio"]')].filter(el=>el.offsetParent!==null&&!el.disabled&&el.tabIndex>=0)
+    const activeIndex=items.indexOf(document.activeElement)
+    const targetIndex=items.indexOf(target)
+    let direction='Tab'
+    if(activeIndex>=0&&targetIndex>=0){
+      const forward=(targetIndex-activeIndex+items.length)%items.length
+      const backward=(activeIndex-targetIndex+items.length)%items.length
+      if(backward<forward)direction='Shift+Tab'
+    }
+    return {ready:true,reached:target===document.activeElement,active,target:describe(target),direction,activeIndex,targetIndex}
+  })()`)
+}
+
+async function keyboardFocus(action, selector, options = {}) {
+  const audit = { action: `Focus: ${action}`, selector, options, steps: [], reached: false }
+  keyboardAudits.push(audit)
+  saveKeyboardAudits()
+  const deadline = Date.now() + 30_000
+  await waitFor(async () => (await keyboardSnapshot(selector, options)).ready, 30_000)
+  for (let step = 0; step < 500 && Date.now() < deadline; step += 1) {
+    const before = await keyboardSnapshot(selector, options)
+    if (before.reached) {
+      audit.reached = true
+      audit.activeElement = before.active
+      audit.target = before.target
+      saveKeyboardAudits()
+      return audit
+    }
+    await instance.cdp.key('Tab', before.direction === 'Shift+Tab' ? 8 : 0)
+    const after = await keyboardSnapshot(selector, options)
+    audit.steps.push({ step, key: before.direction, from: before.active, activeElement: after.active, target: before.target })
+    saveKeyboardAudits()
+  }
+  throw new Error(`Keyboard target unreachable: ${action} ${selector} ${JSON.stringify(audit.steps.at(-1))}`)
+}
+
+async function keyboardActivate(action, selector, options = {}) {
+  const audit = await keyboardFocus(action, selector, options)
+  await instance.cdp.key(options.key ?? 'Enter')
+  audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active }
+  saveKeyboardAudits()
+  return audit
+}
+
+async function keyboardFill(action, selector, value) {
+  const audit = await keyboardFocus(action, selector)
+  await instance.cdp.key('a', 4)
+  await instance.cdp.request('Input.insertText', { text: value })
+  await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`), 30_000)
+  audit.input = { method: 'Input.insertText', selectAll: 'Meta+A', value, activeElement: (await keyboardSnapshot(selector)).active }
+  saveKeyboardAudits()
+}
+
+async function keyboardKey(action, key, details = {}) {
+  const before = await keyboardSnapshot('body')
+  await instance.cdp.key(key)
+  const after = await keyboardSnapshot('body')
+  keyboardAudits.push({ action, key, ...details, from: before.active, activeElement: after.active })
+  saveKeyboardAudits()
 }
 
 async function selectorOpen() {
-  await click('[data-weir-decision-trigger="weir-decision-selector"]')
+  await keyboardActivate('Open decision assistant selector', '[data-weir-decision-trigger="weir-decision-selector"]')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-selector-panel"))'), 30_000)
 }
 
 async function selectorChoose(sessionId, mode, agentId = null) {
-  await selectorOpen()
   const value = mode === 'off' ? 'off' : agentId
-  const target = await waitFor(() => instance.cdp.evaluate(`(() => { const input=document.querySelector('#weir-da-selector-panel input[type="radio"][value=${JSON.stringify(value)}]'); return input&&!input.disabled?{checked:input.checked}:null })()`), 30_000)
-  if (target.checked) {
-    await instance.cdp.key('Escape')
+  for (let step = 0; step < 8; step += 1) {
+    await selectorOpen()
+    const target = await waitFor(() => instance.cdp.evaluate(`(() => { const input=document.querySelector('#weir-da-selector-panel input[type="radio"][value=${JSON.stringify(value)}]'); return input&&!input.disabled?{checked:input.checked}:null })()`), 30_000)
+    if (target.checked) {
+      await keyboardKey('Close unchanged decision assistant selector', 'Escape', { value })
+      await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel")'), 30_000)
+      const current = await rpc(sessionId, 'selector-unchanged', 'overview')
+      return current.selector
+    }
+    await keyboardFocus('Current decision assistant radio', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
+    const navigation = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); const radios=panel?[...panel.querySelectorAll('[role="radiogroup"] input[type="radio"]')].filter(radio=>!radio.disabled):[]; return {values:radios.map(radio=>radio.value),activeValue:document.activeElement?.value??null,activeIndex:radios.indexOf(document.activeElement),targetIndex:radios.findIndex(radio=>radio.value===${JSON.stringify(value)})} })()`)
+    requireEvidence(navigation.activeIndex >= 0 && navigation.targetIndex >= 0 && navigation.activeIndex !== navigation.targetIndex, 'selector radio keyboard navigation is available')
+    const direction = navigation.targetIndex > navigation.activeIndex ? 'ArrowDown' : 'ArrowUp'
+    const expectedValue = navigation.values[navigation.activeIndex + (direction === 'ArrowDown' ? 1 : -1)]
+    await keyboardKey('Select decision assistant with native radio navigation', direction, { fromValue: navigation.activeValue, expectedValue })
     await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel")'), 30_000)
-    const current = await rpc(sessionId, 'selector-unchanged', 'overview')
-    return current.selector
+    const expectedMode = expectedValue === 'off' ? 'off' : 'agent'
+    const overview = await waitFor(async () => { const current = await rpc(sessionId, 'selector', 'overview'); return current.selector?.mode === expectedMode && (expectedMode === 'off' || current.selector?.agentId === expectedValue) ? current : null }, 30_000)
+    await expectMutation('setSelector', expectedValue === 'off' ? { sessionId, mode: 'off' } : { sessionId, mode: 'agent', agentId: expectedValue })
+    if (expectedValue === value) return overview.selector
   }
-  await waitFor(() => instance.cdp.evaluate(`(() => { const input=document.querySelector('#weir-da-selector-panel input[type="radio"][value=${JSON.stringify(value)}]'); if(!input||input.disabled)return false; input.click(); return true })()`), 30_000)
-  await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel")'), 30_000)
-  const overview = await waitFor(async () => { const current = await rpc(sessionId, 'selector', 'overview'); return current.selector?.mode === mode && (mode === 'off' || current.selector?.agentId === agentId) ? current : null }, 30_000)
-  await expectMutation('setSelector', mode === 'off' ? { sessionId, mode: 'off' } : { sessionId, mode: 'agent', agentId })
-  return overview.selector
+  throw new Error(`Keyboard selector did not reach ${value}`)
 }
 
 async function openPage(tab = 'inbox') {
   await instance.cdp.evaluate('window.__decisionQA.selectDecisions()')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("main.weir-da-page"))'), 60_000)
   const current = await instance.cdp.evaluate(`document.querySelector('main.weir-da-page [data-decision-primary-nav] [data-view=${JSON.stringify(tab)}]')?.getAttribute('aria-pressed')`)
-  if (current !== 'true') await click(`main.weir-da-page [data-view="${tab}"]`)
+  if (current !== 'true') await keyboardActivate(`Open ${tab} page`, `main.weir-da-page [data-view="${tab}"]`)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('main.weir-da-page section[data-view=${JSON.stringify(tab)}]'))`), 30_000)
 }
 
 async function fillAgent(name, preference) {
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("form[data-agent-editor]"))'), 30_000)
-  await setInput(instance, '[data-agent-field="name"]', name)
-  await setInput(instance, '[data-agent-field="preference"]', preference)
-  await click('form[data-agent-editor] button[type="submit"]')
+  await keyboardFill('Edit assistant name', '[data-agent-field="name"]', name)
+  await keyboardFill('Edit assistant preference', '[data-agent-field="preference"]', preference)
+  await keyboardActivate('Save assistant', 'form[data-agent-editor] button[type="submit"]')
 }
 
 async function createAgent(sessionId, name, preference) {
   await openPage('agents')
-  await click('[data-action="create-agent"]')
+  await keyboardActivate('Open assistant editor', '[data-action="create-agent"]')
   await fillAgent(name, preference)
   const agents = await waitFor(async () => { const value = await rpc(sessionId, 'agent-create', 'agents'); return value.some(agent => agent.name === name) ? value : null }, 30_000)
   const agent = agents.find(item => item.name === name)
@@ -261,28 +362,30 @@ async function createAgent(sessionId, name, preference) {
 async function openAgent(sessionId, agentId) {
   await openPage('agents')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-summary=${JSON.stringify(agentId)}] [data-action="open-agent"]'))`), 30_000)
-  await click(`[data-agent-summary="${agentId}"] [data-action="open-agent"]`)
+  await keyboardActivate('Open assistant details', `[data-agent-summary="${agentId}"] [data-action="open-agent"]`)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail=${JSON.stringify(agentId)}]'))`), 30_000)
   return rpc(sessionId, 'agent-open', 'agent', { agentId })
 }
 
 async function agentState(sessionId, agentId, state) {
   await openAgent(sessionId, agentId)
-  await click(`[data-agent-detail="${agentId}"] [data-agent-state="${state}"]`)
+  await keyboardActivate(`Request assistant ${state}`, `[data-agent-detail="${agentId}"] [data-agent-state="${state}"]`)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-agent-state"))'), 30_000)
-  await click(`#weir-da-agent-state .weir-da-actions button${state === 'enabled' ? '[data-variant="primary"]' : ':last-child'}`)
+  await keyboardActivate(`Confirm assistant ${state}`, `#weir-da-agent-state .weir-da-actions button${state === 'enabled' ? '[data-variant="primary"]' : ':last-child'}`)
   const agent = await waitFor(async () => { const value = await rpc(sessionId, 'agent-state', 'agent', { agentId }); return value.state === state ? value : null }, 30_000)
   await expectMutation('profileSetState', { sessionId, agentId, state })
   return agent
 }
 
 async function nativeState() {
-  return instance.cdp.evaluate(`(() => { const visible=el=>Boolean(el&&el.offsetParent!==null); const pending=[...document.querySelectorAll('[data-question-key]')].find(visible); return {pending:Boolean(pending),text:pending?.innerText??'',radios:pending?[...pending.querySelectorAll('[role="radio"]')].map(el=>({label:el.getAttribute('aria-label'),checked:el.getAttribute('aria-checked'),disabled:el.disabled})):[] } })()`)
+  return instance.cdp.evaluate(`(() => { const visible=el=>Boolean(el&&el.offsetParent!==null); const pending=[...document.querySelectorAll('[data-question-key]')].find(visible); return {pending:Boolean(pending),key:pending?.getAttribute('data-question-key')??null,text:pending?.innerText??'',radios:pending?[...pending.querySelectorAll('[role="radio"]')].map(el=>({label:el.getAttribute('aria-label'),checked:el.getAttribute('aria-checked'),disabled:el.disabled})):[] } })()`)
 }
 
 async function answerNative(label) {
-  await waitFor(() => instance.cdp.evaluate(`(() => { const pending=[...document.querySelectorAll('[data-question-key]')].find(el=>el.offsetParent!==null); const option=pending?.querySelector('[role="radio"][aria-label=${JSON.stringify(label)}]'); if(!option||option.disabled)return false; option.click(); return true })()`), 30_000)
-  await waitFor(() => instance.cdp.evaluate(`(() => { const pending=[...document.querySelectorAll('[data-question-key]')].find(el=>el.offsetParent!==null); if(!pending)return false; const button=[...pending.querySelectorAll('button')].find(el=>/^(提交|Submit|Next|下一题|继续)$/i.test(el.textContent.trim())&&!el.disabled); if(!button)return false; button.click(); return true })()`), 30_000)
+  const native = await waitFor(async () => { const state=await nativeState(); return state.pending&&state.key&&state.radios.some(radio=>radio.label===label&&!radio.disabled)?state:null }, 30_000)
+  const card = `[data-question-key=${JSON.stringify(native.key)}]`
+  await keyboardActivate(`Choose native answer ${label}`, `[role="radio"][aria-label=${JSON.stringify(label)}]`, { scope: card, key: 'Space' })
+  await keyboardActivate('Submit native answer', 'button', { scope: card, labels: ['提交', 'Submit', 'Next', '下一题', '继续'] })
 }
 
 async function records(sessionId) { return rpc(sessionId, 'records', 'records') }
@@ -304,7 +407,7 @@ async function scanSession(sessionId, path) {
 async function openRecord(sessionId, caseId) {
   await openPage('records')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('.weir-da-record-list [data-case-id=${JSON.stringify(caseId)}]'))`), 30_000)
-  await click(`.weir-da-record-list [data-case-id="${caseId}"]`)
+  await keyboardActivate('Open decision record', `.weir-da-record-list [data-case-id="${caseId}"]`)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-record-detail=${JSON.stringify(caseId)}]'))`), 30_000)
   return record(sessionId, 'record-open', caseId)
 }
@@ -312,7 +415,7 @@ async function openRecord(sessionId, caseId) {
 async function openDisclosure(id) {
   const selector = `button[aria-controls="${id}-content"]`
   const expanded = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.getAttribute('aria-expanded')`)
-  if (expanded !== 'true') await click(selector)
+  if (expanded !== 'true') await keyboardActivate('Open disclosure', selector)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#${id}-content'))`), 30_000)
 }
 
@@ -333,7 +436,7 @@ async function compareRecord(sessionId, phase, caseId, advanced = false) {
 }
 
 async function feedback(sessionId, caseId, verb) {
-  await click(`[data-record-detail="${caseId}"] [data-feedback="${verb}"]`)
+  await keyboardActivate(`Apply feedback ${verb}`, `[data-record-detail="${caseId}"] [data-feedback="${verb}"]`)
   const expected = { rating_up: 'validated', rating_down: 'disputed', undo_rating_up: 'none', undo_rating_down: 'none' }[verb]
   const detail = await waitFor(async () => { const value = await record(sessionId, `feedback-${verb}`, caseId); return value.case.feedbackState === expected ? value : null }, 30_000)
   await expectMutation('feedback', { sessionId, caseId, verb })
@@ -369,7 +472,7 @@ async function startCandidate(sessionId, agent, expectedVersion) {
   const known = new Set(before.learningRuns.map(run => run.learningRunId))
   await collectNetwork()
   const beforeCalls = networkRpc.filter(entry => entry.method === 'learningStart').length
-  await click(`[data-agent-detail="${agent.agentId}"] [data-action="learning-start"]`)
+  await keyboardActivate('Start principle review', `[data-agent-detail="${agent.agentId}"] [data-action="learning-start"]`)
   const current = await waitAgent(sessionId, agent.agentId, value => value.learningRuns.some(run => run.outcome === 'candidate' && !known.has(run.learningRunId)))
   const runSummary = current.learningRuns.find(run => run.outcome === 'candidate' && !known.has(run.learningRunId))
   const snapshotSummary = current.snapshots.find(snapshot => snapshot.learningRunId === runSummary.learningRunId && snapshot.state === 'draft')
@@ -380,7 +483,7 @@ async function startCandidate(sessionId, agent, expectedVersion) {
   requireEvidence(dom.candidate.includes('结构校验通过不代表内容质量') || dom.candidate.includes('Structural checks'), 'structural-quality warning remains visible')
   await collectNetwork()
   const starts = networkRpc.filter(entry => entry.method === 'learningStart')
-  requireEvidence(starts.length === beforeCalls + 1, 'one learningStart per explicit click')
+  requireEvidence(starts.length === beforeCalls + 1, 'one learningStart per explicit keyboard activation')
   const start = starts.at(-1)
   requireEvidence(start.args?.sessionId === sessionId && start.args?.agentId === agent.agentId && typeof start.args?.requestId === 'string' && start.args.requestId && start.rpcId && start.response, 'learningStart exact session/agent/requestId envelope')
   await shot(`learning-v${expectedVersion}-candidate`)
@@ -393,13 +496,13 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   const dialog = { snapshotPublish: 'weir-da-learning-publish', snapshotReject: 'weir-da-learning-reject', snapshotRollback: 'weir-da-learning-rollback' }[kind]
   const snapshotId = candidate.snapshot.snapshotId
   const expectedRevision = candidate.snapshot.revision
-  await click(`[data-action="${action}"]`)
+  await keyboardActivate(`Request ${kind}`, `[data-action="${action}"]`)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#${dialog}'))`), 30_000)
   const confirmation = await instance.cdp.evaluate(`document.querySelector('#${dialog}').innerText`)
   requireEvidence(/只影响|历史|future|history/i.test(confirmation), `${kind} consequence confirmation`)
-  accessibility[`${kind}Dialog`] = await instance.cdp.accessibility(`#${dialog}`)
+  await captureAccessibility(`${kind}Dialog`, `#${dialog}`)
   await shot(`${kind}-v${candidate.snapshot.version}-confirm`)
-  await click(`#${dialog} .weir-da-actions button:last-child`)
+  await keyboardActivate(`Confirm ${kind}`, `#${dialog} .weir-da-actions button:last-child`)
   const agent = await waitAgent(sessionId, candidate.agent.agentId, value => {
     if (kind === 'snapshotPublish') return value.currentSnapshotId === snapshotId
     if (kind === 'snapshotReject') return value.learningRuns.some(run => run.learningRunId === candidate.run.learningRunId && run.outcome === 'rejected')
@@ -454,7 +557,7 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
 async function keyboardSelector(sessionId, agentId) {
   const audit = { agentId, steps: [] }
   keyboardAudits.push(audit)
-  const saveAudit = () => writeJson(join(out, 'keyboard-selector.json'), keyboardAudits)
+  const saveAudit = saveKeyboardAudits
   await openSession(instance, sessionId)
   const triggerReached = await waitFor(async () => {
     const active = await instance.cdp.evaluate(`document.activeElement?.matches('[data-weir-decision-trigger="weir-decision-selector"]')`)
@@ -465,12 +568,12 @@ async function keyboardSelector(sessionId, agentId) {
   audit.triggerReached = triggerReached
   saveAudit()
   check('keyboardReachesSelectorTrigger', triggerReached, { agentId })
-  accessibility.selectorTrigger = await instance.cdp.accessibility('[data-weir-decision-trigger="weir-decision-selector"]')
+  await captureAccessibility('selectorTrigger', '[data-weir-decision-trigger="weir-decision-selector"]')
   await instance.cdp.key('Enter')
   await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&document.activeElement===panel) })()`), 30_000)
   audit.enterPanel = true
   saveAudit()
-  accessibility.selectorPanel = await instance.cdp.accessibility('#weir-da-selector-panel')
+  await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
   await shot(`keyboard-selector-open-${agentId}`)
   await instance.cdp.key('Escape')
   await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel') && document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
@@ -524,7 +627,6 @@ async function keyboardSelector(sessionId, agentId) {
       check('keyboardReachesAgentRadio', audit.reached, { agentId, direction, fromValue: navigation.activeValue })
       check('keyboardSelectionAndFocusReturn', selected.selector.agentId === agentId && focusReturned && targetSteps.length === 1, { agentId, direction, mutation: 'setSelector', targetSteps: targetSteps.length })
       await shot(`keyboard-selector-return-${agentId}`)
-      writeJson(join(out, 'accessibility.json'), accessibility)
       return
     }
     await instance.cdp.key('Enter')
@@ -549,12 +651,12 @@ async function answerInboxWithSuggestions(sessionId, caseId, shotName) {
   await openPage('inbox')
   const article = `article[data-case-id="${caseId}"]`
   await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
-  await clickText(article, ['使用建议', 'Use suggestions'])
+  await keyboardActivate('Use inbox suggestions', 'button', { scope: article, labels: ['使用建议', 'Use suggestions'] })
   const filled = await instance.cdp.evaluate(`(() => { const article=document.querySelector(${JSON.stringify(article)}); return {checked:[...article.querySelectorAll('input[type="radio"],input[type="checkbox"]')].filter(el=>el.checked).map(el=>el.value),texts:[...article.querySelectorAll('textarea')].map(el=>el.value),busy:article.querySelector('form')?.getAttribute('aria-busy')} })()`)
   const stillPending = await record(sessionId, 'suggestion-fill', caseId)
   check(`${shotName}SuggestionOnlyFills`, stillPending.case.state === 'awaiting_user' && filled.checked.length > 0 && filled.busy !== 'true', filled)
   await shot(`${shotName}-suggestion-filled`)
-  await clickText(article, ['提交决定', 'Submit decision'])
+  await keyboardActivate('Submit inbox decision', 'button', { scope: article, labels: ['提交决定', 'Submit decision'] })
   const closed = await waitFor(async () => { const value = await record(sessionId, 'inbox-decide', caseId); return value.case.state === 'closed' ? value : null }, 30_000)
   await expectMutation('decide', { sessionId, caseId, answers: closed.case.decision.answers })
   check(`${shotName}InboxDecisionMatchesAuthority`, closed.case.closing === 'escalated' && closed.case.decision.kind === 'user_decision', { caseId, answers: closed.case.decision.answers })
@@ -567,7 +669,13 @@ async function answerInboxWithSuggestions(sessionId, caseId, shotName) {
 // rendered Skip control is the only finish left; the Hook answers the settled native ask
 // through hookUserAborted, which returns the already closed Case unchanged.
 async function skipLongNativeStep() {
-  return instance.cdp.evaluate(`(() => { const visible=el=>Boolean(el&&el.offsetParent!==null); const pending=[...document.querySelectorAll('[data-question-key]')].find(visible); if(!pending)return 'gone'; const button=[...pending.querySelectorAll('button')].find(el=>visible(el)&&!el.disabled&&/^(跳过|Skip)$/i.test(el.textContent.trim())); if(!button)return 'busy'; button.click(); return 'skipped' })()`)
+  const native = await nativeState()
+  if (!native.pending) return 'gone'
+  const card = `[data-question-key=${JSON.stringify(native.key)}]`
+  const ready = await instance.cdp.evaluate(`(() => { const root=document.querySelector(${JSON.stringify(card)}); return Boolean(root&&[...root.querySelectorAll('button')].find(el=>el.offsetParent!==null&&!el.disabled&&/^(跳过|Skip)$/i.test(el.textContent.trim()))) })()`)
+  if (!ready) return 'busy'
+  await keyboardActivate('Skip native question', 'button', { scope: card, labels: ['跳过', 'Skip'] })
+  return 'skipped'
 }
 
 async function finishLongNativeWithSkip(sessionId, caseId) {
@@ -620,10 +728,10 @@ function writeReport(verdict, error = null) {
     '- `authoritative-rpc.json` 保存只读权威 RPC；驱动拒绝直接调用任何写方法。',
     '- `rpc-ui-comparisons.json` 对照记录 ID/revision/state/answers、Snapshot expectedRevision 与 UI。',
     '- `immutable-history.json` 检查 Attempt 与 Snapshot 原则内容未改写。',
-    '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 触发；无 Auto、自动整理或自动发布。', '',
+    '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 的原生 CDP 键盘事件触发；无 Auto、自动整理或自动发布。', '',
     '## 视觉、主题、缩放、键盘与可访问性', '',
     `- 已执行 ${visualAudits.length} 项视觉审计；目标为 360/768/1440 CSS px、light/dark、200% page scale，记录横向溢出、主操作裁切、控件名称与主题计算色。`,
-    `- 已保存 ${Object.keys(accessibility).length} 组 CDP Accessibility 证据；keyboard-selector.json 逐步记录 Enter/Tab/ArrowDown/ArrowUp/Escape、原生选择即保存和焦点返回。`,
+    `- 已保存 ${Object.keys(accessibility).length} 组 CDP Accessibility 证据；keyboard-interactions.json 逐步记录 ${keyboardAudits.length} 组原生 Tab/Shift+Tab/Arrow/Enter/Space/Input.insertText 轨迹、activeElement、accessible name 与结果。`,
     '- `runtime-events.json` 与 `runtime-scan.json` 保存异常、console、Slot crash 和加载失败扫描。', '',
     '## 真实截图', '',
     ...screenshots.map(item => `- [${item.name}](${basename(item.path)}) — ${item.bytes} bytes`), '',
@@ -660,7 +768,7 @@ try {
   const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label')})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]')),auto:/\\bAuto\\b|自动路由/.test(panel.innerText)} })()`)
   check('dedicatedEmptySelectorOnlyOff', !initialSelector.legacy && !initialSelector.auto && initialSelector.radios.length === 1 && initialSelector.radios[0].value === 'off', initialSelector)
   await shot('01-selector-empty')
-  await clickText('#weir-da-selector-panel', ['新建助手', 'New assistant'])
+  await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'] })
   const longName = '桌面验收助手 · Decision Product QA with an intentionally long English assistant name'
   const preference = '只依据可核验证据；高风险操作仍由用户决定。Prefer source-backed concise answers and preserve the existing approval boundary. 这是用于长文本与编辑验收的用户原创判断偏好。'
   await fillAgent(longName, preference)
@@ -670,7 +778,7 @@ try {
   check('selectorCreateUsesNewPage', primary.state === 'enabled' && primary.scope?.workspaces?.includes(LANE), { agentId: primary.agentId })
   const secondary = await createAgent(sessionId, '空候选与键盘备用助手 · Empty review assistant', 'No existing decisions: the isolated fixture returns no candidate operations for this assistant only.')
   await openAgent(sessionId, primary.agentId)
-  await click(`[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
+  await keyboardActivate('Edit assistant', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
   const editedName = `${longName} · 已编辑 / edited`
   const editedPreference = `${preference} 编辑后仍保持相同 scope 与模型继承。`
   await fillAgent(editedName, editedPreference)
@@ -680,7 +788,7 @@ try {
   await shot('02-assistant-edited')
   await openSession(instance, sessionId)
   await selectorOpen()
-  await clickText('#weir-da-selector-panel', ['管理助手', 'Manage assistants'])
+  await keyboardActivate('Manage assistants from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['管理助手', 'Manage assistants'] })
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify('main.weir-da-page section[data-view="agents"]')}))`), 30_000)
   check('selectorManageOpensThreeDestinationProductPage', await instance.cdp.evaluate('document.querySelectorAll("main.weir-da-page [data-decision-primary-nav] [data-view]").length === 3'))
   await openSession(instance, sessionId)
@@ -703,7 +811,7 @@ try {
   const unavailable = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,disabledOptionAbsent:!panel.querySelector('input[value=${JSON.stringify(primary.agentId)}]'),trigger:document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]').getAttribute('aria-label')} })()`)
   check('selectedDisabledAssistantTruthfulUnavailable', unavailable.disabledOptionAbsent && /不可用|unavailable/i.test(`${unavailable.text} ${unavailable.trigger}`), unavailable)
   await shot('06-selector-unavailable')
-  await instance.cdp.key('Escape')
+  await keyboardKey('Close unavailable assistant selector', 'Escape')
   await agentState(sessionId, primary.agentId, 'enabled')
   await openSession(instance, sessionId)
 
@@ -774,8 +882,8 @@ try {
   await shot('13-record-advanced-diagnostics')
   const note = '独立备注草稿：只补充审计上下文，不影响后续判断。'
   const correction = 'Use Long — 纠正只影响之后的新判断，原回答保留。'
-  await setInput(instance, `[data-record-detail="${first.caseId}"] [data-draft="comment"]`, note)
-  await setInput(instance, `[data-record-detail="${first.caseId}"] [data-draft="correction"]`, correction)
+  await keyboardFill('Enter independent note', `[data-record-detail="${first.caseId}"] [data-draft="comment"]`, note)
+  await keyboardFill('Enter correction', `[data-record-detail="${first.caseId}"] [data-draft="correction"]`, correction)
   const preview = await instance.cdp.evaluate(`document.querySelector('[data-record-detail=${JSON.stringify(first.caseId)}] .weir-da-correction-preview')?.innerText`)
   const previewProblems = correctionPreviewProblems(preview)
   check('independentNoteCorrectionPreview', previewProblems.length === 0, previewProblems.length ? { preview, problems: previewProblems } : preview)
@@ -796,12 +904,12 @@ try {
   check('ratingDownStateAwareUndo', ratedDown.case.feedbackState === 'disputed' && ratedDown.case.needsReview === true)
   await shot('16-rating-down')
   await feedback(sessionId, first.caseId, 'undo_rating_down')
-  await click(`[data-record-detail="${first.caseId}"] [data-action="comment"]`)
+  await keyboardActivate('Submit note', `[data-record-detail="${first.caseId}"] [data-action="comment"]`)
   const commented = await waitFor(async () => { const value = await record(sessionId, 'comment', first.caseId); return value.feedback.some(item => item.kind === 'comment' && item.payload?.text === note) ? value : null }, 30_000)
   await expectMutation('feedback', { sessionId, caseId: first.caseId, verb: 'comment', payload: { text: note } })
   const correctionKept = await instance.cdp.evaluate(`document.querySelector('[data-record-detail=${JSON.stringify(first.caseId)}] [data-draft="correction"]').value`)
   check('noteDoesNotConsumeCorrectionDraft', commented.case.feedbackState === 'none' && correctionKept === correction)
-  await click(`[data-record-detail="${first.caseId}"] [data-action="correction"]`)
+  await keyboardActivate('Submit correction', `[data-record-detail="${first.caseId}"] [data-action="correction"]`)
   const corrected = await waitFor(async () => { const value = await record(sessionId, 'correction', first.caseId); return value.feedback.some(item => item.kind === 'correction' && item.payload?.direction === correction) ? value : null }, 30_000)
   await expectMutation('correction', { sessionId, caseId: first.caseId, direction: correction, scope: firstRecord.authority.case.scope, supersedes: [first.caseId] })
   check('correctionAppendsWithoutHistoryRewrite', corrected.case.decision.answers[0].selected[0] === 'Use Short' && corrected.feedback.some(item => item.kind === 'correction'))
@@ -842,10 +950,11 @@ try {
   await instance.cdp.setPageZoom(1)
   await instance.cdp.setViewport(1440)
   await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')
+  await openRecord(sessionId, longCase.caseId)
+  await captureAccessibility('longRecord', `[data-record-detail="${longCase.caseId}"]`)
   // The decided long Case leaves its native question pending, and a pending native question
   // occupies the composer; finish it with the rendered Skip before any later marker.
   await finishLongNativeWithSkip(sessionId, longCase.caseId)
-  accessibility.longRecord = await instance.cdp.accessibility(`article[data-case-id="${longCase.caseId}"]`).catch(() => null)
   await openPage('metrics')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("[data-metrics-view]"))'), 30_000)
   const metrics = await rpc(sessionId, 'metrics', 'metrics', { window: 'all' })
@@ -863,7 +972,7 @@ try {
 
   writeJson(join(out, 'no-change-agent.json'), { enabled: true, agentId: secondary.agentId })
   await openAgent(sessionId, secondary.agentId)
-  await click(`[data-agent-detail="${secondary.agentId}"] [data-action="learning-start"]`)
+  await keyboardActivate('Start empty principle review', `[data-agent-detail="${secondary.agentId}"] [data-action="learning-start"]`)
   const noChangeAgent = await waitAgent(sessionId, secondary.agentId, value => value.learningRuns.length > 0)
   const noChangeRun = await rpc(sessionId, 'no-change', 'learningRun', { learningRunId: noChangeAgent.learningRuns[0].learningRunId })
   const noChangeDom = await waitFor(async () => { const value = await governanceState(secondary.agentId); return value && /没有可整理的新原则|No new principles/.test(value.text) ? value : null }, 30_000)
@@ -949,7 +1058,11 @@ try {
   check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, importFailures })
   await collectNetwork()
   check('completeLifecyclePngEvidence', screenshots.length >= 30 && screenshots.every(item => statSync(item.path).size > 8), { count: screenshots.length })
-  result = { phase: 'GUI-product-UX-8.1-8.2', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), immutable: join(out, 'immutable-history.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
+  validateAccessibility()
+  const requiredKeyboardActions = ['Open assistant editor', 'Edit assistant', 'Request assistant disabled', 'Confirm assistant disabled', 'Request assistant enabled', 'Confirm assistant enabled', 'Choose native answer Native Off', 'Choose native answer Use Short', 'Choose native answer User backed GUI answer', 'Use inbox suggestions', 'Submit inbox decision', 'Apply feedback rating_up', 'Apply feedback undo_rating_up', 'Apply feedback rating_down', 'Apply feedback undo_rating_down', 'Enter independent note', 'Enter correction', 'Submit note', 'Submit correction', 'Start principle review', 'Request snapshotPublish', 'Confirm snapshotPublish', 'Request snapshotReject', 'Confirm snapshotReject', 'Request snapshotRollback', 'Confirm snapshotRollback']
+  const keyboardProblems = requiredKeyboardActions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && (audit.activation || audit.input)))
+  check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
+  result = { phase: 'GUI-product-UX-8.1-8.2', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)
   writeReport('PASS')

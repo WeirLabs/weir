@@ -67,11 +67,14 @@ export async function connectCdp(port) {
     },
     async key(key, modifiers = 0) {
       const codes = { Enter: 13, Escape: 27, Tab: 9, Space: 32, ArrowDown: 40, ArrowUp: 38 }
-      const virtualKey = codes[key] ?? key.charCodeAt(0)
-      const type = key === 'Tab' || key === 'Escape' || key.startsWith('Arrow') ? 'rawKeyDown' : 'keyDown'
-      const event = { key: key === 'Space' ? ' ' : key, code: key === 'Space' ? 'Space' : key, windowsVirtualKeyCode: virtualKey, nativeVirtualKeyCode: virtualKey, modifiers }
+      const letter = /^[a-z]$/i.test(key)
+      const virtualKey = codes[key] ?? (letter ? key.toUpperCase().charCodeAt(0) : key.charCodeAt(0))
+      const code = key === 'Space' ? 'Space' : letter ? `Key${key.toUpperCase()}` : key
+      const selectAll = letter && key.toLowerCase() === 'a' && modifiers === 4
+      const type = selectAll || key === 'Tab' || key === 'Escape' || key.startsWith('Arrow') ? 'rawKeyDown' : 'keyDown'
+      const event = { key: key === 'Space' ? ' ' : key, code, windowsVirtualKeyCode: virtualKey, nativeVirtualKeyCode: virtualKey, modifiers }
       const text = { Enter: '\r', Space: ' ' }[key]
-      await request('Input.dispatchKeyEvent', { type, ...event, ...(text ? { text, unmodifiedText: text } : {}) })
+      await request('Input.dispatchKeyEvent', { type, ...event, ...(selectAll ? { commands: ['SelectAll'] } : {}), ...(text ? { text, unmodifiedText: text } : {}) })
       await request('Input.dispatchKeyEvent', { type: 'keyUp', ...event })
     },
     async accessibility(selector) {

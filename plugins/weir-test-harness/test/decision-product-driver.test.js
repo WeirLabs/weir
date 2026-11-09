@@ -176,35 +176,41 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(!driver.includes('127.0.0.1:52011'))
 })
 
-// Run Le5TdB regression anchor: the old helper evaluated once and threw on the first non-actionable
-// poll, so a click during the product's pending window reported a false `Rendered click target unavailable`.
-test('product driver click helper waits for one actionable target before clicking', () => {
+// Keyboard acceptance must observe real focus traversal; querying a target is read-only and
+// may never be followed by programmatic focus, DOM clicks or value setters.
+test('product driver keyboard helpers record native focus traversal and text entry', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const body = driver.match(/async function click\(selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
-  assert.ok(body, 'generic click helper exists')
-  assert.equal(body.match(/instance\.cdp\.evaluate\(/g)?.length, 1, 'click issues exactly one CDP action expression')
-  assert.ok(!/setTimeout|sleep\(|delay\(/.test(body), 'click waits by polling, never by an arbitrary sleep')
-  assert.match(body, /await waitFor\(/, 'the single action expression is polled by waitFor')
-  assert.match(body, /30_000/, 'the actionable wait is bounded')
-  assert.match(body, /el\.offsetParent===null/, 'click keeps the visibility guard')
-  assert.match(body, /el\.disabled/, 'click keeps the disabled guard')
-  assert.match(body, /el\.click\(\)/, 'the click happens inside the polled expression')
-  assert.match(body, /Rendered click target unavailable/, 'a bounded wait still reports the exact selector')
+  const focus = driver.match(/async function keyboardFocus\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(focus, 'the shared keyboard focus helper exists')
+  assert.match(focus, /instance\.cdp\.key\('Tab',/, 'focus moves only through native Tab packets')
+  const snapshot = driver.match(/async function keyboardSnapshot\(selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(snapshot, /accessibleName/, 'each trace records the accessible name')
+  assert.match(focus, /activeElement/, 'each trace records the actual active element')
+  assert.match(driver, /writeJson\(join\(out, 'keyboard-interactions\.json'\), keyboardAudits\)/, 'focus evidence is durable after every step')
+  assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(focus), 'focus never bypasses keyboard reachability')
 
-  // The polled expression is real browser code: simulate a target that is first pending, then actionable.
-  const template = body.match(/instance\.cdp\.evaluate\(`([^`]*)`\)/)?.[1] ?? ''
-  assert.ok(template.includes('${JSON.stringify(selector)}'), 'the expression interpolates the JSON encoded selector')
-  const action = new Function('document', `return (${template.replace('${JSON.stringify(selector)}', JSON.stringify('#target'))})`)
-  const target = { offsetParent: null, disabled: false, clicks: 0, click() { this.clicks += 1 } }
-  assert.equal(action({ querySelector: () => null }), false, 'an absent target is not clicked')
-  assert.equal(action({ querySelector: () => target }), false, 'a pending hidden target is not clicked')
-  target.offsetParent = {}
-  target.disabled = true
-  assert.equal(action({ querySelector: () => target }), false, 'a disabled target is not clicked')
-  assert.equal(target.clicks, 0)
-  target.disabled = false
-  assert.equal(action({ querySelector: () => target }), true, 'the actionable target reports success')
-  assert.equal(target.clicks, 1, 'the actionable poll clicks exactly once')
+  const activate = driver.match(/async function keyboardActivate\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(activate, /await keyboardFocus\(action, selector, options\)/)
+  assert.match(activate, /instance\.cdp\.key\(options\.key \?\? 'Enter'\)/)
+  const fill = driver.match(/async function keyboardFill\(action, selector, value\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(fill, /await keyboardFocus\(action, selector\)/)
+  assert.match(fill, /instance\.cdp\.key\('a', 4\)/, 'editing selects old text with native Meta+A')
+  assert.match(fill, /Input\.insertText/, 'text is inserted through the native CDP input channel')
+  assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(`${activate}\n${fill}`))
+})
+
+test('all product write paths use native keyboard helpers instead of DOM actions', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(!/\bsetInput\b/.test(driver), 'the DOM value setter is not imported or called')
+  for (const name of ['selectorOpen', 'selectorChoose', 'fillAgent', 'createAgent', 'agentState', 'answerNative', 'answerInboxWithSuggestions', 'skipLongNativeStep', 'feedback', 'startCandidate', 'confirmLearning']) {
+    const body = driver.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`))?.[0] ?? ''
+    assert.ok(body, `${name} exists`)
+    assert.ok(!/\.focus\(|\.click\(|\bclick\(|\bclickText\(|\bsetInput\(/.test(body), `${name} is keyboard-only`)
+  }
+  for (const call of ["await keyboardActivate('Submit note'", "await keyboardActivate('Submit correction'", "await keyboardFill('Edit assistant name'", "await keyboardFill('Enter independent note'", "await keyboardFill('Enter correction'"]) {
+    assert.ok(driver.includes(call), `missing traced keyboard action: ${call}`)
+  }
+  assert.ok(driver.includes("artifacts: { networkRpc:") && driver.includes("keyboard: join(out, 'keyboard-interactions.json')"), 'the result indexes structured keyboard evidence')
 })
 
 function fakeTransitionCdp(t) {
@@ -259,6 +265,21 @@ test('CDP key emits native Enter and Space activation packets without changing n
     { type: 'keyUp', key: 'ArrowDown', code: 'ArrowDown', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40, modifiers: 0 },
     { type: 'rawKeyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38, modifiers: 0 },
     { type: 'keyUp', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38, modifiers: 0 },
+  ])
+  cdp.close()
+})
+
+test('CDP key emits native reverse Tab and Meta+A editing packets', async t => {
+  const fake = fakeTransitionCdp(t)
+  const cdp = await connectCdp(9494)
+  await cdp.key('Tab', 8)
+  await cdp.key('a', 4)
+  const events = fake.requests.filter(request => request.method === 'Input.dispatchKeyEvent').map(request => request.params)
+  assert.deepEqual(events, [
+    { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 8 },
+    { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: 8 },
+    { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 4, commands: ['SelectAll'] },
+    { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 4 },
   ])
   cdp.close()
 })
@@ -356,38 +377,14 @@ test('long native Skip retires the leftover question without touching the closed
 
   const step = driver.match(/async function skipLongNativeStep\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(step, 'skipLongNativeStep exists')
-  assert.equal(step.match(/instance\.cdp\.evaluate\(/g)?.length, 1, 'one real CDP action per skipped question')
+  assert.equal(step.match(/instance\.cdp\.evaluate\(/g)?.length, 1, 'one read-only readiness expression precedes each keyboard activation')
   assert.ok(!/setTimeout|sleep\(|delay\(/.test(step), 'the Skip waits by polling, never by an arbitrary sleep')
-  assert.ok(step.includes("[data-question-key]"), 'the Skip reads the rendered native question cards')
-  assert.match(step, /el\.offsetParent!==null/, 'the click is scoped to the currently visible card')
-  assert.match(step, /!el\.disabled/, 'a disabled control is never clicked')
-  assert.ok(step.includes('/^(跳过|Skip)$/i'), 'only the real localized Skip control is clicked')
-  assert.ok(!/提交|Submit|下一题|Next/.test(step), 'the Skip never falls back to a submit or next control')
-
-  // The extracted expression is real browser code: a leftover hidden card must stay untouched.
-  const template = step.match(/instance\.cdp\.evaluate\(`([^`]*)`\)/)?.[1] ?? ''
-  assert.ok(template.includes("document.querySelectorAll('[data-question-key]')"), 'the action expression queries the rendered question cards')
-  const action = new Function('document', `return (${template})`)
-  const control = (text, { visible = true, disabled = false } = {}) => ({ textContent: text, offsetParent: visible ? {} : null, disabled, clicks: 0, click() { this.clicks += 1 } })
-  const card = (visible, buttons) => ({ offsetParent: visible ? {} : null, querySelectorAll: () => buttons })
-  const page = (...cards) => ({ querySelectorAll: () => cards })
-
-  const hiddenCardSkip = control('跳过')
-  assert.equal(action(page(card(false, [hiddenCardSkip]))), 'gone', 'a hidden old card reports no visible native card')
-  assert.equal(hiddenCardSkip.clicks, 0, 'a hidden old card is never clicked')
-  const disabledSkip = control('Skip', { disabled: true })
-  assert.equal(action(page(card(true, [disabledSkip]))), 'busy', 'a busy native card is not clicked')
-  assert.equal(disabledSkip.clicks, 0, 'a disabled Skip is never clicked')
-  const submit = control('提交')
-  const liveSkip = control('跳过')
-  assert.equal(action(page(card(true, [submit, liveSkip]))), 'skipped', 'the visible card reports its actionable Skip')
-  assert.equal(liveSkip.clicks, 1, 'the visible Skip is clicked exactly once')
-  assert.equal(submit.clicks, 0, 'the Skip never activates the submit control')
-  const staleSkip = control('跳过')
-  const currentSkip = control('Skip')
-  assert.equal(action(page(card(false, [staleSkip]), card(true, [currentSkip]))), 'skipped')
-  assert.deepEqual([staleSkip.clicks, currentSkip.clicks], [0, 1], 'the click lands on the visible card, never on a hidden old one')
-
+  assert.match(step, /await nativeState\(\)/, 'the Skip reads the currently visible native question')
+  assert.match(step, /el\.offsetParent!==null/, 'readiness is scoped to the visible card')
+  assert.match(step, /!el\.disabled/, 'a disabled control is never activated')
+  assert.ok(step.includes('/^(跳过|Skip)$/i'), 'only the real localized Skip control is accepted')
+  assert.match(step, /await keyboardActivate\('Skip native question', 'button', \{ scope: card, labels: \['跳过', 'Skip'\] \}\)/)
+  assert.ok(!/\.click\(|\.focus\(|提交|Submit|下一题|Next/.test(step), 'Skip never falls back to DOM actions or another control')
   const finish = driver.match(/async function finishLongNativeWithSkip\(sessionId, caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(finish, 'finishLongNativeWithSkip exists')
   const before = finish.indexOf("const before = await record(sessionId, 'long-native-skip-before', caseId)")
@@ -491,4 +488,23 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   assert.match(driver, /check\(`\$\{label\}ExactOwnedCleanup`, receipt\.pass/, 'each owned cleanup retains its named acceptance check')
   for (const log of ['desktop-enabled.log', 'desktop-disabled.log']) assert.ok(driver.includes(`'${log}'`), `${log} is included in the import scan`)
   assert.match(driver, /const importFailures = desktopLogs\.flatMap\(/, 'runtime import failures are scanned across both log modes')
+})
+
+test('product driver persists and validates all six AX evidence groups', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const capture = driver.match(/async function captureAccessibility\(name, selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(capture, 'a single capture helper owns every AX collection')
+  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/)
+  assert.match(capture, /writeJson\(join\(out, 'accessibility\.json'\), accessibility\)/, 'every capture is durable before later scenario steps')
+  const requirements = driver.match(/const accessibilityRequirements = \{[\s\S]*?\n\}/)?.[0] ?? ''
+  for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog']) {
+    assert.ok(requirements.includes(`${name}:`), `${name} has an explicit AX requirement`)
+  }
+  assert.match(driver, /check\('completeAccessibilityEvidence', accessibilityProblems\.length === 0 && Object\.keys\(accessibility\)\.length === 6/)
+  assert.match(driver, /Object\.keys\(accessibility\)\.length/, 'the report count comes from the persisted object rather than a hard-coded claim')
+  const answered = driver.indexOf("await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')")
+  const opened = driver.indexOf('await openRecord(sessionId, longCase.caseId)', answered)
+  const captured = driver.indexOf("await captureAccessibility('longRecord'", answered)
+  const finished = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)', captured)
+  assert.ok(answered >= 0 && opened > answered && captured > opened && finished > captured, 'longRecord AX reads the still-rendered authoritative record after inbox closure')
 })
