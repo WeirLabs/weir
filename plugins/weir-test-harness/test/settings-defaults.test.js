@@ -38,6 +38,8 @@ test('production and headless settings overlays mirror the conservative Auto def
 test('scenario Auto overrides are opt-in and unset values retain conservative field defaults', () => {
   const headless = rowEntries('../cordis.patch.yml', 'weir-it-settings')
   assert.equal(scalar(headless.get('decisionAgentAutoAnswerClasses')), FIELD_DEFAULTS.decisionAgentAutoAnswerClasses)
+  assert.equal(scalar(headless.get('decisionAgentSelectorDefault')), FIELD_DEFAULTS.decisionAgentSelectorDefault)
+  assert.equal(scalar(headless.get('decisionAgentSelectorDefault'), { WEIR_IT_DECISION_SELECTOR_DEFAULT: 'auto' }), 'auto')
   assert.equal(scalar(headless.get('decisionAgentAutoAnswerClasses'), { WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]' }), '["A","B","C"]')
   assert.equal(scalar(headless.get('decisionAgentAnswerTimeoutMs')), FIELD_DEFAULTS.decisionAgentAnswerTimeoutMs)
   assert.equal(scalar(headless.get('decisionAgentAnswerTimeoutMs'), { WEIR_IT_DECISION_TIMEOUT_MS: '100' }), 100)

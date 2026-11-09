@@ -47,7 +47,7 @@ export function apply(ctx, config = {}) {
   ctx.tools.register({
     name: 'decision_recovery_probe',
     description: 'Seed or verify isolated recovery fixtures through real Decision domain objects. Dev-only.',
-    parameters: { type: 'object', properties: { op: { type: 'string', enum: ['seed', 'verify'] } }, required: ['op'] },
+      parameters: { type: 'object', properties: { op: { type: 'string', enum: ['seed', 'verify', 'auto-verify'] } }, required: ['op'] },
     output: {
       schema: { type: 'object' },
       render: (args, value) => [{ type: 'text', text: `DECISION_RECOVERY ${value?.completed ? `done ${args?.op}` : 'error'}:${JSON.stringify(value)}` }],
@@ -69,6 +69,18 @@ export function apply(ctx, config = {}) {
         }
         if (args.op === 'verify') {
           const report = await snapshot(broker, agent, 'after')
+          return { completed: true, op: args.op, report }
+        }
+        if (args.op === 'auto-verify') {
+          const report = await snapshot(broker, agent, 'auto-after')
+          await new Promise(resolve => setTimeout(resolve, 40))
+          const later = readDecisionStore(join(process.env.WEIR_IT_ROOT, 'ws'))
+          const authority = value => JSON.stringify({
+            selectors: value.selectors, cases: value.cases, attempts: value.attempts,
+            evidence: value.evidence, feedback: value.feedback, routes: value.routes,
+          })
+          report.lateStable = authority(report) === authority(later)
+          writeFileSync(join(process.env.WEIR_IT_ROOT, 'ws', 'decision-recovery-auto-after.json'), JSON.stringify(report, null, 2) + '\n')
           return { completed: true, op: args.op, report }
         }
         throw new Error(`Unsupported recovery operation: ${args.op}`)

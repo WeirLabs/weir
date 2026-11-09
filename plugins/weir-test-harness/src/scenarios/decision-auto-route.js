@@ -44,7 +44,10 @@ function decide(options, obs) {
     if (!agentId) return textChunks('DECISION_AUTO_ROUTE_FAILED')
     return toolCallChunks('decision_integration_probe', { op: 'disable-a', agentId })
   }
-  if (obs.lastTool.includes('AGENT_UNAVAILABLE') || obs.lastTool.includes('unavailable for this workspace')) return textChunks('DECISION_AUTO_ROUTE_DONE')
+  if (history.includes('AGENT_UNAVAILABLE') || history.includes('unavailable for this workspace')) {
+    if (!history.includes('DECISION_TEST done auto-safety')) return toolCallChunks('decision_integration_probe', { op: 'auto-safety' })
+    return textChunks('DECISION_AUTO_ROUTE_DONE')
+  }
   const agentId = /"agentB":"([^"]+)"/.exec(history)?.[1]
   if (!agentId) return textChunks('DECISION_AUTO_ROUTE_FAILED')
   return toolCallChunks('decision_consult', { ...EXPLICIT_UNAVAILABLE, agent_id: agentId })
@@ -54,19 +57,24 @@ function classify(pack) {
   return pack.questions.map(question => ({
     id: question.id,
     authorizationClass: question.question?.startsWith('AUTO_ZERO') ? 'C'
-      : /^(?:AUTO_ONE|AUTO_SINGLEFLIGHT|AUTO_REPLAY|AUTO_CONSULT)/.test(question.question ?? '') ? 'B' : 'A',
+      : question.question?.startsWith('AUTO_SAFETY_UNKNOWN') ? 'unknown'
+        : question.question?.startsWith('AUTO_SAFETY_MIXED_MISSING') ? 'D'
+          : /^(?:AUTO_ONE|AUTO_SINGLEFLIGHT|AUTO_REPLAY|AUTO_CONSULT)/.test(question.question ?? '') ? 'B' : 'A',
   }))
 }
 
 function decideRouterClassification(options, obs) {
   const pack = decisionPack(obs)
   if (!pack || !Array.isArray(pack.questions)) throw new Error('decision-auto-route: malformed classification pack')
+  if (process.env.WEIR_IT_AUTO_SHADOW_FAILURE === 'classification' && pack.questions.some(question => question.question?.startsWith('AUTO_SAFETY_SHADOW_FAILURE_CONTROL'))) return textChunks('not-json')
   return textChunks(JSON.stringify({ contract: 'router-classification-contract/1', classes: classify(pack) }))
 }
 
 function decideRouterRoute(options, obs) {
   const pack = decisionPack(obs)
   const question = pack?.questions?.[0]?.question ?? ''
+  if (question.startsWith('AUTO_SAFETY_SHADOW_FAILURE_CONTROL') && process.env.WEIR_IT_AUTO_SHADOW_FAILURE === 'routing') return textChunks('not-json')
+  if (question.startsWith('AUTO_SAFETY_UNOWNED')) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No Auto owner; preserve the unowned user decision boundary' }))
   if (question.startsWith('AUTO_TIMEOUT')) return []
   if (question.startsWith('AUTO_NONE')) {
     return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No eligible Agent matches this request' }))
@@ -80,7 +88,9 @@ function decideRouterRoute(options, obs) {
   if (question.startsWith('AUTO_INVALID')) {
     return textChunks('{"contract":"router-contract/1","outcome":"selected","agentId":"ag_not_eligible","reason":"Unknown candidate must be rejected"}')
   }
-  const selected = pack?.candidates?.find(candidate => candidate.name?.endsWith(' A')) ?? pack?.candidates?.[0]
+  const selected = question.startsWith('AUTO_SAFETY_SHADOW')
+    ? pack?.candidates?.find(candidate => candidate.name?.endsWith(' B'))
+    : pack?.candidates?.find(candidate => candidate.name?.endsWith(' A')) ?? pack?.candidates?.[0]
   if (!selected) throw new Error('decision-auto-route: selected fixture requires an eligible candidate')
   return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'Auto A owns this evidenced fixture' }))
 }
@@ -109,11 +119,13 @@ function probeReport(obs, op) {
 }
 
 function observe(obs) {
+  const setup = probeReport(obs, 'auto-setup')
   const singleflight = probeReport(obs, 'auto-singleflight')
   const replay = probeReport(obs, 'auto-replay')
   const explicitUnavailable = obs.lastTool.includes('AGENT_UNAVAILABLE') || obs.lastTool.includes('unavailable for this workspace')
   const base = {
     ...observeDecision(obs),
+    ...(setup ? { autoSetupReport: setup } : {}),
     ...(singleflight ? { autoSingleflightReport: singleflight } : {}),
     ...(replay ? { autoReplayReport: replay } : {}),
     ...(explicitUnavailable ? { autoExplicitUnavailable: true } : {}),
@@ -147,6 +159,7 @@ function observe(obs) {
     },
     ...(routing && question.startsWith('AUTO_TIMEOUT') ? { autoRouterHold: 'timeout' } : {}),
     ...(classification && question.startsWith('AUTO_SINGLEFLIGHT') ? { autoRouterHold: 'singleflight' } : {}),
+    ...(classification && question.startsWith('AUTO_SAFETY_FLUSH') ? { autoRouterHold: 'flush' } : {}),
   }
 }
 
@@ -224,8 +237,9 @@ function assert(run) {
   run.check('real explicit agent_id has priority, never changes Auto, and unavailable B never falls back to A', explicit?.closing === 'answered' && explicit?.agent_id === agentB && routeFor(explicit)?.mode === 'explicit' && routeFor(explicit)?.chosen === agentB && wiresFor('AUTO_EXPLICIT:', 'classification').length === 0 && wiresFor('AUTO_EXPLICIT:', 'route').length === 0 && selector?.mode === 'auto' && selector?.agent_id === null && !unavailable && run.requests.some(request => request.autoExplicitUnavailable), JSON.stringify({ explicit, route: routeFor(explicit), selector, unavailable }))
 
   const routerWires = run.requests.filter(request => request.autoRouter)
-  const classificationWires = routerWires.filter(request => request.autoRouter.kind === 'classification')
-  const routeWires = routerWires.filter(request => request.autoRouter.kind === 'route')
+  const coreRouterWires = routerWires.filter(request => request.autoRouter.pack?.questions?.every(question => !/^(?:AUTO_SAFETY|AUTO_SHADOW)/.test(question.question ?? '')))
+  const classificationWires = coreRouterWires.filter(request => request.autoRouter.kind === 'classification')
+  const routeWires = coreRouterWires.filter(request => request.autoRouter.kind === 'route')
   const cleanWire = request => request.autoRouter.tools.length === 0 && request.autoRouter.hasTemperature === false && request.autoRouter.provider === 'mock' && request.autoRouter.model === 'mock-1' && request.autoRouter.maxTokens === 1600
   const forbiddenWireKeys = /generatedDescription|memorySnapshot|snapshotId|principles|feedback|attempts|history/
   run.check('Router model wire is bounded, tool-free, temperature-free and excludes domain history/profile memory', classificationWires.length === 11 && routeWires.length === 6 && routerWires.every(cleanWire) && classificationWires.every(request => !forbiddenWireKeys.test(JSON.stringify(request.autoRouter.pack)) && !JSON.stringify(request.autoRouter.pack).includes('Decision Auto')) && routeWires.every(request => !forbiddenWireKeys.test(JSON.stringify(request.autoRouter.pack))), JSON.stringify({ classifications: classificationWires.length, routes: routeWires.length, bad: routerWires.filter(request => !cleanWire(request)) }))
@@ -237,11 +251,56 @@ function assert(run) {
   const knownAgents = new Set([agentA, agentB, null])
   run.check('exact authority census has no duplicate flight, false revision, partial answer, or generic fallback Agent', store.cases.length === 12 && store.routes.length === 12 && store.attempts.length === 11 && store.profiles.length === 2 && store.cases.every(item => knownAgents.has(item.agent_id)) && store.routes.every(route => route.chosen === null || knownAgents.has(route.chosen)), JSON.stringify({ cases: store.cases.length, routes: store.routes.length, attempts: store.attempts.length, profiles: store.profiles.map(profile => ({ id: profile.agent_id, name: profile.name })) }))
 
+  const safetyPath = join(run.ws, 'decision-auto-safety.json')
+  const safety = existsSync(safetyPath) ? JSON.parse(readFileSync(safetyPath, 'utf8')) : null
+  const setupReport = run.requests.find(request => request.autoSetupReport)?.autoSetupReport
+  const safetyWires = marker => routerWires.filter(request => request.autoRouter.pack?.questions?.some(question => question.question?.startsWith(marker)))
+  run.check('fresh startup roots receive Auto while explicit Off survives reinitialization and store reopen', setupReport?.initialSelector?.mode === 'auto' && (setupReport?.initialSelector?.agentId ?? null) === null && safety?.selector?.storeBefore === false && safety?.selector?.fresh?.mode === 'auto' && safety?.selector?.explicitOff?.mode === 'off' && safety?.selector?.resumed?.mode === 'off' && safety?.selector?.restartedStartup?.mode === 'off' && safety?.selector?.persistedRows?.length === 1 && safety.selector.persistedRows[0].mode === 'off', JSON.stringify({ setupReport, selector: safety?.selector }))
+
+  run.check('Off and global-off entry semantics create no hidden database, Case, Route, Attempt, or Shadow sampling', safety?.off?.hook?.kind === 'pass' && safety.off.hook.why === 'bypass' && safety.off.consultError?.code === 'DECISION_OFF' && safety.off.databaseExists === false && safety.off.storeOpen === false && safety?.globalOff?.initial?.mode === 'off' && safety.globalOff.hook?.kind === 'pass' && safety.globalOff.consultError?.code === 'DECISION_OFF' && safety.globalOff.databaseExists === false && safety.globalOff.storeOpen === false && safetyWires('AUTO_SAFETY_OFF').length === 0 && safetyWires('AUTO_SAFETY_GLOBAL_OFF').length === 0, JSON.stringify({ off: safety?.off, globalOff: safety?.globalOff }))
+
+  const excludedWireCount = ['APPROVAL', 'PLAN_REVIEW', 'CLASS_D', 'CLASS_E', 'CLASS_F', 'HIGH_RISK', 'EXECUTION', 'AUTO_CLASS_D', 'CONSULT_D', 'CONSULT_APPROVAL'].reduce((sum, marker) => sum + safetyWires(`AUTO_SAFETY_${marker}`).length, 0)
+  run.check('approval, plan-review, D/E/F, high-risk, and execution-authority paths never sample Shadow or Auto', safety?.excluded?.hookResults?.length === 7 && safety.excluded.hookResults.every(result => result.kind === 'pass' && result.why === 'bypass') && JSON.stringify(safety.excluded.before) === JSON.stringify(safety.excluded.afterHooks) && safety.excluded.consults?.length === 2 && safety.excluded.consults.every(item => item.case?.awaitingReason === 'authority' && item.case?.attemptCount === 0 && item.routes?.length === 1 && item.routes[0].mode === 'pinned') && safety.excluded.autoHook?.why === 'bypass' && JSON.stringify(safety.excluded.beforeAuto) === JSON.stringify(safety.excluded.afterAuto) && safety.excluded.afterAuto.shadow === 0 && excludedWireCount === 0, JSON.stringify({ excluded: safety?.excluded, excludedWireCount }))
+
+  const unknownSafety = safety?.admission?.unknown?.case
+  const mixedSafety = safety?.admission?.mixed?.case
+  run.check('unclassified unknown and mixed batches fail closed as one authority batch without Router or Attempts', unknownSafety?.awaitingReason === 'authority' && unknownSafety?.agentId === null && unknownSafety?.request?.questions?.[0]?.authorizationClass === 'unknown' && mixedSafety?.awaitingReason === 'authority' && mixedSafety?.request?.questions?.[0]?.authorizationClassSource === undefined && mixedSafety?.request?.questions?.[1]?.authorizationClass === 'D' && mixedSafety?.request?.questions?.[1]?.authorizationClassSource === 'auto_classifier' && safety?.admission?.final?.cases === 2 && safety.admission.final.routes === 2 && safety.admission.final.attempts === 0 && safetyWires('AUTO_SAFETY_UNKNOWN').filter(request => request.autoRouter.kind === 'classification').length === 1 && safetyWires('AUTO_SAFETY_MIXED').filter(request => request.autoRouter.kind === 'classification').length === 1 && safetyWires('AUTO_SAFETY_UNKNOWN').filter(request => request.autoRouter.kind === 'route').length === 0 && safetyWires('AUTO_SAFETY_MIXED').filter(request => request.autoRouter.kind === 'route').length === 0, JSON.stringify({ unknownSafety, mixedSafety, admission: safety?.admission?.final }))
+
+  const isolationWire = safetyWires('AUTO_SAFETY_ISOLATION').find(request => request.autoRouter.kind === 'route')
+  const isolationStore = readDecisionStore(run.ws, join(run.ws, '..', 'decision-stores', 'decision-auto-safety-isolation'))
+  const isolationEvidenceIds = safety?.isolation?.attempts?.flatMap(attempt => attempt.packManifest?.evidenceIds ?? []) ?? []
+  run.check('cross-workspace candidates and cross-Agent Evidence never enter Router or domain packs', safety?.isolation?.case?.agentId === safety?.isolation?.localAgents?.[0] && isolationWire && isolationWire.autoRouter.pack.candidates.map(candidate => candidate.agentId).sort().join(',') === safety.isolation.localAgents.slice().sort().join(',') && !JSON.stringify(isolationWire).includes(safety.isolation.foreignAgent) && !JSON.stringify(isolationWire).includes('FORBIDDEN FOREIGN ROUTER CANDIDATE') && !JSON.stringify(isolationWire).includes('FOREIGN WORKSPACE PRIVATE PROFILE BODY') && isolationEvidenceIds.length > 0 && isolationEvidenceIds.every(evidenceId => isolationStore.evidence.find(ref => ref.evidence_id === evidenceId)?.agent_id === safety.isolation.case.agentId), JSON.stringify({ isolation: safety?.isolation, wire: isolationWire, isolationEvidenceIds }))
+
+  const shadowControl = safety?.shadow?.control
+  const shadowObserved = safety?.shadow?.observed
+  run.check('pinned Shadow on/off controls have identical real Case, answer, Evidence, Feedback, delivery, and Attempts with one append-only diagnostic', safety?.shadow?.parity === true && shadowControl?.routes?.map(route => route.mode).join(',') === 'pinned' && shadowObserved?.routes?.map(route => route.mode).join(',') === 'pinned,auto_shadow' && shadowObserved.routes[0].chosen !== shadowObserved.routes[1].chosen && shadowObserved.real?.case?.agentId === 'pinned' && shadowObserved.real?.case?.state === 'closed' && shadowObserved.real?.case?.closing === 'answered' && shadowObserved.counts?.shadow === 1 && shadowObserved.counts?.attempts === 1 && shadowControl.counts?.attempts === 1 && shadowObserved.replaySameAnswer === true && shadowObserved.appendOnly === true && shadowObserved.requestUnchanged === true, JSON.stringify({ parity: safety?.shadow?.parity, control: shadowControl, observed: shadowObserved }))
+
+  const shadowFailures = safety?.shadow?.failures ?? []
+  run.check('Shadow classification, Router, and write failures preserve the real pinned result without retry or late diagnostic duplication', shadowFailures.length === 3 && shadowFailures.every(item => item.equal === true && item.replaySameAnswer === true && item.appendOnly === true && item.requestUnchanged === true && item.counts?.attempts === 1 && item.counts?.cases === 1) && shadowFailures.find(item => item.failure === 'write')?.routes?.map(route => route.mode).join(',') === 'pinned' && shadowFailures.filter(item => item.failure !== 'write').every(item => item.routes?.map(route => route.mode).join(',') === 'pinned,auto_shadow' && item.routes[1].chosen === null && item.routes[1].reason === 'failure:invalid_output'), JSON.stringify(shadowFailures))
+
+  const unowned = safety?.unowned
+  run.check('unowned answer/cancel/retry/reassign preserve user authority, create no premature Evidence or Attempt, and retry only after ownership', unowned?.answer?.opened?.case?.agentId === null && unowned.answer.answered?.agentId === null && unowned.answer.answered?.closing === 'escalated' && unowned.answer.answered?.decision?.answers?.[0]?.selected?.[0] === 'Unowned user answer' && unowned.answer.reread?.userDecided === true && unowned.answer.reread?.evidence?.length === 0 && unowned.answer.evidence === 0 && unowned.cancel.cancelled?.closing === 'cancelled' && unowned.cancel.counts?.attempts === 0 && unowned.retry.error?.code === 'AGENT_UNAVAILABLE' && unowned.retry.unchanged === true && unowned.retry.counts?.attempts === 0 && unowned.reassign.current?.agentId !== null && unowned.reassign.current?.closing === 'answered' && unowned.reassign.routes?.map(route => route.mode).join(',') === 'auto,manual_reassign' && unowned.reassign.counts?.attempts === 1 && unowned.final?.cases === 4 && unowned.final?.routes === 5 && unowned.final?.attempts === 1, JSON.stringify(unowned))
+
+  const flush = safety?.flush
+  run.check('flush aborts and awaits real routing, persists no answer or Attempt, and leaves no late writes or jobs', flush?.before?.cases === 1 && flush.before.routes === 0 && flush.before.attempts === 0 && flush.received?.length === 1 && flush.received[0].state === 'received' && flush.received[0].agent_id === null && flush.result?.outcome === 'awaiting_user' && flush.result?.reason === 'no_route' && flush.after?.cases?.length === 1 && flush.after.cases[0].state === 'awaiting_user' && flush.after.cases[0].awaiting_reason === 'no_route' && flush.after.cases[0].agent_id === null && flush.after.cases[0].decision_json === null && flush.after.routes?.length === 1 && flush.after.routes[0].reason === 'failure:aborted' && flush.after.attempts?.length === 0 && flush.lateStable === true && flush.settled === true && flush.flights === 0 && flush.controllers === 0 && flush.jobs === 0 && flush.active === 0, JSON.stringify(flush))
+
   const auditPath = join(run.ws, '.weir', 'audit.jsonl')
   const audit = existsSync(auditPath) ? readFileSync(auditPath, 'utf8') : ''
   const auditEvents = JSON.stringify(run.events.filter(event => event.type?.startsWith('weir/decision/')))
   const combinedAudit = `${audit}\n${auditEvents}`
-  const sensitive = [...store.cases.flatMap(item => item.request.questions?.map(question => question.question) ?? []), 'Auto A private profile body', 'Auto B private profile body', 'AUTO_REPLAY context secret']
+  const safetyCases = [unknownSafety, mixedSafety, safety?.isolation?.case,
+    ...(safety?.excluded?.consults?.map(item => item.case) ?? []),
+    unowned?.answer?.opened?.case, unowned?.cancel?.opened?.case, unowned?.retry?.opened?.case, unowned?.reassign?.opened?.case,
+  ].filter(Boolean)
+  const shadowRequests = [shadowControl, shadowObserved, ...shadowFailures].flatMap(item => item?.real?.case?.request?.questions?.map(question => question.question) ?? [])
+  const sensitive = [
+    'AUTO_SAFETY_FLUSH: abort and await this route',
+    ...store.cases.flatMap(item => item.request.questions?.map(question => question.question) ?? []),
+    ...safetyCases.flatMap(item => item.request?.questions?.map(question => question.question) ?? []), ...shadowRequests,
+    'Auto A private profile body', 'Auto B private profile body', 'AUTO_REPLAY context secret',
+    'AUTO_SAFETY_OFF: choose the safe fixture', 'AUTO_SAFETY_GLOBAL_OFF: choose the safe fixture',
+    'FORBIDDEN FOREIGN ROUTER CANDIDATE', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY',
+  ]
   run.check('Decision audit contains ids/counts/reasons but no question, context, or profile bodies', auditEvents.includes('weir/decision/attempt') && auditEvents.includes('weir/decision/outcome') && sensitive.every(body => typeof body === 'string' && body.length > 0 && !combinedAudit.includes(body)), JSON.stringify({ auditPath, auditBytes: audit.length, auditEvents: run.events.filter(event => event.type?.startsWith('weir/decision/')).length, leaked: sensitive.filter(body => combinedAudit.includes(body)) }))
   run.check('decision-auto-route real headless run exits cleanly', (run.code === 0 || run.code === null) && run.stdout.includes('DECISION_AUTO_ROUTE_DONE') && !run.stdout.includes('DECISION_AUTO_ROUTE_FAILED'), `code=${run.code} stderr=${run.stderr.slice(-500)}`)
 }
@@ -250,6 +309,6 @@ export default {
   id, prompt, decide, decideDecision, decideRouterClassification, decideRouterRoute, observe, assert,
   env: {
     WEIR_IT_DECISION: '1', WEIR_IT_DECISION_EVENTS: DECISION_EVENTS, WEIR_IT_DECISION_STORE_PATH: decisionStoreDirectory(id),
-    WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_TIMEOUT_MS: '100', WEIR_IT_DECISION_MAX_ATTEMPTS: '8',
+    WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_SELECTOR_DEFAULT: 'auto', WEIR_IT_DECISION_TIMEOUT_MS: '100', WEIR_IT_DECISION_MAX_ATTEMPTS: '8',
   },
 }
