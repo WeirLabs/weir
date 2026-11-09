@@ -146,3 +146,36 @@ test('retry rejects a disabled or archived pinned Agent before changing state', 
   assert.equal(after.attemptCount, current.attemptCount)
   assert.ok(f.audits.some(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.caseId === current.caseId && event.value.agentId === f.a.agentId))
 })
+
+test('unowned Auto Cases answer and cancel safely but reject retry without side effects', async t => {
+  const f = await fixture(t)
+  async function openUnowned(key) {
+    let current = (await f.broker.cases.createCase({
+      workspaceKey: f.workspace, rootSessionId: 'root', entry: 'hook', agentId: null,
+      request: { questions: [{ id: 'q', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] },
+      scope: { workspaces: [f.workspace] }, idempotencyKey: key,
+    })).case
+    await f.broker.cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'auto', reason: 'none:no_candidates' })
+    current = await f.broker.cases.transition({ caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision, state: 'awaiting_user', awaitingReason: 'no_route' })
+    return current
+  }
+
+  const answered = await openUnowned('unowned-answer')
+  const closed = await f.broker.decide({ caseId: answered.caseId, answers: [{ id: 'q', selected: ['A'] }] })
+  assert.equal(closed.closing, 'escalated')
+  assert.equal(closed.agentId, null)
+  assert.deepEqual(closed.decision.answers, [{ id: 'q', selected: ['A'] }])
+  assert.equal(f.broker.store.db.prepare("SELECT COUNT(*) AS n FROM evidence WHERE json_extract(locator_json,'$.caseId')=?").get(answered.caseId).n, 0)
+
+  const waitingToCancel = await openUnowned('unowned-cancel')
+  const cancelled = await f.broker.cancel({ caseId: waitingToCancel.caseId })
+  assert.equal(cancelled.closing, 'cancelled')
+  assert.equal(cancelled.agentId, null)
+  assert.equal(f.broker.attempts.forCase(cancelled.caseId).length, 0)
+
+  const waitingToRetry = await openUnowned('unowned-retry')
+  await assert.rejects(f.broker.retry({ caseId: waitingToRetry.caseId }), error => error.code === 'AGENT_UNAVAILABLE')
+  assert.deepEqual(f.broker.cases.getCase(waitingToRetry.caseId), waitingToRetry)
+  assert.equal(f.broker.attempts.forCase(waitingToRetry.caseId).length, 0)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM evidence').get().n, 0)
+})

@@ -120,6 +120,36 @@ test('a decided consultation reread returns the authoritative user answer and ev
   assert.ok(result.evidence.some(ref => ref.locator.caseId === waiting.caseId))
 })
 
+test('an unowned Auto decision rereads the user answer with empty evidence and no future retrieval', async t => {
+  const f = await fixture(t)
+  await f.broker.setSelector('root', 'auto')
+  f.config.decisionAgentAutoAnswerClasses = []
+  const args = { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }], request_id: 'unowned-decided-reread' }
+  const waiting = await f.broker.consult({ agent: f.agent, args })
+  assert.equal(waiting.outcome, 'awaiting_user')
+  assert.equal(f.broker.cases.getCase(waiting.caseId).agentId, null)
+
+  const closed = await f.broker.decide({ caseId: waiting.caseId, answers: [{ id: 'question', selected: ['B'] }] })
+  assert.equal(closed.state, 'closed')
+  assert.equal(closed.agentId, null)
+  assert.deepEqual(closed.decision.answers, [{ id: 'question', selected: ['B'] }])
+  assert.equal(f.broker.store.db.prepare("SELECT COUNT(*) AS n FROM evidence WHERE json_extract(locator_json,'$.caseId')=?").get(waiting.caseId).n, 0)
+
+  const result = await f.broker.consult({ agent: f.agent, args })
+  assert.equal(result.outcome, 'answered')
+  assert.equal(result.userDecided, true)
+  assert.deepEqual(result.answer, { id: 'question', selected: ['B'] })
+  assert.deepEqual(result.evidence, [])
+  for (const profile of [f.a, f.b]) {
+    const input = { agentId: profile.agentId, workspaceKey: f.workspace, scope: { workspaces: [f.workspace] }, attemptStartedAt: Date.now() }
+    assert.equal(f.broker.evidence.candidates(input).some(ref => ref.locator?.caseId === waiting.caseId), false)
+    const retrieval = f.broker.retriever.retrieve(input)
+    assert.equal(retrieval.L5.some(ref => ref.locator?.caseId === waiting.caseId), false)
+    assert.equal(retrieval.L3.some(item => item.sourceCaseId === waiting.caseId), false)
+  }
+  assert.equal(f.broker.attempts.forCase(waiting.caseId).length, 0)
+})
+
 test('delegated escalation lands in the root inbox without asking from the child', async t => {
   const f = await fixture(t)
   f.respond({ outcome: 'escalate', missing: ['Choose a new direction'] })

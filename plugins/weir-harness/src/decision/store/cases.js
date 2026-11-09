@@ -108,7 +108,8 @@ export class DecisionCases {
     const now = this.now()
     await this.store.write(db => {
       if (change.state === 'closed' && change.closing === 'escalated' && change.decision?.kind === 'user_decision') {
-        insertEvidence(db, { agentId: change.agentId ?? current.agentId, source: 'user_decision', locator: { kind: 'case', caseId: current.caseId }, scope: current.scope }, now)
+        const agentId = change.agentId ?? current.agentId
+        if (typeof agentId === 'string' && agentId) insertEvidence(db, { agentId, source: 'user_decision', locator: { kind: 'case', caseId: current.caseId }, scope: current.scope }, now)
       }
       const result = db.prepare(`UPDATE cases SET state=?,closing=?,awaiting_reason=?,decision_json=?,escalation_json=?,agent_id=?,request_json=?,scope_json=?,max_attempts=?,closed_at=?,revision=revision+1,updated_at=?
         WHERE case_id=? AND state=? AND revision=?`).run(
@@ -166,7 +167,8 @@ export class DecisionCases {
 
       insertRoute(db, fact, now, routeId)
       if (next.state === 'closed' && next.closing === 'escalated' && next.decision?.kind === 'user_decision') {
-        insertEvidence(db, { agentId: next.agentId ?? current.agentId, source: 'user_decision', locator: { kind: 'case', caseId: current.caseId }, scope: current.scope }, now)
+        const agentId = next.agentId ?? current.agentId
+        if (typeof agentId === 'string' && agentId) insertEvidence(db, { agentId, source: 'user_decision', locator: { kind: 'case', caseId: current.caseId }, scope: current.scope }, now)
       }
       const result = db.prepare(`UPDATE cases SET state=?,closing=?,awaiting_reason=?,decision_json=?,escalation_json=?,agent_id=?,request_json=?,scope_json=?,max_attempts=?,closed_at=?,revision=revision+1,updated_at=?
         WHERE case_id=? AND state=? AND revision=?`).run(

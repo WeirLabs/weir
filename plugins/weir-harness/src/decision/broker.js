@@ -729,6 +729,7 @@ export class DecisionBroker {
       }
       case 'retry': {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be retried')
+        if (typeof current.agentId !== 'string' || !current.agentId) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Case requires reassignment before retry')
         const profile = this.profiles.getProfile(current.agentId)
         if (profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: current.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: current.agentId })
         const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })
