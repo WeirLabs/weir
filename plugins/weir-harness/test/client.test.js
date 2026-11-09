@@ -1380,14 +1380,65 @@ describe('weir settings client half', () => {
     const result = { type: 'tool/result', seq: 52, data: { message: { source: { callId: 'call-consult' } } } }
     const settled = definition.update({ state: pending }, { event: result })
     const settledNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: settled, start: { location: { kind: 'unresolved' } } })
-    expect(settledNode?.visibility).toBe('visible')
-    expect(settledNode?.data.settledSeq).toBe(52)
+    expect(settledNode, 'a settled consult stays on its toolview too').toBe(null)
 
     const hookCall = { ...consultCall, data: { ...consultCall.data, name: 'ask_user_question', callId: 'call-hook' } }
     const hookMatch = definition.match(hookCall)
     const hookPending = definition.start(null, { event: hookCall })
     const hookNode = definition.buildViewNode({ key: 'hook-node', id: hookMatch.id, state: hookPending, start: { location: { kind: 'unresolved' } } })
     expect(hookNode?.visibility, 'answered Hook history remains discoverable through the same projection').toBe('visible')
+  })
+
+  it('keeps every consult phase on the keyed toolview and never on a consult chat node', async () => {
+    const { surface, reactStub } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, conversationDefinitions } = makeCtx()
+    surface.apply(ctx)
+    for (const inject of slotInjects) inject.fn()
+
+    const toolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
+    expect(toolview).toBeTruthy()
+    const chatNode = slotRegistrations.find(item => item.definition.name === 'conversation.chat.node' && item.definition.key === 'weir-decision')
+    expect(chatNode).toBeTruthy()
+    const definition = conversationDefinitions[0]
+
+    const callEvent = { type: 'tool/call', seq: 61, data: { name: 'decision_consult', callId: 'call-consult', arguments: JSON.stringify({ question: 'Choose the pair' }) } }
+    const match = definition.match(callEvent)
+    expect(match).toEqual({ id: 'call-consult', role: 'start' })
+    const callState = definition.start(null, { event: callEvent })
+    const callNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: callState, start: { location: { kind: 'unresolved' } } })
+    expect(callNode, 'tool/call: the keyed toolview is the only consult surface').toBe(null)
+
+    // A tool result can settle as awaiting_user while the Case still waits for
+    // the user; the toolview must keep the only card there too, otherwise the
+    // chat node renders a second writable form for the very same Case.
+    const awaitingUser = { outcome: 'awaiting_user', caseId: 'dc_same', state: 'awaiting_user', reason: 'no_route' }
+    const resultEvent = { type: 'tool/result', seq: 62, data: { message: { source: { callId: 'call-consult' }, content: [{ type: 'text', text: JSON.stringify(awaitingUser) }] } } }
+    expect(definition.match(resultEvent)).toEqual({ id: 'call-consult', role: 'update' })
+    const settled = definition.update({ state: callState }, { event: resultEvent })
+    const settledNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: settled, start: { location: { kind: 'unresolved' } } })
+    expect(settledNode, 'tool/result(awaiting_user): still no consult chat node').toBe(null)
+
+    // Composition proof: feed every consult view node the definition publishes to
+    // the chat-node slot and count the cards it renders; that set is empty. The
+    // keyed toolview still renders exactly one card for the same call.
+    const published = [callNode, settledNode].filter(node => node != null)
+    reactStub.reset()
+    reactStub.begin()
+    for (const node of published) chatNode.component({ sessionId: 'root', node })
+    await flush()
+    reactStub.begin()
+    const chatCards = published.map(node => chatNode.component({ sessionId: 'root', node })).filter(card => card != null)
+    expect(chatCards, 'no visible consult chat card at either phase').toEqual([])
+
+    const cardProps = { sessionId: 'root', callId: 'call-consult', toolName: 'decision_consult' }
+    reactStub.reset()
+    reactStub.begin()
+    const shell = toolview.component(cardProps)
+    shell.__type(cardProps)
+    await flush()
+    reactStub.begin()
+    const toolCard = shell.__type(cardProps)
+    expect(toolCard.__type(toolCard).__decisionCard?.cardView, 'the keyed toolview keeps the single consult card').toBe('card-view')
   })
 
   it('renders localized Decision sidebar, loading, and chunk-failure shells before dictionary arrival', async () => {
