@@ -91,7 +91,7 @@ async function setup() {
   const runtime = makeReact()
   const jsx = (type, props) => ({ ...props, __type: type, type: props?.type ?? type })
   const card = (await loadClientChunk('lib/client.decision-card.js', name => name === 'react' ? runtime.react : { jsx, jsxs: jsx })).exports
-  const ui = Object.fromEntries(['DecisionStyles', 'DecisionIcon', 'Button', 'Badge', 'Field', 'LoadingState', 'EmptyState', 'ErrorState', 'Disclosure', 'ConfirmDialog', 'DecisionAnswers'].map(name => [name, `ui.${name}`]))
+  const ui = Object.fromEntries(['DecisionStyles', 'DecisionIcon', 'Button', 'Badge', 'Field', 'LoadingState', 'EmptyState', 'ErrorState', 'Disclosure', 'ConfirmDialog', 'DecisionAnswers', 'DecisionRouteHistory'].map(name => [name, `ui.${name}`]))
   const render = props => { runtime.begin(); return card.DecisionCard(props) }
   return { model, actions, render, ui, unmount: runtime.unmount }
 }
@@ -762,4 +762,80 @@ test('consult wait cancellation and generation guards isolate switches and unmou
   unmountWait.resolve({ caseId: 'dc-late' })
   await flushCard()
   assert.equal(calls.filter(call => call[0] === 'caseForToolCall').length, readsAtUnmount)
+})
+
+
+const unownedAutoDetail = {
+  ...waitingDetail,
+  case: { ...waitingDetail.case, caseId: 'dc-unowned', agentId: null, awaitingReason: 'no_route', escalation: { missing: [], suggestion: [], perQuestion: [] } },
+  attempts: [], feedback: [],
+  routeDecisions: [{ routeDecisionId: 'rd-auto-none', mode: 'auto', chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z' }],
+}
+
+test('unowned Auto consult and Hook cards retain their native answer paths but no Agent feedback or retry', async () => {
+  for (const toolName of ['decision_consult', 'ask_user_question']) {
+    const mounted = await mount(unownedAutoDetail, { props: { toolName } })
+    const tree = mounted.render()
+    const text = textContent(tree)
+    assert.match(text, /decisionNoAssignedAgent/)
+    assert.match(text, /decisionRoutingAutoNone/)
+    assert.equal(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers).length, toolName === 'decision_consult' ? 1 : 0)
+    assert.equal(findAll(tree, node => node['data-native-answer'] === true).length, toolName === 'ask_user_question' ? 1 : 0)
+    assert.equal(findAll(tree, node => node['data-feedback'] || ['open-comment', 'open-correction', 'comment', 'correction', 'retry'].includes(node['data-action'])).length, 0)
+    const recoveryTree = recovery(tree, mounted.ui).children()
+    assert.ok(findAll(recoveryTree, node => node['data-action'] === 'reassign')[0])
+    assert.ok(findAll(recoveryTree, node => node['data-action'] === 'cancel')[0])
+    assert.equal(findAll(recoveryTree, node => node['data-action'] === 'retry').length, 0)
+    const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+    assert.ok(routes)
+    const history = findAll(routes.children(), node => node.__type === mounted.ui.DecisionRouteHistory)[0]
+    assert.equal(history.history.length, 1)
+    assert.equal(history.history[0].mode, 'auto')
+    assert.equal(history.history[0].statusKey, 'decisionRouteStatusNone')
+    mounted.unmount()
+  }
+})
+
+test('explicit reassign is single-flight and restores normal owned recovery and route history', async () => {
+  let current = unownedAutoDetail
+  let release
+  const calls = []
+  const mounted = await mount(current, {
+    props: { toolName: 'decision_consult' },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall' || method === 'record') return current
+      if (method === 'reassign') return new Promise(resolve => {
+        release = () => {
+          current = { ...current, case: { ...current.case, agentId: 'b', awaitingReason: 'authority' }, routeDecisions: [...current.routeDecisions, { routeDecisionId: 'rd-manual', mode: 'manual_reassign', chosen: 'b', reason: '', createdAt: '2026-01-02T03:05:05.000Z' }] }
+          resolve(current.case)
+        }
+      })
+      return null
+    },
+  })
+  let tree = mounted.render()
+  let recoveryTree = recovery(tree, mounted.ui).children()
+  draftInput(recoveryTree, 'reassignTarget').onChange({ target: { value: 'b' } })
+  tree = mounted.render()
+  const reassign = action(recovery(tree, mounted.ui).children(), mounted.ui, 'reassign')
+  const first = reassign.onClick()
+  const second = reassign.onClick()
+  assert.equal(calls.filter(call => call[0] === 'reassign').length, 1)
+  release()
+  await Promise.all([first, second])
+  await flushCard()
+  tree = mounted.render()
+  assert.match(textContent(tree), /Second assistant/)
+  assert.match(textContent(tree), /decisionRoutingManualReassign/)
+  assert.ok(action(recovery(tree, mounted.ui).children(), mounted.ui, 'retry'))
+  assert.ok(action(tree, mounted.ui, 'open-correction'))
+  const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  const history = findAll(routes.children(), node => node.__type === mounted.ui.DecisionRouteHistory)[0]
+  assert.deepEqual(history.history.map(item => item.mode), ['auto', 'manual_reassign'])
+  assert.equal(history.history[1].from, null)
+  assert.equal(history.history[1].toName, 'Second assistant')
+  assert.equal(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers).length, 1)
+  mounted.unmount()
 })

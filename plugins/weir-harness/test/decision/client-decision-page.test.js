@@ -1096,6 +1096,84 @@ test('late routing responses cannot replace a newer window or session epoch', as
   sessions.unmount()
 })
 
+test('unowned inbox keeps answer, reassign, and cancel while retry appears only after authoritative reassign', async () => {
+  const original = { ...waitingFixture(), caseId: 'dc-inbox-unowned', agentId: null, awaitingReason: 'no_route', escalation: { missing: [], suggestion: [], perQuestion: [] } }
+  const auto = { routeDecisionId: 'rd-inbox-auto', mode: 'auto', chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z' }
+  let current = original
+  let routes = [auto]
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }, { agentId: 'b', name: 'Second', state: 'enabled' }],
+    inbox: async () => [current],
+    record: async () => ({ case: current, attempts: [], feedback: [], routeDecisions: routes }),
+    reassign: async () => {
+      current = { ...current, agentId: 'b', awaitingReason: 'authority' }
+      routes = [...routes, { routeDecisionId: 'rd-inbox-manual', mode: 'manual_reassign', chosen: 'b', reason: '', createdAt: '2026-01-02T03:05:05.000Z' }]
+      return {}
+    },
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let card = renderedInboxCard(harness, harness.render(), original.caseId)
+  assert.ok(findAll(card, node => node.type === harness.ui.DecisionAnswers)[0])
+  assert.equal(textOf(card).includes('decisionNoAssignedAgent'), true)
+  let recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionReassign')[0])
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionCancel')[0])
+  assert.equal(findAll(recoveryTree, node => node.children === 'decisionRetry').length, 0)
+  let history = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.ok(history)
+  history.onOpen()
+  await harness.flush()
+  card = renderedInboxCard(harness, harness.render(), original.caseId)
+  history = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  let historyView = findAll(history.children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.deepEqual(historyView.history.map(item => item.mode), ['auto'])
+
+  recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  findAll(recoveryTree, node => node.type === 'select')[0].onChange({ target: { value: 'b' } })
+  card = renderedInboxCard(harness, harness.render(), original.caseId)
+  recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  await findAll(recoveryTree, node => node.children === 'decisionReassign')[0].onClick()
+  await harness.flush()
+  card = renderedInboxCard(harness, harness.render(), original.caseId)
+  assert.equal(textOf(card).includes('Second'), true)
+  recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionRetry')[0])
+  history = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  historyView = findAll(history.children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.deepEqual(historyView.history.map(item => item.mode), ['auto', 'manual_reassign'])
+  harness.unmount()
+})
+
+test('unowned record detail hides Agent feedback and correction but retains no-Evidence truth and read-only RouteDecision history', async () => {
+  const auto = { routeDecisionId: 'rd-record-auto', mode: 'auto', chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z' }
+  const detail = {
+    case: { caseId: 'dc-record-unowned', agentId: null, state: 'closed', closing: 'escalated', feedbackState: 'none', request: { questions: [{ id: 'q', question: 'Unowned question' }] }, decision: { kind: 'user_decision', answers: [{ id: 'q', selected: ['User answer'] }] } },
+    attempts: [], feedback: [], routeDecisions: [auto],
+  }
+  let openCase = detail.case.caseId
+  const harness = await createPageHarness({
+    consumeOpenCase: () => { const value = openCase; openCase = null; return value },
+    actions: { agents: async () => [], inbox: async () => [], record: async () => detail, records: async () => ({ records: [detail.case], nextCursor: null }), metrics: async () => ({}) },
+  })
+  const { tree } = await harness.settle()
+  const record = findAll(tree, node => node['data-record-detail'] === detail.case.caseId)[0]
+  assert.ok(record)
+  assert.equal(textOf(record).includes('User answer'), true)
+  assert.equal(textOf(record).includes('decisionNoAssignedAgent'), true)
+  assert.equal(textOf(record).includes('decisionRoutingAutoNone'), true)
+  assert.equal(findAll(record, node => node['data-feedback'] || ['comment', 'correction', 'retry'].includes(node['data-action'])).length, 0)
+  assert.equal(findAll(record, node => node['data-draft'] === 'comment' || node['data-draft'] === 'correction').length, 0)
+  assert.equal(textOf(findAll(record, node => node['data-current-evidence'] === true)[0]).includes('decisionNoEvidence'), true)
+  const history = findAll(record, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.ok(history)
+  const historyView = findAll(history.children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.equal(historyView.history.length, 1)
+  assert.equal(historyView.history[0].statusKey, 'decisionRouteStatusNone')
+  assert.equal(findAll(history.children(), node => node.type === 'button' || node.type === 'input').length, 0)
+  harness.unmount()
+})
+
 test('client manifest injects layout for render-time panel access', () => {
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))

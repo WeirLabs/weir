@@ -287,3 +287,40 @@ test('routing review pages append stably and dedupe by Case without replacing ea
   assert.deepEqual(model.narrowRoutingReview({ ok: false }), { window: 'all', summary: {}, items: [], nextCursor: null })
   assert.deepEqual(model.narrowRoutingReview({ window: 'invalid', items: null, nextCursor: 4 }), { window: 'all', summary: {}, items: [], nextCursor: null })
 })
+
+
+test('unowned Auto records expose truthful route history and only owned waiting Cases can retry', async () => {
+  const model = await load()
+  const auto = { routeDecisionId: 'rd-auto', mode: 'auto', chosen: null, reason: 'failure:timeout', createdAt: '2026-01-02T03:04:05.000Z' }
+  const shadow = { routeDecisionId: 'rd-shadow', mode: 'auto_shadow', chosen: 'a', reason: 'observation', createdAt: '2026-01-02T03:05:05.000Z' }
+  const detail = {
+    case: { caseId: 'dc-unowned', agentId: null, state: 'awaiting_user', awaitingReason: 'no_route', feedbackState: 'none', request: { questions: [{ id: 'q', question: 'Choose' }] } },
+    attempts: [], feedback: [], routeDecisions: [auto, shadow],
+  }
+  const card = model.cardView(detail, agents)
+  assert.equal(card.assigned, false)
+  assert.equal(card.canRetry, false)
+  assert.equal(card.agentName, 'No assistant selected')
+  assert.equal(card.routeStatusKey, 'decisionRoutingAutoFailure')
+  assert.deepEqual(card.routeHistory.map(item => [item.modeKey, item.statusKey]), [
+    ['decisionRouteModeAuto', 'decisionRouteStatusFailure'],
+    ['decisionRouteModeShadow', 'decisionRouteStatusSelected'],
+  ])
+  assert.deepEqual(card.evidence, [])
+  const summary = model.recordSummary(detail.case, agents)
+  assert.equal(summary.assigned, false)
+  assert.equal(summary.canRetry, false)
+  assert.equal(summary.agentName, 'No assistant selected')
+  assert.equal(summary.reasonKey, 'decisionReasonUnownedNoRoute')
+
+  const manual = { routeDecisionId: 'rd-manual', mode: 'manual_reassign', chosen: 'a', reason: '', createdAt: '2026-01-02T03:06:05.000Z' }
+  const reassigned = model.cardView({ ...detail, case: { ...detail.case, agentId: 'a' }, routeDecisions: [auto, manual] }, agents)
+  assert.equal(reassigned.assigned, true)
+  assert.equal(reassigned.canRetry, true)
+  assert.equal(reassigned.agentName, 'Tone')
+  assert.equal(reassigned.routeStatusKey, 'decisionRoutingManualReassign')
+  assert.equal(reassigned.routeHistory.at(-1).from, null)
+  assert.equal(reassigned.routeHistory.at(-1).to, 'a')
+  assert.equal(reassigned.routeHistory.at(-1).toName, 'Tone')
+  assert.equal(model.cardView({ ...detail, case: { ...detail.case, agentId: 'a', state: 'closed', closing: 'answered' } }, agents).canRetry, false)
+})

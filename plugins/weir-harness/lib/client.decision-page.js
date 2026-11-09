@@ -73,6 +73,7 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [
             jsx.jsx("h2", { children: view?.questionSummary || t("decisionRecord") }, "title"),
             jsx.jsx("p", { className: "weir-da-caption", children: view?.agentName ?? t("decisionSelector") }, "agent"),
+            view?.routeStatusKey ? jsx.jsx("p", { className: "weir-da-caption", "data-route-status": true, children: t(view.routeStatusKey) }, "route-status") : null,
           ] }, "copy"),
           jsx.jsx(ui.Badge, { variant: view?.variant === "answered" ? "success" : view?.variant === "failed" ? "error" : "warn", children: t(view?.statusKey ?? "decisionStatusUnknown") }, "status"),
         ] }, "header"),
@@ -93,11 +94,12 @@ window.__ModuleLoader__.load({
           jsx.jsx("h3", { children: t("decisionEvaluationHistory") }, "title"),
           previous.length ? previous.map((group, index) => EvaluationGroup({ ...group, index, model, ui, t })) : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionNoEarlierEvaluations") }),
         ] }, "history"),
+        jsx.jsx(ui.Disclosure, { id: `weir-da-record-routes-${current.caseId}`, label: t("decisionRouteHistory"), children: () => jsx.jsx(ui.DecisionRouteHistory, { history: view?.routeHistory, t }) }, "route-history"),
         jsx.jsxs("section", { children: [
           jsx.jsx("h3", { children: t("decisionFeedbackHistory") }, "title"),
           feedback.length ? jsx.jsx("ul", { children: feedback.map((entry, index) => jsx.jsx("li", { children: `${t(feedbackKeys[entry?.kind] ?? "decisionComment")}: ${entry?.payload?.text ?? entry?.payload?.direction ?? t("decisionNoAnswer")}` }, entry?.feedbackId ?? index)) }) : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionNoFeedback") }),
         ] }, "feedback-history"),
-        jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
+        view?.assigned ? jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
           jsx.jsx("div", { className: "weir-da-actions", children: model.feedbackActions(current.feedbackState).map(action => jsx.jsx(ui.Button, {
             "data-feedback": action.verb, disabled: pending, onClick: () => props.run("feedback", current.caseId, action.verb), children: t(action.labelKey),
           }, action.verb)) }, "ratings"),
@@ -116,7 +118,7 @@ window.__ModuleLoader__.load({
             jsx.jsx("div", { children: t("decisionCorrectionFutureOnly") }, "future"),
           ] }, "preview") : null,
           jsx.jsx(ui.Button, { "data-action": "correction", disabled: pending || !draft.correction, onClick: () => props.run("correction", current.caseId, draft.correction, current.scope, [current.caseId]), children: t("decisionSubmitCorrection") }, "correction-action"),
-        ] }, "feedback-actions"),
+        ] }, "feedback-actions") : null,
         jsx.jsx(ui.Disclosure, { id: `weir-da-record-advanced-${current.caseId}`, label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsxs("div", { className: "weir-da-advanced-record", children: [
           ...(view?.history ?? []).map((group, index) => AttemptContextPack({ attempt: group.attempt, t })),
           jsx.jsx("pre", { children: JSON.stringify(detail, null, 2) }, "raw"),
@@ -139,6 +141,7 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [
             jsx.jsx("h2", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("p", { className: "weir-da-caption", children: summary?.agentName ?? t("decisionSelector") }, "agent"),
+            evidenceView?.routeStatusKey ? jsx.jsx("p", { className: "weir-da-caption", "data-route-status": true, children: t(evidenceView.routeStatusKey) }, "route-status") : null,
           ] }, "copy"),
           jsx.jsx(ui.Badge, { variant: "warn", children: t(summary?.statusKey ?? "decisionStatusAwaitingUser") }, "status"),
         ] }, "header"),
@@ -164,13 +167,19 @@ window.__ModuleLoader__.load({
             : props.evidence?.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsx(ui.Button, { onClick: () => props.loadEvidence(true), children: t("decisionRetry") }) })
             : evidenceView ? EvidenceList({ evidence: evidenceView.evidence, ui, t }) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEvidence") }),
         }, "evidence"),
+        jsx.jsx(ui.Disclosure, {
+          id: `weir-da-inbox-routes-${current.caseId}`, label: t("decisionRouteHistory"), onOpen: () => props.loadEvidence(false),
+          children: () => props.evidence?.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
+            : props.evidence?.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsx(ui.Button, { onClick: () => props.loadEvidence(true), children: t("decisionRetry") }) })
+              : jsx.jsx(ui.DecisionRouteHistory, { history: evidenceView?.routeHistory ?? [], t }),
+        }, "route-history"),
         jsx.jsx(ui.Disclosure, { id: `weir-da-recovery-${current.caseId}`, label: t("decisionRecoveryActions"), children: jsx.jsxs("div", { className: "weir-da-actions", children: [
           jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => props.updateDraft("reassignTarget", event.target.value), "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: pending, children: [
             jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
             ...props.agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId)),
           ] }, "target"),
           jsx.jsx(ui.Button, { disabled: !draft.reassignTarget || pending, onClick: () => props.run("reassign", current.caseId, draft.reassignTarget), children: t("decisionReassign") }, "reassign"),
-          jsx.jsx(ui.Button, { disabled: pending, onClick: () => props.run("retry", current.caseId), children: t("decisionRetry") }, "retry"),
+          summary?.canRetry ? jsx.jsx(ui.Button, { disabled: pending, onClick: () => props.run("retry", current.caseId), children: t("decisionRetry") }, "retry") : null,
           jsx.jsx(ui.Button, { variant: "danger", disabled: pending, onClick: () => props.requestCancel(), children: t("decisionCancel") }, "cancel"),
         ] }) }, "recovery"),
       ] });

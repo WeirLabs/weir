@@ -109,20 +109,71 @@ window.__ModuleLoader__.load({
       return key => dictionary[key] ?? dictionaries.en[key] ?? key;
     }
 
+    const ROUTE_MODE_KEYS = {
+      pinned: "decisionRouteModePinned", explicit: "decisionRouteModeExplicit", auto: "decisionRouteModeAuto",
+      auto_shadow: "decisionRouteModeShadow", manual_reassign: "decisionRouteModeManual", none: "decisionRouteModeNone",
+    };
+    const ROUTE_FAILURE_REASONS = ["failure:timeout", "failure:model_error", "failure:invalid_output", "failure:truncated", "failure:aborted", "failure:route_unavailable", "failure:candidate_limit", "failure:context_budget"];
+
+    function routeStatus(route) {
+      if (typeof route?.chosen === "string" && route.chosen) return "selected";
+      if (ROUTE_FAILURE_REASONS.includes(route?.reason)) return "failure";
+      if (object(route?.ambiguity) && Array.isArray(route.ambiguity.candidates) && typeof route.ambiguity.conflict === "string") return "ambiguous";
+      return "none";
+    }
+
+    function routeDecisionHistory(routes, agents, locale) {
+      const t = translator(locale);
+      const name = agentId => typeof agentId === "string" && agentId ? array(agents).find(agent => agent?.agentId === agentId)?.name ?? null : null;
+      let authoritative = null;
+      return array(routes).map(value => {
+        const route = object(value) ?? {};
+        const mode = text(route.mode);
+        const status = routeStatus(route);
+        const chosen = typeof route.chosen === "string" && route.chosen ? route.chosen : null;
+        const item = {
+          ...route, mode, modeKey: ROUTE_MODE_KEYS[mode] ?? "decisionRouteModeUnknown",
+          statusKey: `decisionRouteStatus${status[0].toUpperCase()}${status.slice(1)}`,
+          choiceName: name(chosen),
+        };
+        if (mode === "manual_reassign") {
+          item.from = authoritative;
+          item.to = chosen;
+          item.fromName = authoritative ? name(authoritative) : t("decisionNoAssignedAgent");
+          item.toName = chosen ? name(chosen) : t("decisionNoAssignedAgent");
+        }
+        if (mode !== "auto_shadow" && ["pinned", "explicit", "auto", "manual_reassign"].includes(mode) && chosen) authoritative = chosen;
+        return item;
+      });
+    }
+
+    function currentRouteStatusKey(routeHistory) {
+      const latest = [...routeHistory].reverse().find(route => route.mode !== "auto_shadow");
+      if (!latest) return null;
+      if (latest.mode === "manual_reassign") return "decisionRoutingManualReassign";
+      if (latest.mode !== "auto") return null;
+      const status = routeStatus(latest);
+      return status === "selected" ? "decisionRoutingAutoSelected"
+        : status === "ambiguous" ? "decisionRoutingAutoAmbiguous"
+          : status === "failure" ? "decisionRoutingAutoFailure" : "decisionRoutingAutoNone";
+    }
+
     function recordSummary(current, agents = [], locale = "en") {
       if (!current || typeof current !== "object" || typeof current.caseId !== "string") return null;
       const agent = array(agents).find(item => item?.agentId === current.agentId);
       const t = translator(locale);
       const status = statusProjection(current);
+      const assigned = typeof current.agentId === "string" && current.agentId.length > 0;
       return {
         caseId: current.caseId,
         title: questionSummary(current) || t("decisionRecord"),
         answerSummary: answerSummary(current.decision),
         agentId: text(current.agentId),
-        agentName: text(agent?.name, t("decisionSelector")),
+        agentName: assigned ? text(agent?.name, t("decisionSelector")) : t("decisionNoAssignedAgent"),
+        assigned, canRetry: assigned && current.state === "awaiting_user",
         variant: status.variant,
         statusKey: status.statusKey,
-        reasonKey: reasonKey(current.awaitingReason ?? current.decision?.code),
+        reasonKey: !assigned && current.awaitingReason === "no_route" ? "decisionReasonUnownedNoRoute" : reasonKey(current.awaitingReason ?? current.decision?.code),
         time: text(current.createdAt, text(current.updatedAt, text(current.closedAt))),
         feedbackState: current.feedbackState,
       };
@@ -142,16 +193,21 @@ window.__ModuleLoader__.load({
       const rationale = text(array(currentAttempt?.claims)[0]?.text);
       const summary = text(current.escalation?.missing?.[0], text(decision?.hint, rationale));
       const status = statusProjection(current);
+      const t = translator(locale);
+      const assigned = typeof current.agentId === "string" && current.agentId.length > 0;
+      const routeHistory = routeDecisionHistory(detail.routeDecisions, agents, t);
       return {
         caseId: current.caseId,
         agentId: text(current.agentId),
-        agentName: text(agent?.name, translator(locale)("decisionSelector")),
+        agentName: assigned ? text(agent?.name, t("decisionSelector")) : t("decisionNoAssignedAgent"),
+        assigned, canRetry: assigned && current.state === "awaiting_user",
+        routeHistory, routeStatusKey: currentRouteStatusKey(routeHistory),
         state: current.state,
         closing: current.closing,
         outcome: current.closing ?? current.state,
         variant: status.variant,
         statusKey: status.statusKey,
-        reasonKey: reasonKey(current.awaitingReason ?? decision?.code ?? currentAttempt?.reasonCode),
+        reasonKey: !assigned && current.awaitingReason === "no_route" ? "decisionReasonUnownedNoRoute" : reasonKey(current.awaitingReason ?? decision?.code ?? currentAttempt?.reasonCode),
         questionSummary: questionSummary(current),
         answerSummary: answerSummary(decision),
         summary,
@@ -426,6 +482,7 @@ window.__ModuleLoader__.load({
         decisionAuto: "Auto", decisionAutoWhitelist: "Auto routes only these allowed authorization classes:", decisionAutoEmptyWhitelist: "The Auto authorization-class whitelist is empty. New Auto requests will not be answered automatically.", decisionAutoReadinessUnknown: "Auto readiness could not be verified; no automatic-answer capability is assumed.", decisionAutoShadowOn: "Shadow diagnostics are on; they never change the real route or answer.", decisionAutoShadowOff: "Shadow diagnostics are off.",
         decisionRoutingReview: "Routing review", decisionRoutingDiagnostic: "Route comparisons and counts are diagnostic only, not a quality score or automatic promotion.", decisionRoutingAgreement: "Shadow and pinned selections agree", decisionRoutingDisagreement: "Shadow and pinned selections differ", decisionRoutingShadowNone: "Shadow found no assistant", decisionRoutingShadowAmbiguous: "Shadow was ambiguous", decisionRoutingShadowFailure: "Shadow routing failed", decisionRoutingAutoNone: "Auto found no assistant", decisionRoutingAutoAmbiguous: "Auto was ambiguous", decisionRoutingAutoFailure: "Auto routing failed", decisionRoutingManualReassign: "Manually reassigned", decisionRoutingUncomparable: "Not comparable; no usable pinned baseline is recorded", decisionRoutingBaseline: "Pinned baseline for Shadow comparison", decisionRoutingAutoSelected: "Auto selected an assistant", decisionRoutingNoData: "No routing decisions in this window.", decisionRoutingOpenRecord: "Open the authorized decision record for", decisionRoutingShown: "Routing records shown",
         decisionRoutingDirection: "Reassignment direction (from → to)", decisionNoAssignedAgent: "No assistant selected",
+        decisionRouteHistory: "Route decision history", decisionNoRouteHistory: "No routing decisions recorded.", decisionRouteModePinned: "Pinned assistant", decisionRouteModeExplicit: "Explicit consultation", decisionRouteModeAuto: "Auto route", decisionRouteModeShadow: "Shadow observation (diagnostic only)", decisionRouteModeManual: "Manual reassignment", decisionRouteModeNone: "No route", decisionRouteModeUnknown: "Unknown route mode", decisionRouteStatusSelected: "Assistant selected", decisionRouteStatusNone: "No assistant selected", decisionRouteStatusAmbiguous: "Routing is ambiguous", decisionRouteStatusFailure: "Routing failed", decisionReasonUnownedNoRoute: "No assistant was selected. You can answer directly or explicitly reassign this decision.",
         decisionGlobalOff: "Decision assistants are off globally.", decisionGlobalOffHint: "No automatic decisions are made. Enable them in Settings → Weir → Decision assistants.",
         decisionAdvancedDiagnostics: "Advanced diagnostics", decisionStructuralQualityWarning: "Structural validation does not guarantee content quality.", decisionRateNotQuality: "Automatic answer rate is not a quality metric.", decisionHistoricalNotEvidence: "Historical context is not evidence for a decision.",
         decisionSelectionUnavailable: "The current selection is unavailable.", decisionErrorConflict: "The record changed. Reload the latest version before retrying.", decisionErrorUnavailable: "The selected assistant is unavailable. Choose another assistant or Off.",
@@ -476,6 +533,7 @@ window.__ModuleLoader__.load({
         decisionAuto: "Auto", decisionAutoWhitelist: "Auto 只路由以下已允许的授权类：", decisionAutoEmptyWhitelist: "Auto 授权类白名单为空。新的 Auto 请求不会被自动回答。", decisionAutoReadinessUnknown: "无法核实 Auto 的就绪状态；不假定其具备自动回答能力。", decisionAutoShadowOn: "Shadow 诊断已开启；它不会改变真实路由或答案。", decisionAutoShadowOff: "Shadow 诊断已关闭。",
         decisionRoutingReview: "路由复盘", decisionRoutingDiagnostic: "路由比较与计数仅用于诊断，不是质量评分或自动晋升依据。", decisionRoutingAgreement: "Shadow 与钉选选择一致", decisionRoutingDisagreement: "Shadow 与钉选选择不同", decisionRoutingShadowNone: "Shadow 未选择助手", decisionRoutingShadowAmbiguous: "Shadow 路由存在歧义", decisionRoutingShadowFailure: "Shadow 路由失败", decisionRoutingAutoNone: "Auto 未选择助手", decisionRoutingAutoAmbiguous: "Auto 路由存在歧义", decisionRoutingAutoFailure: "Auto 路由失败", decisionRoutingManualReassign: "已手动改派", decisionRoutingUncomparable: "不可比较；没有可用的钉选基线记录", decisionRoutingBaseline: "Shadow 比较的钉选基线", decisionRoutingAutoSelected: "Auto 已选择助手", decisionRoutingNoData: "此时间范围内没有路由决定。", decisionRoutingOpenRecord: "打开以下内容的已授权判断记录", decisionRoutingShown: "已显示的路由记录数",
         decisionRoutingDirection: "改派方向（原助手 → 新助手）", decisionNoAssignedAgent: "尚未选择助手",
+        decisionRouteHistory: "路由决定历史", decisionNoRouteHistory: "暂无路由决定记录。", decisionRouteModePinned: "钉选助手", decisionRouteModeExplicit: "显式咨询", decisionRouteModeAuto: "Auto 路由", decisionRouteModeShadow: "Shadow 观察（仅诊断）", decisionRouteModeManual: "手动改派", decisionRouteModeNone: "无路由", decisionRouteModeUnknown: "未知路由模式", decisionRouteStatusSelected: "已选择助手", decisionRouteStatusNone: "未选择助手", decisionRouteStatusAmbiguous: "路由存在歧义", decisionRouteStatusFailure: "路由失败", decisionReasonUnownedNoRoute: "尚未选择助手。你可以直接回答或明确改派这次判断。",
         decisionGlobalOff: "决策助手已在全局关闭。", decisionGlobalOffHint: "当前不会自动决策。可在“设置 → Weir → 决策助手”中开启。",
         decisionAdvancedDiagnostics: "高级诊断", decisionStructuralQualityWarning: "结构校验通过不代表内容质量。", decisionRateNotQuality: "自动回答率不是质量指标。", decisionHistoricalNotEvidence: "历史参考不是判断依据。",
         decisionSelectionUnavailable: "当前选择的助手不可用。", decisionErrorConflict: "记录已变化，请先读取最新版本再重试。", decisionErrorUnavailable: "当前助手不可用，请选择其他助手或关闭。",
