@@ -8,7 +8,7 @@ import { DecisionCases, decisionIdempotencyKey } from './store/cases.js'
 import { DecisionAttempts } from './store/attempts.js'
 import { DecisionEvidence } from './store/evidence.js'
 import { DecisionFeedback } from './store/feedback.js'
-import { DecisionQuery } from './store/query.js'
+import { DecisionQuery, emptyRoutingReview, projectRoutingChains } from './store/query.js'
 import { DecisionContextRetriever } from './retrieval/retriever.js'
 import { canonicalJson, DecisionContractError, parseAnswerBatch } from './contracts.js'
 import { buildContextPack } from './evaluator/pack.js'
@@ -1131,10 +1131,17 @@ export class DecisionBroker {
     return this.query.inbox({ sessionId: context.rootSessionId })
   }
 
-  async metrics(input) {
-    if (!this.store) return { window: input.window ?? 'all', casesOpened: 0, attemptsTotal: 0, autoAnswered: 0 }
+  async routingReview(input) {
     const context = await this.sessionContext(input.sessionId)
-    return this.query.metrics({ ...input, sessionId: context.rootSessionId })
+    const authorized = { ...input, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey }
+    if (!this.store) return emptyRoutingReview(authorized)
+    return this.query.routingReview(authorized)
+  }
+
+  async metrics(input) {
+    if (!this.store) return { window: input.window ?? 'all', casesOpened: 0, attemptsTotal: 0, autoAnswered: 0, routing: projectRoutingChains([]).summary, reassignments: 0, selectorOffBypasses: 0 }
+    const context = await this.sessionContext(input.sessionId)
+    return this.query.metrics({ ...input, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
   }
 }
 function consultFingerprint(request, scope) {
