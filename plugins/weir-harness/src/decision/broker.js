@@ -218,6 +218,7 @@ export class DecisionBroker {
       ...(args.header === undefined ? {} : { header: args.header }),
       ...(args.options === undefined ? {} : { options: args.options }),
       ...(args.multi_select === undefined ? {} : { multiSelect: args.multi_select }),
+      ...(args.authorization_class === undefined ? {} : { authorizationClass: args.authorization_class }),
     }
     const request = { entry: 'consult', questions: [question], ...(args.context === undefined ? {} : { context: args.context, taskSummary: args.context }), ...(args.evidence === undefined ? {} : { evidence: args.evidence }), ...(toolCallId ? { toolCallId } : {}), excluded: [] }
     const idempotencyKey = args.request_id

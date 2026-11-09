@@ -154,6 +154,40 @@ test('Off, globally disabled and explicit unavailable Agent fail before creating
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, before)
 })
 
+test('Auto consult preserves explicit precedence, caller class, unavailable failure, and Off bypass', async t => {
+  const f = await fixture(t)
+  await f.broker.setSelector('root', 'auto')
+  f.config.decisionAgentAutoAnswerClasses = ['A']
+  const result = await f.broker.consult({
+    agent: f.agent,
+    args: { question: 'Explicit under Auto?', authorization_class: 'A', agent_id: f.b.agentId, request_id: 'auto-explicit' },
+  })
+  assert.equal(result.outcome, 'awaiting_user')
+  const current = f.broker.cases.getCase(result.caseId)
+  assert.equal(current.agentId, f.b.agentId)
+  assert.equal(current.request.questions[0].authorizationClass, 'A')
+  assert.equal(current.request.questions[0].authorizationClassSource, undefined)
+  assert.deepEqual(f.broker.selector('root'), { mode: 'auto' })
+  assert.equal(f.broker.store.db.prepare('SELECT mode FROM route_decisions WHERE case_id=?').get(result.caseId).mode, 'explicit')
+
+  await f.broker.profileSetState(f.b.agentId, 'disabled')
+  const beforeUnavailable = f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n
+  await assert.rejects(f.broker.consult({
+    agent: f.agent,
+    args: { question: 'Unavailable must not fall back?', agent_id: f.b.agentId, request_id: 'auto-unavailable' },
+  }), error => error.code === 'AGENT_UNAVAILABLE')
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, beforeUnavailable)
+
+  await f.broker.setSelector('root', 'off')
+  await assert.rejects(f.broker.consult({ agent: f.agent, args: { question: 'Off?', request_id: 'auto-off' } }), error => error.code === 'DECISION_OFF')
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, beforeUnavailable)
+
+  await f.broker.setSelector('root', 'auto')
+  f.config.decisionAgentsEnabled = false
+  await assert.rejects(f.broker.consult({ agent: f.agent, args: { question: 'Globally off?', agent_id: f.a.agentId, request_id: 'auto-global-off' } }), error => error.code === 'DECISION_OFF')
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, beforeUnavailable)
+})
+
 test('consult wait wakes after the persisted outcome and before the tool return; abort settles cleanly', async t => {
   const f = await fixture(t)
   f.broker.ctx.agents = { get: id => id === 'root' ? f.agent : undefined }

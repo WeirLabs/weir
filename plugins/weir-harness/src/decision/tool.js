@@ -16,6 +16,7 @@ export const DECISION_CONSULT_PARAMETERS = {
     evidence: { type: 'array', items: { type: 'object', properties: { path: { type: 'string' }, excerpt_hint: { type: 'string' } }, required: ['path'] }, description: 'Files to re-read as current evidence.' },
     agent_id: { type: 'string', description: 'Optional enabled Decision Agent for this consultation only; does not change the session selector.' },
     request_id: { type: 'string', description: 'Optional idempotency key supplied by the caller.' },
+    authorization_class: { type: 'string', description: 'Optional caller-provided authorization class for Auto admission; A, B, or C.' },
   },
   required: ['question'],
 }
