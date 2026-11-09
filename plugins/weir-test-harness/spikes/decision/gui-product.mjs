@@ -574,6 +574,9 @@ async function finishLongNativeWithSkip(sessionId, caseId) {
   const before = await record(sessionId, 'long-native-skip-before', caseId)
   requireEvidence(before.case.state === 'closed', 'the long inbox decision closed the Case before the native Skip')
   await shot('18a-long-native-skip-before')
+  // The inbox step leaves a management page behind; the pending native card only
+  // exists inside the owning session, so returning to it precedes the Skip.
+  await openSession(instance, sessionId)
   const steps = []
   let native = await nativeState()
   while (native.pending) {
