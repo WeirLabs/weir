@@ -1362,6 +1362,34 @@ describe('weir settings client half', () => {
     expect(selectedPanels).toEqual(['weir-decisions', 'weir-decisions'])
   })
 
+  it('keeps a pending consult on its toolview card without a second writable chat node', async () => {
+    const { surface } = await loadEntry()
+    const { ctx, slotInjects, slotRegistrations, conversationDefinitions } = makeCtx()
+    surface.apply(ctx)
+    for (const inject of slotInjects) inject.fn()
+
+    const toolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
+    expect(toolview).toBeTruthy()
+    const definition = conversationDefinitions[0]
+    const consultCall = { type: 'tool/call', seq: 51, data: { name: 'decision_consult', callId: 'call-consult', arguments: JSON.stringify({ questions: [{ id: 'q', question: 'Choose' }] }) } }
+    const match = definition.match(consultCall)
+    const pending = definition.start(null, { event: consultCall })
+    const pendingNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: pending, start: { location: { kind: 'unresolved' } } })
+    expect(pendingNode, 'the toolview is the only pending consult surface').toBe(null)
+
+    const result = { type: 'tool/result', seq: 52, data: { message: { source: { callId: 'call-consult' } } } }
+    const settled = definition.update({ state: pending }, { event: result })
+    const settledNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: settled, start: { location: { kind: 'unresolved' } } })
+    expect(settledNode?.visibility).toBe('visible')
+    expect(settledNode?.data.settledSeq).toBe(52)
+
+    const hookCall = { ...consultCall, data: { ...consultCall.data, name: 'ask_user_question', callId: 'call-hook' } }
+    const hookMatch = definition.match(hookCall)
+    const hookPending = definition.start(null, { event: hookCall })
+    const hookNode = definition.buildViewNode({ key: 'hook-node', id: hookMatch.id, state: hookPending, start: { location: { kind: 'unresolved' } } })
+    expect(hookNode?.visibility, 'answered Hook history remains discoverable through the same projection').toBe('visible')
+  })
+
   it('build binds the entry to every chunk digest', () => {
     // Content binding is the red line: the entry header pins each chunk's
     // sha256, so a chunk edit without `pnpm build` fails here

@@ -1349,8 +1349,8 @@ window.__ModuleLoader__.load({
 				ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({ name: "tool.call.toolview", key: toolName, priority: -10 }, DecisionToolCardWrapper)), `ui-weir-settings: ${toolName} decision card`);
 			}
 			// The native answered-question projection replaces its ordinary tool row.
-			// Add an independent read-only chat node from the same tool/call so the
-			// authoritative Decision card remains visible without replacing native UI.
+			// Keep an independent read-only chat node for settled history. A pending
+			// consult stays only on its writable toolview, avoiding competing forms.
 			const decisionConversationDefinition = {
 				kind: "weir-decision", target: "chat",
 				match(event) {
@@ -1367,7 +1367,7 @@ window.__ModuleLoader__.load({
 				update: (context, match) => ({ ...context.state, settledSeq: match.event.seq }),
 				buildViewNode(context) {
 					const state = context.state;
-					if (!state) return null;
+					if (!state || (state.toolName === "decision_consult" && state.settledSeq === undefined)) return null;
 					return { key: context.key, id: context.id, kind: "weir-decision", target: "chat", anchorSeq: state.settledSeq ?? state.seq, location: context.start?.location ?? { kind: "unresolved" }, groupTree: "turn", visibility: "visible", data: { callId: state.callId, toolName: state.toolName, questions: state.questions, ...(state.settledSeq === undefined ? {} : { settledSeq: state.settledSeq }) } };
 				},
 			};
