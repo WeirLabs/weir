@@ -61,7 +61,7 @@ function prepareProfile(root, port) {
 function appEnvironment(paths, out, enabled) {
   const env = {
     PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin',
-    HOME: process.env.HOME ?? paths.home,
+    HOME: paths.home,
     LANG: process.env.LANG ?? 'en_US.UTF-8',
     TMPDIR: process.env.TMPDIR,
     DSH_HOME: paths.home,
@@ -409,7 +409,7 @@ async function runA() {
 }
 
 export {
-  LANE, QA, PHASES, writeJson, readJson, guardedRemove, prepareProfile,
+  LANE, QA, PHASES, writeJson, readJson, guardedRemove, prepareProfile, appEnvironment,
   startInstance, stopInstance, cdpScreenshot, decision, createSession, openSession,
   setInput, click, clickButton, selectDecisionTab, createAgent, setSelector,
   selectorState, submitMarker, records, findCase, waitCase, exportRecord, cardState,
