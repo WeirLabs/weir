@@ -416,3 +416,17 @@ test('long native Skip retires the leftover question without touching the closed
   assert.ok(!/hookUserAborted\(|broker\.|\.dismiss\(/.test(finish), 'the driver never bypasses the rendered Skip with a broker or store call')
   assert.ok(!/await rpc\(sessionId, [^)]*'(decide|cancel|discard|reopen)'/.test(finish), 'no direct RPC mutation finishes the card')
 })
+
+test('product learning candidates cite the real correction and advance beyond their parent', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.match(driver, /const learningCorrection = corrected\.feedback\.find\(item => item\.kind === 'correction'\)/)
+  assert.ok(!driver.includes('sources?.[0] === learningSource.caseId'), 'the unrelated learning Case is not the correction candidate source')
+  assert.match(driver, /learningSource\.decision\?\.kind === 'user_decision'/, 'the native learning-source decision evidence remains')
+  for (const version of ['V1', 'V2', 'V3']) {
+    assert.ok(driver.includes(`candidate${version}.run.operations[0]?.sources?.[0] === learningCorrection.feedbackId`), `${version} cites the actual correction Feedback`)
+  }
+  assert.ok(driver.includes("candidateV1.run.operations[0]?.text === 'Reviewed GUI correction principle: prefer the corrected cross-root answer.'"))
+  for (const version of ['V2', 'V3']) {
+    assert.ok(driver.includes(`candidate${version}.run.operations[0]?.text === 'Reviewed GUI successor principle: prefer the second source-backed answer.'`), `${version} changes the correction principle into a successor`)
+  }
+})

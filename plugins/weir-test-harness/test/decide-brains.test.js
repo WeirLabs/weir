@@ -771,22 +771,28 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(JSON.parse(source.arguments).questions[0].id, 'gui-memory-source')
     assert.equal(JSON.parse(reuse.arguments).questions[0].id, 'gui-memory-reuse')
   })
-  it('scripts authoritative v1, successor, and rejected GUI learning candidates', () => {
+  it('scripts authoritative v1, successor, correction, and rejected GUI learning candidates', () => {
     const scenario = byId('decision-gui')
     const source = { caseId: 'dc_gui_source', excerpt: 'Answer gui-learning-source: User backed GUI answer\nQuestion gui-learning-source: Choose', scope: { workspaces: ['/gui'] } }
+    const correction = { feedbackId: 'fb_gui_correction', kind: 'correction', direction: 'Use corrected GUI direction' }
     const consolidate = projection => {
-      const options = userOptions(JSON.stringify({ workspaceKey: '/gui', cases: [source], parentSnapshot: null, ...projection }), { system: 'Decision consolidation contract v1' })
+      const options = userOptions(JSON.stringify({ workspaceKey: '/gui', cases: [source], feedback: [], parentSnapshot: null, ...projection }), { system: 'Decision consolidation contract v1' })
       return JSON.parse(blockEnds([...scenario.decideConsolidation(options, extract(options))])[0].text).operations[0]
     }
     const v1 = consolidate({})
     assert.deepEqual(v1.sources, ['dc_gui_source'])
-    assert.ok(!v1.text.includes('successor'))
-    assert.ok(consolidate({ parentSnapshot: { snapshotId: 'ms_v1' } }).text.includes('successor'))
-    const corrected = consolidate({ parentSnapshot: { snapshotId: 'ms_v1' }, feedback: [{ feedbackId: 'fb_gui_correction', kind: 'correction', direction: 'Use corrected GUI direction' }] })
+    assert.equal(v1.text, 'Reviewed GUI principle: prefer the source-backed answer.')
+    assert.equal(consolidate({ parentSnapshot: { snapshotId: 'ms_v1' } }).text, 'Reviewed GUI successor principle: prefer the second source-backed answer.')
+    const corrected = consolidate({ feedback: [correction] })
     assert.deepEqual(corrected.sources, ['fb_gui_correction'])
-    assert.ok(corrected.text.includes('correction'))
-    const rejected = consolidate({ cases: [source, { caseId: 'dc_empty', excerpt: 'Question gui-learning-after-empty: Answer' }] })
-    assert.ok(rejected.text.startsWith('Rejected GUI candidate'))
+    assert.equal(corrected.text, 'Reviewed GUI correction principle: prefer the corrected cross-root answer.')
+    const correctedSuccessor = consolidate({ parentSnapshot: { snapshotId: 'ms_v1' }, feedback: [correction] })
+    assert.deepEqual(correctedSuccessor.sources, corrected.sources)
+    assert.equal(correctedSuccessor.text, 'Reviewed GUI successor principle: prefer the second source-backed answer.')
+    assert.notEqual(correctedSuccessor.text, corrected.text)
+    const rejected = consolidate({ parentSnapshot: { snapshotId: 'ms_v1' }, feedback: [correction], cases: [source, { caseId: 'dc_empty', excerpt: 'Question gui-learning-after-empty: Answer' }] })
+    assert.equal(rejected.text, 'Rejected GUI candidate: this principle must never become current.')
+    assert.deepEqual(rejected.sources, ['fb_gui_correction'])
     const question = blockEnds(run('decision-gui', userOptions('GUI_LEARNING_SOURCE')))[0]
     assert.equal(JSON.parse(question.arguments).questions[0].id, 'gui-learning-source')
   })
