@@ -52,7 +52,7 @@ test('disabled Hook and tool fail while remote overview stays read-only without 
   const result = await remote.overview({ sessionId: 'root' })
   assert.deepEqual(result, {
     ok: true,
-    value: { status: { available: false, enabled: false, reason: 'disabled' }, selector: { mode: 'off' }, agents: [] },
+    value: { status: { available: false, enabled: false, reason: 'disabled' }, selector: { mode: 'off' }, agents: [], auto: { answerClasses: [], shadow: false } },
   })
   assert.equal(existsSync(join(home, 'weir', 'profiles', 'test', 'decisions')), false)
   await broker.flush()

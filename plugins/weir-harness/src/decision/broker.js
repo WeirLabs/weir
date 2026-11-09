@@ -142,8 +142,24 @@ export class DecisionBroker {
     return this.profiles.selector(rootSessionId)
   }
 
+  /** Apply selectorDefault=auto only to a genuinely fresh startup root. */
+  async initializeSelectorDefault({ agent, source }) {
+    const config = this.config()
+    const header = agent?.session?.header
+    const rootSessionId = header?.id ?? agent?.id
+    if (typeof rootSessionId !== 'string' || !rootSessionId) return { mode: 'off' }
+    if (config.decisionAgentsEnabled !== true || config.decisionAgentSelectorDefault !== 'auto' || source !== 'startup') {
+      return this.selector(rootSessionId)
+    }
+    if (header?.origin === 'subagent' || (header?.delegationDepth ?? 0) >= 1) return this.selector(rootSessionId)
+    await this.ensureStore()
+    const initialized = await this.profiles.initializeAutoSelector(rootSessionId)
+    if (initialized) this.audit('selector', { rootSessionId, mode: 'auto' })
+    return this.profiles.selector(rootSessionId)
+  }
+
   async setSelector(rootSessionId, mode, agentId, workspaceKey) {
-    if (mode === 'off' && !this.store) {
+    if (mode === 'off' && !this.store && this.config().decisionAgentsEnabled !== true) {
       this.audit('selector', { rootSessionId, mode: 'off' })
       return { mode: 'off' }
     }
@@ -587,7 +603,17 @@ export class DecisionBroker {
 
   async overview(input) {
     const context = await this.sessionContext(input.sessionId)
-    return { status: this.status(), selector: this.store ? this.profiles.selector(context.rootSessionId) : { mode: 'off' }, agents: this.store && context.workspaceKey ? this.profiles.listProfiles(context.workspaceKey, { includeArchived: true }) : [] }
+    const config = this.config()
+    const configuredClasses = config.decisionAgentAutoAnswerClasses
+    const answerClasses = Array.isArray(configuredClasses) && configuredClasses.every(value => ['A', 'B', 'C'].includes(value))
+      ? [...new Set(configuredClasses)]
+      : []
+    return {
+      status: this.status(),
+      selector: this.store ? this.profiles.selector(context.rootSessionId) : { mode: 'off' },
+      agents: this.store && context.workspaceKey ? this.profiles.listProfiles(context.workspaceKey, { includeArchived: true }) : [],
+      auto: { answerClasses, shadow: config.decisionAgentAutoShadow === true },
+    }
   }
 
   async agents(input) {

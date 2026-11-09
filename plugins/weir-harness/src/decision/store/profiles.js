@@ -165,6 +165,17 @@ export class DecisionProfiles {
     return { mode: 'agent', agentId: value.agentId }
   }
 
+  /** Initialize Auto only when no selector row exists; return whether this call inserted it. */
+  async initializeAutoSelector(rootSessionId) {
+    return this.store.write(db => {
+      const existing = db.prepare('SELECT 1 FROM selectors WHERE root_session_id=?').get(rootSessionId)
+      if (existing) return false
+      db.prepare("INSERT INTO selectors(root_session_id,mode,agent_id,revision,updated_at) VALUES(?,'auto',NULL,1,?)")
+        .run(rootSessionId, this.now())
+      return true
+    })
+  }
+
   /** @param {string} rootSessionId */
   selector(rootSessionId) {
     const row = this.store.db.prepare('SELECT mode,agent_id FROM selectors WHERE root_session_id=?').get(rootSessionId)
