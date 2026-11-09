@@ -30,6 +30,7 @@ test('selector offers Off, sanitized Auto readiness, and enabled Agents as disti
   const unknown = model.selectorOptions({ agents: [] })
   assert.equal(unknown[1].auto.ready, false)
   assert.equal(unknown[1].descriptionKey, 'decisionAutoReadinessUnknown')
+  assert.equal(unknown[1].shadowKey, 'decisionAutoShadowUnknown')
   assert.deepEqual(model.selectorOptions({ ok: false, error: { message: 'off' } }).map(option => option.value), ['off', 'auto'])
 })
 
