@@ -185,9 +185,13 @@ window.__ModuleLoader__.load({
 
     function Field(props) {
       const hintId = props.hint && props.id ? `${props.id}-hint` : undefined;
+      const childProps = props.children?.props ?? props.children;
+      const control = hintId && props.children && typeof props.children === "object"
+        ? react.cloneElement(props.children, { "aria-describedby": [childProps?.["aria-describedby"], hintId].filter(Boolean).join(" ") })
+        : props.children;
       return jsx.jsxs("div", { className: "weir-da-field", "data-field": props.id, children: [
         jsx.jsx("label", { htmlFor: props.id, children: props.label }, "label"),
-        props.children,
+        control,
         props.hint ? jsx.jsx("div", { id: hintId, className: "weir-da-field-hint", children: props.hint }, "hint") : null,
       ] });
     }
@@ -272,12 +276,13 @@ window.__ModuleLoader__.load({
       const pendingRef = react.useRef(false);
       const answers = props.answers ?? localAnswers;
       const pending = props.pending === true || submitting;
-      const complete = questions.length > 0 && questions.every(question => {
+      const isAnswered = question => {
         const answer = answers[question.id];
         return Array.isArray(question.options)
           ? Array.isArray(answer?.selected) && answer.selected.length > 0
           : typeof answer?.custom === "string" && answer.custom.length > 0;
-      });
+      };
+      const complete = questions.length > 0 && questions.every(isAnswered);
       const update = next => {
         setLocalAnswers(next);
         props.onChange?.(next);
@@ -313,11 +318,11 @@ window.__ModuleLoader__.load({
               id: `weir-da-answer-${instanceId}-${question.id}`, label: question.question,
               children: jsx.jsx("textarea", {
                 id: `weir-da-answer-${instanceId}-${question.id}`, className: "weir-da-answer-textarea", rows: 3,
-                value: answer.custom ?? "", disabled: pending, "aria-label": question.question,
+                value: answer.custom ?? "", disabled: pending, "aria-label": question.question, "aria-describedby": !isAnswered(question) ? incompleteId : undefined,
                 onChange: event => update({ ...answers, [question.id]: { selected: [], custom: event.target.value } }),
               }),
             }, question.id);
-            return jsx.jsxs("fieldset", { className: "weir-da-question", disabled: pending, "data-question-id": question.id, children: [
+            return jsx.jsxs("fieldset", { className: "weir-da-question", disabled: pending, "data-question-id": question.id, "aria-describedby": !isAnswered(question) ? incompleteId : undefined, children: [
               jsx.jsx("legend", { children: question.question }, "legend"),
               jsx.jsx("div", { className: "weir-da-choices", children: question.options.map((option, index) => {
                 const value = typeof option?.label === "string" ? option.label : String(option?.value ?? "");
