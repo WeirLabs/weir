@@ -3,6 +3,8 @@
 export const DECISION_SCHEMA_VERSION = 1
 export const PROMPT_VERSION = 'evaluator-contract/3'
 export const EVALUATOR_VERSION = 'sidecar/1'
+export const ROUTER_CLASSIFICATION_CONTRACT = 'router-classification-contract/1'
+export const ROUTER_CONTRACT = 'router-contract/1'
 
 export const RETURN_CODES = Object.freeze([
   'INVALID_PREMISE', 'MISSING_CONTEXT', 'OUT_OF_SCOPE',
@@ -22,7 +24,15 @@ export const EVIDENCE_SOURCES = Object.freeze([
   'user_decision', 'user_correction', 'user_profile', 'agent_record', 'repo_doc', 'current_observation',
 ])
 export const EVIDENCE_STATUSES = Object.freeze(['active', 'superseded', 'deleted'])
-export const ROUTE_MODES = Object.freeze(['pinned', 'explicit', 'manual_reassign', 'none'])
+export const SELECTOR_MODES = Object.freeze(['off', 'agent', 'auto'])
+export const ROUTE_MODES = Object.freeze(['pinned', 'explicit', 'manual_reassign', 'none', 'auto_shadow', 'auto'])
+export const ROUTE_FAILURE_REASONS = Object.freeze([
+  'failure:timeout', 'failure:model_error', 'failure:invalid_output', 'failure:truncated',
+  'failure:aborted', 'failure:route_unavailable', 'failure:candidate_limit', 'failure:context_budget',
+])
+export const ROUTE_REASON_CODES = Object.freeze([
+  'none:no_candidates', 'admission:authority', 'deterministic:single_candidate',
+])
 export const OMISSION_CODES = Object.freeze([
   'L5_EVIDENCE_TRUNCATED', 'L5_EVIDENCE_OMITTED', 'L5_EXCERPT_OMITTED', 'L4_TRUNCATED',
   'L3_EPISODE_OMITTED', 'L3_EPISODE_TRUNCATED',
@@ -127,3 +137,7 @@ export function parseAnswerBatch(value) {
 }
 
 /** @typedef {{ id: string, selected: string[], custom?: string }} AnswerItem */
+
+/** @typedef {{mode:'off'}|{mode:'auto'}|{mode:'agent',agentId:string}} DecisionSelector */
+/** @typedef {{agentId:string,enabled:boolean,rejectedBecause?:string}} RouteCandidate */
+/** @typedef {{schemaVersion:number,routeDecisionId:string,caseId?:string,rootSessionId:string,mode:typeof ROUTE_MODES[number],candidates:RouteCandidate[],chosen?:string,reason:string,ambiguity?:{candidates:string[],conflict:string},revision:number,createdAt:number,updatedAt:number}} RouteDecision */

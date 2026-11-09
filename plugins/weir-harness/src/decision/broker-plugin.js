@@ -3,12 +3,24 @@ import { DecisionBroker } from './broker.js'
 import { createDecisionAudit } from './audit.js'
 import { overlayConfig } from '../shared/runtime-messages.js'
 
+/** Accept the normalized section array or its raw JSON string, never a partial
+ * or unknown class. Any malformed hand-edited value closes the whitelist. */
+function autoAnswerClasses(value) {
+  let parsed = value
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value) } catch { return [] }
+  }
+  if (!Array.isArray(parsed) || parsed.some(entry => !['A', 'B', 'C'].includes(entry))) return []
+  return [...new Set(parsed)]
+}
+
 /** Map the settings section to the Broker's versioned flat runtime options. */
 export function decisionBrokerConfig(ctx) {
   const value = overlayConfig(ctx, 'decisionAgent', {}, { defaults: {
     enabled: false, answerTimeoutMs: 60000, maxAttemptsPerCase: 3,
     contextBudgetTokens: 24000, maxOutputTokens: 1600, maxConcurrentAttempts: 4,
     chains: {}, retentionDays: 0, storePath: '',
+    selectorDefault: 'off', autoShadow: false, autoAnswerClasses: [],
   } })
   return {
     decisionAgentsEnabled: value.enabled,
@@ -20,6 +32,9 @@ export function decisionBrokerConfig(ctx) {
     decisionAgentChains: value.chains,
     decisionAgentRetentionDays: value.retentionDays,
     decisionAgentStorePath: value.storePath,
+    decisionAgentSelectorDefault: value.selectorDefault === 'auto' ? 'auto' : 'off',
+    decisionAgentAutoShadow: value.autoShadow === true,
+    decisionAgentAutoAnswerClasses: autoAnswerClasses(value.autoAnswerClasses),
   }
 }
 

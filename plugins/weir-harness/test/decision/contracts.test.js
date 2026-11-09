@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   ATTEMPT_FAILURES, ATTEMPT_OUTCOMES, AWAITING_REASONS, CASE_CLOSINGS, CASE_STATES,
   EVIDENCE_SOURCES, EVIDENCE_STATUSES, FEEDBACK_KINDS, OMISSION_CODES, RETURN_CODES, ROUTE_MODES,
-  DecisionContractError, assertClosedObject, assertEnum, canonicalJson, parseAnswerBatch,
+  ROUTE_FAILURE_REASONS, ROUTE_REASON_CODES, ROUTER_CLASSIFICATION_CONTRACT, ROUTER_CONTRACT,
+  SELECTOR_MODES, DecisionContractError, assertClosedObject, assertEnum, canonicalJson, parseAnswerBatch,
 } from '../../src/decision/contracts.js'
 
 describe('decision contract enums', () => {
@@ -30,6 +31,30 @@ describe('decision contract enums', () => {
       })
     })
   }
+
+  it('extends route and selector modes without changing the original members', () => {
+    assert.deepEqual([...ROUTE_MODES], ['pinned', 'explicit', 'manual_reassign', 'none', 'auto_shadow', 'auto'])
+    assert.deepEqual([...SELECTOR_MODES], ['off', 'agent', 'auto'])
+    for (const mode of ['pinned', 'explicit', 'manual_reassign', 'none', 'auto_shadow', 'auto']) {
+      assert.equal(assertEnum(mode, ROUTE_MODES, 'route mode'), mode)
+    }
+    assert.throws(() => assertEnum('automatic', ROUTE_MODES, 'route mode'), /INVALID_ENUM/)
+  })
+
+  it('versions both router sidecars and closes their stable reason vocabulary', () => {
+    assert.equal(ROUTER_CLASSIFICATION_CONTRACT, 'router-classification-contract/1')
+    assert.equal(ROUTER_CONTRACT, 'router-contract/1')
+    assert.deepEqual([...ROUTE_FAILURE_REASONS], [
+      'failure:timeout', 'failure:model_error', 'failure:invalid_output', 'failure:truncated',
+      'failure:aborted', 'failure:route_unavailable', 'failure:candidate_limit', 'failure:context_budget',
+    ])
+    assert.deepEqual([...ROUTE_REASON_CODES], [
+      'none:no_candidates', 'admission:authority', 'deterministic:single_candidate',
+    ])
+    for (const vocabulary of [ROUTE_MODES, SELECTOR_MODES, ROUTE_FAILURE_REASONS, ROUTE_REASON_CODES]) {
+      assert.equal(Object.isFrozen(vocabulary), true)
+    }
+  })
 })
 
 describe('canonical JSON', () => {

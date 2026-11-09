@@ -31,6 +31,9 @@
         guardSoftThreshold: 0.72
         guardHardThreshold: 0.88
         decisionAgentsEnabled: false
+        decisionAgentSelectorDefault: off
+        decisionAgentAutoShadow: false
+        decisionAgentAutoAnswerClasses: '[]'
         decisionAgentAnswerTimeoutMs: 60000
         decisionAgentMaxAttemptsPerCase: 3
         decisionAgentContextBudgetTokens: 24000

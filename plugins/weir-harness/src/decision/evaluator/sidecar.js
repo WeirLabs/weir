@@ -27,7 +27,14 @@ export async function streamDecision(input) {
   if (input.signal?.aborted) return failure('aborted')
 
   const controller = new AbortController()
-  const onAbort = () => controller.abort(input.signal?.reason)
+  let onAbort = () => {}
+  /** @type {Promise<{kind:'aborted'}>} */
+  const aborted = new Promise(resolve => {
+    onAbort = () => {
+      controller.abort(input.signal?.reason)
+      resolve({ kind: 'aborted' })
+    }
+  })
   input.signal?.addEventListener('abort', onAbort, { once: true })
   const options = {
     provider: input.route.provider,
@@ -52,7 +59,11 @@ export async function streamDecision(input) {
         resolve({ kind: 'timeout' })
       }, input.timeoutMs)
     })
-    const winner = await Promise.race([consuming, timeout])
+    const winner = await Promise.race([consuming, timeout, aborted])
+    if (winner.kind === 'aborted') {
+      consuming.catch(() => {})
+      return failure('aborted')
+    }
     if (winner.kind === 'timeout') {
       consuming.catch(() => {})
       return failure('timeout')
@@ -64,7 +75,7 @@ export async function streamDecision(input) {
     return winner.value
   } catch (error) {
     if (input.signal?.aborted || controller.signal.aborted) return failure('aborted')
-    return failure('model_error', error?.code)
+    return failure('model_error', /** @type {any} */ (error)?.code)
   } finally {
     if (timer) clearTimeout(timer)
     input.signal?.removeEventListener('abort', onAbort)

@@ -2,18 +2,8 @@
 import { randomUUID } from 'node:crypto'
 import { assertSupportedSchemaVersion, canonicalJson, EVIDENCE_SOURCES, EVIDENCE_STATUSES, DecisionContractError } from '../contracts.js'
 
-/** @param {unknown} evidenceScope @param {unknown} requestedScope @param {string} workspaceKey */
-export function scopeCovers(evidenceScope, requestedScope, workspaceKey) {
-  if (!evidenceScope || !requestedScope || !evidenceScope.workspaces?.includes(workspaceKey)) return false
-  if (!requestedScope.workspaces?.includes(workspaceKey)) return false
-  const paths = evidenceScope.paths ?? []
-  const requestedPaths = requestedScope.paths ?? []
-  if (paths.length && (!requestedPaths.length || requestedPaths.some(path => !paths.some(prefix => path === prefix || path.startsWith(`${prefix}/`))))) return false
-  const tags = evidenceScope.tags ?? []
-  const requestedTags = requestedScope.tags ?? []
-  if (tags.length && (!requestedTags.length || requestedTags.some(tag => !tags.includes(tag)))) return false
-  return true
-}
+import { scopeCovers } from '../scope.js'
+export { scopeCovers }
 
 export class DecisionEvidence {
   /** @param {import('./db.js').DecisionDatabase} store @param {{now?:()=>number}} [options] */

@@ -63,6 +63,23 @@ test('return, revision, escalation, cancellation and route facts follow the cont
   assert.equal(store.db.prepare('SELECT mode FROM route_decisions WHERE route_decision_id=?').get(routeId).mode, 'pinned')
 })
 
+test('auto and auto_shadow append independent immutable route facts and reject unknown modes', async t => {
+  const { store, cases } = fixture(t)
+  const current = (await cases.createCase(input('auto-routes'))).case
+  const pinnedId = await cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'pinned', chosen: 'agent-a', reason: 'Pinned by user' })
+  const shadowId = await cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'auto_shadow', chosen: 'agent-b', reason: 'Suggested shadow route' })
+  const autoId = await cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'auto', chosen: 'agent-b', reason: 'deterministic:single_candidate' })
+  const rows = store.db.prepare('SELECT route_decision_id,mode,chosen,reason,revision FROM route_decisions ORDER BY created_at,route_decision_id').all()
+  assert.equal(rows.length, 3)
+  assert.deepEqual({ ...rows.find(row => row.route_decision_id === pinnedId) }, {
+    route_decision_id: pinnedId, mode: 'pinned', chosen: 'agent-a', reason: 'Pinned by user', revision: 1,
+  })
+  assert.equal(rows.find(row => row.route_decision_id === shadowId).mode, 'auto_shadow')
+  assert.equal(rows.find(row => row.route_decision_id === autoId).mode, 'auto')
+  await assert.rejects(cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'automatic', reason: 'not in contract' }), error => error.code === 'INVALID_ROUTE_MODE')
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions').get().n, 3)
+})
+
 test('stale revision cannot overwrite a newer Case', async t => {
   const { cases } = fixture(t)
   const current = (await cases.createCase(input())).case

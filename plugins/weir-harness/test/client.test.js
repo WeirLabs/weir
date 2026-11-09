@@ -2409,6 +2409,8 @@ describe('weir settings client half', () => {
     'leaseToolWatchSelf',
     'leaseToolWatchUnsupported',
     'leaseToolWatchWaiting',
+    'decisionAgentAutoAnswerClasses', 'decisionAgentAutoAnswerClassesHint', 'decisionAgentAutoShadow', 'decisionAgentAutoShadowHint',
+    'decisionAgentSelectorDefault', 'decisionAgentSelectorDefaultHint', 'decisionAgentSelectorDefaultOptionAuto', 'decisionAgentSelectorDefaultOptionOff',
     'decisionAgentAnswerTimeoutMs', 'decisionAgentAnswerTimeoutMsHint', 'decisionAgentChains', 'decisionAgentChainsHint',
     'decisionAgentContextBudgetTokens', 'decisionAgentContextBudgetTokensHint', 'decisionAgentMaxAttemptsPerCase', 'decisionAgentMaxAttemptsPerCaseHint',
     'decisionAgentMaxConcurrentAttempts', 'decisionAgentMaxConcurrentAttemptsHint', 'decisionAgentMaxOutputTokens', 'decisionAgentMaxOutputTokensHint',

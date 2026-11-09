@@ -153,7 +153,7 @@ describe('client.settings-page chunk', () => {
     return dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentChains','decisionAgentRetentionDays','decisionAgentStorePath','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentSelectorDefault','decisionAgentAutoShadow','decisionAgentAutoAnswerClasses','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentChains','decisionAgentRetentionDays','decisionAgentStorePath','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
   const MAIN_GROUPS = ['intent', 'todo', 'guard', 'decision', 'editing', 'worktree', 'robash', 'lsp', 'notify']
   const ROUTING_GROUPS = ['routingCategories', 'routingAgents', 'routingSupervision']
@@ -273,6 +273,24 @@ describe('client.settings-page chunk', () => {
     const todoRows = cards.todo.children.slice(1)
     expect(todoRows[0].style.borderTop).toBe('none')
     for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('1px solid var(--dsw-alias-border-l2)')
+  })
+
+  it('keeps the three conservative Auto controls in the existing Decision group', async () => {
+    const { exports, editors } = await loadPage()
+    const group = exports.GROUPS.find((candidate) => candidate.id === 'decision')
+    expect(group.fields.slice(0, 4)).toEqual([
+      { field: 'decisionAgentsEnabled', kind: 'boolean' },
+      { field: 'decisionAgentSelectorDefault', kind: 'enum', values: ['off', 'auto'], parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
+      { field: 'decisionAgentAutoShadow', kind: 'boolean', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
+      { field: 'decisionAgentAutoAnswerClasses', kind: 'text', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
+    ])
+    const cards = cardsOf(renderCard(exports, editors, {
+      fields: makeFields({ decisionAgentsEnabled: { text: 'true' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }))
+    expect(rowKeys(cards, 'decision').slice(0, 4)).toEqual([
+      'decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswerClasses',
+    ])
   })
 
   it('splits the two pages: main renders its 8 groups, routing renders its 3 — never mixed', async () => {
@@ -902,11 +920,12 @@ describe('client.settings-page chunk', () => {
     expect(Object.keys(FIELD_DEFAULTS).sort()).toEqual(Object.keys(SERVER_FIELD_DEFAULTS).sort())
     expect(FIELD_DEFAULTS).toEqual(SERVER_FIELD_DEFAULTS)
     // BOOLEAN_DEFAULTS is the derived boolean subset — exactly the previous
-    // hand-maintained literal plus the Decision master switch (12 entries).
+    // hand-maintained literal plus the Decision master and Shadow switches (13 entries).
     expect(BOOLEAN_DEFAULTS).toEqual({
       todoEnabled: true,
       guardEnabled: true,
       decisionAgentsEnabled: false,
+      decisionAgentAutoShadow: false,
       hashlineHideStockEdit: true,
       worktreeEnabled: true,
       worktreeAutoSetup: true,
