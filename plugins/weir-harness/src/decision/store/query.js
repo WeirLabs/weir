@@ -1,5 +1,5 @@
 // Read-only projections, rebuildable metrics, and startup-only retention sweeps.
-import { assertSupportedSchemaVersion, canonicalJson, DecisionContractError, RETURN_CODES } from '../contracts.js'
+import { assertSupportedSchemaVersion, canonicalJson, DecisionContractError, RETURN_CODES, ROUTE_FAILURE_REASONS } from '../contracts.js'
 import { attemptOf } from './attempts.js'
 import { caseOf } from './cases.js'
 import { evidenceOf, expandEvidence } from './evidence.js'
@@ -267,6 +267,88 @@ function flattenMetrics(metrics) {
     }
   }
   return result
+}
+
+const ROUTING_SUMMARY_BY_OUTCOME = Object.freeze({
+  agreement: 'agreement', disagreement: 'disagreement',
+  shadow_none: 'shadowNone', shadow_ambiguous: 'shadowAmbiguous', shadow_failure: 'shadowFailure',
+  auto_none: 'autoNone', auto_ambiguous: 'autoAmbiguous', auto_failure: 'autoFailure',
+  manual_reassign: 'manualReassign', uncomparable: 'uncomparable',
+})
+
+/** Project immutable route facts without interpreting natural-language reasons. */
+export function projectRoutingChains(chains) {
+  const summary = {
+    agreement: 0, disagreement: 0,
+    shadowNone: 0, shadowAmbiguous: 0, shadowFailure: 0,
+    autoNone: 0, autoAmbiguous: 0, autoFailure: 0,
+    manualReassign: 0, uncomparable: 0,
+  }
+  const items = []
+  for (const chain of chains) {
+    const routes = [...chain.routes].sort((left, right) => left.createdAt - right.createdAt || left.routeDecisionId.localeCompare(right.routeDecisionId))
+    const hasShadow = routes.some(route => route.mode === 'auto_shadow')
+    for (let index = 0; index < routes.length; index++) {
+      const route = routes[index]
+      const prior = routes.slice(0, index)
+      const classified = classifyRoute(route, prior, hasShadow)
+      const summaryKey = ROUTING_SUMMARY_BY_OUTCOME[classified.outcome]
+      if (summaryKey) summary[summaryKey]++
+      items.push({
+        caseId: chain.case.caseId,
+        routeDecisionId: route.routeDecisionId,
+        mode: route.mode,
+        candidates: (Array.isArray(route.candidates) ? route.candidates : []).map(candidate => ({
+          agentId: candidate.agentId,
+          enabled: candidate.enabled === true,
+          ...(typeof candidate.rejectedBecause === 'string' ? { rejectedBecause: candidate.rejectedBecause } : {}),
+        })),
+        chosen: typeof route.chosen === 'string' && route.chosen ? route.chosen : null,
+        reason: typeof route.reason === 'string' ? route.reason : '',
+        ambiguity: route.ambiguity && typeof route.ambiguity === 'object' && !Array.isArray(route.ambiguity) ? {
+          candidates: Array.isArray(route.ambiguity.candidates) ? route.ambiguity.candidates.filter(value => typeof value === 'string') : [],
+          conflict: typeof route.ambiguity.conflict === 'string' ? route.ambiguity.conflict : '',
+        } : null,
+        createdAt: route.createdAt,
+        agentId: typeof chain.case.agentId === 'string' && chain.case.agentId ? chain.case.agentId : null,
+        outcome: classified.outcome,
+        ...(classified.baselineAgentId === undefined ? {} : { baselineAgentId: classified.baselineAgentId }),
+        ...(classified.reassignment === undefined ? {} : { reassignment: classified.reassignment }),
+      })
+    }
+  }
+  items.sort((left, right) => right.createdAt - left.createdAt || right.routeDecisionId.localeCompare(left.routeDecisionId))
+  return deepFreeze({ summary, items })
+}
+
+function classifyRoute(route, prior, hasShadow) {
+  if (route.mode === 'manual_reassign') {
+    const previous = [...prior].reverse().find(candidate => ['pinned', 'explicit', 'auto', 'manual_reassign'].includes(candidate.mode)
+      && typeof candidate.chosen === 'string' && candidate.chosen)
+    return {
+      outcome: 'manual_reassign',
+      reassignment: { from: previous?.chosen ?? null, to: typeof route.chosen === 'string' && route.chosen ? route.chosen : null },
+    }
+  }
+  if (route.mode === 'auto') return { outcome: automaticOutcome(route, 'auto') }
+  if (route.mode === 'auto_shadow') {
+    const baseline = [...prior].reverse().find(candidate => candidate.mode === 'pinned' && typeof candidate.chosen === 'string' && candidate.chosen)
+    if (!baseline) return { outcome: 'uncomparable' }
+    if (typeof route.chosen === 'string' && route.chosen) {
+      return { outcome: route.chosen === baseline.chosen ? 'agreement' : 'disagreement', baselineAgentId: baseline.chosen }
+    }
+    return { outcome: automaticOutcome(route, 'shadow'), baselineAgentId: baseline.chosen }
+  }
+  if (route.mode === 'pinned' && hasShadow && typeof route.chosen === 'string' && route.chosen) return { outcome: 'baseline' }
+  return { outcome: 'uncomparable' }
+}
+
+function automaticOutcome(route, prefix) {
+  if (typeof route.chosen === 'string' && route.chosen) return `${prefix}_selected`
+  if (ROUTE_FAILURE_REASONS.includes(route.reason)) return `${prefix}_failure`
+  if (route.ambiguity && typeof route.ambiguity === 'object' && !Array.isArray(route.ambiguity)
+    && Array.isArray(route.ambiguity.candidates) && typeof route.ambiguity.conflict === 'string') return `${prefix}_ambiguous`
+  return `${prefix}_none`
 }
 
 /** @template T @param {T} value @returns {T} */
