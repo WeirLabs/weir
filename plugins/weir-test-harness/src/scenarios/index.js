@@ -78,6 +78,7 @@ import decisionIsolation from './decision-isolation.js'
 import decisionUiRemote from './decision-ui-remote.js'
 import decisionMemory from './decision-memory.js'
 import decisionLearning from './decision-learning.js'
+import decisionAutoRoute from './decision-auto-route.js'
 import decisionGui from './decision-gui.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
@@ -162,6 +163,7 @@ SCENARIOS.push(decisionIsolation)
 SCENARIOS.push(decisionUiRemote)
 SCENARIOS.push(decisionMemory)
 SCENARIOS.push(decisionLearning)
+SCENARIOS.push(decisionAutoRoute)
 if (process.env.WEIR_IT_DECISION_GUI === '1') SCENARIOS.push(decisionGui)
 
 /**

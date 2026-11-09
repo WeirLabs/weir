@@ -133,7 +133,9 @@
         decisionAgentsEnabled: true
         decisionAgentSelectorDefault: off
         decisionAgentAutoShadow: false
-        decisionAgentAutoAnswerClasses: '[]'
+        decisionAgentAutoAnswerClasses: !!js process.env.WEIR_IT_DECISION_AUTO_CLASSES ?? '[]'
+        decisionAgentAnswerTimeoutMs: !!js Number(process.env.WEIR_IT_DECISION_TIMEOUT_MS ?? 60000)
+        decisionAgentMaxAttemptsPerCase: !!js Number(process.env.WEIR_IT_DECISION_MAX_ATTEMPTS ?? 3)
         decisionAgentStorePath: !!js process.env.WEIR_IT_DECISION_STORE_PATH || ''
     # Decision Agents: profile Broker + inert/self-healing Host remote.
     - id: weir-it-decision-broker

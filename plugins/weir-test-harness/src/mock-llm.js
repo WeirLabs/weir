@@ -61,6 +61,14 @@ function decide(options, obs) {
   if (options.purpose === 'session-title') return textChunks('Integration Test Session')
   if (options.purpose === 'compaction') return textChunks('SUMMARY: the probe task was in progress with no errors.')
   const contract = obs.system.split('\n', 1)[0]
+  if (contract === 'Auto request classification contract: router-classification-contract/1') {
+    if (typeof scenario.decideRouterClassification !== 'function') throw new Error(`${scenario.id} has no Auto classification brain`)
+    return scenario.decideRouterClassification(options, obs)
+  }
+  if (contract === 'Auto candidate router contract: router-contract/1') {
+    if (typeof scenario.decideRouterRoute !== 'function') throw new Error(`${scenario.id} has no Auto Router brain`)
+    return scenario.decideRouterRoute(options, obs)
+  }
   if (contract === 'Decision consolidation contract v1') {
     if (typeof scenario.decideConsolidation !== 'function') throw new Error(`${scenario.id} has no consolidation Decision brain`)
     return scenario.decideConsolidation(options, obs)
@@ -131,6 +139,28 @@ async function* streamScenario(options) {
       yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: 'learning stream aborted' } } }
       return
     }
+  }
+  if (record.autoRouterHold === 'singleflight') {
+    const ready = join(IT_ROOT, 'decision-auto-singleflight.ready')
+    const release = join(IT_ROOT, 'decision-auto-singleflight.release')
+    writeFileSync(ready, JSON.stringify({ pid: process.pid, at: Date.now() }) + '\n')
+    const deadline = Date.now() + 10_000
+    while (!options.signal?.aborted && !existsSync(release)) {
+      if (Date.now() >= deadline) throw new Error('decision-auto-route single-flight hold timed out')
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    if (options.signal?.aborted) {
+      yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: 'single-flight Router stream aborted' } } }
+      return
+    }
+  }
+  if (record.autoRouterHold === 'timeout') {
+    await new Promise((resolve) => {
+      if (options.signal?.aborted) return resolve()
+      options.signal?.addEventListener('abort', resolve, { once: true })
+    })
+    yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: 'Router stream held until abort' } } }
+    return
   }
   if (scenario.id === 'decision-spike-cancel' && record.s6Fixture === 'hang') {
     const events = process.env.WEIR_DECISION_SPIKE_EVENTS
