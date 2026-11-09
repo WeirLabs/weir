@@ -28,7 +28,7 @@ test('Decision source has no session events, command channel, static host import
   assert.ok(files.length >= 15)
 })
 
-test('disabled Hook, tool and remote fail without creating a decisions directory', async t => {
+test('disabled Hook and tool fail while remote overview stays read-only without creating a decisions directory', async t => {
   const home = mkdtempSync(join(tmpdir(), 'weir-decision-guards-'))
   t.after(() => rmSync(home, { recursive: true, force: true }))
   const broker = new DecisionBroker({ profileContext: { home, name: 'test' }, config: () => ({ decisionAgentsEnabled: false }) })
@@ -40,8 +40,10 @@ test('disabled Hook, tool and remote fail without creating a decisions directory
   await assert.rejects(tool.execute({ question: 'Q' }, { agent, signal: new AbortController().signal }), /disabled/)
   const remote = createDecisionRemoteService({ broker: () => broker })
   const result = await remote.overview({ sessionId: 'root' })
-  assert.equal(result.ok, false)
-  assert.equal(result.error.code, 'DECISION_UNAVAILABLE')
+  assert.deepEqual(result, {
+    ok: true,
+    value: { status: { available: false, enabled: false, reason: 'disabled' }, selector: { mode: 'off' }, agents: [] },
+  })
   assert.equal(existsSync(join(home, 'weir', 'profiles', 'test', 'decisions')), false)
   await broker.flush()
 })

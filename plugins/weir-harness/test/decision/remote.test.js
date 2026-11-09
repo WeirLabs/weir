@@ -40,7 +40,7 @@ test('every remote method reaches the Broker and wraps its value', async () => {
   assert.equal(calls.find(call => call[0] === 'profileUpsert')[1][0].workspaceKey, '/repo')
 })
 
-test('Broker errors become bounded envelopes without stacks; disabled stays unavailable', async () => {
+test('Broker errors become bounded envelopes without stacks', async () => {
   const error = new Error('bad input')
   error.code = 'BAD_INPUT'
   const broker = { status: () => ({ available: true }), record: async () => { throw error } }
@@ -49,10 +49,43 @@ test('Broker errors become bounded envelopes without stacks; disabled stays unav
   assert.deepEqual(result, { ok: false, error: { code: 'BAD_INPUT', message: 'bad input' } })
   assert.equal(JSON.stringify(result).includes('stack'), false)
 
-  const disabled = createDecisionRemoteService({ broker: () => ({ status: () => ({ available: false, reason: 'disabled' }) }) })
-  assert.deepEqual(await disabled.overview({ sessionId: 'root' }), { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: 'disabled' } })
   const unavailable = createDecisionRemoteService({ broker: () => broker, ensureRegistered: () => false })
   assert.equal((await unavailable.overview({})).error.code, 'CHANNEL_UNAVAILABLE')
+})
+
+test('global off permits only overview and fails every other remote method closed', async () => {
+  const calls = []
+  const broker = {
+    status: () => ({ available: false, enabled: false, reason: 'disabled' }),
+    overview: async () => ({ status: broker.status(), selector: { mode: 'off' }, agents: [] }),
+  }
+  for (const method of DECISION_REMOTE_METHODS.filter(method => method !== 'overview')) {
+    broker[method] = async () => { calls.push(method); return { unexpected: true } }
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  assert.deepEqual(await service.overview({ sessionId: 'root' }), {
+    ok: true,
+    value: { status: { available: false, enabled: false, reason: 'disabled' }, selector: { mode: 'off' }, agents: [] },
+  })
+  for (const method of DECISION_REMOTE_METHODS.filter(method => method !== 'overview')) {
+    assert.deepEqual(await service[method]({ sessionId: 'root' }), {
+      ok: false, error: { code: 'DECISION_UNAVAILABLE', message: 'disabled' },
+    }, method)
+  }
+  assert.deepEqual(calls, [])
+})
+
+test('overview remains unavailable for non-disabled Broker failures', async () => {
+  let called = false
+  const broker = {
+    status: () => ({ available: false, enabled: true, reason: 'store_open_failed' }),
+    overview: async () => { called = true; return {} },
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  assert.deepEqual(await service.overview({ sessionId: 'root' }), {
+    ok: false, error: { code: 'DECISION_UNAVAILABLE', message: 'store_open_failed' },
+  })
+  assert.equal(called, false)
 })
 
 test('remote apply is idempotent and self-heals missing endpoints', () => {

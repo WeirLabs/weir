@@ -16,7 +16,8 @@ export function createDecisionRemoteService(dependencies) {
     try {
       if (!ensure()) return { ok: false, error: { code: 'CHANNEL_UNAVAILABLE', message: 'Decision remote is not registered' } }
       const broker = dependencies.broker()
-      if (!broker || broker.status().available !== true) return { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: broker?.status().reason ?? 'Decision Broker is unavailable' } }
+      const status = broker?.status()
+      if (!broker || (status.available !== true && !(method === 'overview' && status.reason === 'disabled'))) return { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: status?.reason ?? 'Decision Broker is unavailable' } }
       let value
       const needsContext = method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
