@@ -1630,7 +1630,7 @@ describe('weir settings client half', () => {
   })
 
   it('dictionary union pin: entry NS keys ∪ chunk data-face keys reproduce the pre-move dictionaries key-for-key', async () => {
-    // The frozen key set (636 keys): any key dropped in a future edit
+    // The frozen key set: any key dropped in a future edit
     // of the data faces or the entry dictionary reddens here (the design's
     // 键集并集 pin), and any cross-slice duplicate inside the page merge would
     // silently shadow — pinned too.
@@ -2473,6 +2473,15 @@ describe('weir settings client half', () => {
     'decisionPrincipleDetailsOnOpen', 'decisionProfileHistory', 'decisionRawMetrics', 'decisionReasonSummary',
     'decisionRecordFilters', 'decisionRecoveryActions', 'decisionReviewedPrinciplesUsed', 'decisionSelectRecord',
     'decisionStatusClosed', 'decisionSubmitCorrection', 'decisionSuggestionNotSubmitted', 'decisionVersionUnavailable', 'decisionViewAssistant',
+    'decisionAuto', 'decisionAutoEmptyWhitelist', 'decisionAutoReadinessUnknown', 'decisionAutoShadowOff', 'decisionAutoShadowOn', 'decisionAutoWhitelist',
+    'decisionNoAssignedAgent', 'decisionNoRouteHistory', 'decisionReasonUnownedNoRoute',
+    'decisionRouteHistory', 'decisionRouteModeAuto', 'decisionRouteModeExplicit', 'decisionRouteModeManual', 'decisionRouteModeNone',
+    'decisionRouteModePinned', 'decisionRouteModeShadow', 'decisionRouteModeUnknown',
+    'decisionRouteStatusAmbiguous', 'decisionRouteStatusFailure', 'decisionRouteStatusNone', 'decisionRouteStatusSelected',
+    'decisionRoutingAgreement', 'decisionRoutingAutoAmbiguous', 'decisionRoutingAutoFailure', 'decisionRoutingAutoNone', 'decisionRoutingAutoSelected',
+    'decisionRoutingBaseline', 'decisionRoutingDiagnostic', 'decisionRoutingDirection', 'decisionRoutingDisagreement', 'decisionRoutingManualReassign',
+    'decisionRoutingNoData', 'decisionRoutingOpenRecord', 'decisionRoutingReview', 'decisionRoutingShadowAmbiguous', 'decisionRoutingShadowFailure',
+    'decisionRoutingShadowNone', 'decisionRoutingShown', 'decisionRoutingUncomparable',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }
