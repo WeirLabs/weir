@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
 import { answerFormExpression, correctionPreviewProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
-import { decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
+import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
 test('product fixture gives each emitted tool call a unique real identity', () => {
@@ -20,6 +20,26 @@ test('shared selector wait emits a syntactically valid browser expression', () =
   const expression = decisionTriggerExpression()
   assert.doesNotThrow(() => new Function(`return (${expression})`))
   assert.ok(expression.includes('data-weir-decision-trigger'))
+})
+
+test('Desktop app environment isolates HOME and preserves required runtime variables', t => {
+  const originalHome = process.env.HOME
+  t.after(() => {
+    if (originalHome === undefined) delete process.env.HOME
+    else process.env.HOME = originalHome
+  })
+  process.env.HOME = '/real-home-must-not-leak'
+  const paths = {
+    home: '/isolated/root/home',
+    profile: '/isolated/root/home/profiles/desktop',
+    electronData: '/isolated/root/electron-data',
+  }
+  const env = appEnvironment(paths, '/isolated/root/out', true)
+  assert.equal(env.HOME, paths.home)
+  assert.notEqual(env.HOME, process.env.HOME)
+  assert.equal(env.PATH, process.env.PATH ?? '/usr/bin:/bin:/usr/sbin:/sbin')
+  assert.equal(env.DSH_HOME, paths.home)
+  assert.equal(env.DSH_AGENTS_HOME, join(paths.home, 'agents-home'))
 })
 
 test('inbox answer wait composes the selector before JSON encoding', () => {
