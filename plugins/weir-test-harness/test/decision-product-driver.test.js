@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 
 test('product fixture gives each emitted tool call a unique real identity', () => {
@@ -19,6 +19,21 @@ test('shared selector wait emits a syntactically valid browser expression', () =
   const expression = decisionTriggerExpression()
   assert.doesNotThrow(() => new Function(`return (${expression})`))
   assert.ok(expression.includes('data-weir-decision-trigger'))
+})
+
+test('inbox answer wait composes the selector before JSON encoding', () => {
+  const expression = answerFormExpression('dc_1')
+  assert.doesNotThrow(() => new Function(`return (${expression})`))
+  const queried = []
+  const found = new Function('document', `return (${expression})`)({ querySelector: selector => (queried.push(selector), {}) })
+  assert.equal(found, true)
+  assert.deepEqual(queried, ['article[data-case-id="dc_1"] form.weir-da-answers'])
+  assert.ok(expression.includes('dc_1'))
+  assert.ok(expression.includes('article[data-case-id='))
+  assert.ok(expression.includes('form.weir-da-answers'))
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes('answerFormExpression(caseId)'))
+  assert.ok(!driver.includes('JSON.stringify(article)} form.weir-da-answers'))
 })
 
 const evaluatorOptions = questions => ({

@@ -14,6 +14,13 @@ export function parseDecisionRequest(url, postData) {
   }
 }
 
+// Composes the CSS selector first, then JSON-encodes it once: a literal
+// `${article} form.weir-da-answers` splice produces invalid browser source.
+export function answerFormExpression(caseId) {
+  const selector = `article[data-case-id="${caseId}"] form.weir-da-answers`
+  return `Boolean(document.querySelector(${JSON.stringify(selector)}))`
+}
+
 function same(left, right) {
   if (Object.is(left, right)) return true
   if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false

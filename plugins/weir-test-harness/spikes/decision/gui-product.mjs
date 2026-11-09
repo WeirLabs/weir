@@ -10,7 +10,7 @@ import {
   createSession, openSession, setInput, submitMarker,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from './gui-product-lib.mjs'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
 const BASE_HEAD = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: LANE, encoding: 'utf8' }).stdout.trim()
@@ -477,7 +477,7 @@ async function askLongNative(sessionId) {
 async function answerInboxWithSuggestions(sessionId, caseId, shotName) {
   await openPage('inbox')
   const article = `article[data-case-id="${caseId}"]`
-  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(article)} form.weir-da-answers))`), 30_000)
+  await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
   await clickText(article, ['使用建议', 'Use suggestions'])
   const filled = await instance.cdp.evaluate(`(() => { const article=document.querySelector(${JSON.stringify(article)}); return {checked:[...article.querySelectorAll('input[type="radio"],input[type="checkbox"]')].filter(el=>el.checked).map(el=>el.value),texts:[...article.querySelectorAll('textarea')].map(el=>el.value),busy:article.querySelector('form')?.getAttribute('aria-busy')} })()`)
   const stillPending = await record(sessionId, 'suggestion-fill', caseId)
