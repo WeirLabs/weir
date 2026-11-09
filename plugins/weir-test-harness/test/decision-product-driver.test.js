@@ -430,3 +430,65 @@ test('product learning candidates cite the real correction and advance beyond th
     assert.ok(driver.includes(`candidate${version}.run.operations[0]?.text === 'Reviewed GUI successor principle: prefer the second source-backed answer.'`), `${version} changes the correction principle into a successor`)
   }
 })
+
+// Run 47hAKq regression anchor: global-off UI evidence passed, then the disabled process
+// issued learningRun and correctly received DECISION_UNAVAILABLE. Persistence authority
+// belongs to a fresh enabled process, never to the disabled-bypass phase.
+test('global off bypass and enabled restart persistence run in separate owned processes', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const disabledStart = driver.indexOf('instance = await startDesktop(false)')
+  const disabledStop = driver.indexOf("await stopOwned('process-2')", disabledStart)
+  assert.ok(disabledStart >= 0 && disabledStop > disabledStart, 'the disabled instance has an exact owned cleanup boundary')
+  const disabled = driver.slice(disabledStart, disabledStop)
+  assert.doesNotMatch(disabled, /\b(?:rpc|records|record|openAgent|openRecord|compareRecord|waitAgent|waitCase)\(/, 'the disabled phase never calls a disabled Decision read or a helper that performs one')
+
+  const firstOpen = disabled.indexOf('await openSession(instance, sessionId)')
+  const selector = disabled.indexOf('await selectorOpen()', firstOpen)
+  const explanation = disabled.indexOf("check('globalOffExplainsBypassAndRetainsPinnedSelection'", selector)
+  const screenshot = disabled.indexOf("await shot('23-restart-global-off')", explanation)
+  const escape = disabled.indexOf("await instance.cdp.key('Escape')", screenshot)
+  const reopened = disabled.indexOf('await openSession(instance, sessionId)', escape)
+  const marker = disabled.indexOf("await submitMarker(instance, 'GUI_C_OFF')", reopened)
+  const pending = disabled.indexOf('await waitFor(async () => (await nativeState()).pending, 30_000)', marker)
+  const answered = disabled.indexOf("await answerNative('Native Off')", pending)
+  const disabledScan = disabled.indexOf("const scanAfter = await scanSession(sessionId, 'session-after-restart.json')", answered)
+  const disabledScanCheck = disabled.indexOf("check('restartAddsNoForbiddenSessionEvents', scanAfter.commandEvents.length === 0 && scanAfter.customDecisionEvents.length === 0)", disabledScan)
+  const disabledOrder = [firstOpen, selector, explanation, screenshot, escape, reopened, marker, pending, answered, disabledScan, disabledScanCheck]
+  assert.ok(disabledOrder.every((index, position) => index >= 0 && (position === 0 || index > disabledOrder[position - 1])), 'disabled open → selector evidence → Escape → native bypass → forbidden-event scan stays ordered')
+
+  const beforeGlobalOff = driver.indexOf('const beforeGlobalOff = await records(sessionId)')
+  const firstStop = driver.indexOf("await stopOwned('process-1')")
+  assert.ok(beforeGlobalOff >= 0 && beforeGlobalOff < firstStop, 'the enabled authority captures the record count before process 1 stops')
+
+  const enabledStart = driver.indexOf('instance = await startDesktop(true)', disabledStop)
+  const enabledStop = driver.indexOf("await stopOwned('process-3')", enabledStart)
+  assert.ok(enabledStart > disabledStop && enabledStop > enabledStart, 'a fresh enabled process 3 starts only after disabled process 2 is stopped')
+  const enabled = driver.slice(enabledStart, enabledStop)
+  const enabledOpen = enabled.indexOf('await openSession(instance, sessionId)')
+  const restartedRun = enabled.indexOf("const restartedRun = await rpc(sessionId, 'restart', 'learningRun'", enabledOpen)
+  const restartedSnapshot = enabled.indexOf("const restartedSnapshot = await rpc(sessionId, 'restart', 'memorySnapshot'", restartedRun)
+  const restartedAgent = enabled.indexOf("const restartedAgent = await rpc(sessionId, 'restart', 'agent'", restartedSnapshot)
+  const restartedRecord = enabled.indexOf("const restartedRecord = await record(sessionId, 'restart', learned.caseId)", restartedAgent)
+  const persisted = enabled.indexOf("check('restartPersistsLearningFeedbackSelectorAndRecords'", restartedRecord)
+  const openedAgent = enabled.indexOf('await openAgent(sessionId, primary.agentId)', persisted)
+  const advanced = enabled.indexOf('await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)', openedAgent)
+  const restartShot = enabled.indexOf("await shot('24-restart-learning-persisted')", advanced)
+  const openedRecord = enabled.indexOf('await openRecord(sessionId, learned.caseId)', restartShot)
+  const compared = enabled.indexOf("await compareRecord(sessionId, 'restart-record', learned.caseId, true)", openedRecord)
+  const afterGlobalOff = enabled.indexOf('const afterGlobalOff = await records(sessionId)', compared)
+  const sameCount = enabled.indexOf("check('globalOffCreatesNoNewCase', afterGlobalOff.records.length === beforeGlobalOff.records.length)", afterGlobalOff)
+  const finalScan = enabled.indexOf("await scanSession(sessionId, 'session-after-enabled-restart.json')", sameCount)
+  const finalScanCheck = enabled.indexOf('enabledRestartAddsNoForbiddenSessionEvents', finalScan)
+  const enabledOrder = [enabledOpen, restartedRun, restartedSnapshot, restartedAgent, restartedRecord, persisted, openedAgent, advanced, restartShot, openedRecord, compared, afterGlobalOff, sameCount, finalScan, finalScanCheck]
+  assert.ok(enabledOrder.every((index, position) => index >= 0 && (position === 0 || index > enabledOrder[position - 1])), 'enabled open → four authority rereads → original assertions/UI comparisons → count comparison → final scan stays ordered')
+  assert.ok(enabled.includes("restartedRun.outcome === 'rejected' && restartedRun.revision === rejectedV3.run.revision"), 'the original learning-run persistence assertions remain')
+  assert.ok(enabled.includes("restartedSnapshot.state === 'draft' && restartedSnapshot.revision === rejectedV3.snapshot.revision"), 'the original snapshot persistence assertions remain')
+  assert.ok(enabled.includes('restartedAgent.currentSnapshotId === candidateV1.snapshot.snapshotId'), 'the original current-snapshot assertion remains')
+  assert.ok(enabled.includes('JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail)'), 'the original whole-record persistence assertion remains')
+
+  assert.deepEqual([...driver.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true'], 'the successful path owns enabled, disabled, then fresh enabled instances')
+  assert.deepEqual([...driver.matchAll(/await stopOwned\('process-(\d)'\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
+  assert.match(driver, /check\(`\$\{label\}ExactOwnedCleanup`, receipt\.pass/, 'each owned cleanup retains its named acceptance check')
+  for (const log of ['desktop-enabled.log', 'desktop-disabled.log']) assert.ok(driver.includes(`'${log}'`), `${log} is included in the import scan`)
+  assert.match(driver, /const importFailures = desktopLogs\.flatMap\(/, 'runtime import failures are scanned across both log modes')
+})
