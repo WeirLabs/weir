@@ -314,3 +314,27 @@ test('keyboard selector audits precede native pending and retain long-case visua
   assert.equal(driver.match(/const longCase = await askLongNative\(sessionId\)/g)?.length, 1, 'the scenario neither closes nor recreates the long Case to pass')
   assert.match(driver, /pending native question hides the composer/i, 'the ordering documents the verified host contract')
 })
+
+// Run W1nSiy regression anchor: native ArrowDown selected and closed the radio panel;
+// a subsequent Space confirmation has no target and is not part of the product contract.
+test('keyboard selector treats directional native selection as the complete activation path', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function keyboardSelector\(sessionId, agentId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body, 'keyboardSelector exists')
+  assert.ok(!/\.focus\(|\.click\(/.test(body), 'the keyboard audit never substitutes programmatic focus or click')
+  assert.match(body, /document\.activeElement\?\.checked/, 'Tab stops at the native radio group current item')
+  assert.match(body, /navigation\.targetIndex > navigation\.activeIndex \? 'ArrowDown' : 'ArrowUp'/, 'direction is computed toward the requested target')
+  assert.match(body, /const expectedValue = navigation\.values\[expectedIndex\]/, 'each arrow predicts the native selection it must produce')
+  assert.match(body, /await instance\.cdp\.key\(direction\)/)
+  assert.ok(!body.includes("await instance.cdp.key('Space')"), 'native arrow selection requires no second Space confirmation')
+  assert.match(body, /await expectMutation\('setSelector', expectedValue === 'off'/, 'every native selection has exactly one matching raw mutation')
+  assert.match(body, /selected\.selector/, 'the authoritative selector is reread after every native selection')
+  assert.match(body, /!document\.querySelector\('#weir-da-selector-panel'\).*document\.activeElement===document\.querySelector/, 'panel closure and trigger focus are observed together')
+  assert.ok(body.includes("check('keyboardReachesAgentRadio'"), 'the existing target keyboard assertion remains')
+  assert.ok(body.includes("check('keyboardSelectionAndFocusReturn'"), 'the existing authority and focus-return assertion remains')
+  const enter = body.indexOf("await instance.cdp.key('Enter')")
+  const escape = body.indexOf("await instance.cdp.key('Escape')")
+  const tab = body.lastIndexOf("await instance.cdp.key('Tab')")
+  const arrow = body.indexOf('await instance.cdp.key(direction)')
+  assert.ok(enter >= 0 && escape > enter && tab > escape && arrow > tab, 'Enter/Escape/Tab precede native directional activation')
+})

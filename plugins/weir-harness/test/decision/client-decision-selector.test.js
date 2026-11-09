@@ -47,12 +47,23 @@ function makeReact(document) {
   }
   const mount = tree => {
     for (const node of findAll(tree, item => item.ref && typeof item.ref === 'object')) {
-      if (node.ref.current) continue
-      node.ref.current = {
+      const element = node.ref.current ?? {
         focused: 0,
-        focus() { this.focused += 1; document.activeElement = this },
+        focusCalls: 0,
+        disabledFocusCalls: 0,
+        focus() {
+          this.focusCalls += 1
+          if (this.disabled) {
+            this.disabledFocusCalls += 1
+            return
+          }
+          this.focused += 1
+          document.activeElement = this
+        },
         contains(target) { return target === this },
       }
+      element.disabled = node.disabled === true
+      node.ref.current = element
     }
   }
   const effects = () => {
@@ -214,6 +225,36 @@ test('selection saves exactly once and closes without confirmation', async t => 
   assert.equal(textOf(triggerOf(tree)).includes('A very long assistant name'), true)
   assert.equal(triggerOf(tree).ref.current.focused, 1)
   assert.equal(findAll(tree, node => node.role === 'dialog' && node['aria-modal'] === true).length, 0)
+})
+
+test('successful selection restores focus only after the enabled trigger commits', async t => {
+  let release
+  const h = await load(t, enabledOverview, { setSelector: () => new Promise(resolve => { release = resolve }) })
+  let tree = h.render()
+  const trigger = triggerOf(tree).ref.current
+  assert.equal(trigger.focusCalls, 0, 'initial mount never steals focus')
+  await h.flush()
+  tree = h.render()
+  assert.equal(trigger.focusCalls, 0, 'the overview render never steals focus')
+  tree = h.render()
+  assert.equal(trigger.focusCalls, 0, 'an unrelated render never steals focus')
+  triggerOf(tree).onClick()
+  tree = h.render()
+  radioOf(tree, 'a').onChange({ target: { value: 'a' } })
+  tree = h.render()
+  assert.equal(triggerOf(tree).disabled, true)
+  assert.equal(trigger.focusCalls, 0, 'pending does not focus the disabled trigger')
+  release({ mode: 'agent', agentId: 'a' })
+  await h.flush()
+  assert.equal(trigger.focused, 0, 'focus waits for the enabled trigger to commit')
+  assert.equal(trigger.disabledFocusCalls, 0, 'the pending focus attempt is not made')
+  tree = h.render()
+  assert.equal(panelOf(tree), undefined)
+  assert.equal(triggerOf(tree).disabled, false)
+  assert.equal(trigger.focused, 1)
+  assert.equal(h.document.activeElement, trigger)
+  tree = h.render()
+  assert.equal(trigger.focused, 1, 'later unrelated renders do not repeat focus restoration')
 })
 
 test('failed save preserves the prior selection and retries the requested target', async t => {
