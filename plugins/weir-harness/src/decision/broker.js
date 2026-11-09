@@ -262,6 +262,7 @@ export class DecisionBroker {
           const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'authority', escalation: { missing: ['This consultation requires native user authority'] } })
           return this.consultResult(waiting)
         }
+        if (!explicit) await this.observeShadow({ current: opened.case, request, scope, origin, agent, signal: flightSignal })
         const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
         const verdict = await this.evaluateCase(evaluating, agent, flightSignal)
         return this.consultResult(this.cases.getCase(verdict.caseId), verdict)
@@ -368,6 +369,7 @@ export class DecisionBroker {
           return { kind: 'pass', caseId: waiting.caseId, why: 'awaiting_user' }
         }
         await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: 'Pinned by user' })
+        await this.observeShadow({ current: opened.case, request: opened.case.request, scope: opened.case.scope, origin, agent, signal: flightSignal })
         const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
         this.audit('case-open', { caseId: evaluating.caseId, entry: 'hook', agentId: selected })
         return this.evaluateCase(evaluating, agent, flightSignal)
@@ -428,6 +430,39 @@ export class DecisionBroker {
     if (latest.state === 'closed') return this.persistedVerdict(latest)
     if (latest.state !== 'evaluating') return { kind: 'pass', caseId: latest.caseId, why: 'awaiting_user' }
     return this.evaluateCase(latest, agent, signal, { heldSlot })
+  }
+
+  /** Append one diagnostic route without changing the already-pinned Case. */
+  async observeShadow({ current, request, scope, origin, agent, signal }) {
+    if (this.config().decisionAgentAutoShadow !== true) return
+    const sidecar = {
+      llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent), signal,
+      timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
+      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 1600,
+      contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
+    }
+    try {
+      const classified = await classifyAutoRequest({ request, ...sidecar })
+      let route
+      if (classified.kind === 'failed') {
+        route = { kind: 'failed', candidates: [], reason: classified.reason }
+      } else if (classified.kind === 'authority') {
+        route = { kind: 'none', candidates: [], reason: 'admission:authority' }
+      } else {
+        const profiles = this.profiles.listProfiles(origin.workspaceKey)
+        route = await routeAuto({
+          request: classified.request, scope, workspaceKey: origin.workspaceKey, profiles, ...sidecar,
+        })
+      }
+      await this.cases.recordRoute({
+        caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto_shadow',
+        candidates: route.candidates, ...(route.kind === 'selected' ? { chosen: route.chosen } : {}),
+        reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
+      })
+    } catch {
+      // Shadow is diagnostic only: model, parsing, and storage failures never
+      // enter domain recovery or change the real pinned outcome.
+    }
   }
 
   async routeAutoCase({ current, request, scope, origin, agent, signal }) {
