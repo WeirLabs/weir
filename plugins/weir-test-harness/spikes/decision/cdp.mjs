@@ -67,10 +67,12 @@ export async function connectCdp(port) {
     },
     async key(key, modifiers = 0) {
       const codes = { Enter: 13, Escape: 27, Tab: 9, Space: 32, ArrowDown: 40, ArrowUp: 38 }
-      const code = codes[key] ?? key.charCodeAt(0)
+      const virtualKey = codes[key] ?? key.charCodeAt(0)
       const type = key === 'Tab' || key === 'Escape' || key.startsWith('Arrow') ? 'rawKeyDown' : 'keyDown'
-      await request('Input.dispatchKeyEvent', { type, key, code: key === 'Space' ? 'Space' : key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code, modifiers })
-      await request('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key === 'Space' ? 'Space' : key, windowsVirtualKeyCode: code, nativeVirtualKeyCode: code, modifiers })
+      const event = { key: key === 'Space' ? ' ' : key, code: key === 'Space' ? 'Space' : key, windowsVirtualKeyCode: virtualKey, nativeVirtualKeyCode: virtualKey, modifiers }
+      const text = { Enter: '\r', Space: ' ' }[key]
+      await request('Input.dispatchKeyEvent', { type, ...event, ...(text ? { text, unmodifiedText: text } : {}) })
+      await request('Input.dispatchKeyEvent', { type: 'keyUp', ...event })
     },
     async accessibility(selector) {
       const { root } = await request('DOM.getDocument', { depth: 0 })
