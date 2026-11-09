@@ -5,14 +5,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openDecisionDatabase } from '../../src/decision/store/db.js'
 import { DecisionCases } from '../../src/decision/store/cases.js'
+import { DecisionProfiles } from '../../src/decision/store/profiles.js'
 
 /** @param {import('node:test').TestContext} t */
 function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'weir-decision-cases-'))
   const store = openDecisionDatabase(join(dir, 'decision.db'))
   const cases = new DecisionCases(store)
+  const profiles = new DecisionProfiles(store)
   t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }) })
-  return { store, cases }
+  return { store, cases, profiles }
 }
 
 const input = (key = 'request-1') => ({
@@ -85,3 +87,72 @@ test('stale revision cannot overwrite a newer Case', async t => {
   const current = (await cases.createCase(input())).case
   await assert.rejects(cases.transition({ caseId: current.caseId, expectedState: 'received', expectedRevision: 99, state: 'evaluating' }), error => error.code === 'REVISION_CONFLICT')
 })
+
+test('transitionWithRoute atomically persists Auto selection, derived request, and Case ownership', async t => {
+  const { store, cases, profiles } = fixture(t)
+  const profile = await profiles.createProfile({ workspaceKey: '/repo', name: 'Auto target' })
+  const current = (await cases.createCase({ ...input('atomic-auto'), agentId: null })).case
+  const { change, route } = autoSelection(current, profile.agentId)
+  const committed = await cases.transitionWithRoute(change, route)
+  assert.equal(committed.state, 'evaluating')
+  assert.equal(committed.agentId, profile.agentId)
+  assert.equal(committed.revision, current.revision + 1)
+  assert.equal(committed.request.questions[0].authorizationClass, 'A')
+  assert.equal(committed.request.questions[0].authorizationClassSource, 'auto_classifier')
+  const persistedRoute = store.db.prepare('SELECT * FROM route_decisions WHERE case_id=?').get(current.caseId)
+  assert.equal(persistedRoute.mode, 'auto')
+  assert.equal(persistedRoute.chosen, profile.agentId)
+  assert.equal(persistedRoute.reason, 'deterministic:single_candidate')
+})
+
+test('transitionWithRoute rolls back the appended route when the guarded Case update fails', async t => {
+  const { store, cases, profiles } = fixture(t)
+  const profile = await profiles.createProfile({ workspaceKey: '/repo', name: 'Rollback target' })
+  const current = (await cases.createCase({ ...input('rollback-auto'), agentId: null })).case
+  const { change, route } = autoSelection(current, profile.agentId)
+  await assert.rejects(cases.transitionWithRoute({ ...change, expectedRevision: current.revision + 1 }, route), error => error.code === 'REVISION_CONFLICT')
+  assert.deepEqual(cases.getCase(current.caseId), current)
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions WHERE case_id=?').get(current.caseId).n, 0)
+})
+
+test('transitionWithRoute revalidates enabled, workspace, scope, and final classes before selection', async t => {
+  const { store, cases, profiles } = fixture(t)
+  const scenarios = [
+    { key: 'disabled', workspaceKey: '/repo', disable: true },
+    { key: 'foreign', workspaceKey: '/other' },
+    { key: 'narrow', workspaceKey: '/repo', scope: { workspaces: ['/repo'], paths: ['src'], authorizationClasses: ['A'] } },
+    { key: 'wrong-class', workspaceKey: '/repo', scope: { workspaces: ['/repo'], authorizationClasses: ['B'] } },
+  ]
+  for (const scenario of scenarios) {
+    const profile = await profiles.createProfile({ workspaceKey: scenario.workspaceKey, name: scenario.key, ...(scenario.scope ? { scope: scenario.scope } : {}) })
+    if (scenario.disable) await profiles.setProfileState(profile.agentId, 'disabled')
+    const current = (await cases.createCase({ ...input(`revalidate-${scenario.key}`), agentId: null })).case
+    const { change, route } = autoSelection(current, profile.agentId)
+    const committed = await cases.transitionWithRoute(change, route)
+    assert.equal(committed.state, 'awaiting_user', scenario.key)
+    assert.equal(committed.awaitingReason, 'no_route', scenario.key)
+    assert.equal(committed.agentId, null, scenario.key)
+    assert.equal(committed.request.questions[0].authorizationClassSource, 'auto_classifier', scenario.key)
+    const persistedRoute = store.db.prepare('SELECT * FROM route_decisions WHERE case_id=?').get(current.caseId)
+    assert.equal(persistedRoute.chosen, null, scenario.key)
+    assert.equal(persistedRoute.reason, 'none:no_candidates', scenario.key)
+  }
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM attempts').get().n, 0)
+})
+
+function autoSelection(current, agentId) {
+  const request = {
+    ...current.request,
+    questions: current.request.questions.map(question => ({ ...question, authorizationClass: 'A', authorizationClassSource: 'auto_classifier' })),
+  }
+  return {
+    change: {
+      caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
+      state: 'evaluating', agentId, request, scope: current.scope,
+    },
+    route: {
+      caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto',
+      candidates: [{ agentId, enabled: true }], chosen: agentId, reason: 'deterministic:single_candidate',
+    },
+  }
+}
