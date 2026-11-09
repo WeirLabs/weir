@@ -154,3 +154,34 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(fixture.includes("exec.arguments?.request_id !== 'gui_b_decide'"))
   assert.ok(!driver.includes('127.0.0.1:52011'))
 })
+
+// Run Le5TdB regression anchor: the old helper evaluated once and threw on the first non-actionable
+// poll, so a click during the product's pending window reported a false `Rendered click target unavailable`.
+test('product driver click helper waits for one actionable target before clicking', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function click\(selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body, 'generic click helper exists')
+  assert.equal(body.match(/instance\.cdp\.evaluate\(/g)?.length, 1, 'click issues exactly one CDP action expression')
+  assert.ok(!/setTimeout|sleep\(|delay\(/.test(body), 'click waits by polling, never by an arbitrary sleep')
+  assert.match(body, /await waitFor\(/, 'the single action expression is polled by waitFor')
+  assert.match(body, /30_000/, 'the actionable wait is bounded')
+  assert.match(body, /el\.offsetParent===null/, 'click keeps the visibility guard')
+  assert.match(body, /el\.disabled/, 'click keeps the disabled guard')
+  assert.match(body, /el\.click\(\)/, 'the click happens inside the polled expression')
+  assert.match(body, /Rendered click target unavailable/, 'a bounded wait still reports the exact selector')
+
+  // The polled expression is real browser code: simulate a target that is first pending, then actionable.
+  const template = body.match(/instance\.cdp\.evaluate\(`([^`]*)`\)/)?.[1] ?? ''
+  assert.ok(template.includes('${JSON.stringify(selector)}'), 'the expression interpolates the JSON encoded selector')
+  const action = new Function('document', `return (${template.replace('${JSON.stringify(selector)}', JSON.stringify('#target'))})`)
+  const target = { offsetParent: null, disabled: false, clicks: 0, click() { this.clicks += 1 } }
+  assert.equal(action({ querySelector: () => null }), false, 'an absent target is not clicked')
+  assert.equal(action({ querySelector: () => target }), false, 'a pending hidden target is not clicked')
+  target.offsetParent = {}
+  target.disabled = true
+  assert.equal(action({ querySelector: () => target }), false, 'a disabled target is not clicked')
+  assert.equal(target.clicks, 0)
+  target.disabled = false
+  assert.equal(action({ querySelector: () => target }), true, 'the actionable target reports success')
+  assert.equal(target.clicks, 1, 'the actionable poll clicks exactly once')
+})

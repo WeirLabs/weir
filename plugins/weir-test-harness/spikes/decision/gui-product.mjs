@@ -194,9 +194,15 @@ async function stopOwned(label) {
   return receipt
 }
 
+// Clicking races the product's own pending guard: the rendered control can exist while the
+// authoritative reread/loadInbox/finally clearing is still settling. Wait for the real target
+// to be present, visible and enabled, then click once inside that same CDP expression.
 async function click(selector) {
-  const clicked = await instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el||el.offsetParent===null||el.disabled)return false; el.click(); return true })()`)
-  if (!clicked) throw new Error(`Rendered click target unavailable: ${selector}`)
+  try {
+    await waitFor(() => instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); if(!el||el.offsetParent===null||el.disabled)return false; el.click(); return true })()`), 30_000)
+  } catch (error) {
+    throw new Error(`Rendered click target unavailable: ${selector} (${error.message})`)
+  }
 }
 
 async function clickText(scope, labels) {
