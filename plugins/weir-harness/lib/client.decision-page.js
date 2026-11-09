@@ -73,6 +73,7 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [
             jsx.jsx("h2", { children: view?.questionSummary || t("decisionRecord") }, "title"),
             jsx.jsx("p", { className: "weir-da-caption", children: view?.agentName ?? t("decisionSelector") }, "agent"),
+            view?.routeStatusKey ? jsx.jsx("p", { className: "weir-da-caption", "data-route-status": true, children: t(view.routeStatusKey) }, "route-status") : null,
           ] }, "copy"),
           jsx.jsx(ui.Badge, { variant: view?.variant === "answered" ? "success" : view?.variant === "failed" ? "error" : "warn", children: t(view?.statusKey ?? "decisionStatusUnknown") }, "status"),
         ] }, "header"),
@@ -93,11 +94,12 @@ window.__ModuleLoader__.load({
           jsx.jsx("h3", { children: t("decisionEvaluationHistory") }, "title"),
           previous.length ? previous.map((group, index) => EvaluationGroup({ ...group, index, model, ui, t })) : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionNoEarlierEvaluations") }),
         ] }, "history"),
+        jsx.jsx(ui.Disclosure, { id: `weir-da-record-routes-${current.caseId}`, label: t("decisionRouteHistory"), children: () => jsx.jsx(ui.DecisionRouteHistory, { history: view?.routeHistory, t }) }, "route-history"),
         jsx.jsxs("section", { children: [
           jsx.jsx("h3", { children: t("decisionFeedbackHistory") }, "title"),
           feedback.length ? jsx.jsx("ul", { children: feedback.map((entry, index) => jsx.jsx("li", { children: `${t(feedbackKeys[entry?.kind] ?? "decisionComment")}: ${entry?.payload?.text ?? entry?.payload?.direction ?? t("decisionNoAnswer")}` }, entry?.feedbackId ?? index)) }) : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionNoFeedback") }),
         ] }, "feedback-history"),
-        jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
+        view?.assigned ? jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
           jsx.jsx("div", { className: "weir-da-actions", children: model.feedbackActions(current.feedbackState).map(action => jsx.jsx(ui.Button, {
             "data-feedback": action.verb, disabled: pending, onClick: () => props.run("feedback", current.caseId, action.verb), children: t(action.labelKey),
           }, action.verb)) }, "ratings"),
@@ -116,7 +118,7 @@ window.__ModuleLoader__.load({
             jsx.jsx("div", { children: t("decisionCorrectionFutureOnly") }, "future"),
           ] }, "preview") : null,
           jsx.jsx(ui.Button, { "data-action": "correction", disabled: pending || !draft.correction, onClick: () => props.run("correction", current.caseId, draft.correction, current.scope, [current.caseId]), children: t("decisionSubmitCorrection") }, "correction-action"),
-        ] }, "feedback-actions"),
+        ] }, "feedback-actions") : null,
         jsx.jsx(ui.Disclosure, { id: `weir-da-record-advanced-${current.caseId}`, label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsxs("div", { className: "weir-da-advanced-record", children: [
           ...(view?.history ?? []).map((group, index) => AttemptContextPack({ attempt: group.attempt, t })),
           jsx.jsx("pre", { children: JSON.stringify(detail, null, 2) }, "raw"),
@@ -139,6 +141,7 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [
             jsx.jsx("h2", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("p", { className: "weir-da-caption", children: summary?.agentName ?? t("decisionSelector") }, "agent"),
+            evidenceView?.routeStatusKey ? jsx.jsx("p", { className: "weir-da-caption", "data-route-status": true, children: t(evidenceView.routeStatusKey) }, "route-status") : null,
           ] }, "copy"),
           jsx.jsx(ui.Badge, { variant: "warn", children: t(summary?.statusKey ?? "decisionStatusAwaitingUser") }, "status"),
         ] }, "header"),
@@ -164,13 +167,19 @@ window.__ModuleLoader__.load({
             : props.evidence?.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsx(ui.Button, { onClick: () => props.loadEvidence(true), children: t("decisionRetry") }) })
             : evidenceView ? EvidenceList({ evidence: evidenceView.evidence, ui, t }) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEvidence") }),
         }, "evidence"),
+        jsx.jsx(ui.Disclosure, {
+          id: `weir-da-inbox-routes-${current.caseId}`, label: t("decisionRouteHistory"), onOpen: () => props.loadEvidence(false),
+          children: () => props.evidence?.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
+            : props.evidence?.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsx(ui.Button, { onClick: () => props.loadEvidence(true), children: t("decisionRetry") }) })
+              : jsx.jsx(ui.DecisionRouteHistory, { history: evidenceView?.routeHistory ?? [], t }),
+        }, "route-history"),
         jsx.jsx(ui.Disclosure, { id: `weir-da-recovery-${current.caseId}`, label: t("decisionRecoveryActions"), children: jsx.jsxs("div", { className: "weir-da-actions", children: [
           jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => props.updateDraft("reassignTarget", event.target.value), "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: pending, children: [
             jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
             ...props.agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId)),
           ] }, "target"),
           jsx.jsx(ui.Button, { disabled: !draft.reassignTarget || pending, onClick: () => props.run("reassign", current.caseId, draft.reassignTarget), children: t("decisionReassign") }, "reassign"),
-          jsx.jsx(ui.Button, { disabled: pending, onClick: () => props.run("retry", current.caseId), children: t("decisionRetry") }, "retry"),
+          summary?.canRetry ? jsx.jsx(ui.Button, { disabled: pending, onClick: () => props.run("retry", current.caseId), children: t("decisionRetry") }, "retry") : null,
           jsx.jsx(ui.Button, { variant: "danger", disabled: pending, onClick: () => props.requestCancel(), children: t("decisionCancel") }, "cancel"),
         ] }) }, "recovery"),
       ] });
@@ -317,13 +326,53 @@ window.__ModuleLoader__.load({
           jsx.jsx("h3", { children: props.t(section.labelKey) }, "title"),
           MetricRows({ rows: section.rows, t: props.t }),
         ] }, section.key)),
+        RoutingReviewDetails({ ...props, resource: props.routingReview }),
         jsx.jsx(props.ui.Disclosure, { id: "weir-da-raw-metrics", label: props.t("decisionRawMetrics"), children: () => jsx.jsx("pre", { children: JSON.stringify(view.raw, null, 2) }) }, "raw"),
+      ] });
+    }
+
+    function RoutingReviewDetails(props) {
+      const { resource, model, ui, t } = props;
+      const view = model.routingReviewView({ window: resource.window, summary: resource.summary, items: resource.value, nextCursor: resource.nextCursor }, t);
+      const windowKeys = { all: "decisionMetricWindowAll", "24h": "decisionMetricWindow24h", "7d": "decisionMetricWindow7d", "30d": "decisionMetricWindow30d" };
+      const agentName = agentId => agentId === null || agentId === undefined
+        ? t("decisionNoAssignedAgent")
+        : props.agents.find(agent => agent?.agentId === agentId)?.name ?? agentId;
+      return jsx.jsxs("section", { className: "weir-da-routing-review", "data-routing-review": true, "aria-labelledby": "weir-da-routing-review-title", children: [
+        jsx.jsx("h3", { id: "weir-da-routing-review-title", children: t("decisionRoutingReview") }, "title"),
+        jsx.jsx("p", { role: "note", className: "weir-da-caption", children: t("decisionRoutingDiagnostic") }, "diagnostic"),
+        jsx.jsx("label", { className: "weir-da-filter", children: [
+          jsx.jsx("span", { children: t("decisionMetricWindow") }, "label"),
+          jsx.jsx("select", { className: "weir-da-select", "data-routing-window": true, "aria-label": t("decisionMetricWindow"), value: resource.window, disabled: resource.status === "loading" || resource.loadingMore, onChange: event => props.onWindow(event.target.value), children: Object.entries(windowKeys).map(([value, key]) => jsx.jsx("option", { value, children: t(key) }, value)) }, "select"),
+        ] }, "window"),
+        resource.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") }, "loading") : null,
+        resource.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsxs("div", { className: "weir-da-actions", children: [
+          jsx.jsx("span", { children: props.readFailure(resource.error) }, "message"),
+          jsx.jsx(ui.Button, { onClick: props.onRetry, children: t("decisionRetry") }, "retry"),
+        ] }) }, "error") : null,
+        resource.status === "ready" ? jsx.jsxs("div", { className: "weir-da-routing-content", children: [
+          MetricRows({ rows: view.summary, t }),
+          jsx.jsx("p", { className: "weir-da-caption", role: "status", "aria-live": "polite", "data-routing-status": true, children: `${t("decisionRoutingShown")}: ${view.items.length}` }, "status"),
+          view.items.length ? jsx.jsx("div", { className: "weir-da-routing-list", "aria-label": t("decisionRoutingReview"), children: view.items.map(item => jsx.jsxs("article", { className: "weir-da-routing-item", "data-routing-case": item.caseId, children: [
+            jsx.jsx("strong", { children: item.title }, "question"),
+            jsx.jsx("p", { children: t(item.outcomeKey) }, "outcome"),
+            item.outcome === "manual_reassign" && item.reassignment ? jsx.jsx("p", { className: "weir-da-caption", children: `${t("decisionRoutingDirection")}: ${agentName(item.reassignment.from)} → ${agentName(item.reassignment.to)}` }, "direction") : null,
+            item.createdAt ? jsx.jsx("time", { dateTime: item.createdAt, children: readableTime(item.createdAt) }, "time") : null,
+            item.recordCaseId ? jsx.jsx(ui.Button, { variant: "ghost", "data-routing-record": item.recordCaseId, "aria-label": `${t("decisionRoutingOpenRecord")}: ${item.title}`, onClick: () => props.onOpenRecord(item.recordCaseId), children: t("decisionHistory") }, "record") : null,
+          ] }, item.routeDecisionId ?? item.caseId)) }, "items") : jsx.jsx(ui.EmptyState, { children: t("decisionRoutingNoData") }, "empty"),
+          resource.loadMoreError ? jsx.jsx(ui.ErrorState, { children: jsx.jsxs("div", { className: "weir-da-actions", children: [
+            jsx.jsx("span", { children: props.readFailure(resource.loadMoreError) }, "message"),
+            jsx.jsx(ui.Button, { onClick: props.onMore, children: t("decisionRetry") }, "retry-more"),
+          ] }) }, "more-error") : null,
+          resource.nextCursor ? jsx.jsx(ui.Button, { "data-routing-load-more": true, disabled: resource.loadingMore, "aria-busy": resource.loadingMore === true, onClick: props.onMore, children: resource.loadingMore ? t("decisionLoadingShort") : t("decisionLoadMore") }, "more") : null,
+        ] }, "ready") : null,
       ] });
     }
     const emptyResource = () => ({ status: "idle", value: null, error: null });
     const emptyResources = () => ({
       agents: { ...emptyResource(), value: [] }, inbox: { ...emptyResource(), value: [] },
       records: { ...emptyResource(), value: [], nextCursor: null, loadingMore: false },
+      routingReview: { ...emptyResource(), value: [], summary: {}, window: "all", nextCursor: null, loadingMore: false, loadMoreError: null },
       details: {}, agent: emptyResource(), metrics: emptyResource(),
     });
     const asError = (reason, code = "DECISION_READ_FAILED") => reason instanceof Error ? reason : Object.assign(new Error(String(reason ?? code)), { code });
@@ -437,13 +486,16 @@ window.__ModuleLoader__.load({
       const pendingRef = react.useRef(false);
       const learningIntentRef = react.useRef(null);
       const epochRef = react.useRef(0);
-      const requestsRef = react.useRef({ agents: 0, inbox: 0, records: 0, metrics: 0, agent: 0, learning: 0, details: {} });
+      const routingAppendRef = react.useRef(false);
+      const routingWindowRef = react.useRef("all");
+      const requestsRef = react.useRef({ agents: 0, inbox: 0, records: 0, metrics: 0, routingReview: 0, agent: 0, learning: 0, details: {} });
       const tabRef = react.useRef(tab);
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
       tabRef.current = tab;
       filterRef.current = appliedFilter;
       selectedCaseRef.current = selectedCaseId;
+      routingWindowRef.current = resources.routingReview.window;
       const view = model.pageView({ tab, agents: resources.agents.value, records: resources.records.value, inbox: resources.inbox.value, metrics: resources.metrics.value });
       const updateDraft = (caseId, field, value) => setDrafts(current => model.draftsReducer(current, { type: "update", sessionId, caseId, field, value }));
       const clearDraft = (caseId, fields) => setDrafts(current => model.draftsReducer(current, { type: "clear", sessionId, caseId, fields }));
@@ -505,6 +557,46 @@ window.__ModuleLoader__.load({
           const value = await actions.metrics("all");
           if (valid("metrics", token, epoch, requestSession)) patchResource("metrics", { status: "ready", value: value ?? null, error: null });
         } catch (reason) { if (valid("metrics", token, epoch, requestSession)) patchResource("metrics", { status: "error", error: asError(reason) }); }
+      };
+      const loadRoutingReview = async (nextWindow = routingWindowRef.current, requestSession = sessionId, epoch = epochRef.current) => {
+        if (!requestSession) return;
+        const token = ++requestsRef.current.routingReview;
+        routingAppendRef.current = false;
+        patchResource("routingReview", { status: "loading", error: null, value: [], summary: {}, window: nextWindow, nextCursor: null, loadingMore: false, loadMoreError: null });
+        try {
+          const page = model.narrowRoutingReview(await actions.routingReview(nextWindow));
+          if (valid("routingReview", token, epoch, requestSession)) patchResource("routingReview", { status: "ready", value: page.items, summary: page.summary, window: nextWindow, nextCursor: page.nextCursor, error: null });
+        } catch (reason) {
+          if (valid("routingReview", token, epoch, requestSession)) patchResource("routingReview", { status: "error", error: asError(reason) });
+        }
+      };
+      const loadMoreRouting = async () => {
+        const current = resources.routingReview;
+        const cursor = current.nextCursor;
+        if (!sessionId || !cursor || current.status !== "ready" || current.loadingMore || routingAppendRef.current) return;
+        const requestSession = sessionId;
+        const requestWindow = current.window;
+        const epoch = epochRef.current;
+        const token = ++requestsRef.current.routingReview;
+        routingAppendRef.current = true;
+        patchResource("routingReview", { loadingMore: true, loadMoreError: null });
+        try {
+          const page = model.narrowRoutingReview(await actions.routingReview(requestWindow, cursor));
+          if (valid("routingReview", token, epoch, requestSession)) {
+            routingAppendRef.current = false;
+            setResources(state => {
+              const latest = state.routingReview;
+              if (latest.window !== requestWindow || latest.nextCursor !== cursor) return state;
+              const appended = model.appendRoutingPage(latest.value, page);
+              return { ...state, routingReview: { ...latest, value: appended.items, nextCursor: appended.nextCursor, loadingMore: false, loadMoreError: null } };
+            });
+          }
+        } catch (reason) {
+          if (valid("routingReview", token, epoch, requestSession)) {
+            routingAppendRef.current = false;
+            patchResource("routingReview", { loadingMore: false, loadMoreError: asError(reason) });
+          }
+        }
       };
       const readRecord = async (caseId, options = {}) => {
         const requestSession = options.sessionId ?? sessionId;
@@ -695,14 +787,19 @@ window.__ModuleLoader__.load({
           if (resources.records.status === "idle" || resources.records.status === "error") loadRecords();
         } else if (next === "agents" && (resources.agents.status === "idle" || resources.agents.status === "error")) loadAgents();
         else if (next === "inbox" && (resources.inbox.status === "idle" || resources.inbox.status === "error")) loadInbox();
-        else if (next === "metrics" && resources.metrics.status !== "loading" && resources.metrics.status !== "ready") loadMetrics();
+        else if (next === "metrics") {
+          if (resources.metrics.status !== "loading" && resources.metrics.status !== "ready") loadMetrics();
+          if (resources.routingReview.status === "idle" || resources.routingReview.status === "error") loadRoutingReview();
+        }
       };
       react.useEffect(() => {
         const openCaseId = props.consumeOpenCase?.();
         const agentDestination = props.consumeAgentDestination?.();
         const epoch = ++epochRef.current;
-        requestsRef.current = { agents: 0, inbox: 0, records: 0, metrics: 0, agent: 0, learning: 0, details: {} };
+        requestsRef.current = { agents: 0, inbox: 0, records: 0, metrics: 0, routingReview: 0, agent: 0, learning: 0, details: {} };
         pendingRef.current = false;
+        routingAppendRef.current = false;
+        routingWindowRef.current = "all";
         learningIntentRef.current = null;
         setPending(null); setActionError(null); setResources(emptyResources());
         setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
@@ -718,7 +815,7 @@ window.__ModuleLoader__.load({
           if (tabRef.current === "records") {
             loadRecords(filterRef.current, sessionId, epoch);
             if (selectedCaseRef.current) readRecord(selectedCaseRef.current, { sessionId, epoch, force: true });
-          } else if (tabRef.current === "metrics") loadMetrics(sessionId, epoch);
+          } else if (tabRef.current === "metrics") { loadMetrics(sessionId, epoch); loadRoutingReview(routingWindowRef.current, sessionId, epoch); }
         });
         return () => { subscription?.(); if (epochRef.current === epoch) epochRef.current += 1; };
       }, [sessionId]);
@@ -834,7 +931,11 @@ window.__ModuleLoader__.load({
       }) : null;
       const metricsContent = !sessionId ? noSession : resources.metrics.status === "error" ? retryState(resources.metrics, () => loadMetrics())
         : resources.metrics.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
-        : MetricsDetails({ metrics: resources.metrics.value, model, ui, t });
+        : MetricsDetails({
+          metrics: resources.metrics.value, model, ui, t, agents: resources.agents.value,
+          routingReview: resources.routingReview, readFailure,
+          onWindow: value => loadRoutingReview(value), onRetry: () => loadRoutingReview(), onMore: loadMoreRouting, onOpenRecord: openLearningRecord,
+        });
       return jsx.jsxs("main", { className: "weir-da-page", children: [
         jsx.jsx(ui.DecisionStyles, {}, "styles"),
         jsx.jsxs("div", { className: "weir-da-page-inner", children: [

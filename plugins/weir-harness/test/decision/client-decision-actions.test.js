@@ -18,10 +18,12 @@ test('every user action maps to the same Host method with bare session args', as
   await actions.correction('dc', 'Use B', { paths: ['src'] }, ['dc']);
   await actions.profileUpsert({ agentId: 'a', userDescription: 'v2' });
   await actions.profileSetState('a', 'disabled');
-  assert.deepEqual(calls.map(call => call.method), ['setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'feedback', 'correction', 'profileUpsert', 'profileSetState']);
+  await actions.routingReview('7d', 'cursor-1');
+  assert.deepEqual(calls.map(call => call.method), ['setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'feedback', 'correction', 'profileUpsert', 'profileSetState', 'routingReview']);
   for (const call of calls) assert.equal(call.args.sessionId, 'child');
   assert.deepEqual(calls[6].args.payload, { text: 'nuance' });
   assert.deepEqual(calls[7].args, { sessionId: 'child', caseId: 'dc', direction: 'Use B', scope: { paths: ['src'] }, supersedes: ['dc'] });
+  assert.deepEqual(calls[10].args, { sessionId: 'child', window: '7d', cursor: 'cursor-1' });
   assert.equal(calls.some(call => 'actor' in call.args), false);
 })
 

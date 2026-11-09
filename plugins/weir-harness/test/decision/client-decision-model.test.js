@@ -8,16 +8,30 @@ async function load() {
   return exports
 }
 
-test('selector offers only Off and enabled Agents, never Auto', async () => {
+test('selector offers Off, sanitized Auto readiness, and enabled Agents as distinct modes', async () => {
   const model = await load()
-  const options = model.selectorOptions({ ok: true, value: { agents: [
-    { agentId: 'a', name: 'A', state: 'enabled' },
-    { agentId: 'b', name: 'B', state: 'disabled' },
-    { agentId: 'c', name: 'C', state: 'archived' },
-  ] } })
-  assert.deepEqual(options.map(option => option.value), ['off', 'a'])
-  assert.equal(JSON.stringify(options).includes('Auto'), false)
-  assert.deepEqual(model.selectorOptions({ ok: false, error: { message: 'off' } }).map(option => option.value), ['off'])
+  const options = model.selectorOptions({ ok: true, value: {
+    auto: { answerClasses: ['A', 'A', 'B', 'D'], shadow: true },
+    agents: [
+      { agentId: 'a', name: 'A', state: 'enabled' },
+      { agentId: 'b', name: 'B', state: 'disabled' },
+      { agentId: 'c', name: 'C', state: 'archived' },
+    ],
+  } })
+  assert.deepEqual(options.map(option => option.value), ['off', 'auto', 'a'])
+  assert.equal(options[1].mode, 'auto')
+  assert.deepEqual(options[1].auto, { known: true, answerClasses: ['A', 'B'], shadow: true, ready: true })
+  assert.equal(options[1].descriptionKey, 'decisionAutoWhitelist')
+  assert.equal(options[1].shadowKey, 'decisionAutoShadowOn')
+
+  const empty = model.selectorOptions({ auto: { answerClasses: [], shadow: false }, agents: [] })
+  assert.equal(empty[1].descriptionKey, 'decisionAutoEmptyWhitelist')
+  assert.equal(empty[1].shadowKey, 'decisionAutoShadowOff')
+  const unknown = model.selectorOptions({ agents: [] })
+  assert.equal(unknown[1].auto.ready, false)
+  assert.equal(unknown[1].descriptionKey, 'decisionAutoReadinessUnknown')
+  assert.equal(unknown[1].shadowKey, 'decisionAutoShadowUnknown')
+  assert.deepEqual(model.selectorOptions({ ok: false, error: { message: 'off' } }).map(option => option.value), ['off', 'auto'])
 })
 
 test('card and page projections are complete and malformed payloads stay neutral', async () => {

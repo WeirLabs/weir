@@ -9,6 +9,7 @@ window.__ModuleLoader__.load({
       return {
         overview: () => call("overview"), agents: () => call("agents"), agent: agentId => call("agent", { agentId }), records: (filter, cursor) => call("records", { filter, cursor }),
         record: caseId => call("record", { caseId }), inbox: () => call("inbox"), metrics: window => call("metrics", { window }),
+        routingReview: (window, cursor) => call("routingReview", { window, ...(cursor === undefined ? {} : { cursor }) }),
         setSelector: (mode, agentId) => call("setSelector", { mode, agentId }),
         decide: (caseId, answers) => call("decide", { caseId, answers }),
         reassign: (caseId, agentId) => call("reassign", { caseId, agentId }),

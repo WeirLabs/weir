@@ -247,3 +247,21 @@ test('Disclosure opens lazily and notifies the owner without rendering hidden di
   tree = ui.Disclosure(props)
   assert.equal(builds, 1)
 })
+
+
+test('RouteDecision history is named, readable, and read-only with a truthful empty state', async () => {
+  const ui = await load()
+  const tree = ui.DecisionRouteHistory({ t: key => key, history: [
+    { routeDecisionId: 'rd-auto', mode: 'auto', modeKey: 'decisionRouteModeAuto', statusKey: 'decisionRouteStatusNone', createdAt: '2026-01-02T03:04:05.000Z' },
+    { routeDecisionId: 'rd-manual', mode: 'manual_reassign', modeKey: 'decisionRouteModeManual', statusKey: 'decisionRouteStatusSelected', fromName: 'No assistant selected', toName: 'Tone', createdAt: '2026-01-02T03:05:05.000Z' },
+  ] })
+  const list = findAll(tree, node => node.type === 'ol' && node['aria-label'] === 'decisionRouteHistory')[0]
+  assert.ok(list)
+  assert.equal(findAll(list, node => node.type === 'li').length, 2)
+  const text = JSON.stringify(tree)
+  for (const key of ['decisionRouteModeAuto', 'decisionRouteStatusNone', 'decisionRouteModeManual', 'decisionRoutingDirection', 'No assistant selected', 'Tone']) assert.equal(text.includes(key), true, key)
+  assert.equal(findAll(tree, node => ['button', 'input', 'select', 'textarea'].includes(node.type)).length, 0)
+  const empty = ui.DecisionRouteHistory({ t: key => key, history: [] })
+  assert.equal(empty.role, 'status')
+  assert.equal(empty.children, 'decisionNoRouteHistory')
+})

@@ -59,8 +59,8 @@ test('selector projection never guesses Off and pins an unavailable selection ho
   assert.equal(selected.selected, 'b')
   assert.equal(selected.selectedName, 'Archived helper')
   assert.equal(selected.unavailable, true)
-  assert.deepEqual(selected.options.map(option => option.value), ['off', 'a'])
-  assert.equal(JSON.stringify(selected.options).includes('Auto'), false)
+  assert.deepEqual(selected.options.map(option => option.value), ['off', 'auto', 'a'])
+  assert.equal(selected.options[1].mode, 'auto')
   assert.equal(selected.options.some(option => option.value === 'b'), false)
 
   const saving = model.selectorView({ phase: 'saving', selector: { mode: 'agent', agentId: 'a' }, agents })
@@ -69,11 +69,17 @@ test('selector projection never guesses Off and pins an unavailable selection ho
   const failed = model.selectorView({ phase: 'error', selector: { mode: 'agent', agentId: 'a' }, agents, error: new Error('offline') })
   assert.equal(failed.selected, 'a')
   assert.equal(failed.error.message, 'offline')
-  assert.deepEqual(model.selectorView({ phase: 'ready', selector: { mode: 'off' }, agents: [] }).options.map(option => option.value), ['off'])
+  assert.deepEqual(model.selectorView({ phase: 'ready', selector: { mode: 'off' }, agents: [] }).options.map(option => option.value), ['off', 'auto'])
   const globalOff = model.selectorView({ phase: 'ready', status: { enabled: false, reason: 'disabled' }, selector: { mode: 'agent', agentId: 'a' }, agents })
   assert.equal(globalOff.globalOff, true)
   assert.equal(globalOff.selected, 'a')
-  assert.deepEqual(globalOff.options.map(option => option.value), ['off', 'a'])
+  assert.deepEqual(globalOff.options.map(option => option.value), ['off', 'auto', 'a'])
+  const automatic = model.selectorView({ phase: 'ready', selector: { mode: 'auto', agentId: null }, agents, auto: { answerClasses: [], shadow: false } })
+  assert.equal(automatic.selected, 'auto')
+  assert.equal(automatic.selectedName, null)
+  assert.equal(automatic.unavailable, false)
+  assert.equal(automatic.triggerKey, 'decisionAuto')
+  assert.equal(automatic.options[1].descriptionKey, 'decisionAutoEmptyWhitelist')
 })
 
 test('record summaries and card evidence follow the current Attempt only', async () => {
@@ -242,4 +248,82 @@ test('metrics projection preserves raw values while formatting counts, rates, du
   assert.equal(row('ratings.undone').display, '1')
   assert.equal('qualityScore' in view, false)
   assert.deepEqual(model.metricsView(null), { window: null, since: null, sections: [], raw: null })
+})
+
+
+test('routing review projects every diagnostic outcome without inventing a quality score or record link', async () => {
+  const model = await load()
+  const outcomes = ['agreement', 'disagreement', 'shadow_none', 'shadow_ambiguous', 'shadow_failure', 'auto_none', 'auto_ambiguous', 'auto_failure', 'manual_reassign', 'uncomparable', 'baseline', 'auto_selected']
+  const outcomeKeys = ['decisionRoutingAgreement', 'decisionRoutingDisagreement', 'decisionRoutingShadowNone', 'decisionRoutingShadowAmbiguous', 'decisionRoutingShadowFailure', 'decisionRoutingAutoNone', 'decisionRoutingAutoAmbiguous', 'decisionRoutingAutoFailure', 'decisionRoutingManualReassign', 'decisionRoutingUncomparable', 'decisionRoutingBaseline', 'decisionRoutingAutoSelected']
+  const items = outcomes.map((outcome, index) => ({
+    caseId: `dc-${index}`, routeDecisionId: `rd-${index}`, outcome,
+    questionSummary: `Question ${index}`, createdAt: '2026-01-02T03:04:05.000Z', record: { caseId: `dc-${index}` },
+  }))
+  const summary = { agreement: 1, disagreement: 2, shadowNone: 3, shadowAmbiguous: 4, shadowFailure: 5, autoNone: 6, autoAmbiguous: 7, autoFailure: 8, manualReassign: 9, uncomparable: 10 }
+  const raw = { window: '7d', summary, items, nextCursor: 'next' }
+  assert.deepEqual(model.narrowRoutingReview({ ok: true, value: raw }), raw)
+  const view = model.routingReviewView(raw)
+  assert.equal(view.raw, raw)
+  assert.deepEqual(view.items.map(item => item.outcomeKey), outcomeKeys)
+  assert.deepEqual(view.summary.map(row => [row.key, row.display]), Object.entries(summary).map(([key, value]) => [key, String(value)]))
+  assert.equal(view.items[0].recordCaseId, 'dc-0')
+  assert.equal('qualityScore' in view, false)
+  assert.match(model.dictionaries.en.decisionRoutingUncomparable, /baseline/i)
+  assert.match(model.dictionaries.zh.decisionRoutingUncomparable, /基线/)
+  assert.match(model.dictionaries.en.decisionRoutingDiagnostic, /not a quality/i)
+  assert.match(model.dictionaries.zh.decisionRoutingDiagnostic, /不是质量/)
+  assert.equal(model.routingReviewView(null).items.length, 0)
+  assert.equal(model.routingReviewView({ items: [{ ...items[0], record: { caseId: 'other' } }] }).items[0].recordCaseId, null)
+})
+
+test('routing review pages append stably and dedupe by Case without replacing earlier text', async () => {
+  const model = await load()
+  const first = { caseId: 'dc-a', routeDecisionId: 'rd-a', questionSummary: 'Original A' }
+  const page = { window: 'all', summary: { agreement: 1 }, items: [
+    { ...first, questionSummary: 'Updated duplicate A' },
+    { caseId: 'dc-b', routeDecisionId: 'rd-b', questionSummary: 'B' },
+  ], nextCursor: null }
+  assert.deepEqual(model.appendRoutingPage([first], page), { items: [first, page.items[1]], nextCursor: null })
+  assert.deepEqual(model.narrowRoutingReview({ ok: false }), { window: 'all', summary: {}, items: [], nextCursor: null })
+  assert.deepEqual(model.narrowRoutingReview({ window: 'invalid', items: null, nextCursor: 4 }), { window: 'all', summary: {}, items: [], nextCursor: null })
+})
+
+
+test('unowned Auto records expose truthful route history and only owned waiting Cases can retry', async () => {
+  const model = await load()
+  const auto = { routeDecisionId: 'rd-auto', mode: 'auto', chosen: null, reason: 'failure:timeout', createdAt: '2026-01-02T03:04:05.000Z' }
+  const shadow = { routeDecisionId: 'rd-shadow', mode: 'auto_shadow', chosen: 'a', reason: 'observation', createdAt: '2026-01-02T03:05:05.000Z' }
+  const detail = {
+    case: { caseId: 'dc-unowned', agentId: null, state: 'awaiting_user', awaitingReason: 'no_route', feedbackState: 'none', request: { questions: [{ id: 'q', question: 'Choose' }] } },
+    attempts: [], feedback: [], routeDecisions: [auto, shadow],
+  }
+  const card = model.cardView(detail, agents)
+  assert.equal(card.assigned, false)
+  assert.equal(card.canRetry, false)
+  assert.equal(card.agentName, 'No assistant selected')
+  assert.equal(card.routeStatusKey, 'decisionRoutingAutoFailure')
+  assert.deepEqual(card.routeHistory.map(item => [item.modeKey, item.statusKey]), [
+    ['decisionRouteModeAuto', 'decisionRouteStatusFailure'],
+    ['decisionRouteModeShadow', 'decisionRouteStatusSelected'],
+  ])
+  assert.deepEqual(card.evidence, [])
+  const summary = model.recordSummary(detail.case, agents)
+  assert.equal(summary.assigned, false)
+  assert.equal(summary.canRetry, false)
+  assert.equal(summary.agentName, 'No assistant selected')
+  assert.equal(summary.reasonKey, 'decisionReasonUnownedNoRoute')
+
+  const manual = { routeDecisionId: 'rd-manual', mode: 'manual_reassign', chosen: 'a', reason: '', createdAt: '2026-01-02T03:06:05.000Z' }
+  const reassigned = model.cardView({ ...detail, case: { ...detail.case, agentId: 'a' }, routeDecisions: [auto, manual] }, agents)
+  assert.equal(reassigned.assigned, true)
+  assert.equal(reassigned.canRetry, true)
+  assert.equal(reassigned.agentName, 'Tone')
+  assert.equal(reassigned.routeStatusKey, 'decisionRoutingManualReassign')
+  assert.equal(reassigned.routeHistory.at(-1).from, null)
+  assert.equal(reassigned.routeHistory.at(-1).to, 'a')
+  assert.equal(reassigned.routeHistory.at(-1).toName, 'Tone')
+  assert.equal(model.cardView({ ...detail, case: { ...detail.case, agentId: 'a', state: 'closed', closing: 'answered' } }, agents).canRetry, false)
+  const unknown = model.cardView({ ...detail, case: { ...detail.case, agentId: 'missing' }, routeDecisions: [{ ...manual, chosen: 'missing' }] }, [])
+  assert.equal(unknown.assigned, true)
+  assert.equal(unknown.routeHistory.at(-1).toName, 'The current selection is unavailable.')
 })

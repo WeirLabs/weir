@@ -13,7 +13,7 @@ window.__ModuleLoader__.load({
     function DecisionSelector(props) {
       const t = props.t ?? (key => key);
       const ui = props.ui;
-      const [snapshot, setSnapshot] = react.useState({ phase: "loading", selector: null, agents: [], status: null, error: null });
+      const [snapshot, setSnapshot] = react.useState({ phase: "loading", selector: null, agents: [], status: null, auto: null, error: null });
       const [open, setOpen] = react.useState(false);
       const [pending, setPending] = react.useState(false);
       const [readRevision, setReadRevision] = react.useState(0);
@@ -35,7 +35,7 @@ window.__ModuleLoader__.load({
           savingRef.current = false;
           setOpen(false);
           setPending(false);
-          setSnapshot({ phase: "loading", selector: null, agents: [], status: null, error: null });
+          setSnapshot({ phase: "loading", selector: null, agents: [], status: null, auto: null, error: null });
         } else {
           setSnapshot(current => ({ ...current, phase: "loading", error: null }));
         }
@@ -43,7 +43,7 @@ window.__ModuleLoader__.load({
         if (!props.sessionId) return () => { alive = false; };
         Promise.resolve().then(() => props.decisionRpc(props.connection, "overview", { sessionId: props.sessionId })).then(value => {
           if (!alive) return;
-          setSnapshot({ phase: "ready", selector: value?.selector ?? null, agents: Array.isArray(value?.agents) ? value.agents : [], status: value?.status ?? null, error: null });
+          setSnapshot({ phase: "ready", selector: value?.selector ?? null, agents: Array.isArray(value?.agents) ? value.agents : [], status: value?.status ?? null, auto: value?.auto ?? null, error: null });
         }).catch(reason => {
           if (!alive) return;
           const error = reason instanceof Error ? reason : new Error(String(reason));
@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
 
       const view = props.selectorView({
         phase: pending ? "saving" : snapshot.phase,
-        selector: snapshot.selector, agents: snapshot.agents, status: snapshot.status, error: snapshot.error,
+        selector: snapshot.selector, agents: snapshot.agents, status: snapshot.status, auto: snapshot.auto, error: snapshot.error,
       });
       const choose = async option => {
         if (!option || savingRef.current || pending || !props.sessionId) return;
@@ -98,14 +98,14 @@ window.__ModuleLoader__.load({
         setFailedTarget(null);
         setSnapshot(current => ({ ...current, error: null }));
         try {
-          const args = option.value === "off"
-            ? { sessionId, mode: "off" }
+          const args = option.mode === "off" || option.mode === "auto"
+            ? { sessionId, mode: option.mode }
             : { sessionId, mode: "agent", agentId: option.value };
           const result = await props.decisionRpc(props.connection, "setSelector", args);
           if (sessionRef.current !== sessionId) return;
-          const selector = result?.mode === "off" || result?.mode === "agent"
+          const selector = result?.mode === "off" || result?.mode === "auto" || result?.mode === "agent"
             ? result
-            : option.value === "off" ? { mode: "off" } : { mode: "agent", agentId: option.value };
+            : option.mode === "off" || option.mode === "auto" ? { mode: option.mode } : { mode: "agent", agentId: option.value };
           setSnapshot(current => ({ ...current, phase: "ready", selector, error: null }));
           savingRef.current = false;
           setPending(false);
@@ -142,7 +142,11 @@ window.__ModuleLoader__.load({
             checked: view.selected === option.value, disabled: pending,
             onChange: () => choose(option), "aria-label": option.label,
           }, "input"),
-          jsx.jsx("span", { children: option.label }, "label"),
+          jsx.jsxs("span", { children: [
+            jsx.jsx("span", { children: option.label }, "label"),
+            option.descriptionKey ? jsx.jsx("span", { className: "weir-da-caption", children: `${t(option.descriptionKey)}${option.auto?.ready ? ` ${option.auto.answerClasses.join(", ")}.` : ""}` }, "description") : null,
+            option.shadowKey ? jsx.jsx("span", { className: "weir-da-caption", children: t(option.shadowKey) }, "shadow") : null,
+          ] }, "copy"),
         ],
       }, option.value);
       const errorText = snapshot.error ? t(view.errorKey ?? "decisionFailed") : "";

@@ -929,6 +929,251 @@ test('records and advanced metrics use the no-session empty state without issuin
   assert.deepEqual(calls, [])
   harness.unmount()
 })
+function routingSummary(patch = {}) {
+  return { agreement: 0, disagreement: 0, shadowNone: 0, shadowAmbiguous: 0, shadowFailure: 0, autoNone: 0, autoAmbiguous: 0, autoFailure: 0, manualReassign: 0, uncomparable: 0, ...patch }
+}
+function routingItem(caseId, patch = {}) {
+  return { caseId, routeDecisionId: `rd-${caseId}`, mode: 'auto_shadow', outcome: 'agreement', questionSummary: `Question ${caseId}`, createdAt: '2026-01-02T03:04:05.000Z', record: { caseId }, ...patch }
+}
+async function openMetrics(harness) {
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'metrics')[0].onClick()
+  await harness.flush()
+  return harness.render()
+}
+function routingCases(tree) {
+  return findAll(tree, node => node['data-routing-case']).map(node => node['data-routing-case'])
+}
+
+test('advanced metrics include ordinary-language routing diagnostics and authorized record navigation only', async () => {
+  const calls = []
+  const first = routingItem('dc-agree')
+  const second = routingItem('dc-failed', { mode: 'auto', outcome: 'auto_failure', reason: 'failure:timeout' })
+  const detail = { case: { caseId: 'dc-agree', agentId: 'a', state: 'closed', closing: 'answered', request: { questions: [{ id: 'q', question: 'Authorized detail' }] }, decision: { answers: [] } }, attempts: [], feedback: [], routeDecisions: [first] }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    metrics: async () => ({ window: 'all', casesOpened: 2 }),
+    routingReview: async (window, cursor) => { calls.push(['review', window, cursor]); return { window, summary: routingSummary({ agreement: 1, autoFailure: 1 }), items: [first, second], nextCursor: null } },
+    record: async caseId => { calls.push(['record', caseId]); return detail }, records: async () => ({ records: [detail.case], nextCursor: null }),
+  } })
+  await harness.settle()
+  assert.equal(calls.length, 0)
+  let tree = await openMetrics(harness)
+  assert.deepEqual(calls, [['review', 'all', undefined]])
+  const review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.ok(review)
+  const text = textOf(review)
+  for (const value of ['decisionRoutingReview', 'decisionRoutingDiagnostic', 'decisionRoutingAgreement', 'decisionRoutingAutoFailure', 'Question dc-agree', 'decisionRoutingShown']) assert.equal(text.includes(value), true, value)
+  assert.equal(text.includes('failure:timeout'), false)
+  assert.equal(text.includes('decisionAdopt') || text.includes('decisionIgnore'), false)
+  const windowControl = findAll(review, node => node['data-routing-window'] === true)[0]
+  assert.equal(windowControl.value, 'all')
+  assert.equal(windowControl['aria-label'], 'decisionMetricWindow')
+  const link = findAll(review, node => node['data-routing-record'] === 'dc-agree')[0]
+  assert.match(link['aria-label'], /decisionRoutingOpenRecord/)
+  assert.match(link['aria-label'], /Question dc-agree/)
+  await link.onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(calls.some(call => call[0] === 'record' && call[1] === 'dc-agree'), true)
+  assert.equal(findAll(tree, node => node['data-record-detail'] === 'dc-agree').length, 1)
+  const nav = findAll(tree, node => node.type === 'nav' && node['data-decision-primary-nav'] === true)[0]
+  assert.deepEqual(findAll(nav, node => node.type === harness.ui.Button).map(node => node['data-view']), ['inbox', 'records', 'agents'])
+  harness.unmount()
+})
+
+test('routing review appends the next cursor once, dedupes Cases, and reports the stable shown count', async () => {
+  const first = routingItem('dc-a', { questionSummary: 'Original A' })
+  const second = routingItem('dc-b', { outcome: 'manual_reassign', mode: 'manual_reassign' })
+  const firstPage = [first, ...Array.from({ length: 19 }, (_, index) => routingItem(`dc-page-${index}`))]
+  const gate = deferred()
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async (window, cursor) => {
+      calls.push({ window, cursor })
+      if (!cursor) return { window, summary: routingSummary({ agreement: 20 }), items: firstPage, nextCursor: 'cursor-1' }
+      return gate.promise
+    },
+  } })
+  await harness.settle()
+  let tree = await openMetrics(harness)
+  assert.equal(routingCases(tree).length, 20)
+  const more = findAll(tree, node => node['data-routing-load-more'] === true)[0]
+  assert.equal(more['aria-busy'], false)
+  const firstRead = more.onClick()
+  const duplicateRead = more.onClick()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node['data-routing-load-more'] === true)[0]['aria-busy'], true)
+  assert.equal(calls.length, 2)
+  gate.resolve({ window: 'all', summary: routingSummary({ agreement: 20, manualReassign: 1 }), items: [{ ...first, questionSummary: 'Updated duplicate A' }, second], nextCursor: null })
+  await Promise.all([firstRead, duplicateRead])
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(routingCases(tree), [...firstPage.map(item => item.caseId), 'dc-b'])
+  assert.equal(textOf(tree).includes('Original A'), true)
+  assert.equal(textOf(tree).includes('Updated duplicate A'), false)
+  assert.deepEqual(calls[1], { window: 'all', cursor: 'cursor-1' })
+  assert.equal(findAll(tree, node => node['data-routing-load-more'] === true).length, 0)
+  assert.match(textOf(findAll(tree, node => node['data-routing-status'] === true)[0]), /21/)
+  harness.unmount()
+})
+
+test('routing review retains loaded items on append failure and has explicit retry, empty, and no-data states', async () => {
+  const first = routingItem('dc-kept')
+  let initialFails = true
+  let appendFails = true
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async (window, cursor) => {
+      if (initialFails) { initialFails = false; throw Object.assign(new Error('offline'), { code: 'NETWORK' }) }
+      if (!cursor) return { window, summary: routingSummary(), items: [first], nextCursor: 'next' }
+      if (appendFails) { appendFails = false; throw new Error('append offline') }
+      return { window, summary: routingSummary(), items: [], nextCursor: null }
+    },
+  } })
+  await harness.settle()
+  let tree = await openMetrics(harness)
+  let review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.equal(findAll(review, node => node.type === harness.ui.ErrorState).length, 1)
+  findAll(review, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(routingCases(tree), ['dc-kept'])
+  await findAll(tree, node => node['data-routing-load-more'] === true)[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(routingCases(tree), ['dc-kept'])
+  review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.equal(textOf(review).includes('decisionReadFailed'), true)
+  findAll(review, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  assert.equal(findAll(harness.render(), node => node['data-routing-load-more'] === true).length, 0)
+
+  const empty = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async window => ({ window, summary: routingSummary(), items: [], nextCursor: null }),
+  } })
+  await empty.settle()
+  tree = await openMetrics(empty)
+  review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.equal(textOf(review).includes('decisionRoutingNoData'), true)
+  assert.equal(findAll(review, node => node.type === 'pre').length, 0)
+  empty.unmount()
+  harness.unmount()
+})
+
+test('late routing responses cannot replace a newer window or session epoch', async () => {
+  const oldWindow = deferred()
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async window => window === 'all' ? oldWindow.promise : { window, summary: routingSummary(), items: [routingItem('dc-seven-day')], nextCursor: null },
+  } })
+  await harness.settle()
+  let tree = await openMetrics(harness)
+  findAll(tree, node => node['data-routing-window'] === true)[0].onChange({ target: { value: '7d' } })
+  await harness.flush()
+  assert.deepEqual(routingCases(harness.render()), ['dc-seven-day'])
+  oldWindow.resolve({ window: 'all', summary: routingSummary(), items: [routingItem('dc-old-window')], nextCursor: null })
+  await harness.flush()
+  assert.deepEqual(routingCases(harness.render()), ['dc-seven-day'])
+  harness.unmount()
+
+  const oldSession = deferred()
+  const sessions = await createPageHarness({ sessionId: 'old', actionsForSession: sessionId => ({
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async window => sessionId === 'old' ? oldSession.promise : { window, summary: routingSummary(), items: [routingItem('dc-new-session')], nextCursor: null },
+  }) })
+  await sessions.settle()
+  await openMetrics(sessions)
+  sessions.update({ sessionId: 'new' })
+  sessions.render()
+  await sessions.flush()
+  await openMetrics(sessions)
+  assert.deepEqual(routingCases(sessions.render()), ['dc-new-session'])
+  oldSession.resolve({ window: 'all', summary: routingSummary(), items: [routingItem('dc-old-session')], nextCursor: null })
+  await sessions.flush()
+  assert.deepEqual(routingCases(sessions.render()), ['dc-new-session'])
+  sessions.unmount()
+})
+
+test('unowned inbox keeps answer, reassign, and cancel while retry appears only after authoritative reassign', async () => {
+  const original = { ...waitingFixture(), caseId: 'dc-inbox-unowned', agentId: null, awaitingReason: 'no_route', escalation: { missing: [], suggestion: [], perQuestion: [] } }
+  const auto = { routeDecisionId: 'rd-inbox-auto', mode: 'auto', chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z' }
+  let current = original
+  let routes = [auto]
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }, { agentId: 'b', name: 'Second', state: 'enabled' }],
+    inbox: async () => [current],
+    record: async () => ({ case: current, attempts: [], feedback: [], routeDecisions: routes }),
+    reassign: async () => {
+      current = { ...current, agentId: 'b', awaitingReason: 'authority' }
+      routes = [...routes, { routeDecisionId: 'rd-inbox-manual', mode: 'manual_reassign', chosen: 'b', reason: '', createdAt: '2026-01-02T03:05:05.000Z' }]
+      return {}
+    },
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let card = renderedInboxCard(harness, harness.render(), original.caseId)
+  assert.ok(findAll(card, node => node.type === harness.ui.DecisionAnswers)[0])
+  assert.equal(textOf(card).includes('decisionNoAssignedAgent'), true)
+  let recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionReassign')[0])
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionCancel')[0])
+  assert.equal(findAll(recoveryTree, node => node.children === 'decisionRetry').length, 0)
+  let history = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.ok(history)
+  history.onOpen()
+  await harness.flush()
+  card = renderedInboxCard(harness, harness.render(), original.caseId)
+  history = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  let historyView = findAll(history.children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.deepEqual(historyView.history.map(item => item.mode), ['auto'])
+
+  recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  findAll(recoveryTree, node => node.type === 'select')[0].onChange({ target: { value: 'b' } })
+  card = renderedInboxCard(harness, harness.render(), original.caseId)
+  recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  await findAll(recoveryTree, node => node.children === 'decisionReassign')[0].onClick()
+  await harness.flush()
+  card = renderedInboxCard(harness, harness.render(), original.caseId)
+  assert.equal(textOf(card).includes('Second'), true)
+  recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionRetry')[0])
+  history = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  historyView = findAll(history.children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.deepEqual(historyView.history.map(item => item.mode), ['auto', 'manual_reassign'])
+  harness.unmount()
+})
+
+test('unowned record detail hides Agent feedback and correction but retains no-Evidence truth and read-only RouteDecision history', async () => {
+  const auto = { routeDecisionId: 'rd-record-auto', mode: 'auto', chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z' }
+  const detail = {
+    case: { caseId: 'dc-record-unowned', agentId: null, state: 'closed', closing: 'escalated', feedbackState: 'none', request: { questions: [{ id: 'q', question: 'Unowned question' }] }, decision: { kind: 'user_decision', answers: [{ id: 'q', selected: ['User answer'] }] } },
+    attempts: [], feedback: [], routeDecisions: [auto],
+  }
+  let openCase = detail.case.caseId
+  const harness = await createPageHarness({
+    consumeOpenCase: () => { const value = openCase; openCase = null; return value },
+    actions: { agents: async () => [], inbox: async () => [], record: async () => detail, records: async () => ({ records: [detail.case], nextCursor: null }), metrics: async () => ({}) },
+  })
+  const { tree } = await harness.settle()
+  const record = findAll(tree, node => node['data-record-detail'] === detail.case.caseId)[0]
+  assert.ok(record)
+  assert.equal(textOf(record).includes('User answer'), true)
+  assert.equal(textOf(record).includes('decisionNoAssignedAgent'), true)
+  assert.equal(textOf(record).includes('decisionRoutingAutoNone'), true)
+  assert.equal(findAll(record, node => node['data-feedback'] || ['comment', 'correction', 'retry'].includes(node['data-action'])).length, 0)
+  assert.equal(findAll(record, node => node['data-draft'] === 'comment' || node['data-draft'] === 'correction').length, 0)
+  assert.equal(textOf(findAll(record, node => node['data-current-evidence'] === true)[0]).includes('decisionNoEvidence'), true)
+  const history = findAll(record, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.ok(history)
+  const historyView = findAll(history.children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.equal(historyView.history.length, 1)
+  assert.equal(historyView.history[0].statusKey, 'decisionRouteStatusNone')
+  assert.equal(findAll(history.children(), node => node.type === 'button' || node.type === 'input').length, 0)
+  harness.unmount()
+})
+
 test('client manifest injects layout for render-time panel access', () => {
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))

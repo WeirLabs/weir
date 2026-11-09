@@ -15,13 +15,30 @@ window.__ModuleLoader__.load({
       const value = okValue(payload);
       return { records: array(value?.records), nextCursor: typeof value?.nextCursor === "string" ? value.nextCursor : null };
     }
+    function narrowRoutingReview(payload) {
+      const value = okValue(payload);
+      return {
+        window: ["24h", "7d", "30d", "all"].includes(value?.window) ? value.window : "all",
+        summary: object(value?.summary) ?? {}, items: array(value?.items),
+        nextCursor: typeof value?.nextCursor === "string" ? value.nextCursor : null,
+      };
+    }
     function narrowInbox(payload) { return array(okValue(payload)); }
 
     function selectorOptions(payload) {
       const value = okValue(payload) ?? payload;
       const agents = array(value?.agents).filter(agent => agent && agent.state === "enabled" && typeof agent.agentId === "string");
+      const autoValue = object(value?.auto);
+      const known = autoValue !== null && Array.isArray(autoValue.answerClasses) && typeof autoValue.shadow === "boolean";
+      const answerClasses = known ? [...new Set(autoValue.answerClasses.filter(item => ["A", "B", "C"].includes(item)))] : [];
+      const auto = { known, answerClasses, shadow: known ? autoValue.shadow : false, ready: known && answerClasses.length > 0 };
       return [
         { value: "off", mode: "off", label: "Off" },
+        {
+          value: "auto", mode: "auto", label: "Auto", auto,
+          descriptionKey: !known ? "decisionAutoReadinessUnknown" : auto.ready ? "decisionAutoWhitelist" : "decisionAutoEmptyWhitelist",
+          shadowKey: !known ? "decisionAutoShadowUnknown" : auto.shadow ? "decisionAutoShadowOn" : "decisionAutoShadowOff",
+        },
         ...agents.map(agent => ({ value: agent.agentId, mode: "agent", label: text(agent.name, agent.agentId), agent })),
       ];
     }
@@ -92,20 +109,71 @@ window.__ModuleLoader__.load({
       return key => dictionary[key] ?? dictionaries.en[key] ?? key;
     }
 
+    const ROUTE_MODE_KEYS = {
+      pinned: "decisionRouteModePinned", explicit: "decisionRouteModeExplicit", auto: "decisionRouteModeAuto",
+      auto_shadow: "decisionRouteModeShadow", manual_reassign: "decisionRouteModeManual", none: "decisionRouteModeNone",
+    };
+    const ROUTE_FAILURE_REASONS = ["failure:timeout", "failure:model_error", "failure:invalid_output", "failure:truncated", "failure:aborted", "failure:route_unavailable", "failure:candidate_limit", "failure:context_budget"];
+
+    function routeStatus(route) {
+      if (typeof route?.chosen === "string" && route.chosen) return "selected";
+      if (ROUTE_FAILURE_REASONS.includes(route?.reason)) return "failure";
+      if (object(route?.ambiguity) && Array.isArray(route.ambiguity.candidates) && typeof route.ambiguity.conflict === "string") return "ambiguous";
+      return "none";
+    }
+
+    function routeDecisionHistory(routes, agents, locale) {
+      const t = translator(locale);
+      const name = agentId => typeof agentId === "string" && agentId ? array(agents).find(agent => agent?.agentId === agentId)?.name ?? null : null;
+      let authoritative = null;
+      return array(routes).map(value => {
+        const route = object(value) ?? {};
+        const mode = text(route.mode);
+        const status = routeStatus(route);
+        const chosen = typeof route.chosen === "string" && route.chosen ? route.chosen : null;
+        const item = {
+          ...route, mode, modeKey: ROUTE_MODE_KEYS[mode] ?? "decisionRouteModeUnknown",
+          statusKey: `decisionRouteStatus${status[0].toUpperCase()}${status.slice(1)}`,
+          choiceName: chosen ? name(chosen) ?? t("decisionSelectionUnavailable") : null,
+        };
+        if (mode === "manual_reassign") {
+          item.from = authoritative;
+          item.to = chosen;
+          item.fromName = authoritative ? name(authoritative) ?? t("decisionSelectionUnavailable") : t("decisionNoAssignedAgent");
+          item.toName = chosen ? name(chosen) ?? t("decisionSelectionUnavailable") : t("decisionNoAssignedAgent");
+        }
+        if (mode !== "auto_shadow" && ["pinned", "explicit", "auto", "manual_reassign"].includes(mode) && chosen) authoritative = chosen;
+        return item;
+      });
+    }
+
+    function currentRouteStatusKey(routeHistory) {
+      const latest = [...routeHistory].reverse().find(route => route.mode !== "auto_shadow");
+      if (!latest) return null;
+      if (latest.mode === "manual_reassign") return "decisionRoutingManualReassign";
+      if (latest.mode !== "auto") return null;
+      const status = routeStatus(latest);
+      return status === "selected" ? "decisionRoutingAutoSelected"
+        : status === "ambiguous" ? "decisionRoutingAutoAmbiguous"
+          : status === "failure" ? "decisionRoutingAutoFailure" : "decisionRoutingAutoNone";
+    }
+
     function recordSummary(current, agents = [], locale = "en") {
       if (!current || typeof current !== "object" || typeof current.caseId !== "string") return null;
       const agent = array(agents).find(item => item?.agentId === current.agentId);
       const t = translator(locale);
       const status = statusProjection(current);
+      const assigned = typeof current.agentId === "string" && current.agentId.length > 0;
       return {
         caseId: current.caseId,
         title: questionSummary(current) || t("decisionRecord"),
         answerSummary: answerSummary(current.decision),
         agentId: text(current.agentId),
-        agentName: text(agent?.name, t("decisionSelector")),
+        agentName: assigned ? text(agent?.name, t("decisionSelector")) : t("decisionNoAssignedAgent"),
+        assigned, canRetry: assigned && current.state === "awaiting_user",
         variant: status.variant,
         statusKey: status.statusKey,
-        reasonKey: reasonKey(current.awaitingReason ?? current.decision?.code),
+        reasonKey: !assigned && current.awaitingReason === "no_route" ? "decisionReasonUnownedNoRoute" : reasonKey(current.awaitingReason ?? current.decision?.code),
         time: text(current.createdAt, text(current.updatedAt, text(current.closedAt))),
         feedbackState: current.feedbackState,
       };
@@ -125,16 +193,21 @@ window.__ModuleLoader__.load({
       const rationale = text(array(currentAttempt?.claims)[0]?.text);
       const summary = text(current.escalation?.missing?.[0], text(decision?.hint, rationale));
       const status = statusProjection(current);
+      const t = translator(locale);
+      const assigned = typeof current.agentId === "string" && current.agentId.length > 0;
+      const routeHistory = routeDecisionHistory(detail.routeDecisions, agents, t);
       return {
         caseId: current.caseId,
         agentId: text(current.agentId),
-        agentName: text(agent?.name, translator(locale)("decisionSelector")),
+        agentName: assigned ? text(agent?.name, t("decisionSelector")) : t("decisionNoAssignedAgent"),
+        assigned, canRetry: assigned && current.state === "awaiting_user",
+        routeHistory, routeStatusKey: currentRouteStatusKey(routeHistory),
         state: current.state,
         closing: current.closing,
         outcome: current.closing ?? current.state,
         variant: status.variant,
         statusKey: status.statusKey,
-        reasonKey: reasonKey(current.awaitingReason ?? decision?.code ?? currentAttempt?.reasonCode),
+        reasonKey: !assigned && current.awaitingReason === "no_route" ? "decisionReasonUnownedNoRoute" : reasonKey(current.awaitingReason ?? decision?.code ?? currentAttempt?.reasonCode),
         questionSummary: questionSummary(current),
         answerSummary: answerSummary(decision),
         summary,
@@ -208,13 +281,15 @@ window.__ModuleLoader__.load({
       const selector = object(value.selector);
       const selected = phase !== "loading" && selector?.mode === "agent" && typeof selector.agentId === "string"
         ? selector.agentId
-        : phase !== "loading" && selector?.mode === "off" ? "off" : null;
-      const selectedAgent = selected && selected !== "off" ? agents.find(agent => agent?.agentId === selected) ?? null : null;
-      const unavailable = selected !== null && selected !== "off" && selectedAgent?.state !== "enabled";
-      const options = phase === "loading" || (phase === "error" && !selector) ? [] : selectorOptions({ agents });
+        : phase !== "loading" && selector?.mode === "auto" ? "auto"
+          : phase !== "loading" && selector?.mode === "off" ? "off" : null;
+      const selectedAgent = selected && selected !== "off" && selected !== "auto" ? agents.find(agent => agent?.agentId === selected) ?? null : null;
+      const unavailable = selected !== null && selected !== "off" && selected !== "auto" && selectedAgent?.state !== "enabled";
+      const options = phase === "loading" || (phase === "error" && !selector) ? [] : selectorOptions({ agents, auto: value.auto });
       const triggerKey = phase === "loading" ? "decisionLoadingShort"
         : phase === "saving" ? "decisionSaving"
         : selected === "off" ? "decisionOff"
+        : selected === "auto" ? "decisionAuto"
         : selected === null ? "decisionSelector" : null;
       return {
         phase,
@@ -225,7 +300,7 @@ window.__ModuleLoader__.load({
         unavailableKey: unavailable ? "decisionSelectionUnavailable" : null,
         options,
         triggerKey,
-        emptyKey: phase === "ready" && options.length === 1 ? "decisionNoAgents" : null,
+        emptyKey: phase === "ready" && !options.some(option => option.mode === "agent") ? "decisionNoAgents" : null,
         error: value.error ?? null,
         errorKey: value.error ? errorKey(value.error) : null,
       };
@@ -255,6 +330,52 @@ window.__ModuleLoader__.load({
         records.push(record);
       }
       return { records, nextCursor: next.nextCursor };
+    }
+
+    const ROUTING_OUTCOME_KEYS = {
+      agreement: "decisionRoutingAgreement", disagreement: "decisionRoutingDisagreement",
+      shadow_none: "decisionRoutingShadowNone", shadow_ambiguous: "decisionRoutingShadowAmbiguous", shadow_failure: "decisionRoutingShadowFailure",
+      auto_none: "decisionRoutingAutoNone", auto_ambiguous: "decisionRoutingAutoAmbiguous", auto_failure: "decisionRoutingAutoFailure",
+      manual_reassign: "decisionRoutingManualReassign", uncomparable: "decisionRoutingUncomparable",
+      baseline: "decisionRoutingBaseline", auto_selected: "decisionRoutingAutoSelected",
+    };
+    const ROUTING_SUMMARY_KEYS = {
+      agreement: "decisionRoutingAgreement", disagreement: "decisionRoutingDisagreement",
+      shadowNone: "decisionRoutingShadowNone", shadowAmbiguous: "decisionRoutingShadowAmbiguous", shadowFailure: "decisionRoutingShadowFailure",
+      autoNone: "decisionRoutingAutoNone", autoAmbiguous: "decisionRoutingAutoAmbiguous", autoFailure: "decisionRoutingAutoFailure",
+      manualReassign: "decisionRoutingManualReassign", uncomparable: "decisionRoutingUncomparable",
+    };
+
+    function routingReviewView(payload, locale = "en") {
+      const value = object(payload);
+      if (!value) return { window: null, summary: [], items: [], nextCursor: null, raw: null };
+      const page = narrowRoutingReview(value);
+      const t = translator(locale);
+      return {
+        window: page.window,
+        summary: Object.entries(ROUTING_SUMMARY_KEYS).map(([key, labelKey]) => metricRow(key, Number.isFinite(page.summary[key]) ? page.summary[key] : 0, labelKey)),
+        items: page.items.map(item => ({
+          ...item, title: text(item?.questionSummary) || t("decisionRecord"),
+          outcomeKey: ROUTING_OUTCOME_KEYS[item?.outcome] ?? "decisionRoutingUncomparable",
+          recordCaseId: typeof item?.caseId === "string" && item?.record?.caseId === item.caseId ? item.caseId : null,
+        })),
+        nextCursor: page.nextCursor, raw: payload,
+      };
+    }
+
+    function appendRoutingPage(existing, page) {
+      const next = narrowRoutingReview(page);
+      const items = [...array(existing)];
+      const seen = new Set(items.map(item => item?.caseId).filter(caseId => typeof caseId === "string"));
+      for (const item of next.items) {
+        const caseId = item?.caseId;
+        if (typeof caseId === "string") {
+          if (seen.has(caseId)) continue;
+          seen.add(caseId);
+        }
+        items.push(item);
+      }
+      return { items, nextCursor: next.nextCursor };
     }
 
     function recordEmptyState(input = {}) {
@@ -358,6 +479,11 @@ window.__ModuleLoader__.load({
         decisionUp: "Confirm", decisionDown: "Dispute", decisionUndo: "Undo rating", decisionUndoUp: "Undo confirmation", decisionUndoDown: "Undo dispute", decisionComment: "Note", decisionCorrect: "Correction", decisionConfirmConsequence: "Confirmation supports this answer only within its original scope.", decisionDisputeConsequence: "Dispute immediately stops this answer from being used alone for automatic answers; it does not infer the opposite answer.",
         decisionDecide: "Submit decision", decisionReassign: "Reassign", decisionCancel: "Cancel", decisionRetry: "Retry", decisionSave: "Save", decisionUseSuggestions: "Use suggestions", decisionAnswersIncomplete: "Answer every question before submitting.",
         decisionSelectTitle: "Choose a decision assistant", decisionSelectorSafety: "Only this session; approvals and high-risk actions still ask you.", decisionManageAgents: "Manage assistants", decisionCreateAgent: "New assistant",
+        decisionAuto: "Auto", decisionAutoWhitelist: "Auto routes only these allowed authorization classes:", decisionAutoEmptyWhitelist: "The Auto authorization-class whitelist is empty. New Auto requests will not be answered automatically.", decisionAutoReadinessUnknown: "Auto readiness could not be verified; no automatic-answer capability is assumed.", decisionAutoShadowOn: "Shadow diagnostics are on; they never change the real route or answer.", decisionAutoShadowOff: "Shadow diagnostics are off.",
+        decisionAutoShadowUnknown: "Shadow diagnostic state could not be verified.",
+        decisionRoutingReview: "Routing review", decisionRoutingDiagnostic: "Route comparisons and counts are diagnostic only, not a quality score or automatic promotion.", decisionRoutingAgreement: "Shadow and pinned selections agree", decisionRoutingDisagreement: "Shadow and pinned selections differ", decisionRoutingShadowNone: "Shadow found no assistant", decisionRoutingShadowAmbiguous: "Shadow was ambiguous", decisionRoutingShadowFailure: "Shadow routing failed", decisionRoutingAutoNone: "Auto found no assistant", decisionRoutingAutoAmbiguous: "Auto was ambiguous", decisionRoutingAutoFailure: "Auto routing failed", decisionRoutingManualReassign: "Manually reassigned", decisionRoutingUncomparable: "Not comparable; no usable pinned baseline is recorded", decisionRoutingBaseline: "Pinned baseline for Shadow comparison", decisionRoutingAutoSelected: "Auto selected an assistant", decisionRoutingNoData: "No routing decisions in this window.", decisionRoutingOpenRecord: "Open the authorized decision record for", decisionRoutingShown: "Routing records shown",
+        decisionRoutingDirection: "Reassignment direction (from → to)", decisionNoAssignedAgent: "No assistant selected",
+        decisionRouteHistory: "Route decision history", decisionNoRouteHistory: "No routing decisions recorded.", decisionRouteModePinned: "Pinned assistant", decisionRouteModeExplicit: "Explicit consultation", decisionRouteModeAuto: "Auto route", decisionRouteModeShadow: "Shadow observation (diagnostic only)", decisionRouteModeManual: "Manual reassignment", decisionRouteModeNone: "No route", decisionRouteModeUnknown: "Unknown route mode", decisionRouteStatusSelected: "Assistant selected", decisionRouteStatusNone: "No assistant selected", decisionRouteStatusAmbiguous: "Routing is ambiguous", decisionRouteStatusFailure: "Routing failed", decisionReasonUnownedNoRoute: "No assistant was selected. You can answer directly or explicitly reassign this decision.",
         decisionGlobalOff: "Decision assistants are off globally.", decisionGlobalOffHint: "No automatic decisions are made. Enable them in Settings → Weir → Decision assistants.",
         decisionAdvancedDiagnostics: "Advanced diagnostics", decisionStructuralQualityWarning: "Structural validation does not guarantee content quality.", decisionRateNotQuality: "Automatic answer rate is not a quality metric.", decisionHistoricalNotEvidence: "Historical context is not evidence for a decision.",
         decisionSelectionUnavailable: "The current selection is unavailable.", decisionErrorConflict: "The record changed. Reload the latest version before retrying.", decisionErrorUnavailable: "The selected assistant is unavailable. Choose another assistant or Off.",
@@ -405,6 +531,11 @@ window.__ModuleLoader__.load({
         decisionUp: "认可", decisionDown: "不认可", decisionUndo: "撤销评分", decisionUndoUp: "撤销认可", decisionUndoDown: "撤销不认可", decisionComment: "备注", decisionCorrect: "纠正", decisionConfirmConsequence: "认可仅在原适用范围内支持此回答作为依据。", decisionDisputeConsequence: "不认可会立即停止此回答单独用于自动回答，但不会反推相反答案。",
         decisionDecide: "提交决定", decisionReassign: "改派", decisionCancel: "取消", decisionRetry: "重试", decisionSave: "保存", decisionUseSuggestions: "使用建议", decisionAnswersIncomplete: "请回答全部问题后再提交。",
         decisionSelectTitle: "选择决策助手", decisionSelectorSafety: "仅当前会话；审批和高风险操作仍会询问你。", decisionManageAgents: "管理助手", decisionCreateAgent: "新建助手",
+        decisionAuto: "Auto", decisionAutoWhitelist: "Auto 只路由以下已允许的授权类：", decisionAutoEmptyWhitelist: "Auto 授权类白名单为空。新的 Auto 请求不会被自动回答。", decisionAutoReadinessUnknown: "无法核实 Auto 的就绪状态；不假定其具备自动回答能力。", decisionAutoShadowOn: "Shadow 诊断已开启；它不会改变真实路由或答案。", decisionAutoShadowOff: "Shadow 诊断已关闭。",
+        decisionAutoShadowUnknown: "无法核实 Shadow 诊断状态。",
+        decisionRoutingReview: "路由复盘", decisionRoutingDiagnostic: "路由比较与计数仅用于诊断，不是质量评分或自动晋升依据。", decisionRoutingAgreement: "Shadow 与钉选选择一致", decisionRoutingDisagreement: "Shadow 与钉选选择不同", decisionRoutingShadowNone: "Shadow 未选择助手", decisionRoutingShadowAmbiguous: "Shadow 路由存在歧义", decisionRoutingShadowFailure: "Shadow 路由失败", decisionRoutingAutoNone: "Auto 未选择助手", decisionRoutingAutoAmbiguous: "Auto 路由存在歧义", decisionRoutingAutoFailure: "Auto 路由失败", decisionRoutingManualReassign: "已手动改派", decisionRoutingUncomparable: "不可比较；没有可用的钉选基线记录", decisionRoutingBaseline: "Shadow 比较的钉选基线", decisionRoutingAutoSelected: "Auto 已选择助手", decisionRoutingNoData: "此时间范围内没有路由决定。", decisionRoutingOpenRecord: "打开以下内容的已授权判断记录", decisionRoutingShown: "已显示的路由记录数",
+        decisionRoutingDirection: "改派方向（原助手 → 新助手）", decisionNoAssignedAgent: "尚未选择助手",
+        decisionRouteHistory: "路由决定历史", decisionNoRouteHistory: "暂无路由决定记录。", decisionRouteModePinned: "钉选助手", decisionRouteModeExplicit: "显式咨询", decisionRouteModeAuto: "Auto 路由", decisionRouteModeShadow: "Shadow 观察（仅诊断）", decisionRouteModeManual: "手动改派", decisionRouteModeNone: "无路由", decisionRouteModeUnknown: "未知路由模式", decisionRouteStatusSelected: "已选择助手", decisionRouteStatusNone: "未选择助手", decisionRouteStatusAmbiguous: "路由存在歧义", decisionRouteStatusFailure: "路由失败", decisionReasonUnownedNoRoute: "尚未选择助手。你可以直接回答或明确改派这次判断。",
         decisionGlobalOff: "决策助手已在全局关闭。", decisionGlobalOffHint: "当前不会自动决策。可在“设置 → Weir → 决策助手”中开启。",
         decisionAdvancedDiagnostics: "高级诊断", decisionStructuralQualityWarning: "结构校验通过不代表内容质量。", decisionRateNotQuality: "自动回答率不是质量指标。", decisionHistoricalNotEvidence: "历史参考不是判断依据。",
         decisionSelectionUnavailable: "当前选择的助手不可用。", decisionErrorConflict: "记录已变化，请先读取最新版本再重试。", decisionErrorUnavailable: "当前助手不可用，请选择其他助手或关闭。",
@@ -451,6 +582,9 @@ window.__ModuleLoader__.load({
     exports.metricsView = metricsView;
     exports.recordSummary = recordSummary;
     exports.appendRecordPage = appendRecordPage;
+    exports.narrowRoutingReview = narrowRoutingReview;
+    exports.routingReviewView = routingReviewView;
+    exports.appendRoutingPage = appendRoutingPage;
     exports.recordEmptyState = recordEmptyState;
     exports.feedbackActions = feedbackActions;
     exports.draftsReducer = draftsReducer;
