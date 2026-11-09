@@ -83,7 +83,7 @@ export async function createPageHarness(options = {}) {
     narrowInbox: model.narrowInbox,
     ui,
     learning,
-    t: key => key,
+    t: options.t ?? (key => key),
     consumeOpenCase: options.consumeOpenCase,
     consumeAgentDestination: options.consumeAgentDestination,
     panelInfo: options.panelInfo,

@@ -60,7 +60,7 @@ window.__ModuleLoader__.load({
     function RecordDetail(props) {
       const { detail, model, ui, t, draft } = props;
       const agents = Array.isArray(props.agents) ? props.agents : [];
-      const view = model.cardView(detail, agents);
+      const view = model.cardView(detail, agents, t);
       const current = detail.case;
       const questions = Array.isArray(current.request?.questions) ? current.request.questions : [];
       const answers = Array.isArray(current.decision?.answers) ? current.decision.answers : [];
@@ -127,13 +127,13 @@ window.__ModuleLoader__.load({
     function InboxItem(props) {
       const current = props.item;
       const { t, ui, model, draft } = props;
-      const summary = model.recordSummary(current, props.agents);
+      const summary = model.recordSummary(current, props.agents, t);
       const questions = Array.isArray(current.request?.questions) ? current.request.questions : [];
       const pending = typeof props.pending === "string";
       const suggestions = Array.isArray(current.escalation?.suggestion) ? current.escalation.suggestion : [];
       const perQuestion = Array.isArray(current.escalation?.perQuestion) ? current.escalation.perQuestion : [];
       const detail = props.evidence?.value;
-      const evidenceView = detail ? model.cardView(detail, props.agents) : null;
+      const evidenceView = detail ? model.cardView(detail, props.agents, t) : null;
       return jsx.jsxs("article", { className: "weir-da-card weir-da-inbox-card", "data-case-id": current.caseId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [
@@ -741,7 +741,7 @@ window.__ModuleLoader__.load({
       const listBody = resources.records.status === "error" ? retryState(resources.records, () => loadRecords())
         : resources.records.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.records.value.length ? resources.records.value.map(record => {
-          const summary = model.recordSummary(record, resources.agents.value);
+          const summary = model.recordSummary(record, resources.agents.value, t);
           return jsx.jsxs(ui.Button, { className: "weir-da-record-row", "data-case-id": record.caseId, "aria-pressed": selectedCaseId === record.caseId, onClick: () => readRecord(record.caseId, { select: true }), children: [
             jsx.jsx("strong", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("span", { children: `${summary?.agentName ?? t("decisionSelector")} · ${t(summary?.statusKey ?? "decisionStatusUnknown")}` }, "meta"),

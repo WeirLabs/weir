@@ -108,6 +108,23 @@ test('record summaries and card evidence follow the current Attempt only', async
   assert.equal(summary.time, '2026-01-02T03:04:05.000Z')
 })
 
+test('record and card fallbacks follow the active locale including regional Chinese and translator seats', async () => {
+  const model = await load()
+  const current = { caseId: 'dc-fallback', agentId: 'missing', state: 'closed', closing: 'answered', request: { questions: [] } }
+  const detail = { case: current, attempts: [] }
+  const english = model.recordSummary(current, [])
+  assert.equal(english.title, 'Decision record')
+  assert.equal(english.agentName, 'Decision assistant')
+  assert.equal(model.cardView(detail, []).agentName, 'Decision assistant')
+
+  for (const locale of ['zh', 'zh-CN', key => model.dictionaries.zh[key]]) {
+    const summary = model.recordSummary(current, [], locale)
+    assert.equal(summary.title, '判断记录')
+    assert.equal(summary.agentName, '决策助手')
+    assert.equal(model.cardView(detail, [], locale).agentName, '决策助手')
+  }
+})
+
 test('record pages append without duplicates and empty states remain specific', async () => {
   const model = await load()
   const first = [{ caseId: 'dc-a', request: { questions: [{ question: 'A' }] } }]

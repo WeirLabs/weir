@@ -1390,6 +1390,64 @@ describe('weir settings client half', () => {
     expect(hookNode?.visibility, 'answered Hook history remains discoverable through the same projection').toBe('visible')
   })
 
+  it('renders localized Decision sidebar, loading, and chunk-failure shells before dictionary arrival', async () => {
+    const localizedContext = () => {
+      const base = makeCtx()
+      const registered = new Map()
+      base.ctx.locale.register = (ns, dicts) => {
+        registered.set(ns, dicts)
+        base.localeRegistrations.push({ ns, dicts })
+        return () => {}
+      }
+      base.ctx.locale.bind = ns => key => registered.get(ns)?.en?.[key] ?? key
+      return base
+    }
+    const renderShells = (surface, reactStub, base) => {
+      surface.apply(base.ctx)
+      for (const inject of base.slotInjects) inject.fn()
+      const selector = base.slotRegistrations.find(item => item.definition.id === 'weir-decision-selector')
+      const panel = base.slotRegistrations.find(item => item.definition.id === 'weir-decisions')
+      const main = base.slotRegistrations.find(item => item.definition.name === 'main' && item.definition.key === 'weir-decisions')
+      reactStub.reset()
+      reactStub.begin()
+      const selectorTree = selector.component({ sessionId: 'root' })
+      reactStub.reset()
+      reactStub.begin()
+      const pageTree = main.component({})
+      return { selectorTree, pageTree, sidebarLabel: panel.definition.label() }
+    }
+
+    const pending = await loadEntry()
+    const pendingBase = localizedContext()
+    const loading = renderShells(pending.surface, pending.reactStub, pendingBase)
+    expect(loading.sidebarLabel).toBe('Decision assistant')
+    expect(loading.selectorTree.children).toBe('Loading…')
+    expect(loading.selectorTree['aria-label']).toBe('Decision assistant')
+    expect(loading.pageTree.children).toBe('Loading decisions…')
+
+    const failed = await loadEntry()
+    failed.setAsyncFailure(new Error('chunk transport offline'))
+    const failedBase = localizedContext()
+    failed.surface.apply(failedBase.ctx)
+    for (const inject of failedBase.slotInjects) inject.fn()
+    const selector = failedBase.slotRegistrations.find(item => item.definition.id === 'weir-decision-selector')
+    const main = failedBase.slotRegistrations.find(item => item.definition.name === 'main' && item.definition.key === 'weir-decisions')
+    failed.reactStub.begin()
+    selector.component({ sessionId: 'root' })
+    await flush()
+    failed.reactStub.begin()
+    const selectorFailure = selector.component({ sessionId: 'root' })
+    failed.reactStub.reset()
+    failed.reactStub.begin()
+    main.component({})
+    await flush()
+    failed.reactStub.begin()
+    const pageFailure = main.component({})
+    expect(selectorFailure.children).toBe('Decision records could not be loaded. Retry the read.')
+    expect(pageFailure.children).toBe('Decision records could not be loaded. Retry the read.')
+    expect(JSON.stringify([selectorFailure, pageFailure]).includes('chunk transport offline')).toBe(false)
+  })
+
   it('build binds the entry to every chunk digest', () => {
     // Content binding is the red line: the entry header pins each chunk's
     // sha256, so a chunk edit without `pnpm build` fails here
@@ -2403,6 +2461,12 @@ describe('weir settings client half', () => {
       // NS (entry-side, sync-rendered); the chunk's own loading row reads it
       // from its feature namespace — byte-identical in both homes.
       ['worktreeLoading', ['NS (entry)', 'lib/client.worktree-model.js']],
+      // Decision shells render before their feature namespace arrives; these
+      // four strings are byte-identical in the synchronous and chunk homes.
+      ['decisionSelector', ['NS (entry)', 'lib/client.decision-model.js']],
+      ['decisionLoading', ['NS (entry)', 'lib/client.decision-model.js']],
+      ['decisionLoadingShort', ['NS (entry)', 'lib/client.decision-model.js']],
+      ['decisionReadFailed', ['NS (entry)', 'lib/client.decision-model.js']],
       // the edit-lock card titles: the pre-arrival placeholder reads them from
       // NS, the card from its feature namespace — byte-identical in both homes
       ['leaseToolTitle_edit_lock_acquire', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],

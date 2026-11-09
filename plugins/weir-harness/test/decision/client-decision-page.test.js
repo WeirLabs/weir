@@ -466,6 +466,24 @@ test('applying filters resets old pagination busy and error state and ignores st
   harness.unmount()
 })
 
+test('production record summaries pass the active locale to fallback text', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const record = { caseId: 'dc-unavailable-agent', agentId: 'missing', state: 'closed', closing: 'answered', request: { questions: [] } }
+  const harness = await createPageHarness({
+    t: key => model.dictionaries.zh[key],
+    actions: { agents: async () => [], inbox: async () => [], records: async () => ({ records: [record], nextCursor: null }) },
+  })
+  await harness.settle()
+  const tree = await openRecords(harness)
+  const row = findAll(tree, node => node.type === harness.ui.Button && node['data-case-id'] === record.caseId)[0]
+  const text = textOf(row)
+  assert.ok(text.includes('判断记录'))
+  assert.ok(text.includes('决策助手'))
+  assert.equal(text.includes('Decision assistant'), false)
+  assert.equal(text.includes('Decision record'), false)
+  harness.unmount()
+})
+
 test('Attempt Context Pack details show actual neutral sources and truthful legacy empty states', async () => {
   const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({ jsx: (type, props) => ({ type, ...props }), jsxs: (type, props) => ({ type, ...props }) }));
   const render = attempt => exports.AttemptContextPack({ attempt, t: key => key });

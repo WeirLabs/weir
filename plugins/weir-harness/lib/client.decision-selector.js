@@ -139,7 +139,8 @@ window.__ModuleLoader__.load({
           jsx.jsx("span", { children: option.label }, "label"),
         ],
       }, option.value);
-      const errorText = snapshot.error ? `${t(view.errorKey ?? "decisionFailed")} ${snapshot.error.message ?? String(snapshot.error)}` : "";
+      const errorText = snapshot.error ? t(view.errorKey ?? "decisionFailed") : "";
+      const rawError = snapshot.error ? { code: snapshot.error.code, message: snapshot.error.message ?? String(snapshot.error) } : null;
       const panel = open ? jsx.jsxs("section", {
         ref: panelRef, id: PANEL_ID, className: "weir-da-overlay weir-da-selector-panel",
         role: "dialog", "aria-modal": false, "aria-labelledby": TITLE_ID,
@@ -162,6 +163,7 @@ window.__ModuleLoader__.load({
             jsx.jsx("span", { children: errorText }, "message"),
             jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => choose(failedTarget), children: t("decisionRetry") }, "retry"),
           ] }, "save-error") : null,
+          rawError ? jsx.jsx(ui.Disclosure, { label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsx("pre", { children: JSON.stringify(rawError, null, 2) }) }, "error-diagnostics") : null,
           view.phase !== "loading" && view.options.length > 0 ? jsx.jsx("div", {
             role: "radiogroup", "aria-label": t("decisionSelectTitle"), className: "weir-da-selector-options",
             children: view.options.map(optionRow),

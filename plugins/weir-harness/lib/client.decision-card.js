@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
       // Refresh on that existing projection boundary instead of racing Case creation or polling.
       const pendingInteraction = props.useSessionStatus?.(snapshot => props.sessionId ? snapshot.get(props.sessionId)?.pendingInteraction : undefined);
       const actions = props.createDecisionActions(props.connection, props.sessionId, props.decisionRpc);
-      const view = props.cardView(detail, agents);
+      const view = props.cardView(detail, agents, t);
 
       const load = async (authoritative, targetCaseId = caseId, rethrow = false) => {
         const generation = generationRef.current;
