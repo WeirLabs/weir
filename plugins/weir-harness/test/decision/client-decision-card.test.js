@@ -39,7 +39,14 @@ function makeReact() {
       return hooks[index].id
     },
   }
-  return { react, begin: () => { cursor = 0 } }
+  return {
+    react,
+    begin: () => { cursor = 0 },
+    unmount: () => {
+      for (const hook of hooks) hook?.cleanup?.()
+      hooks.length = 0
+    },
+  }
 }
 
 function findAll(node, predicate, found = []) {
@@ -86,7 +93,7 @@ async function setup() {
   const card = (await loadClientChunk('lib/client.decision-card.js', name => name === 'react' ? runtime.react : { jsx, jsxs: jsx })).exports
   const ui = Object.fromEntries(['DecisionStyles', 'DecisionIcon', 'Button', 'Badge', 'Field', 'LoadingState', 'EmptyState', 'ErrorState', 'Disclosure', 'ConfirmDialog', 'DecisionAnswers'].map(name => [name, `ui.${name}`]))
   const render = props => { runtime.begin(); return card.DecisionCard(props) }
-  return { model, actions, render, ui }
+  return { model, actions, render, ui, unmount: runtime.unmount }
 }
 
 async function mount(detail = answeredDetail, options = {}) {
@@ -645,4 +652,87 @@ test('native pending interaction refreshes an early tool-call card without polli
   assert.equal(source.includes('props.useSessionStatus?.('), true)
   assert.equal(source.includes('props.refreshKey, pendingInteraction]'), true)
   assert.equal(/setInterval|setTimeout/.test(source), false)
+})
+
+test('consult refreshes an early null once its authoritative Case arrives before tool result', async () => {
+  let current = null
+  const waits = []
+  const calls = []
+  const mounted = await mount(null, {
+    props: {
+      toolName: 'decision_consult', callId: 'call-early',
+      // No refreshKey/tool-result and no native pendingInteraction exist here.
+      waitForDecisionCase: (sessionId, callId, signal) => new Promise(resolve => {
+        waits.push({ sessionId, callId, signal, resolve })
+      }),
+    },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall') return current
+      return null
+    },
+  })
+  assert.equal(mounted.render(), null)
+  assert.equal(calls.filter(call => call[0] === 'caseForToolCall').length, 1)
+
+  current = { ...waitingDetail, case: { ...waitingDetail.case, caseId: 'dc-early' } }
+  for (const wait of waits) wait.resolve({ caseId: 'dc-early', revision: current.case.revision })
+  await flushCard()
+
+  const tree = mounted.render()
+  assert.equal(tree?.['data-weir-decision-card'], 'dc-early')
+  assert.equal(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers).length, 1)
+  assert.equal(calls.filter(call => call[0] === 'caseForToolCall').length, 2)
+  assert.deepEqual(waits.map(wait => [wait.sessionId, wait.callId]), [['root', 'call-early']])
+})
+
+test('consult wait cancellation and generation guards isolate switches and unmounts', async () => {
+  const byCall = {
+    'call-old': null,
+    'call-new': { ...waitingDetail, case: { ...waitingDetail.case, caseId: 'dc-new' } },
+    'call-unmount': null,
+  }
+  const waits = []
+  const calls = []
+  const mounted = await mount(null, {
+    props: {
+      toolName: 'decision_consult', callId: 'call-old',
+      waitForDecisionCase: (_sessionId, callId, signal) => new Promise(resolve => {
+        // Deliberately non-cooperative after abort: a late resolution must still be inert.
+        waits.push({ callId, signal, resolve })
+      }),
+    },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall') return byCall[request.toolCallId]
+      return null
+    },
+  })
+  const oldWait = waits[0]
+  assert.equal(oldWait.callId, 'call-old')
+
+  mounted.props.callId = 'call-new'
+  mounted.render()
+  await flushCard()
+  assert.equal(oldWait.signal.aborted, true)
+  assert.equal(mounted.render()['data-weir-decision-card'], 'dc-new')
+  const readsAfterSwitch = calls.filter(call => call[0] === 'caseForToolCall').length
+  oldWait.resolve({ caseId: 'dc-old' })
+  await flushCard()
+  assert.equal(mounted.render()['data-weir-decision-card'], 'dc-new')
+  assert.equal(calls.filter(call => call[0] === 'caseForToolCall').length, readsAfterSwitch)
+
+  mounted.props.callId = 'call-unmount'
+  mounted.render()
+  await flushCard()
+  const unmountWait = waits.find(wait => wait.callId === 'call-unmount')
+  assert.ok(unmountWait)
+  mounted.unmount()
+  assert.equal(unmountWait.signal.aborted, true)
+  const readsAtUnmount = calls.filter(call => call[0] === 'caseForToolCall').length
+  unmountWait.resolve({ caseId: 'dc-late' })
+  await flushCard()
+  assert.equal(calls.filter(call => call[0] === 'caseForToolCall').length, readsAtUnmount)
 })

@@ -112,8 +112,28 @@ window.__ModuleLoader__.load({
       react.useEffect(() => {
         const generation = ++generationRef.current;
         evidenceReadRef.current = null; setDetail(null); setError(null); setEditor(null); setConfirm(null);
-        load(false);
-        return () => { if (generationRef.current === generation) generationRef.current += 1; };
+        let waitController = null;
+        const loadAndWait = async () => {
+          const value = await load(false);
+          const state = value?.case?.state;
+          if (generationRef.current !== generation || !props.sessionId || !props.callId || props.toolName !== "decision_consult" || typeof props.waitForDecisionCase !== "function") return;
+          if (value?.case && state !== "received" && state !== "evaluating") return;
+          // The one-shot Host wait checks authority and registers atomically.
+          // Wake on that boundary, then reread once; no timer or polling loop.
+          const controller = new AbortController();
+          waitController = controller;
+          try {
+            await props.waitForDecisionCase(props.sessionId, props.callId, controller.signal);
+            if (generationRef.current === generation) await load(false);
+          } catch (reason) {
+            if (generationRef.current === generation && !controller.signal.aborted) setError({ reason, kind: "read" });
+          }
+        };
+        void loadAndWait();
+        return () => {
+          if (generationRef.current === generation) generationRef.current += 1;
+          waitController?.abort();
+        };
       }, [props.sessionId, props.callId, props.refreshKey, pendingInteraction]);
 
       const errorMessage = error ? t(error.kind === "read" ? "decisionReadFailed" : model?.errorKey?.(error.reason) ?? "decisionFailed") : null;

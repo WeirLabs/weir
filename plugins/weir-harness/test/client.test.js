@@ -234,9 +234,9 @@ describe('weir settings client half', () => {
     // to simulate failures.
     const connection = {
       rpc: {
-        call: async (channel, endpoint, payload) => {
+        call: async (channel, endpoint, payload, signal) => {
           rpcCalls.push({ channel, endpoint, payload })
-          if (connection.rpcBehavior) return connection.rpcBehavior(channel, endpoint, payload)
+          if (connection.rpcBehavior) return connection.rpcBehavior(channel, endpoint, payload, signal)
           const method = endpoint.split('/')[1]
           if (method === 'receipt') return { ok: true, value: { status: 'applied', revision: 1, effective: { skills: [], mcpServers: [] }, warnings: [], sid: payload?.args?.sessionId } }
           if (method === 'list') return { ok: true, value: { skills: [], mcpServers: [] } }
@@ -1289,7 +1289,7 @@ describe('weir settings client half', () => {
   })
   it('loads Decision UI, selector, cards, page, and learning helpers in one parallel batch with themed slot shells', async () => {
     const { surface, reactStub, asyncCalls } = await loadEntry()
-    const { ctx, slotInjects, slotRegistrations, localeRegistrations } = makeCtx()
+    const { ctx, slotInjects, slotRegistrations, localeRegistrations, connection } = makeCtx()
     const selectedPanels = []
     ctx.layout.selectPanel = id => { selectedPanels.push(id) }
     surface.apply(ctx)
@@ -1354,6 +1354,18 @@ describe('weir settings client half', () => {
     const card = cardShell.__type(cardProps)
     expect(card.decisionModel.decisionRpc).toBe('decision-rpc')
     expect(card.cardView).toBe('card-view')
+    expect(typeof card.waitForDecisionCase).toBe('function')
+    let waitSignal
+    connection.rpcBehavior = (channel, endpoint, payload, signal) => {
+      waitSignal = signal
+      expect(channel).toBe('/api')
+      expect(endpoint).toBe('weirDecision/waitForToolCall')
+      expect(payload).toEqual({ args: { args: { sessionId: 'root', toolCallId: 'call-consult' } } })
+      return { ok: true, value: { ok: true, value: { caseId: 'dc-consult', revision: 4, state: 'awaiting_user' } } }
+    }
+    const controller = new AbortController()
+    expect(await card.waitForDecisionCase('root', 'call-consult', controller.signal)).toEqual({ caseId: 'dc-consult', revision: 4, state: 'awaiting_user' })
+    expect(waitSignal).toBe(controller.signal)
     arrived.onCreate()
     expect(page.consumeAgentDestination()).toBe('create')
     expect(page.consumeAgentDestination()).toBe(null)

@@ -153,3 +153,41 @@ test('Off, globally disabled and explicit unavailable Agent fail before creating
   await assert.rejects(f.broker.consult({ agent: f.agent, args: { question: 'Q' } }), error => error.code === 'DECISION_OFF')
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, before)
 })
+
+test('consult wait wakes after the persisted outcome and before the tool return; abort settles cleanly', async t => {
+  const f = await fixture(t)
+  f.broker.ctx.agents = { get: id => id === 'root' ? f.agent : undefined }
+  const order = []
+  const publishConsult = f.broker.publishConsult.bind(f.broker)
+  f.broker.publishConsult = current => { order.push('notification'); publishConsult(current) }
+  const controller = new AbortController()
+  let markRegistered
+  const registered = new Promise(resolve => { markRegistered = resolve })
+  const addEventListener = controller.signal.addEventListener.bind(controller.signal)
+  controller.signal.addEventListener = (type, listener, options) => {
+    const result = addEventListener(type, listener, options)
+    if (type === 'abort') markRegistered()
+    return result
+  }
+  const waiting = f.broker.waitForToolCall({ sessionId: 'root', toolCallId: 'call-wait' }, controller.signal)
+  await registered
+
+  const consulting = f.broker.consult({
+    agent: f.agent, toolCallId: 'call-wait',
+    args: { question: 'Choose before the tool result', options: [{ label: 'A' }, { label: 'B' }], request_id: 'wait-1' },
+  }).then(value => { order.push('tool-return'); return value })
+  const [notice, result] = await Promise.all([waiting, consulting])
+  assert.equal(result.outcome, 'awaiting_user')
+  const authoritative = await f.broker.caseForToolCall({ sessionId: 'root', toolCallId: 'call-wait' })
+  assert.equal(authoritative.case.state, 'awaiting_user')
+  assert.deepEqual(notice, {
+    caseId: result.caseId, revision: authoritative.case.revision, state: 'awaiting_user',
+  })
+  assert.deepEqual(order, ['notification', 'tool-return'])
+
+  const abandonedController = new AbortController()
+  const abandoned = f.broker.waitForToolCall({ sessionId: 'root', toolCallId: 'call-abort' }, abandonedController.signal)
+  for (let index = 0; index < 4; index++) await Promise.resolve()
+  abandonedController.abort(new Error('card unmounted'))
+  await assert.rejects(abandoned, /card unmounted/)
+})
