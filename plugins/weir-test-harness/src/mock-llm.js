@@ -154,6 +154,21 @@ async function* streamScenario(options) {
       return
     }
   }
+  if (record.autoRouterHold === 'flush' || record.autoRouterHold === 'interruption') {
+    const kind = record.autoRouterHold
+    const ready = join(IT_ROOT, `decision-auto-${kind}.ready`)
+    const release = join(IT_ROOT, `decision-auto-${kind}.release`)
+    writeFileSync(ready, JSON.stringify({ pid: process.pid, at: Date.now() }) + '\n')
+    const deadline = Date.now() + 30_000
+    while (!options.signal?.aborted && !existsSync(release)) {
+      if (Date.now() >= deadline) throw new Error(`decision-auto ${kind} hold timed out`)
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    if (options.signal?.aborted) {
+      yield { type: 'finish', reason: { kind: 'aborted', failure: { code: 'MOCK_ABORT', message: `${kind} Router stream aborted` } } }
+      return
+    }
+  }
   if (record.autoRouterHold === 'timeout') {
     await new Promise((resolve) => {
       if (options.signal?.aborted) return resolve()

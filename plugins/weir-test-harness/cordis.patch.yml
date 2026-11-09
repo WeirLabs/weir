@@ -131,7 +131,7 @@
         intentGateProvider: mock
         intentGateModel: mock-1
         decisionAgentsEnabled: true
-        decisionAgentSelectorDefault: off
+        decisionAgentSelectorDefault: !!js process.env.WEIR_IT_DECISION_SELECTOR_DEFAULT ?? 'off'
         decisionAgentAutoShadow: false
         decisionAgentAutoAnswerClasses: !!js process.env.WEIR_IT_DECISION_AUTO_CLASSES ?? '[]'
         decisionAgentAnswerTimeoutMs: !!js Number(process.env.WEIR_IT_DECISION_TIMEOUT_MS ?? 60000)

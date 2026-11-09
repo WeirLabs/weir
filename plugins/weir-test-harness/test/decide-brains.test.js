@@ -710,6 +710,21 @@ describe('decision-auto-route P4 brain and Router mock dispatch', () => {
     assert.equal(Object.hasOwn(args.questions[0], 'authorization_class'), false)
   })
 
+  it('runs the isolated safety probe once after the explicit-unavailable control', () => {
+    const history = [
+      'decision-auto-route-probe', 'DECISION_TEST done auto-setup:{"agentA":"ag_a","agentB":"ag_b"}',
+      'decision-auto-selected', 'decision-auto-zero', 'decision-auto-one', 'decision-auto-none',
+      'decision-auto-ambiguous', 'decision-auto-invalid', 'decision-auto-timeout', 'decision-auto-partial-1',
+      'DECISION_TEST done auto-singleflight', 'DECISION_TEST done auto-replay',
+      '"selected":["Auto Consult B"]', '"selected":["Explicit B"]', 'DECISION_TEST done disable-a', 'AGENT_UNAVAILABLE',
+    ].join('\n')
+    const safety = blockEnds(run('decision-auto-route', userOptions(history)))[0]
+    assert.equal(safety.name, 'decision_integration_probe')
+    assert.equal(JSON.parse(safety.arguments).op, 'auto-safety')
+    const done = blockEnds(run('decision-auto-route', userOptions(`${history}\nDECISION_TEST done auto-safety:{"completed":true}`)))[0]
+    assert.equal(done.text, 'DECISION_AUTO_ROUTE_DONE')
+  })
+
   it('dispatches both exact first-line contracts to controllable classification and route brains', async () => {
     const question = { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }, { label: 'Other' }] }
     await withMockScenario('decision-auto-route', 'dispatch', ({ planRequest }) => {
@@ -779,6 +794,34 @@ describe('decision-recovery P1 brain', () => {
       const verify = blockEnds(run('decision-recovery', toolOptions('decision-recovery-probe\n{"outcome":"answered","caseId":"dc_replay"}', '{"outcome":"answered","caseId":"dc_replay"}')))[0]
       assert.equal(verify.name, 'decision_recovery_probe')
       assert.equal(JSON.parse(verify.arguments).op, 'verify')
+    } finally {
+      if (previous === undefined) delete process.env.WEIR_IT_DECISION_PHASE
+      else process.env.WEIR_IT_DECISION_PHASE = previous
+    }
+  })
+
+  it('holds Auto intake before kill and verifies the interrupted replay after restart', () => {
+    const previous = process.env.WEIR_IT_DECISION_PHASE
+    try {
+      process.env.WEIR_IT_DECISION_PHASE = 'auto-before'
+      const setup = blockEnds(run('decision-recovery', userOptions('decision-recovery-probe')))[0]
+      assert.equal(JSON.parse(setup.arguments).op, 'auto-setup')
+      const consult = blockEnds(run('decision-recovery', toolOptions('decision-recovery-probe', 'DECISION_TEST done auto-setup:{"completed":true}')))[0]
+      assert.equal(consult.name, 'decision_consult')
+      assert.equal(JSON.parse(consult.arguments).request_id, 'auto-recovery-interrupt')
+
+      const scenario = byId('decision-recovery')
+      const options = userOptions(JSON.stringify({ questions: [{ id: 'question', question: 'AUTO_RECOVERY_INTERRUPT: never answer an interrupted intake' }] }), { system: 'Auto request classification contract: router-classification-contract/1' })
+      const classified = JSON.parse(blockEnds([...scenario.decideRouterClassification(options, extract(options))])[0].text)
+      assert.equal(classified.classes[0].authorizationClass, 'A')
+      assert.equal(scenario.observe(extract(options)).autoRouterHold, 'interruption')
+
+      process.env.WEIR_IT_DECISION_PHASE = 'auto-after'
+      const replay = blockEnds(run('decision-recovery', userOptions('decision-recovery-probe')))[0]
+      assert.equal(JSON.parse(replay.arguments).request_id, 'auto-recovery-interrupt')
+      const waiting = toolOptions('decision-recovery-probe', '{"outcome":"awaiting_user","caseId":"dc_auto","reason":"interrupted"}')
+      const verify = blockEnds(run('decision-recovery', waiting))[0]
+      assert.equal(JSON.parse(verify.arguments).op, 'auto-verify')
     } finally {
       if (previous === undefined) delete process.env.WEIR_IT_DECISION_PHASE
       else process.env.WEIR_IT_DECISION_PHASE = previous
