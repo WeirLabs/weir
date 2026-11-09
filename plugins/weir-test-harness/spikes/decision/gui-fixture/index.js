@@ -1,6 +1,6 @@
 // Isolated Desktop QA Host fixture: real Weir sessions, mock route and log scans only.
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { userTextMessage } from '../../../../../plugins/weir-harness/src/shared/user-message.js'
 import { applyGuiAdapter } from './adapter.js'
@@ -10,7 +10,7 @@ export const inject = ['llm', 'typert', 'agents', 'agentPresets', 'sessionQuery'
 
 const SERVICE = 'weirDecisionGuiFixture'
 const NAMESPACE = 'weirDecisionGuiFixture'
-const METHODS = ['createSession', 'scanSession', 'hostState', 'askNative']
+const METHODS = ['createSession', 'scanSession', 'hostState', 'decisionConfig', 'askNative']
 
 function contribution() {
   return {
@@ -35,6 +35,9 @@ export async function apply(ctx) {
     mock.apply(ctx)
   }
   ctx.on('tools/execute', async (exec, next) => {
+    if (exec.name === 'ask_user_question') {
+      appendFileSync(join(out, 'stock-tool-calls.jsonl'), `${JSON.stringify({ phase: 'before-decision-hook', at: Date.now(), pid: process.pid, sessionId: exec.agent?.id ?? exec.agent?.session?.id ?? null, callId: exec.callId, name: exec.name, arguments: exec.arguments })}\n`)
+    }
     const result = await next()
     if (process.env.WEIR_DECISION_PRODUCT_UX !== '1' || exec.name !== 'decision_consult' || exec.arguments?.request_id !== 'gui_b_decide' || result.isError) return result
     writeFileSync(join(out, 'consult-result-held.json'), `${JSON.stringify({ callId: exec.callId, pid: process.pid, at: Date.now() })}\n`)
@@ -51,11 +54,24 @@ export async function apply(ctx) {
   const host = () => ({
     pid: process.pid, parentPid: process.ppid, execPath: process.execPath, electron: process.versions.electron,
     node: process.versions.node, profile: ctx.get('profileContext'), out,
+    env: { HOME: process.env.HOME, DSH_HOME: process.env.DSH_HOME, DSH_AGENTS_HOME: process.env.DSH_AGENTS_HOME },
   })
   writeFileSync(join(out, 'host.json'), JSON.stringify(host(), null, 2) + '\n')
 
   const service = {
     async hostState() { return host() },
+    async decisionConfig() {
+      const broker = ctx.root.get('weirDecisionBroker')
+      if (typeof broker?.config !== 'function') throw new Error('decisionConfig requires the live root Decision Broker')
+      const settings = ctx.root.get('weirSettings')
+      const brokerSettings = broker.ctx?.get?.('weirSettings')
+      return {
+        effective: broker.config(),
+        section: settings?.get('decisionAgent') ?? null,
+        brokerSection: brokerSettings?.get('decisionAgent') ?? null,
+        decisionEnv: { enabled: process.env.WEIR_DECISION_GUI_ENABLED, selectorDefault: process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT, shadow: process.env.WEIR_DECISION_GUI_SHADOW, autoClasses: process.env.WEIR_DECISION_GUI_AUTO_CLASSES },
+      }
+    },
     async createSession(args) {
       const cwd = args.cwd
       if (typeof cwd !== 'string' || !cwd) throw new Error('createSession cwd is required')
@@ -79,11 +95,12 @@ export async function apply(ctx) {
     },
     async scanSession(args) {
       const snapshot = await ctx.get('sessionQuery').readSession(args.sessionId)
-      const events = snapshot.events.map(event => ({ seq: event.seq, type: event.type, ignorable: event.ignorable === true, callId: event.data?.callId ?? event.data?.message?.source?.callId ?? null, toolName: event.data?.name ?? null }))
+      const events = snapshot.events.map(event => ({ seq: event.seq, type: event.type, ignorable: event.ignorable === true, callId: event.data?.callId ?? event.data?.message?.source?.callId ?? null, toolName: event.data?.name ?? null, ...(event.type === 'tool/call' ? { data: event.data } : {}) }))
       return {
         sessionId: args.sessionId, eventCount: events.length, events,
         commandEvents: events.filter(event => event.type === 'command/run' || event.type === 'command/done'),
         customDecisionEvents: events.filter(event => event.type.startsWith('weir/') || event.type.startsWith('decision/')),
+        stockAskCalls: events.filter(event => event.type === 'tool/call' && event.toolName === 'ask_user_question'),
       }
     },
   }

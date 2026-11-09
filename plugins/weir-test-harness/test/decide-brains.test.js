@@ -963,4 +963,39 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     const missing = evaluate('gui-learning-after-v1', [{ principleId: 'pr_v1', evidenceIds: ['pr_not_evidence'] }])
     assert.equal(missing.outcome, 'return')
   })
+  it('drives classless stock Auto markers through bounded classification and controllable Router outcomes', () => {
+    const scenario = byId('decision-gui')
+    for (const marker of ['GUI_AUTO_SELECTED', 'GUI_AUTO_NONE', 'GUI_AUTO_AMBIGUOUS', 'GUI_AUTO_INVALID', 'GUI_AUTO_TIMEOUT']) {
+      const [call] = blockEnds(run('decision-gui', userOptions(marker)))
+      assert.equal(call.name, 'ask_user_question')
+      const args = JSON.parse(call.arguments)
+      assert.equal(args.questions.length, 1)
+      assert.equal(Object.hasOwn(args.questions[0], 'authorizationClass'), false, `${marker} has no camelCase authorization injection`)
+      assert.equal(Object.hasOwn(args.questions[0], 'authorization_class'), false, `${marker} has no tool-only authorization injection`)
+    }
+    const question = { id: 'gui-auto-selected', question: 'GUI_AUTO_SELECTED: choose an eligible assistant', options: [{ label: 'Auto answer' }] }
+    const classificationOptions = userOptions(JSON.stringify({ contract: 'router-classification-contract/1', questions: [question], context: '' }), { system: 'Auto request classification contract: router-classification-contract/1\nClassify only this request.' })
+    const classification = JSON.parse(blockEnds([...scenario.decideRouterClassification(classificationOptions, extract(classificationOptions))])[0].text)
+    assert.deepEqual(classification, { contract: 'router-classification-contract/1', classes: [{ id: question.id, authorizationClass: 'A' }] })
+    const observed = scenario.observe(extract(classificationOptions))
+    assert.equal(observed.autoRouter.kind, 'classification')
+    assert.deepEqual(observed.autoRouter.pack.questions, [question], 'the full pack survives lastUser trace truncation')
+    assert.deepEqual(observed.autoRouter.tools, [])
+    assert.equal(observed.autoRouter.hasTemperature, false)
+
+    const route = marker => {
+      const routedQuestion = { ...question, id: `gui-auto-${marker.toLowerCase()}`, question: `GUI_AUTO_${marker}: controlled route` }
+      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion, authorizationClass: 'A' }], context: '', candidates: [{ agentId: 'ag_a', name: 'Primary' }, { agentId: 'ag_b', name: 'Secondary' }] }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
+      return { chunks: [...scenario.decideRouterRoute(options, extract(options))], observed: scenario.observe(extract(options)) }
+    }
+    assert.equal(JSON.parse(blockEnds(route('SELECTED').chunks)[0].text).agentId, 'ag_a')
+    assert.equal(JSON.parse(blockEnds(route('NONE').chunks)[0].text).outcome, 'none')
+    const ambiguous = JSON.parse(blockEnds(route('AMBIGUOUS').chunks)[0].text)
+    assert.equal(ambiguous.outcome, 'ambiguous')
+    assert.deepEqual(ambiguous.ambiguity.candidates, ['ag_a', 'ag_b'])
+    assert.equal(JSON.parse(blockEnds(route('INVALID').chunks)[0].text).agentId, 'ag_not_eligible')
+    const timeout = route('TIMEOUT')
+    assert.equal(timeout.chunks.length, 0, 'timeout holds the real stream instead of emitting text')
+    assert.equal(timeout.observed.autoRouterHold, 'timeout')
+  })
 })
