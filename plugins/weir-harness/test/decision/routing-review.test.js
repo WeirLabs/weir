@@ -1,5 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { openDecisionDatabase } from '../../src/decision/store/db.js'
+import { DecisionCases } from '../../src/decision/store/cases.js'
 import * as decisionQuery from '../../src/decision/store/query.js'
 
 function route(caseId, routeDecisionId, mode, createdAt, extra = {}) {
@@ -127,4 +132,155 @@ test('comparison requires a preceding chosen pinned baseline and never infers la
   assert.equal(projected.summary.shadowFailure, 0)
   assert.equal(projected.summary.agreement, 1)
   assert.equal(projected.summary.uncomparable, 3)
+})
+
+function reviewFixture(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'weir-routing-review-'))
+  const at = 1_000_000_000
+  const store = openDecisionDatabase(join(dir, 'decision.db'))
+  const cases = new DecisionCases(store, { now: () => at })
+  const query = new decisionQuery.DecisionQuery(store, { now: () => at })
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }) })
+
+  async function addCase(key, options = {}) {
+    const workspaceKey = options.workspaceKey ?? '/repo'
+    const rootSessionId = options.rootSessionId ?? 'root'
+    return (await cases.createCase({
+      workspaceKey, rootSessionId, entry: 'hook',
+      agentId: Object.hasOwn(options, 'agentId') ? options.agentId : 'agent-current',
+      request: { questions: [{ id: 'q', question: options.question ?? `Question ${key}` }] },
+      scope: { workspaces: [workspaceKey] }, idempotencyKey: key,
+    })).case
+  }
+  async function addRoute(current, options = {}) {
+    const id = await cases.recordRoute({
+      caseId: current.caseId, rootSessionId: options.rootSessionId ?? current.rootSessionId,
+      mode: options.mode ?? 'auto', candidates: options.candidates ?? [],
+      ...(options.chosen === undefined ? {} : { chosen: options.chosen }),
+      reason: options.reason ?? 'none:no_candidates',
+      ...(options.ambiguity === undefined ? {} : { ambiguity: options.ambiguity }),
+    })
+    if (options.createdAt !== undefined) {
+      store.db.prepare('UPDATE route_decisions SET created_at=?,updated_at=? WHERE route_decision_id=?').run(options.createdAt, options.createdAt, id)
+    }
+    return id
+  }
+  return { store, cases, query, addCase, addRoute, at }
+}
+
+test('routingReview limits associations to the authorized root and workspace and returns bounded record navigation', async t => {
+  const f = reviewFixture(t)
+  const longQuestion = `${'😀'.repeat(300)}PRIVATE_SUFFIX`
+  const allowed = await f.addCase('allowed', { question: longQuestion, agentId: 'agent-a' })
+  const allowedRoute = await f.addRoute(allowed, {
+    chosen: 'agent-a', reason: 'deterministic:single_candidate',
+    candidates: [{ agentId: 'agent-a', enabled: true, name: 'PROFILE_NAME_MUST_NOT_LEAK' }],
+  })
+  const legacy = await f.addCase('legacy', { question: 'Legacy opaque question' })
+  const legacyRoute = await f.addRoute(legacy, { mode: 'explicit', chosen: 'agent-explicit' })
+  f.store.db.prepare("UPDATE route_decisions SET mode='legacy_unknown' WHERE route_decision_id=?").run(legacyRoute)
+
+  const foreignRoot = await f.addCase('foreign-root', { rootSessionId: 'other', question: 'FOREIGN_ROOT_QUESTION' })
+  await f.addRoute(foreignRoot, { chosen: 'foreign-agent' })
+  const foreignWorkspace = await f.addCase('foreign-workspace', { workspaceKey: '/foreign', question: 'FOREIGN_WORKSPACE_QUESTION' })
+  await f.addRoute(foreignWorkspace, { chosen: 'foreign-agent' })
+  await f.addRoute(foreignRoot, { rootSessionId: 'root', reason: 'none:no_candidates' })
+  await f.cases.recordRoute({ caseId: 'missing-case', rootSessionId: 'root', mode: 'auto', reason: 'failure:model_error' })
+
+  const review = f.query.routingReview({ sessionId: 'root', workspaceKey: '/repo', window: 'all' })
+  assert.equal(review.window, 'all')
+  assert.equal(review.nextCursor, null)
+  assert.equal(review.items.length, 2)
+  const item = review.items.find(row => row.routeDecisionId === allowedRoute)
+  assert.equal(Array.from(item.questionSummary).length, 240)
+  assert.equal(item.questionSummary.includes('PRIVATE_SUFFIX'), false)
+  assert.equal(item.agentId, 'agent-a')
+  assert.deepEqual(item.record, { caseId: allowed.caseId })
+  assert.deepEqual(item.candidates, [{ agentId: 'agent-a', enabled: true }])
+  assert.equal(review.items.find(row => row.routeDecisionId === legacyRoute).outcome, 'uncomparable')
+  assert.equal(review.summary.uncomparable, 1)
+  assert.ok(f.query.record({ sessionId: 'root', caseId: item.record.caseId }))
+  assert.equal(f.query.record({ sessionId: 'other', caseId: item.record.caseId }), null)
+  const serialized = JSON.stringify(review)
+  for (const secret of ['PRIVATE_SUFFIX', 'PROFILE_NAME_MUST_NOT_LEAK', 'FOREIGN_ROOT_QUESTION', 'FOREIGN_WORKSPACE_QUESTION', 'foreign-agent']) {
+    assert.equal(serialized.includes(secret), false, secret)
+  }
+  assert.deepEqual(f.query.routingReview({ sessionId: 'other', workspaceKey: '/repo', window: 'all' }).items.map(row => row.caseId), [foreignRoot.caseId])
+  assert.equal(f.query.metrics({ sessionId: 'root', workspaceKey: '/repo', window: 'all' }).casesOpened, 2)
+})
+
+test('routingReview pages exactly 20 stable items with duplicate-resistant, root-and-window-bound cursors', async t => {
+  const f = reviewFixture(t)
+  for (let index = 0; index < 45; index++) {
+    const current = await f.addCase(`page-${index}`)
+    await f.addRoute(current)
+  }
+
+  const first = f.query.routingReview({ sessionId: 'root', window: 'all' })
+  assert.equal(first.items.length, 20)
+  assert.equal(first.summary.autoNone, 45)
+  assert.ok(first.nextCursor)
+  const second = f.query.routingReview({ sessionId: 'root', window: 'all', cursor: first.nextCursor })
+  assert.equal(second.items.length, 20)
+  assert.equal(second.summary.autoNone, 45)
+  assert.ok(second.nextCursor)
+  const third = f.query.routingReview({ sessionId: 'root', window: 'all', cursor: second.nextCursor })
+  assert.equal(third.items.length, 5)
+  assert.equal(third.nextCursor, null)
+  const items = [...first.items, ...second.items, ...third.items]
+  assert.equal(new Set(items.map(item => item.routeDecisionId)).size, 45)
+  assert.deepEqual(items.map(item => item.routeDecisionId), [...items]
+    .sort((left, right) => right.createdAt - left.createdAt || right.routeDecisionId.localeCompare(left.routeDecisionId))
+    .map(item => item.routeDecisionId))
+  assert.deepEqual(f.query.routingReview({ sessionId: 'root', window: 'all' }), first)
+  assert.deepEqual(f.query.routingReview({ sessionId: 'root', window: 'all', cursor: first.nextCursor }), second)
+
+  const decoded = JSON.parse(Buffer.from(first.nextCursor, 'base64url').toString('utf8'))
+  const reencode = value => Buffer.from(JSON.stringify(value)).toString('base64url')
+  const invalid = [
+    '', 'not-base64-json', reencode({ ...decoded, extra: true }),
+    reencode({ ...decoded, window: '7d' }), reencode({ ...decoded, sessionId: 'other' }),
+  ]
+  for (const cursor of invalid) {
+    assert.throws(() => f.query.routingReview({ sessionId: 'root', window: 'all', cursor }), error => error.code === 'INVALID_ROUTING_CURSOR')
+  }
+  assert.throws(() => f.query.routingReview({ sessionId: 'root', cursor: { after: first.nextCursor } }), error => error.code === 'INVALID_ROUTING_CURSOR')
+  for (const window of ['week', '', null, 7, 'toString', '__proto__']) {
+    assert.throws(() => f.query.routingReview({ sessionId: 'root', window }), error => error.code === 'INVALID_ROUTING_WINDOW')
+  }
+  assert.throws(() => f.query.routingReview({ sessionId: '', window: 'all' }), error => error.code === 'INVALID_SESSION')
+})
+
+test('metrics and routingReview share one windowed summary without rewriting Case or RouteDecision history', async t => {
+  const f = reviewFixture(t)
+  const agreement = await f.addCase('metric-agreement')
+  await f.addRoute(agreement, { mode: 'pinned', chosen: 'agent-a', createdAt: f.at - 20 })
+  await f.addRoute(agreement, { mode: 'auto_shadow', chosen: 'agent-a', createdAt: f.at - 19 })
+  const reassigned = await f.addCase('metric-reassigned')
+  await f.addRoute(reassigned, { mode: 'auto', chosen: 'agent-a' })
+  await f.addRoute(reassigned, { mode: 'manual_reassign', chosen: 'agent-b' })
+  const old = await f.addCase('metric-old')
+  const oldRoute = await f.addRoute(old, { reason: 'failure:timeout' })
+  f.store.db.prepare('UPDATE route_decisions SET created_at=?,updated_at=? WHERE route_decision_id=?')
+    .run(f.at - 8 * 24 * 60 * 60 * 1000, f.at - 8 * 24 * 60 * 60 * 1000, oldRoute)
+  const history = () => ({
+    cases: f.store.db.prepare('SELECT * FROM cases ORDER BY case_id').all(),
+    routes: f.store.db.prepare('SELECT * FROM route_decisions ORDER BY route_decision_id').all(),
+  })
+  const before = history()
+
+  for (const window of ['all', '24h', '7d']) {
+    const review = f.query.routingReview({ sessionId: 'root', window })
+    const metrics = f.query.metrics({ sessionId: 'root', window })
+    assert.deepEqual(metrics.routing, review.summary, window)
+    assert.equal(metrics.reassignments, review.summary.manualReassign, window)
+    assert.equal(metrics.selectorOffBypasses, 0, window)
+  }
+  assert.equal(f.query.metrics({ sessionId: 'root', window: '24h' }).routing.autoFailure, 0)
+  assert.equal(f.query.metrics({ sessionId: 'root', window: '7d' }).routing.autoFailure, 0)
+  assert.equal(f.query.metrics({ sessionId: 'root', window: 'all' }).routing.autoFailure, 1)
+  await f.query.rebuildMetrics({ sessionId: 'root', window: '24h' })
+  assert.equal(f.store.db.prepare("SELECT value FROM metrics_counters WHERE bucket='root:24h:routing.agreement'").get().value, 1)
+  assert.deepEqual(history(), before)
+  for (const window of ['invalid', 'toString', '__proto__']) assert.equal(f.query.metrics({ sessionId: 'root', window }), null)
 })

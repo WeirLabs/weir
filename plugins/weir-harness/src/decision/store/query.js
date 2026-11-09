@@ -6,6 +6,8 @@ import { evidenceOf, expandEvidence } from './evidence.js'
 
 const WINDOW_MS = { '24h': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000, '30d': 30 * 24 * 60 * 60 * 1000 }
 const FILTER_KEYS = ['agentId', 'state', 'outcome', 'reasonCode', 'scope', 'feedbackState']
+const ROUTING_PAGE_SIZE = 20
+const ROUTING_SUMMARY_CHARS = 240
 
 export class DecisionQuery {
   /** @param {import('./db.js').DecisionDatabase} store @param {{now?:()=>number}} [options] */
@@ -83,22 +85,84 @@ export class DecisionQuery {
     return deepFreeze(this.store.db.prepare("SELECT * FROM cases WHERE root_session_id=? AND state='awaiting_user' ORDER BY updated_at DESC,case_id DESC").all(input.sessionId).map(caseOf))
   }
 
-  /** @param {{sessionId:string,window?:'24h'|'7d'|'30d'|'all'}} input */
+  /** @param {{sessionId:string,workspaceKey?:string,window?:'24h'|'7d'|'30d'|'all',cursor?:string}} input */
+  routingReview(input) {
+    requireSession(input.sessionId)
+    const window = input.window === undefined ? 'all' : input.window
+    const since = routingSince(window, this.now())
+    const projected = this.routingProjection(input.sessionId, input.workspaceKey, since)
+    const after = input.cursor === undefined ? null : decodeRoutingCursor(input.cursor, input.sessionId, window)
+    const remaining = after ? projected.items.filter(item => item.createdAt < after.createdAt
+      || (item.createdAt === after.createdAt && item.routeDecisionId < after.routeDecisionId)) : projected.items
+    const items = remaining.slice(0, ROUTING_PAGE_SIZE)
+    const last = items.at(-1)
+    return deepFreeze({
+      window,
+      summary: projected.summary,
+      items,
+      nextCursor: remaining.length > ROUTING_PAGE_SIZE && last
+        ? encodeRoutingCursor(last, input.sessionId, window) : null,
+    })
+  }
+
+  /** Read only valid Case associations inside the authorized root/workspace. */
+  routingProjection(sessionId, workspaceKey, since) {
+    requireWorkspace(workspaceKey)
+    const where = ['route_decisions.root_session_id=?']
+    const params = [sessionId]
+    if (workspaceKey !== undefined) {
+      where.push('cases.workspace_key=?')
+      params.push(workspaceKey)
+    }
+    if (since !== null) {
+      where.push('route_decisions.created_at>=?')
+      params.push(since)
+    }
+    const rows = this.store.db.prepare(`SELECT route_decisions.*,
+      cases.case_id AS associated_case_id,cases.agent_id AS current_agent_id,
+      cases.request_json AS associated_request_json,cases.schema_version AS associated_schema_version
+      FROM route_decisions JOIN cases ON cases.case_id=route_decisions.case_id
+        AND cases.root_session_id=route_decisions.root_session_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY route_decisions.created_at DESC,route_decisions.route_decision_id DESC`).all(...params)
+    const chains = new Map()
+    for (const row of rows) {
+      assertSupportedSchemaVersion(row.associated_schema_version, 'DecisionCase')
+      let chain = chains.get(row.associated_case_id)
+      if (!chain) {
+        chain = {
+          case: {
+            caseId: row.associated_case_id,
+            agentId: row.current_agent_id,
+            request: parseJson(row.associated_request_json),
+          },
+          routes: [],
+        }
+        chains.set(row.associated_case_id, chain)
+      }
+      chain.routes.push(routeOf(row))
+    }
+    return projectRoutingChains([...chains.values()])
+  }
+
+  /** @param {{sessionId:string,workspaceKey?:string,window?:'24h'|'7d'|'30d'|'all'}} input */
   metrics(input) {
     requireSession(input.sessionId)
     const window = input.window ?? 'all'
-    if (window !== 'all' && !(window in WINDOW_MS)) return null
+    if (window !== 'all' && !Object.hasOwn(WINDOW_MS, window)) return null
     const now = this.now()
     const since = window === 'all' ? null : now - WINDOW_MS[window]
-    const cases = this.store.db.prepare('SELECT * FROM cases WHERE root_session_id=?').all(input.sessionId)
-      .filter(row => within(row.created_at, since))
+    requireWorkspace(input.workspaceKey)
+    const workspace = input.workspaceKey
+    const caseParams = [input.sessionId, ...(workspace === undefined ? [] : [workspace])]
+    const cases = this.store.db.prepare(`SELECT * FROM cases WHERE root_session_id=?${workspace === undefined ? '' : ' AND workspace_key=?'}`)
+      .all(...caseParams).filter(row => within(row.created_at, since))
+    const associationWhere = `cases.root_session_id=?${workspace === undefined ? '' : ' AND cases.workspace_key=?'}`
     const attempts = this.store.db.prepare(`SELECT attempts.* FROM attempts JOIN cases ON cases.case_id=attempts.case_id
-      WHERE cases.root_session_id=?`).all(input.sessionId).filter(row => within(row.started_at, since))
+      WHERE ${associationWhere}`).all(...caseParams).filter(row => within(row.started_at, since))
     const feedback = this.store.db.prepare(`SELECT feedback.* FROM feedback JOIN cases ON cases.case_id=feedback.case_id
-      WHERE cases.root_session_id=?`).all(input.sessionId).filter(row => within(row.created_at, since))
-    const routes = this.store.db.prepare(`SELECT route_decisions.* FROM route_decisions
-      LEFT JOIN cases ON cases.case_id=route_decisions.case_id
-      WHERE route_decisions.root_session_id=?`).all(input.sessionId).filter(row => within(row.created_at, since))
+      WHERE ${associationWhere}`).all(...caseParams).filter(row => within(row.created_at, since))
+    const routing = this.routingProjection(input.sessionId, workspace, since).summary
 
     const returnedByCode = Object.fromEntries(RETURN_CODES.map(code => [code, 0]))
     for (const row of cases) {
@@ -135,7 +199,8 @@ export class DecisionQuery {
         undone: feedback.filter(row => row.kind === 'undo_rating_up' || row.kind === 'undo_rating_down').length,
       },
       corrections: feedback.filter(row => row.kind === 'correction').length,
-      reassignments: routes.filter(row => row.mode === 'manual_reassign').length,
+      routing,
+      reassignments: routing.manualReassign,
       feedbackParticipation: new Set(feedback.map(row => row.case_id)).size,
       // Off is deliberately not sampled; this stable zero is not an activity estimate.
       selectorOffBypasses: 0,
@@ -224,7 +289,48 @@ function decodeCursor(value) {
   }
 }
 
-/** @param {any} row */
+/** @param {any} item @param {string} sessionId @param {string} window */
+function encodeRoutingCursor(item, sessionId, window) {
+  return Buffer.from(JSON.stringify({
+    createdAt: item.createdAt, routeDecisionId: item.routeDecisionId, sessionId, window,
+  })).toString('base64url')
+}
+
+function decodeRoutingCursor(value, sessionId, window) {
+  try {
+    if (typeof value !== 'string' || !value || value.length > 1024 || !/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('shape')
+    const decoded = Buffer.from(value, 'base64url')
+    if (decoded.toString('base64url') !== value) throw new Error('encoding')
+    const cursor = JSON.parse(decoded.toString('utf8'))
+    const keys = Object.keys(cursor)
+    if (!Number.isInteger(cursor.createdAt) || cursor.createdAt < 0
+      || typeof cursor.routeDecisionId !== 'string' || !cursor.routeDecisionId
+      || cursor.sessionId !== sessionId || cursor.window !== window
+      || keys.length !== 4 || keys.some(key => !['createdAt', 'routeDecisionId', 'sessionId', 'window'].includes(key))) throw new Error('shape')
+    return cursor
+  } catch {
+    throw new DecisionContractError('INVALID_ROUTING_CURSOR', 'cursor is not valid for this routing window and root')
+  }
+}
+
+function routingSince(window, now) {
+  if (window !== 'all' && !Object.hasOwn(WINDOW_MS, window)) throw new DecisionContractError('INVALID_ROUTING_WINDOW', String(window))
+  return window === 'all' ? null : now - WINDOW_MS[window]
+}
+
+function requireWorkspace(workspaceKey) {
+  if (workspaceKey !== undefined && (typeof workspaceKey !== 'string' || !workspaceKey)) {
+    throw new DecisionContractError('INVALID_WORKSPACE', 'workspaceKey must be a non-empty string')
+  }
+}
+
+function routingQuestionSummary(request) {
+  const text = (Array.isArray(request?.questions) ? request.questions : [])
+    .map(question => typeof question?.question === 'string' ? question.question : '')
+    .filter(Boolean).join(' · ')
+  return Array.from(text).slice(0, ROUTING_SUMMARY_CHARS).join('')
+}
+
 function feedbackOf(row) {
   assertSupportedSchemaVersion(row.schema_version, 'Feedback')
   return {
@@ -310,6 +416,8 @@ export function projectRoutingChains(chains) {
           conflict: typeof route.ambiguity.conflict === 'string' ? route.ambiguity.conflict : '',
         } : null,
         createdAt: route.createdAt,
+        questionSummary: routingQuestionSummary(chain.case.request),
+        record: { caseId: chain.case.caseId },
         agentId: typeof chain.case.agentId === 'string' && chain.case.agentId ? chain.case.agentId : null,
         outcome: classified.outcome,
         ...(classified.baselineAgentId === undefined ? {} : { baselineAgentId: classified.baselineAgentId }),
