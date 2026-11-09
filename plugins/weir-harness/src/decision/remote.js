@@ -2,7 +2,7 @@
 export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
 export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
-  'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
+  'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'routingReview', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
   'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'profileUpsert', 'profileSetState',
   'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
 ])
@@ -19,11 +19,12 @@ export function createDecisionRemoteService(dependencies) {
       const status = broker?.status()
       if (!broker || (status.available !== true && !(method === 'overview' && status.reason === 'disabled'))) return { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: status?.reason ?? 'Decision Broker is unavailable' } }
       let value
-      const needsContext = method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)
+      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
       if (method === 'setSelector') value = await broker.setSelector(context.rootSessionId, args.mode, args.agentId, context.workspaceKey)
       else if (method === 'profileSetState') value = await broker.profileSetState(args.agentId, args.state, context.workspaceKey)
       else if (method === 'profileUpsert') value = await broker.profileUpsert({ ...args, workspaceKey: context.workspaceKey })
+      else if (method === 'routingReview') value = await broker.routingReview({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (method === 'waitForToolCall') value = await broker[method](args, signal)
       else value = await broker[method](args)

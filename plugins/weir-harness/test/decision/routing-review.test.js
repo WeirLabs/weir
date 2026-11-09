@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { openDecisionDatabase } from '../../src/decision/store/db.js'
 import { DecisionCases } from '../../src/decision/store/cases.js'
 import * as decisionQuery from '../../src/decision/store/query.js'
+import { brokerFixture } from './p3-fixtures.js'
 
 function route(caseId, routeDecisionId, mode, createdAt, extra = {}) {
   return {
@@ -283,4 +284,41 @@ test('metrics and routingReview share one windowed summary without rewriting Cas
   assert.equal(f.store.db.prepare("SELECT value FROM metrics_counters WHERE bucket='root:24h:routing.agreement'").get().value, 1)
   assert.deepEqual(history(), before)
   for (const window of ['invalid', 'toString', '__proto__']) assert.equal(f.query.metrics({ sessionId: 'root', window }), null)
+})
+
+test('Broker routingReview resolves the authorized root/workspace and preserves existing record navigation', async t => {
+  const f = await brokerFixture(t)
+  const local = (await f.broker.cases.createCase({
+    workspaceKey: f.workspace, rootSessionId: 'root', entry: 'hook', agentId: null,
+    request: { questions: [{ id: 'q', question: 'Authorized routing question' }] },
+    scope: { workspaces: [f.workspace] }, idempotencyKey: 'broker-routing-local',
+  })).case
+  await f.broker.cases.recordRoute({ caseId: local.caseId, rootSessionId: 'root', mode: 'auto', reason: 'none:no_candidates' })
+  for (const [key, rootSessionId, workspaceKey, question] of [
+    ['broker-routing-workspace', 'root', '/foreign', 'FOREIGN_WORKSPACE_BROKER'],
+    ['broker-routing-root', 'other', f.workspace, 'FOREIGN_ROOT_BROKER'],
+  ]) {
+    const foreign = (await f.broker.cases.createCase({
+      workspaceKey, rootSessionId, entry: 'hook', agentId: 'foreign-agent',
+      request: { questions: [{ id: 'q', question }] }, scope: { workspaces: [workspaceKey] }, idempotencyKey: key,
+    })).case
+    await f.broker.cases.recordRoute({ caseId: foreign.caseId, rootSessionId, mode: 'auto', chosen: 'foreign-agent', reason: 'deterministic:single_candidate' })
+  }
+  f.broker.ctx.sessionQuery = {
+    traceSession: async sessionId => {
+      if (sessionId === 'child') return { complete: true, root: { header: { id: 'root', cwd: f.workspace } } }
+      throw new Error(`unknown session ${sessionId}`)
+    },
+  }
+
+  const review = await f.broker.routingReview({ sessionId: 'child', workspaceKey: '/spoof', window: 'all' })
+  assert.deepEqual(review.items.map(item => item.caseId), [local.caseId])
+  assert.equal(review.summary.autoNone, 1)
+  assert.equal(JSON.stringify(review).includes('FOREIGN_'), false)
+  assert.equal(JSON.stringify(review).includes('foreign-agent'), false)
+  assert.ok(await f.broker.record({ sessionId: 'child', caseId: review.items[0].record.caseId }))
+  assert.equal((await f.broker.metrics({ sessionId: 'child', window: 'all' })).casesOpened, 1)
+  await assert.rejects(f.broker.routingReview({ sessionId: 'child', window: 'invalid' }), error => error.code === 'INVALID_ROUTING_WINDOW')
+  await assert.rejects(f.broker.routingReview({ sessionId: 'child', cursor: 'not-a-cursor' }), error => error.code === 'INVALID_ROUTING_CURSOR')
+  await assert.rejects(f.broker.routingReview({ sessionId: 'missing' }), error => error.message.includes('unknown session'))
 })

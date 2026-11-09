@@ -382,6 +382,16 @@ const ROUTING_SUMMARY_BY_OUTCOME = Object.freeze({
   manual_reassign: 'manualReassign', uncomparable: 'uncomparable',
 })
 
+/** Validate and project an empty read without opening or creating a database. */
+export function emptyRoutingReview(input) {
+  requireSession(input.sessionId)
+  requireWorkspace(input.workspaceKey)
+  const window = input.window === undefined ? 'all' : input.window
+  routingSince(window, 0)
+  if (input.cursor !== undefined) decodeRoutingCursor(input.cursor, input.sessionId, window)
+  return deepFreeze({ window, summary: projectRoutingChains([]).summary, items: [], nextCursor: null })
+}
+
 /** Project immutable route facts without interpreting natural-language reasons. */
 export function projectRoutingChains(chains) {
   const summary = {

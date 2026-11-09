@@ -180,3 +180,38 @@ test('waitForToolCall keeps bare JSON args and forwards RPC cancellation to the 
   assert.deepEqual(result.value, { caseId: 'dc-wait', revision: 4, state: 'awaiting_user' })
   assert.deepEqual(calls, [[{ sessionId: 'child', toolCallId: 'call' }, controller.signal]])
 })
+
+test('routingReview is one authorized bare-args remote with contribution parity and explicit parameter errors', async () => {
+  assert.equal(DECISION_REMOTE_METHODS.filter(method => method === 'routingReview').length, 1)
+  const invocation = decisionRemoteContribution().invocations.find(row => row.method === 'routingReview')
+  assert.ok(invocation)
+  assert.equal(invocation.cancellation, undefined)
+  assert.deepEqual(invocation.parameters, [{ name: 'args', wire: 'args', source: 'json', codec: { mode: 'src-json' } }])
+
+  const contexts = []
+  const calls = []
+  const broker = {
+    status: () => ({ available: true }),
+    sessionContext: async sessionId => {
+      contexts.push(sessionId)
+      return { rootSessionId: 'root', workspaceKey: '/repo' }
+    },
+    routingReview: async args => {
+      if (args.window === 'invalid') {
+        const error = new Error('invalid routing window')
+        error.code = 'INVALID_ROUTING_WINDOW'
+        throw error
+      }
+      calls.push(args)
+      return { window: args.window, summary: { agreement: 0 }, items: [], nextCursor: null }
+    },
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  const result = await service.routingReview({ sessionId: 'child', workspaceKey: '/spoof', window: '7d', cursor: 'cursor' })
+  assert.deepEqual(result, { ok: true, value: { window: '7d', summary: { agreement: 0 }, items: [], nextCursor: null } })
+  assert.deepEqual(contexts, ['child'])
+  assert.deepEqual(calls, [{ sessionId: 'root', workspaceKey: '/repo', window: '7d', cursor: 'cursor' }])
+  const invalid = await service.routingReview({ sessionId: 'child', window: 'invalid' })
+  assert.equal(invalid.ok, false)
+  assert.equal(invalid.error.code, 'INVALID_ROUTING_WINDOW')
+})
