@@ -323,4 +323,7 @@ test('unowned Auto records expose truthful route history and only owned waiting 
   assert.equal(reassigned.routeHistory.at(-1).to, 'a')
   assert.equal(reassigned.routeHistory.at(-1).toName, 'Tone')
   assert.equal(model.cardView({ ...detail, case: { ...detail.case, agentId: 'a', state: 'closed', closing: 'answered' } }, agents).canRetry, false)
+  const unknown = model.cardView({ ...detail, case: { ...detail.case, agentId: 'missing' }, routeDecisions: [{ ...manual, chosen: 'missing' }] }, [])
+  assert.equal(unknown.assigned, true)
+  assert.equal(unknown.routeHistory.at(-1).toName, 'The current selection is unavailable.')
 })

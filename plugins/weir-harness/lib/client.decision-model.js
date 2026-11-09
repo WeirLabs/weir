@@ -134,13 +134,13 @@ window.__ModuleLoader__.load({
         const item = {
           ...route, mode, modeKey: ROUTE_MODE_KEYS[mode] ?? "decisionRouteModeUnknown",
           statusKey: `decisionRouteStatus${status[0].toUpperCase()}${status.slice(1)}`,
-          choiceName: name(chosen),
+          choiceName: chosen ? name(chosen) ?? t("decisionSelectionUnavailable") : null,
         };
         if (mode === "manual_reassign") {
           item.from = authoritative;
           item.to = chosen;
-          item.fromName = authoritative ? name(authoritative) : t("decisionNoAssignedAgent");
-          item.toName = chosen ? name(chosen) : t("decisionNoAssignedAgent");
+          item.fromName = authoritative ? name(authoritative) ?? t("decisionSelectionUnavailable") : t("decisionNoAssignedAgent");
+          item.toName = chosen ? name(chosen) ?? t("decisionSelectionUnavailable") : t("decisionNoAssignedAgent");
         }
         if (mode !== "auto_shadow" && ["pinned", "explicit", "auto", "manual_reassign"].includes(mode) && chosen) authoritative = chosen;
         return item;
