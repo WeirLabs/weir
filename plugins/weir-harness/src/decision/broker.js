@@ -114,6 +114,15 @@ export class DecisionBroker {
     this.query = new DecisionQuery(store, { now: this.now })
     this.retriever = new DecisionContextRetriever(store, this.evidence)
     this.learning = new DecisionLearning(store, { now: this.now, evidence: this.evidence })
+    const incompleteIntake = store.db.prepare("SELECT case_id FROM cases WHERE state='received' AND agent_id IS NULL").all()
+    for (const row of incompleteIntake) {
+      const current = this.cases.getCase(row.case_id)
+      await this.cases.transition({
+        caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
+        state: 'awaiting_user', awaitingReason: 'interrupted',
+      })
+    }
+    this.audit('recover', { recoveredIntake: incompleteIntake.length })
     const recovered = await this.attempts.recoverInterrupted()
     this.audit('recover', recovered)
     const recoveredLearning = await this.learning.recoverInterrupted()
@@ -262,6 +271,7 @@ export class DecisionBroker {
           const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'authority', escalation: { missing: ['This consultation requires native user authority'] } })
           return this.consultResult(waiting)
         }
+        if (!explicit) await this.observeShadow({ current: opened.case, request, scope, origin, agent, signal: flightSignal })
         const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
         const verdict = await this.evaluateCase(evaluating, agent, flightSignal)
         return this.consultResult(this.cases.getCase(verdict.caseId), verdict)
@@ -368,6 +378,7 @@ export class DecisionBroker {
           return { kind: 'pass', caseId: waiting.caseId, why: 'awaiting_user' }
         }
         await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: 'Pinned by user' })
+        await this.observeShadow({ current: opened.case, request: opened.case.request, scope: opened.case.scope, origin, agent, signal: flightSignal })
         const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
         this.audit('case-open', { caseId: evaluating.caseId, entry: 'hook', agentId: selected })
         return this.evaluateCase(evaluating, agent, flightSignal)
@@ -428,6 +439,41 @@ export class DecisionBroker {
     if (latest.state === 'closed') return this.persistedVerdict(latest)
     if (latest.state !== 'evaluating') return { kind: 'pass', caseId: latest.caseId, why: 'awaiting_user' }
     return this.evaluateCase(latest, agent, signal, { heldSlot })
+  }
+
+  /** Append one diagnostic route without changing the already-pinned Case. */
+  async observeShadow({ current, request, scope, origin, agent, signal }) {
+    if (this.config().decisionAgentAutoShadow !== true) return
+    const sidecar = {
+      llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent), signal,
+      timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
+      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 1600,
+      contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
+    }
+    try {
+      const pinned = this.profiles.getProfile(current.agentId)
+      if (pinned.state !== 'enabled' || pinned.workspaceKey !== current.workspaceKey) return
+      const classified = await classifyAutoRequest({ request, ...sidecar })
+      let route
+      if (classified.kind === 'failed') {
+        route = { kind: 'failed', candidates: [], reason: classified.reason }
+      } else if (classified.kind === 'authority') {
+        route = { kind: 'none', candidates: [], reason: 'admission:authority' }
+      } else {
+        const profiles = this.profiles.listProfiles(origin.workspaceKey)
+        route = await routeAuto({
+          request: classified.request, scope, workspaceKey: origin.workspaceKey, profiles, ...sidecar,
+        })
+      }
+      await this.cases.recordRoute({
+        caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto_shadow',
+        candidates: route.candidates, ...(route.kind === 'selected' ? { chosen: route.chosen } : {}),
+        reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
+      })
+    } catch {
+      // Shadow is diagnostic only: model, parsing, and storage failures never
+      // enter domain recovery or change the real pinned outcome.
+    }
   }
 
   async routeAutoCase({ current, request, scope, origin, agent, signal }) {
@@ -687,13 +733,20 @@ export class DecisionBroker {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be reassigned')
         const target = this.profiles.getProfile(input.agentId)
         if (target.state !== 'enabled' || target.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: target.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: input.agentId })
-        const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', agentId: target.agentId, ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })
-        await this.cases.recordRoute({ caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'manual_reassign', candidates: [{ agentId: target.agentId, enabled: true }], chosen: target.agentId, reason: 'User reassigned the Case' })
+        const evaluating = await this.cases.transitionWithRoute({
+          caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision,
+          state: 'evaluating', agentId: target.agentId,
+          ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}),
+        }, {
+          caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'manual_reassign',
+          candidates: [{ agentId: target.agentId, enabled: true }], chosen: target.agentId, reason: 'User reassigned the Case',
+        })
         this.audit('outcome', { caseId: current.caseId, action: 'reassign', agentId: target.agentId })
         return evaluating
       }
       case 'retry': {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be retried')
+        if (typeof current.agentId !== 'string' || !current.agentId) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Case requires reassignment before retry')
         const profile = this.profiles.getProfile(current.agentId)
         if (profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: current.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: current.agentId })
         const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })

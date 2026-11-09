@@ -88,6 +88,20 @@ test('stale revision cannot overwrite a newer Case', async t => {
   await assert.rejects(cases.transition({ caseId: current.caseId, expectedState: 'received', expectedRevision: 99, state: 'evaluating' }), error => error.code === 'REVISION_CONFLICT')
 })
 
+test('an unowned user decision closes truthfully without creating Agent Evidence', async t => {
+  const { store, cases } = fixture(t)
+  let current = (await cases.createCase({ ...input('unowned-decision'), agentId: null })).case
+  current = await cases.transition({ caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision, state: 'awaiting_user', awaitingReason: 'no_route' })
+  current = await cases.transition({
+    caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision,
+    state: 'closed', closing: 'escalated', decision: { kind: 'user_decision', answers: [{ id: 'q', selected: ['A'] }] },
+  })
+  assert.equal(current.agentId, null)
+  assert.equal(current.state, 'closed')
+  assert.deepEqual(current.decision.answers, [{ id: 'q', selected: ['A'] }])
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM evidence').get().n, 0)
+})
+
 test('transitionWithRoute atomically persists Auto selection, derived request, and Case ownership', async t => {
   const { store, cases, profiles } = fixture(t)
   const profile = await profiles.createProfile({ workspaceKey: '/repo', name: 'Auto target' })

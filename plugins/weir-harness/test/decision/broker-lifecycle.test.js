@@ -62,6 +62,10 @@ test('start recovers only interrupted work and preserves waiting states, selecto
   const revision = await make('revision', 'awaiting_revision')
   const evaluating = await make('evaluating', 'evaluating')
   const received = await make('received', 'received')
+  const receivedUnowned = (await cases.createCase({
+    workspaceKey: '/repo', rootSessionId: 'root', entry: 'consult', agentId: null,
+    request: { questions: [{ id: 'q', question: 'Choose?' }] }, scope: { workspaces: ['/repo'] }, idempotencyKey: 'received-unowned',
+  })).case
   const profileBefore = profiles.getProfile(profile.agentId)
   store.close()
 
@@ -72,10 +76,44 @@ test('start recovers only interrupted work and preserves waiting states, selecto
   assert.equal(broker.cases.getCase(evaluating.caseId).state, 'awaiting_user')
   assert.equal(broker.cases.getCase(evaluating.caseId).awaitingReason, 'interrupted')
   assert.equal(broker.cases.getCase(received.caseId).state, 'received')
+  const recoveredIntake = broker.cases.getCase(receivedUnowned.caseId)
+  assert.equal(recoveredIntake.state, 'awaiting_user')
+  assert.equal(recoveredIntake.awaitingReason, 'interrupted')
+  assert.equal(recoveredIntake.agentId, null)
+  assert.equal(recoveredIntake.attemptCount, 0)
+  assert.equal(broker.attempts.forCase(receivedUnowned.caseId).length, 0)
+  assert.equal(broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions WHERE case_id=?').get(receivedUnowned.caseId).n, 0)
   assert.equal(broker.attempts.forCase(evaluating.caseId)[0].error.kind, 'interrupted')
   assert.equal(broker.cases.getCase(evaluating.caseId).attemptCount, 1)
   assert.deepEqual(broker.selector('root'), { mode: 'agent', agentId: profile.agentId })
   assert.deepEqual(broker.profiles.getProfile(profile.agentId), profileBefore)
+})
+
+test('recovered Auto intake replay returns interrupted waiting without rerouting or an Attempt', async t => {
+  const { dir, broker } = fixture(t, { decisionAgentAutoAnswerClasses: ['A'] })
+  const path = join(dir, 'weir', 'profiles', 'test', 'decisions', 'decision.db')
+  const store = openDecisionDatabase(path)
+  const profiles = new DecisionProfiles(store)
+  const cases = new DecisionCases(store)
+  await profiles.setSelector('root', { mode: 'auto', agentId: null })
+  const current = (await cases.createCase({
+    workspaceKey: dir, rootSessionId: 'root', entry: 'consult', agentId: null,
+    request: { entry: 'consult', questions: [{ id: 'question', question: 'Choose?', options: [{ label: 'A' }] }] },
+    scope: { workspaces: [dir] }, idempotencyKey: 'consult:root:interrupted-auto',
+  })).case
+  store.close()
+
+  await broker.start()
+  const recovered = broker.cases.getCase(current.caseId)
+  assert.equal(recovered.state, 'awaiting_user')
+  assert.equal(recovered.awaitingReason, 'interrupted')
+  const agent = { id: 'root', session: { header: { id: 'root', cwd: dir, delegationDepth: 0 }, requestContext: () => ({ provider: 'p', model: 'm' }) } }
+  const replay = await broker.consult({ agent, args: { question: 'Choose?', options: [{ label: 'A' }], request_id: 'interrupted-auto' } })
+  assert.deepEqual(replay, { outcome: 'awaiting_user', caseId: current.caseId, state: 'awaiting_user', reason: 'interrupted' })
+  assert.equal(broker.cases.getCase(current.caseId).revision, recovered.revision)
+  assert.equal(broker.cases.getCase(current.caseId).attemptCount, 0)
+  assert.equal(broker.attempts.forCase(current.caseId).length, 0)
+  assert.equal(broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions WHERE case_id=?').get(current.caseId).n, 0)
 })
 
 test('unresolvable root and storage open failure are readable and audited', async t => {
