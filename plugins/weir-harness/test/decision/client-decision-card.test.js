@@ -199,6 +199,33 @@ const waitingDetail = {
   },
 }
 
+test('awaiting explicit consult leads with its only answer form and no duplicate review content', async () => {
+  const mounted = await mount(waitingDetail, { props: { toolName: 'decision_consult' } })
+  const tree = mounted.render()
+  const content = tree.children.filter(Boolean)
+  const forms = findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)
+  const answerFormIndex = content.findIndex(node => node.__type === mounted.ui.DecisionAnswers)
+  const secondaryLabels = ['decisionEvidence', 'decisionEvaluationHistory', 'decisionRecoveryActions', 'decisionAdvancedDiagnostics']
+  const secondaryContentAfterForm = secondaryLabels.every(label => content.findIndex(node => node.__type === mounted.ui.Disclosure && node.label === label) > answerFormIndex)
+    && content.findIndex(node => node.__type === mounted.ui.Button && node.children === 'decisionHistory') > answerFormIndex
+    && content.findIndex(node => node.className === 'weir-da-feedback-editor') > answerFormIndex
+  assert.deepEqual({
+    formCount: forms.length,
+    answerFormImmediatelyAfterHeader: content[0]?.__type === mounted.ui.DecisionStyles && content[1]?.className === 'weir-da-card-header' && answerFormIndex === 2,
+    recordAnswerSummaries: findAll(tree, node => node.className === 'weir-da-record-answers').length,
+    suggestionReviews: findAll(tree, node => node.className === 'weir-da-suggestion-review').length,
+    secondaryContentAfterForm,
+  }, {
+    formCount: 1,
+    answerFormImmediatelyAfterHeader: true,
+    recordAnswerSummaries: 0,
+    suggestionReviews: 0,
+    secondaryContentAfterForm: true,
+  })
+  assert.deepEqual(forms[0].suggestions, waitingDetail.case.escalation.suggestion)
+  assert.equal(textContent(tree).includes('decisionNoAnswer'), false)
+})
+
 test('Hook pending card defers to the native question and never duplicates its answer form', async () => {
   const mounted = await mount(waitingDetail, { props: { toolName: 'ask_user_question' } })
   const tree = mounted.render()

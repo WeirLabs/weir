@@ -148,6 +148,7 @@ window.__ModuleLoader__.load({
       const reason = view.reasonKey ? t(view.reasonKey) : null;
       const waiting = view.state === "awaiting_user";
       const nativeAnswer = waiting && props.toolName === "ask_user_question";
+      const directConsultAnswer = waiting && props.toolName === "decision_consult";
       const suggestions = Array.isArray(view.escalation?.suggestion) ? view.escalation.suggestion : [];
       const perQuestion = Array.isArray(view.escalation?.perQuestion) ? view.escalation.perQuestion : [];
       const previous = view.history.filter(group => group.attempt?.attemptId !== view.currentAttempt?.attemptId);
@@ -178,20 +179,24 @@ window.__ModuleLoader__.load({
             ] }, "copy"),
             jsx.jsx(ui.Badge, { variant: badgeVariant, children: t(view.statusKey) }, "status"),
           ] }, "header"),
-          jsx.jsx("section", { className: "weir-da-record-answers", "aria-label": t("decisionRecord"), children: questions.map((question, index) => {
+          directConsultAnswer ? jsx.jsx(ui.DecisionAnswers, {
+            questions, answers: draft.answers, suggestions, pending: isPending,
+            onChange: value => updateDraft("answers", value), onSubmit: value => run("decide", view.caseId, value), t,
+          }, "answer-form") : null,
+          !directConsultAnswer ? jsx.jsx("section", { className: "weir-da-record-answers", "aria-label": t("decisionRecord"), children: questions.map((question, index) => {
             const answer = answers.find(item => item?.id === question.id);
             return jsx.jsxs("div", { className: "weir-da-answer-summary", children: [
               jsx.jsx("strong", { children: question.question }, "question"),
               jsx.jsx("div", { children: answerText(answer) || t("decisionNoAnswer") }, "answer"),
             ] }, question.id ?? index);
-          }) }, "answers"),
+          }) }, "answers") : null,
           summary || reason ? jsx.jsxs("section", { children: [
             jsx.jsx("h3", { children: t("decisionReasonSummary") }, "title"),
             summary ? jsx.jsx("p", { children: summary }, "summary") : null,
             reason && reason !== summary ? jsx.jsx("p", { className: "weir-da-caption", children: reason }, "recorded-reason") : null,
           ] }, "reason") : null,
           nativeAnswer ? jsx.jsx("p", { className: "weir-da-state", "data-native-answer": true, children: t("decisionNativeAnswerHint") }, "native-answer") : null,
-          waiting && (suggestions.length || perQuestion.length) ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [
+          waiting && !directConsultAnswer && (suggestions.length || perQuestion.length) ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [
             jsx.jsx("strong", { children: [t("decisionSuggestions"), " · ", t("decisionSuggestionNotSubmitted")] }, "title"),
             suggestions.length ? jsx.jsx("ul", { children: suggestions.map((answer, index) => {
               const question = questions.find(item => item.id === answer?.id);
@@ -202,10 +207,6 @@ window.__ModuleLoader__.load({
               return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown")}` }, entry?.id ?? index);
             }) }, "per-question") : null,
           ] }, "guidance") : null,
-          waiting && props.toolName === "decision_consult" ? jsx.jsx(ui.DecisionAnswers, {
-            questions, answers: draft.answers, suggestions, pending: isPending,
-            onChange: value => updateDraft("answers", value), onSubmit: value => run("decide", view.caseId, value), t,
-          }, "answer-form") : null,
           error ? jsx.jsx(ui.ErrorState, { children: errorMessage }, "error") : null,
           jsx.jsx(ui.Disclosure, {
             id: `weir-da-card-evidence-${view.caseId}`, label: t("decisionEvidence"), onOpen: openEvidence,

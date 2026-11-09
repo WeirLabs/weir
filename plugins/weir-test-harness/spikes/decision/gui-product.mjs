@@ -395,7 +395,46 @@ async function waitCase(sessionId, marker, predicate = () => true) {
 async function record(sessionId, phase, caseId) { return rpc(sessionId, phase, 'record', { caseId }) }
 
 async function cardState(caseId) {
-  return instance.cdp.evaluate(`(() => { const cards=[...document.querySelectorAll('[data-weir-decision-card=${JSON.stringify(caseId)}]')].filter(el=>el.offsetParent!==null); return {cards:cards.length,forms:cards.reduce((sum,card)=>sum+card.querySelectorAll('form.weir-da-answers').length,0),nativeHints:cards.reduce((sum,card)=>sum+card.querySelectorAll('[data-native-answer]').length,0),text:cards.map(card=>card.innerText).join('\\n---\\n')} })()`)
+  return instance.cdp.evaluate(`(() => {
+    const cards=[...document.querySelectorAll('[data-weir-decision-card=${JSON.stringify(caseId)}]')].filter(el=>el.offsetParent!==null)
+    const forms=cards.reduce((sum,card)=>sum+card.querySelectorAll('form.weir-da-answers').length,0)
+    const formImmediatelyAfterHeader=cards.length===1&&cards.every(card=>card.querySelector(':scope > .weir-da-card-header')?.nextElementSibling===card.querySelector(':scope > form.weir-da-answers'))
+    const formBeforeSecondary=cards.length===1&&cards.every(card=>{
+      const form=card.querySelector(':scope > form.weir-da-answers')
+      if(!form)return false
+      const content=[...card.children]
+      const formIndex=content.indexOf(form)
+      const secondary=content.filter(el=>el.classList.contains('weir-da-disclosure')||el.classList.contains('weir-da-feedback-editor')||el.matches('button.weir-da-button'))
+      return secondary.length===6&&secondary.every(el=>content.indexOf(el)>formIndex)
+    })
+    return {cards:cards.length,forms,formImmediatelyAfterHeader,formBeforeSecondary,recordAnswerSummaries:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-record-answers').length,0),suggestionReviews:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-suggestion-review').length,0),nativeHints:cards.reduce((sum,card)=>sum+card.querySelectorAll('[data-native-answer]').length,0),text:cards.map(card=>card.innerText).join('\\n---\\n')}
+  })()`)
+}
+
+async function revealCard(caseId) {
+  const selector = `[data-weir-decision-card=${JSON.stringify(caseId)}]`
+  const initial = await cardState(caseId)
+  if (!initial.text.trim()) {
+    const target = await instance.cdp.evaluate(`(() => {
+      const card=document.querySelector(${JSON.stringify(selector)})
+      const question=card?.querySelector('.weir-da-card-header h2')?.textContent?.trim()
+      if(!question)return null
+      const trigger=[...document.querySelectorAll('button[data-process-activity="tools"]')].find(el=>el.offsetParent!==null&&el.getAttribute('aria-expanded')==='false'&&el.textContent.includes(question))
+      if(!trigger)return null
+      const rect=trigger.getBoundingClientRect()
+      return {label:trigger.textContent.trim(),x:rect.left+rect.width/2,y:rect.top+rect.height/2}
+    })()`)
+    requireEvidence(target, 'the held consult native process group can be opened')
+    await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseMoved', x: target.x, y: target.y })
+    await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', buttons: 1, clickCount: 1 })
+    await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', buttons: 0, clickCount: 1 })
+    writeJson(join(out, 'consult-reveal.json'), { caseId, method: 'CDP Input.dispatchMouseEvent', target })
+  }
+  await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'start',inline:'nearest'})`)
+  return waitFor(async () => {
+    const value = await cardState(caseId)
+    return value.text.trim() ? value : null
+  }, 30_000)
 }
 
 async function scanSession(sessionId, path) {
@@ -868,6 +907,8 @@ try {
     check('consultSingleWritableCardBeforeToolResult', false, { caseId: consult.caseId, callId: held.callId, authoritativeCaseId: authoritativeDuringHold?.case?.caseId ?? null, cardCount: evidence.card.cards, forms: evidence.card.forms, lookupCount: evidence.lookups.length })
   }
   check('consultSingleWritableCardBeforeToolResult', !beforeResult.events.some(event => event.type === 'tool/result' && event.callId === held.callId) && beforeCard.cards === 1 && beforeCard.forms === 1, { held, card: beforeCard })
+  beforeCard = await revealCard(consult.caseId)
+  check('consultWaitingCardPutsDecisionFirst', beforeCard.cards === 1 && beforeCard.forms === 1 && beforeCard.formImmediatelyAfterHeader && beforeCard.formBeforeSecondary && beforeCard.recordAnswerSummaries === 0 && beforeCard.suggestionReviews === 0 && beforeCard.text.includes('GUI_B_DECIDE'), beforeCard)
   await shot('10-consult-before-tool-result')
   writeFileSync(join(out, 'consult-result.release'), `${JSON.stringify({ at: Date.now() })}\n`)
   const afterResult = await waitFor(async () => { const scan = await scanSession(sessionId, 'consult-after-result-session.json'); return scan.events.some(event => event.type === 'tool/result' && event.callId === held.callId) ? scan : null }, 30_000)
