@@ -34,6 +34,7 @@ const sqlitePhases = []
 const comparisons = []
 const visualAudits = []
 const accessibility = {}
+const keyboardAudits = []
 const mutationCounts = new Map()
 let instance = null
 let instanceNumber = 0
@@ -451,30 +452,85 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
 }
 
 async function keyboardSelector(sessionId, agentId) {
+  const audit = { agentId, steps: [] }
+  keyboardAudits.push(audit)
+  const saveAudit = () => writeJson(join(out, 'keyboard-selector.json'), keyboardAudits)
   await openSession(instance, sessionId)
-  await instance.cdp.evaluate(`document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]').focus()`)
-  accessibility.selectorTrigger = await instance.cdp.accessibility('[data-weir-decision-trigger="weir-decision-selector"]')
-  await instance.cdp.key('Enter')
-  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-selector-panel"))'), 30_000)
-  accessibility.selectorPanel = await instance.cdp.accessibility('#weir-da-selector-panel')
-  await shot('keyboard-selector-open')
-  await instance.cdp.key('Escape')
-  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel') && document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
-  await instance.cdp.key('Enter')
-  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-selector-panel"))'), 30_000)
-  const reached = await waitFor(async () => {
-    const active = await instance.cdp.evaluate(`document.activeElement?.matches('input[type="radio"][value=${JSON.stringify(agentId)}]')`)
+  const triggerReached = await waitFor(async () => {
+    const active = await instance.cdp.evaluate(`document.activeElement?.matches('[data-weir-decision-trigger="weir-decision-selector"]')`)
     if (active) return true
     await instance.cdp.key('Tab')
     return null
-  }, 15_000).catch(() => false)
-  check('keyboardReachesAgentRadio', reached)
-  await instance.cdp.key('Space')
-  await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel")'), 30_000)
-  const selected = await waitFor(async () => { const value = await rpc(sessionId, 'keyboard', 'overview'); return value.selector?.agentId === agentId ? value : null }, 30_000)
-  await expectMutation('setSelector', { sessionId, mode: 'agent', agentId })
-  check('keyboardSelectionAndFocusReturn', selected.selector.agentId === agentId && await instance.cdp.evaluate(`document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`))
-  writeJson(join(out, 'accessibility.json'), accessibility)
+  }, 30_000).catch(() => false)
+  audit.triggerReached = triggerReached
+  saveAudit()
+  check('keyboardReachesSelectorTrigger', triggerReached, { agentId })
+  accessibility.selectorTrigger = await instance.cdp.accessibility('[data-weir-decision-trigger="weir-decision-selector"]')
+  await instance.cdp.key('Enter')
+  await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&document.activeElement===panel) })()`), 30_000)
+  audit.enterPanel = true
+  saveAudit()
+  accessibility.selectorPanel = await instance.cdp.accessibility('#weir-da-selector-panel')
+  await shot(`keyboard-selector-open-${agentId}`)
+  await instance.cdp.key('Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel') && document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
+  audit.escapeReturnsTrigger = true
+  saveAudit()
+  await instance.cdp.key('Enter')
+  await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&document.activeElement===panel) })()`), 30_000)
+  audit.reopened = true
+  saveAudit()
+  for (let step = 0; step < 8; step += 1) {
+    const groupReached = await waitFor(async () => {
+      const active = await instance.cdp.evaluate(`document.activeElement?.matches('#weir-da-selector-panel [role="radiogroup"] input[type="radio"]') && document.activeElement?.checked === true`)
+      if (active) return true
+      await instance.cdp.key('Tab')
+      return null
+    }, 15_000).catch(() => false)
+    check('keyboardReachesCheckedRadio', groupReached, { agentId, step })
+    const navigation = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); const radios=panel?[...panel.querySelectorAll('[role="radiogroup"] input[type="radio"]')].filter(radio=>!radio.disabled):[]; return {values:radios.map(radio=>radio.value),activeValue:document.activeElement?.value??null,activeIndex:radios.indexOf(document.activeElement),targetIndex:radios.findIndex(radio=>radio.value===${JSON.stringify(agentId)})} })()`)
+    if (navigation.values.length < 2 || navigation.activeIndex < 0 || navigation.targetIndex < 0) {
+      check('keyboardNavigationOrderAvailable', false, { agentId, step, navigation })
+    }
+    const setup = navigation.activeValue === agentId
+    let direction
+    if (setup) {
+      const destinationIndex = navigation.activeIndex > 0 ? navigation.activeIndex - 1 : 1
+      direction = destinationIndex > navigation.activeIndex ? 'ArrowDown' : 'ArrowUp'
+    } else {
+      direction = navigation.targetIndex > navigation.activeIndex ? 'ArrowDown' : 'ArrowUp'
+    }
+    const expectedIndex = navigation.activeIndex + (direction === 'ArrowDown' ? 1 : -1)
+    const expectedValue = navigation.values[expectedIndex]
+    await shot(`keyboard-selector-before-arrow-${agentId}-${step}`)
+    await instance.cdp.key(direction)
+    await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel') && document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
+    const expectedMode = expectedValue === 'off' ? 'off' : 'agent'
+    const selected = await waitFor(async () => {
+      const value = await rpc(sessionId, 'keyboard', 'overview')
+      return value.selector?.mode === expectedMode && (expectedMode === 'off' || value.selector?.agentId === expectedValue) ? value : null
+    }, 30_000)
+    await expectMutation('setSelector', expectedValue === 'off' ? { sessionId, mode: 'off' } : { sessionId, mode: 'agent', agentId: expectedValue })
+    const focusReturned = await instance.cdp.evaluate(`document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`)
+    const stepEvidence = { step, setup, fromValue: navigation.activeValue, direction, expectedValue, selected: selected.selector, focusReturned }
+    audit.steps.push(stepEvidence)
+    saveAudit()
+    check(`keyboardNativeArrowStep:${agentId}:${step}`, selected.selector?.mode === expectedMode && (expectedMode === 'off' || selected.selector?.agentId === expectedValue) && focusReturned, stepEvidence)
+    if (expectedValue === agentId) {
+      const targetSteps = audit.steps.filter(item => !item.setup && item.expectedValue === agentId)
+      audit.reached = !setup && targetSteps.length === 1
+      audit.focusReturned = focusReturned
+      saveAudit()
+      check('keyboardReachesAgentRadio', audit.reached, { agentId, direction, fromValue: navigation.activeValue })
+      check('keyboardSelectionAndFocusReturn', selected.selector.agentId === agentId && focusReturned && targetSteps.length === 1, { agentId, direction, mutation: 'setSelector', targetSteps: targetSteps.length })
+      await shot(`keyboard-selector-return-${agentId}`)
+      writeJson(join(out, 'accessibility.json'), accessibility)
+      return
+    }
+    await instance.cdp.key('Enter')
+    await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&document.activeElement===panel) })()`), 30_000)
+  }
+  check('keyboardReachesAgentRadio', false, { agentId, steps: audit.steps })
 }
 
 async function askLongNative(sessionId) {
@@ -534,7 +590,7 @@ function writeReport(verdict, error = null) {
     '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 触发；无 Auto、自动整理或自动发布。', '',
     '## 视觉、主题、缩放、键盘与可访问性', '',
     `- 已执行 ${visualAudits.length} 项视觉审计；目标为 360/768/1440 CSS px、light/dark、200% page scale，记录横向溢出、主操作裁切、控件名称与主题计算色。`,
-    `- 已保存 ${Object.keys(accessibility).length} 组 CDP Accessibility 证据；键盘流包含 Enter/Tab/Space/Escape 和焦点返回。`,
+    `- 已保存 ${Object.keys(accessibility).length} 组 CDP Accessibility 证据；keyboard-selector.json 逐步记录 Enter/Tab/ArrowDown/ArrowUp/Escape、原生选择即保存和焦点返回。`,
     '- `runtime-events.json` 与 `runtime-scan.json` 保存异常、console、Slot crash 和加载失败扫描。', '',
     '## 真实截图', '',
     ...screenshots.map(item => `- [${item.name}](${basename(item.path)}) — ${item.bytes} bytes`), '',
