@@ -249,3 +249,41 @@ test('metrics projection preserves raw values while formatting counts, rates, du
   assert.equal('qualityScore' in view, false)
   assert.deepEqual(model.metricsView(null), { window: null, since: null, sections: [], raw: null })
 })
+
+
+test('routing review projects every diagnostic outcome without inventing a quality score or record link', async () => {
+  const model = await load()
+  const outcomes = ['agreement', 'disagreement', 'shadow_none', 'shadow_ambiguous', 'shadow_failure', 'auto_none', 'auto_ambiguous', 'auto_failure', 'manual_reassign', 'uncomparable', 'baseline', 'auto_selected']
+  const outcomeKeys = ['decisionRoutingAgreement', 'decisionRoutingDisagreement', 'decisionRoutingShadowNone', 'decisionRoutingShadowAmbiguous', 'decisionRoutingShadowFailure', 'decisionRoutingAutoNone', 'decisionRoutingAutoAmbiguous', 'decisionRoutingAutoFailure', 'decisionRoutingManualReassign', 'decisionRoutingUncomparable', 'decisionRoutingBaseline', 'decisionRoutingAutoSelected']
+  const items = outcomes.map((outcome, index) => ({
+    caseId: `dc-${index}`, routeDecisionId: `rd-${index}`, outcome,
+    questionSummary: `Question ${index}`, createdAt: '2026-01-02T03:04:05.000Z', record: { caseId: `dc-${index}` },
+  }))
+  const summary = { agreement: 1, disagreement: 2, shadowNone: 3, shadowAmbiguous: 4, shadowFailure: 5, autoNone: 6, autoAmbiguous: 7, autoFailure: 8, manualReassign: 9, uncomparable: 10 }
+  const raw = { window: '7d', summary, items, nextCursor: 'next' }
+  assert.deepEqual(model.narrowRoutingReview({ ok: true, value: raw }), raw)
+  const view = model.routingReviewView(raw)
+  assert.equal(view.raw, raw)
+  assert.deepEqual(view.items.map(item => item.outcomeKey), outcomeKeys)
+  assert.deepEqual(view.summary.map(row => [row.key, row.display]), Object.entries(summary).map(([key, value]) => [key, String(value)]))
+  assert.equal(view.items[0].recordCaseId, 'dc-0')
+  assert.equal('qualityScore' in view, false)
+  assert.match(model.dictionaries.en.decisionRoutingUncomparable, /baseline/i)
+  assert.match(model.dictionaries.zh.decisionRoutingUncomparable, /基线/)
+  assert.match(model.dictionaries.en.decisionRoutingDiagnostic, /not a quality/i)
+  assert.match(model.dictionaries.zh.decisionRoutingDiagnostic, /不是质量/)
+  assert.equal(model.routingReviewView(null).items.length, 0)
+  assert.equal(model.routingReviewView({ items: [{ ...items[0], record: { caseId: 'other' } }] }).items[0].recordCaseId, null)
+})
+
+test('routing review pages append stably and dedupe by Case without replacing earlier text', async () => {
+  const model = await load()
+  const first = { caseId: 'dc-a', routeDecisionId: 'rd-a', questionSummary: 'Original A' }
+  const page = { window: 'all', summary: { agreement: 1 }, items: [
+    { ...first, questionSummary: 'Updated duplicate A' },
+    { caseId: 'dc-b', routeDecisionId: 'rd-b', questionSummary: 'B' },
+  ], nextCursor: null }
+  assert.deepEqual(model.appendRoutingPage([first], page), { items: [first, page.items[1]], nextCursor: null })
+  assert.deepEqual(model.narrowRoutingReview({ ok: false }), { window: 'all', summary: {}, items: [], nextCursor: null })
+  assert.deepEqual(model.narrowRoutingReview({ window: 'invalid', items: null, nextCursor: 4 }), { window: 'all', summary: {}, items: [], nextCursor: null })
+})

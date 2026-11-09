@@ -125,6 +125,12 @@ window.__ModuleLoader__.load({
 .weir-da-metric { min-width: 0; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
 .weir-da-metric dt { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .weir-da-metric dd { margin: 4px 0 0; color: var(--dsw-alias-label-primary); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.weir-da-routing-review, .weir-da-routing-content, .weir-da-routing-list { min-width: 0; display: grid; gap: 12px; }
+.weir-da-routing-review { padding-top: 16px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-routing-review > p { margin: 0; }
+.weir-da-routing-item { min-width: 0; display: grid; justify-items: start; gap: 6px; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-routing-item p { margin: 0; }
+.weir-da-routing-item time { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .weir-da-advanced-record pre, .weir-da-agent-diagnostics pre, .weir-da-metrics pre, .weir-da-learning-diagnostics pre { box-sizing: border-box; max-width: 100%; max-height: 420px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); font-size: 12px; }
 .weir-da-agent-diagnostics button { max-width: 100%; overflow-wrap: anywhere; }
 @media (max-width: 400px) { .weir-da-page-inner { padding: 12px; } }

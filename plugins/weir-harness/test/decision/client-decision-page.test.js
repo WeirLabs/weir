@@ -929,6 +929,173 @@ test('records and advanced metrics use the no-session empty state without issuin
   assert.deepEqual(calls, [])
   harness.unmount()
 })
+function routingSummary(patch = {}) {
+  return { agreement: 0, disagreement: 0, shadowNone: 0, shadowAmbiguous: 0, shadowFailure: 0, autoNone: 0, autoAmbiguous: 0, autoFailure: 0, manualReassign: 0, uncomparable: 0, ...patch }
+}
+function routingItem(caseId, patch = {}) {
+  return { caseId, routeDecisionId: `rd-${caseId}`, mode: 'auto_shadow', outcome: 'agreement', questionSummary: `Question ${caseId}`, createdAt: '2026-01-02T03:04:05.000Z', record: { caseId }, ...patch }
+}
+async function openMetrics(harness) {
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'metrics')[0].onClick()
+  await harness.flush()
+  return harness.render()
+}
+function routingCases(tree) {
+  return findAll(tree, node => node['data-routing-case']).map(node => node['data-routing-case'])
+}
+
+test('advanced metrics include ordinary-language routing diagnostics and authorized record navigation only', async () => {
+  const calls = []
+  const first = routingItem('dc-agree')
+  const second = routingItem('dc-failed', { mode: 'auto', outcome: 'auto_failure', reason: 'failure:timeout' })
+  const detail = { case: { caseId: 'dc-agree', agentId: 'a', state: 'closed', closing: 'answered', request: { questions: [{ id: 'q', question: 'Authorized detail' }] }, decision: { answers: [] } }, attempts: [], feedback: [], routeDecisions: [first] }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+    metrics: async () => ({ window: 'all', casesOpened: 2 }),
+    routingReview: async (window, cursor) => { calls.push(['review', window, cursor]); return { window, summary: routingSummary({ agreement: 1, autoFailure: 1 }), items: [first, second], nextCursor: null } },
+    record: async caseId => { calls.push(['record', caseId]); return detail }, records: async () => ({ records: [detail.case], nextCursor: null }),
+  } })
+  await harness.settle()
+  assert.equal(calls.length, 0)
+  let tree = await openMetrics(harness)
+  assert.deepEqual(calls, [['review', 'all', undefined]])
+  const review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.ok(review)
+  const text = textOf(review)
+  for (const value of ['decisionRoutingReview', 'decisionRoutingDiagnostic', 'decisionRoutingAgreement', 'decisionRoutingAutoFailure', 'Question dc-agree', 'decisionRoutingShown']) assert.equal(text.includes(value), true, value)
+  assert.equal(text.includes('failure:timeout'), false)
+  assert.equal(text.includes('decisionAdopt') || text.includes('decisionIgnore'), false)
+  const windowControl = findAll(review, node => node['data-routing-window'] === true)[0]
+  assert.equal(windowControl.value, 'all')
+  assert.equal(windowControl['aria-label'], 'decisionMetricWindow')
+  const link = findAll(review, node => node['data-routing-record'] === 'dc-agree')[0]
+  assert.match(link['aria-label'], /decisionRoutingOpenRecord/)
+  assert.match(link['aria-label'], /Question dc-agree/)
+  await link.onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(calls.some(call => call[0] === 'record' && call[1] === 'dc-agree'), true)
+  assert.equal(findAll(tree, node => node['data-record-detail'] === 'dc-agree').length, 1)
+  const nav = findAll(tree, node => node.type === 'nav' && node['data-decision-primary-nav'] === true)[0]
+  assert.deepEqual(findAll(nav, node => node.type === harness.ui.Button).map(node => node['data-view']), ['inbox', 'records', 'agents'])
+  harness.unmount()
+})
+
+test('routing review appends the next cursor once, dedupes Cases, and reports the stable shown count', async () => {
+  const first = routingItem('dc-a', { questionSummary: 'Original A' })
+  const second = routingItem('dc-b', { outcome: 'manual_reassign', mode: 'manual_reassign' })
+  const firstPage = [first, ...Array.from({ length: 19 }, (_, index) => routingItem(`dc-page-${index}`))]
+  const gate = deferred()
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async (window, cursor) => {
+      calls.push({ window, cursor })
+      if (!cursor) return { window, summary: routingSummary({ agreement: 20 }), items: firstPage, nextCursor: 'cursor-1' }
+      return gate.promise
+    },
+  } })
+  await harness.settle()
+  let tree = await openMetrics(harness)
+  assert.equal(routingCases(tree).length, 20)
+  const more = findAll(tree, node => node['data-routing-load-more'] === true)[0]
+  assert.equal(more['aria-busy'], false)
+  const firstRead = more.onClick()
+  const duplicateRead = more.onClick()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node['data-routing-load-more'] === true)[0]['aria-busy'], true)
+  assert.equal(calls.length, 2)
+  gate.resolve({ window: 'all', summary: routingSummary({ agreement: 20, manualReassign: 1 }), items: [{ ...first, questionSummary: 'Updated duplicate A' }, second], nextCursor: null })
+  await Promise.all([firstRead, duplicateRead])
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(routingCases(tree), [...firstPage.map(item => item.caseId), 'dc-b'])
+  assert.equal(textOf(tree).includes('Original A'), true)
+  assert.equal(textOf(tree).includes('Updated duplicate A'), false)
+  assert.deepEqual(calls[1], { window: 'all', cursor: 'cursor-1' })
+  assert.equal(findAll(tree, node => node['data-routing-load-more'] === true).length, 0)
+  assert.match(textOf(findAll(tree, node => node['data-routing-status'] === true)[0]), /21/)
+  harness.unmount()
+})
+
+test('routing review retains loaded items on append failure and has explicit retry, empty, and no-data states', async () => {
+  const first = routingItem('dc-kept')
+  let initialFails = true
+  let appendFails = true
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async (window, cursor) => {
+      if (initialFails) { initialFails = false; throw Object.assign(new Error('offline'), { code: 'NETWORK' }) }
+      if (!cursor) return { window, summary: routingSummary(), items: [first], nextCursor: 'next' }
+      if (appendFails) { appendFails = false; throw new Error('append offline') }
+      return { window, summary: routingSummary(), items: [], nextCursor: null }
+    },
+  } })
+  await harness.settle()
+  let tree = await openMetrics(harness)
+  let review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.equal(findAll(review, node => node.type === harness.ui.ErrorState).length, 1)
+  findAll(review, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(routingCases(tree), ['dc-kept'])
+  await findAll(tree, node => node['data-routing-load-more'] === true)[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.deepEqual(routingCases(tree), ['dc-kept'])
+  review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.equal(textOf(review).includes('decisionReadFailed'), true)
+  findAll(review, node => node.type === harness.ui.Button && node.children === 'decisionRetry')[0].onClick()
+  await harness.flush()
+  assert.equal(findAll(harness.render(), node => node['data-routing-load-more'] === true).length, 0)
+
+  const empty = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async window => ({ window, summary: routingSummary(), items: [], nextCursor: null }),
+  } })
+  await empty.settle()
+  tree = await openMetrics(empty)
+  review = findAll(tree, node => node['data-routing-review'] === true)[0]
+  assert.equal(textOf(review).includes('decisionRoutingNoData'), true)
+  assert.equal(findAll(review, node => node.type === 'pre').length, 0)
+  empty.unmount()
+  harness.unmount()
+})
+
+test('late routing responses cannot replace a newer window or session epoch', async () => {
+  const oldWindow = deferred()
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async window => window === 'all' ? oldWindow.promise : { window, summary: routingSummary(), items: [routingItem('dc-seven-day')], nextCursor: null },
+  } })
+  await harness.settle()
+  let tree = await openMetrics(harness)
+  findAll(tree, node => node['data-routing-window'] === true)[0].onChange({ target: { value: '7d' } })
+  await harness.flush()
+  assert.deepEqual(routingCases(harness.render()), ['dc-seven-day'])
+  oldWindow.resolve({ window: 'all', summary: routingSummary(), items: [routingItem('dc-old-window')], nextCursor: null })
+  await harness.flush()
+  assert.deepEqual(routingCases(harness.render()), ['dc-seven-day'])
+  harness.unmount()
+
+  const oldSession = deferred()
+  const sessions = await createPageHarness({ sessionId: 'old', actionsForSession: sessionId => ({
+    agents: async () => [], inbox: async () => [], metrics: async () => ({}),
+    routingReview: async window => sessionId === 'old' ? oldSession.promise : { window, summary: routingSummary(), items: [routingItem('dc-new-session')], nextCursor: null },
+  }) })
+  await sessions.settle()
+  await openMetrics(sessions)
+  sessions.update({ sessionId: 'new' })
+  sessions.render()
+  await sessions.flush()
+  await openMetrics(sessions)
+  assert.deepEqual(routingCases(sessions.render()), ['dc-new-session'])
+  oldSession.resolve({ window: 'all', summary: routingSummary(), items: [routingItem('dc-old-session')], nextCursor: null })
+  await sessions.flush()
+  assert.deepEqual(routingCases(sessions.render()), ['dc-new-session'])
+  sessions.unmount()
+})
+
 test('client manifest injects layout for render-time panel access', () => {
   const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))
