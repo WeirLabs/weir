@@ -76,6 +76,24 @@ export function recordProjectionProblems(detail, dom) {
   return problems
 }
 
+// Spec requires the correction preview to state three facts: the scope it applies
+// to, the answer it supersedes, and that only future judgments change. Labels are
+// localized ("适用于" / "Applies to"), so match their meaning, not one literal
+// string (run wab8MC: an `/scope|适用范围/` oracle rejected a correct preview).
+const CORRECTION_PREVIEW_FACTS = [
+  { fact: 'scope', pattern: /适用于|适用范围|applies to|scope/i },
+  { fact: 'superseded answer', pattern: /取代|supersedes/i },
+  { fact: 'future-only consequence', pattern: /只影响|future/i },
+]
+
+export function correctionPreviewProblems(preview) {
+  const text = typeof preview === 'string' ? preview : ''
+  if (!text.trim()) return ['missing correction preview']
+  return CORRECTION_PREVIEW_FACTS
+    .filter(({ pattern }) => !pattern.test(text))
+    .map(({ fact }) => `correction preview omits ${fact}`)
+}
+
 export function immutableChanges(phases) {
   const attempts = new Map()
   const snapshotContent = new Map()

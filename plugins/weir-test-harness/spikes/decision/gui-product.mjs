@@ -10,7 +10,7 @@ import {
   createSession, openSession, setInput, submitMarker,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from './gui-product-lib.mjs'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
 const BASE_HEAD = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: LANE, encoding: 'utf8' }).stdout.trim()
@@ -673,7 +673,8 @@ try {
   await setInput(instance, `[data-record-detail="${first.caseId}"] [data-draft="comment"]`, note)
   await setInput(instance, `[data-record-detail="${first.caseId}"] [data-draft="correction"]`, correction)
   const preview = await instance.cdp.evaluate(`document.querySelector('[data-record-detail=${JSON.stringify(first.caseId)}] .weir-da-correction-preview')?.innerText`)
-  check('independentNoteCorrectionPreview', /scope|适用范围/i.test(preview) && /只影响|future/i.test(preview), preview)
+  const previewProblems = correctionPreviewProblems(preview)
+  check('independentNoteCorrectionPreview', previewProblems.length === 0, previewProblems.length ? { preview, problems: previewProblems } : preview)
   await openRecord(sessionId, reuse.caseId)
   const otherDrafts = await instance.cdp.evaluate(`[...document.querySelectorAll('[data-record-detail=${JSON.stringify(reuse.caseId)}] [data-draft]')].map(el=>({field:el.getAttribute('data-draft'),value:el.value}))`)
   check('caseSwitchDoesNotShareDrafts', otherDrafts.filter(item => ['comment', 'correction'].includes(item.field)).every(item => item.value === ''), otherDrafts)
