@@ -1,8 +1,9 @@
 // Isolated Desktop QA Host fixture: real Weir sessions, mock route and log scans only.
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { userTextMessage } from '../../../../../plugins/weir-harness/src/shared/user-message.js'
+import { applyGuiAdapter } from './adapter.js'
 
 export const name = 'weir-decision-gui-fixture'
 export const inject = ['llm', 'typert', 'agents', 'agentPresets', 'sessionQuery', 'userQuestions']
@@ -27,8 +28,25 @@ export async function apply(ctx) {
   const out = process.env.WEIR_DECISION_GUI_OUT
   if (!out) throw new Error('WEIR_DECISION_GUI_OUT is required for the isolated QA fixture')
   mkdirSync(out, { recursive: true })
-  const mock = await import('../../../src/mock-llm.js')
-  mock.apply(ctx)
+  if (process.env.WEIR_DECISION_PRODUCT_UX === '1') {
+    applyGuiAdapter(ctx, out)
+  } else {
+    const mock = await import('../../../src/mock-llm.js')
+    mock.apply(ctx)
+  }
+  ctx.on('tools/execute', async (exec, next) => {
+    const result = await next()
+    if (process.env.WEIR_DECISION_PRODUCT_UX !== '1' || exec.name !== 'decision_consult' || exec.arguments?.request_id !== 'gui_b_decide' || result.isError) return result
+    writeFileSync(join(out, 'consult-result-held.json'), `${JSON.stringify({ callId: exec.callId, pid: process.pid, at: Date.now() })}\n`)
+    const release = join(out, 'consult-result.release')
+    const deadline = Date.now() + 60_000
+    while (!existsSync(release)) {
+      if (exec.signal.aborted) return result
+      if (Date.now() >= deadline) throw new Error('consult result hold timed out')
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    return result
+  })
   const handles = []
   const host = () => ({
     pid: process.pid, parentPid: process.ppid, execPath: process.execPath, electron: process.versions.electron,
@@ -61,7 +79,7 @@ export async function apply(ctx) {
     },
     async scanSession(args) {
       const snapshot = await ctx.get('sessionQuery').readSession(args.sessionId)
-      const events = snapshot.events.map(event => ({ seq: event.seq, type: event.type, ignorable: event.ignorable === true }))
+      const events = snapshot.events.map(event => ({ seq: event.seq, type: event.type, ignorable: event.ignorable === true, callId: event.data?.callId ?? event.data?.message?.source?.callId ?? null, toolName: event.data?.name ?? null }))
       return {
         sessionId: args.sessionId, eventCount: events.length, events,
         commandEvents: events.filter(event => event.type === 'command/run' || event.type === 'command/done'),
