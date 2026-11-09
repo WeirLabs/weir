@@ -60,6 +60,38 @@ test('selector persists across reopen and child lineage resolves to root', async
   coldStore.close()
 })
 
+test('explicit Off persists as a row with no Agent across reopen', async t => {
+  const { dir, store, profiles } = fixture(t)
+  await profiles.setSelector('root', { mode: 'off' })
+  assert.deepEqual({ ...store.db.prepare('SELECT mode,agent_id FROM selectors WHERE root_session_id=?').get('root') }, { mode: 'off', agent_id: null })
+  const coldStore = openDecisionDatabase(join(dir, 'decision.db'))
+  const cold = new DecisionProfiles(coldStore)
+  assert.deepEqual(cold.selector('root'), { mode: 'off' })
+  coldStore.close()
+})
+
+test('Auto selector persists without an Agent across reopen', async t => {
+  const { dir, store, profiles } = fixture(t)
+  assert.deepEqual(await profiles.setSelector('root', { mode: 'auto' }), { mode: 'auto' })
+  assert.deepEqual({ ...store.db.prepare('SELECT mode,agent_id FROM selectors WHERE root_session_id=?').get('root') }, { mode: 'auto', agent_id: null })
+  const coldStore = openDecisionDatabase(join(dir, 'decision.db'))
+  const cold = new DecisionProfiles(coldStore)
+  assert.deepEqual(cold.selector('root'), { mode: 'auto' })
+  coldStore.close()
+})
+
+test('legacy DELETE-form Off, absent rows and unknown modes fail closed', async t => {
+  const { store, profiles } = fixture(t)
+  await store.write(db => {
+    db.prepare("INSERT INTO selectors(root_session_id,mode,agent_id,updated_at) VALUES('legacy-off','agent','old-agent',1)").run()
+    db.prepare("DELETE FROM selectors WHERE root_session_id='legacy-off'").run()
+    db.prepare("INSERT INTO selectors(root_session_id,mode,agent_id,updated_at) VALUES('unknown','future-mode',NULL,1)").run()
+  })
+  assert.deepEqual(profiles.selector('legacy-off'), { mode: 'off' })
+  assert.deepEqual(profiles.selector('resume-without-row'), { mode: 'off' })
+  assert.deepEqual(profiles.selector('unknown'), { mode: 'off' })
+  await assert.rejects(profiles.setSelector('root', { mode: 'future-mode' }), error => error.code === 'INVALID_SELECTOR')
+})
 test('archived Agent cannot be selected for new work', async t => {
   const { profiles } = fixture(t)
   const profile = await profiles.createProfile({ workspaceKey: '/repo', name: 'Taste' })

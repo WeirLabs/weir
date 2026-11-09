@@ -55,6 +55,10 @@ test('remote resolves child selector writes to the root session', async t => {
   const selected = await f.remote.setSelector({ sessionId: 'child', mode: 'agent', agentId: f.a.agentId })
   assert.equal(selected.ok, true)
   assert.equal(f.broker.selector('root').agentId, f.a.agentId)
+  const automatic = await f.remote.setSelector({ sessionId: 'child', mode: 'auto' })
+  assert.equal(automatic.ok, true)
+  assert.deepEqual(automatic.value, { mode: 'auto' })
+  assert.deepEqual(f.broker.selector('root'), { mode: 'auto' })
 })
 
 test('every remote Case mutation rejects a foreign root and workspace without changing the Case', async t => {

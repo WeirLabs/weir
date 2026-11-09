@@ -136,11 +136,23 @@ export class DecisionProfiles {
       .map(row => ({ revision: row.revision, text: row.text, createdAt: row.created_at }))
   }
 
-  /** @param {string} rootSessionId @param {{mode:'off'|'agent',agentId?:string}} value */
+  /** @param {string} rootSessionId @param {{mode:'off'|'agent'|'auto',agentId?:string}} value */
   async setSelector(rootSessionId, value) {
     if (value.mode === 'off') {
-      await this.store.write(db => { db.prepare('DELETE FROM selectors WHERE root_session_id=?').run(rootSessionId) })
+      await this.store.write(db => {
+        db.prepare(`INSERT INTO selectors(root_session_id,mode,agent_id,revision,updated_at) VALUES(?,'off',NULL,1,?)
+          ON CONFLICT(root_session_id) DO UPDATE SET mode='off',agent_id=NULL,revision=selectors.revision+1,updated_at=excluded.updated_at`)
+          .run(rootSessionId, this.now())
+      })
       return { mode: 'off' }
+    }
+    if (value.mode === 'auto') {
+      await this.store.write(db => {
+        db.prepare(`INSERT INTO selectors(root_session_id,mode,agent_id,revision,updated_at) VALUES(?,'auto',NULL,1,?)
+          ON CONFLICT(root_session_id) DO UPDATE SET mode='auto',agent_id=NULL,revision=selectors.revision+1,updated_at=excluded.updated_at`)
+          .run(rootSessionId, this.now())
+      })
+      return { mode: 'auto' }
     }
     if (value.mode !== 'agent' || typeof value.agentId !== 'string') throw new DecisionContractError('INVALID_SELECTOR', 'agent selector requires agentId')
     const profile = this.getProfile(value.agentId)
@@ -153,10 +165,23 @@ export class DecisionProfiles {
     return { mode: 'agent', agentId: value.agentId }
   }
 
+  /** Initialize Auto only when no selector row exists; return whether this call inserted it. */
+  async initializeAutoSelector(rootSessionId) {
+    return this.store.write(db => {
+      const existing = db.prepare('SELECT 1 FROM selectors WHERE root_session_id=?').get(rootSessionId)
+      if (existing) return false
+      db.prepare("INSERT INTO selectors(root_session_id,mode,agent_id,revision,updated_at) VALUES(?,'auto',NULL,1,?)")
+        .run(rootSessionId, this.now())
+      return true
+    })
+  }
+
   /** @param {string} rootSessionId */
   selector(rootSessionId) {
     const row = this.store.db.prepare('SELECT mode,agent_id FROM selectors WHERE root_session_id=?').get(rootSessionId)
-    return row?.mode === 'agent' ? { mode: 'agent', agentId: row.agent_id } : { mode: 'off' }
+    if (row?.mode === 'agent') return { mode: 'agent', agentId: row.agent_id }
+    if (row?.mode === 'auto') return { mode: 'auto' }
+    return { mode: 'off' }
   }
 }
 
