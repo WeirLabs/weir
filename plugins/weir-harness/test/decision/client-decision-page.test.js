@@ -589,6 +589,28 @@ const assistantDetail = {
   snapshots: [{ snapshotId: 'ms-current', version: 3, state: 'published', revision: 4, learningRunId: 'lr-current' }],
 }
 
+test('assistant list renders Broker learning summary fields without opening detail', async () => {
+  const summary = {
+    agentId: 'ag_summary', name: 'Summary assistant', state: 'enabled',
+    userDescription: { revision: 1, text: 'Use reviewed guidance' },
+    currentSnapshotId: 'ms-current', currentSnapshotVersion: 3, pendingReview: true,
+  }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [summary], inbox: async () => [],
+    agent: async () => { throw new Error('list summary must not require an Agent detail read') },
+  } })
+  await harness.settle()
+  const tree = await openAgents(harness)
+  const card = findAll(tree, node => node['data-agent-summary'] === 'ag_summary')[0]
+  const text = textOf(card)
+  assert.ok(text.includes('decisionCurrentSnapshot: v3'))
+  assert.ok(text.includes('decisionPendingReview'))
+  assert.equal(text.includes('decisionVersionUnavailable'), false)
+  assert.equal(text.includes('decisionPrincipleDetailsOnOpen'), false)
+  assert.equal(findAll(tree, node => node['data-agent-detail']).length, 0)
+  harness.unmount()
+})
+
 test('assistant summaries are read-only and simple create preserves defaults, dirty drafts, and cancel confirmation', async () => {
   const calls = []
   let failSave = true

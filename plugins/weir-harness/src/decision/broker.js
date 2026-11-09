@@ -590,7 +590,15 @@ export class DecisionBroker {
   async agents(input) {
     if (!this.store) return []
     const context = await this.sessionContext(input.sessionId)
-    return this.profiles.listProfiles(context.workspaceKey, { includeArchived: true })
+    return this.profiles.listProfiles(context.workspaceKey, { includeArchived: true }).map(profile => {
+      const currentSnapshot = this.learning.currentSnapshot(profile.agentId, context.workspaceKey)
+      return {
+        ...profile,
+        currentSnapshotId: currentSnapshot?.snapshotId ?? null,
+        currentSnapshotVersion: currentSnapshot?.version ?? null,
+        pendingReview: this.learning.listRuns(profile.agentId).some(run => run.outcome === 'candidate'),
+      }
+    })
   }
 
   async agent(input) {

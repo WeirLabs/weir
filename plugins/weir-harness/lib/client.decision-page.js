@@ -231,7 +231,9 @@ window.__ModuleLoader__.load({
     function AgentSummary(props) {
       const agent = props.detail?.agentId === props.agent.agentId ? props.detail : props.agent;
       const current = learningRows(agent.snapshots).find(snapshot => snapshot.snapshotId === agent.currentSnapshotId);
-      const pendingReview = learningRows(agent.learningRuns).some(run => run.outcome === "candidate");
+      const currentVersion = Number.isInteger(agent.currentSnapshotVersion) ? agent.currentSnapshotVersion : current?.version;
+      const pendingReview = typeof agent.pendingReview === "boolean" ? agent.pendingReview : learningRows(agent.learningRuns).some(run => run.outcome === "candidate");
+      const hasLearningSummary = typeof agent.pendingReview === "boolean" || agent.currentSnapshotVersion !== undefined || Array.isArray(agent.learningRuns) || Array.isArray(agent.snapshots);
       return jsx.jsxs("article", { key: props.agent.agentId, className: "weir-da-card weir-da-agent-summary", "data-agent-summary": props.agent.agentId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsx("h2", { children: agent.name }, "name"),
@@ -239,8 +241,8 @@ window.__ModuleLoader__.load({
         ] }, "header"),
         jsx.jsx("p", { children: agent.userDescription?.text || props.t("decisionNoPreference") }, "preference"),
         jsx.jsx("p", { className: "weir-da-caption", children: agent.currentSnapshotId
-          ? `${props.t("decisionCurrentSnapshot")}: ${current ? `v${current.version ?? "—"}` : props.t("decisionVersionUnavailable")}`
-          : Array.isArray(agent.learningRuns) ? props.t("decisionNoCurrentSnapshot") : props.t("decisionPrincipleDetailsOnOpen") }, "principles"),
+          ? `${props.t("decisionCurrentSnapshot")}: ${currentVersion !== undefined ? `v${currentVersion ?? "—"}` : props.t("decisionVersionUnavailable")}`
+          : hasLearningSummary ? props.t("decisionNoCurrentSnapshot") : props.t("decisionPrincipleDetailsOnOpen") }, "principles"),
         pendingReview ? jsx.jsx(props.ui.Badge, { variant: "warn", children: props.t("decisionPendingReview") }, "pending") : null,
         jsx.jsx(props.ui.Button, { "data-action": "open-agent", onClick: () => props.onOpen(props.agent.agentId), children: props.t("decisionViewAssistant") }, "open"),
       ] });
