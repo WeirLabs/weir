@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
 import { answerFormExpression, correctionPreviewProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
+import { connectCdp } from '../spikes/decision/cdp.mjs'
 
 test('product fixture gives each emitted tool call a unique real identity', () => {
   const delta = uniqueToolCall({ type: 'tool-call-delta', id: 'mock-call-1' }, 'unique-1')
@@ -184,4 +185,75 @@ test('product driver click helper waits for one actionable target before clickin
   target.disabled = false
   assert.equal(action({ querySelector: () => target }), true, 'the actionable target reports success')
   assert.equal(target.clicks, 1, 'the actionable poll clicks exactly once')
+})
+
+function fakeTransitionCdp(t) {
+  const state = { scale: 1, scheme: 'light', pendingScale: null, pendingScheme: null }
+  const requests = []
+  const originalFetch = globalThis.fetch
+  const originalWebSocket = globalThis.WebSocket
+  t.after(() => { globalThis.fetch = originalFetch; globalThis.WebSocket = originalWebSocket })
+  globalThis.fetch = async () => ({ json: async () => [{ type: 'page', webSocketDebuggerUrl: 'ws://isolated.test' }] })
+  const evaluate = expression => {
+    if (state.pendingScale && --state.pendingScale.polls === 0) state.scale = state.pendingScale.value
+    if (state.pendingScheme && --state.pendingScheme.polls === 0) state.scheme = state.pendingScheme.value
+    return new Function('visualViewport', 'matchMedia', `return (${expression})`)(
+      { scale: state.scale },
+      query => ({ matches: query === `(prefers-color-scheme: ${state.scheme})` }),
+    )
+  }
+  globalThis.WebSocket = class FakeWebSocket {
+    constructor() { this.listeners = new Map(); queueMicrotask(() => this.emit('open', {})) }
+    addEventListener(type, listener) { this.listeners.set(type, listener) }
+    emit(type, event) { this.listeners.get(type)?.(event) }
+    send(text) {
+      const request = JSON.parse(text)
+      requests.push(request)
+      queueMicrotask(() => {
+        if (request.method === 'Emulation.setPageScaleFactor') state.pendingScale = { value: request.params.pageScaleFactor, polls: 2 }
+        if (request.method === 'Emulation.setEmulatedMedia') state.pendingScheme = { value: request.params.features[0].value, polls: 2 }
+        const result = request.method === 'Runtime.evaluate' ? { result: { value: evaluate(request.params.expression) } } : {}
+        this.emit('message', { data: JSON.stringify({ id: request.id, result }) })
+      })
+    }
+    close() {}
+  }
+  return { state, requests }
+}
+
+test('CDP page zoom helper waits until the requested visual scale is observable', async t => {
+  const fake = fakeTransitionCdp(t)
+  const cdp = await connectCdp(9491)
+  await cdp.setPageZoom(2)
+  assert.equal(fake.state.scale, 2, 'ack alone must not resolve while the renderer still reports scale 1')
+  assert.ok(fake.requests.filter(request => request.method === 'Runtime.evaluate').length >= 2, 'the helper polls the real scale condition')
+  cdp.close()
+})
+
+test('CDP color scheme helper waits for both dark and light target media states', async t => {
+  const fake = fakeTransitionCdp(t)
+  const cdp = await connectCdp(9492)
+  const observed = []
+  for (const scheme of ['dark', 'light']) {
+    await cdp.setColorScheme(scheme)
+    observed.push(fake.state.scheme)
+  }
+  assert.deepEqual(observed, ['dark', 'light'])
+  assert.ok(fake.requests.filter(request => request.method === 'Runtime.evaluate').length >= 4, 'each target is independently polled')
+  cdp.close()
+})
+
+test('product visual audit waits for target computed colors and retains strict zoom and layout guards', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const audit = driver.match(/async function layoutAudit\(name, theme = 'light', zoom = 1\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(audit, 'layoutAudit exists')
+  assert.match(audit, /await waitFor\(/, 'the audit waits for a real condition rather than sampling the CDP ack')
+  assert.match(audit, /expectedColors/, 'light and dark have explicit computed-color targets')
+  assert.match(audit, /audit\.colors\?\.background===expectedColors\.background/)
+  assert.match(audit, /audit\.colors\?\.color===expectedColors\.color/)
+  assert.match(audit, /layoutProblems\(audit\)/)
+  assert.match(audit, /Math\.abs\(\(audit\.viewport\.scale \?\? 1\) - zoom\) < 0\.01/)
+  for (const guard of ['surfaceOverflow', 'clippedPrimary', 'unnamedControls']) assert.ok(audit.includes(guard), guard)
+  const zoomLoop = driver.match(/for \(const width of \[360, 768, 1440\]\) \{\s*await instance\.cdp\.setViewport\(width, 900, true\)[\s\S]*?await instance\.cdp\.setPageZoom\(1\)/)?.[0] ?? ''
+  assert.ok(zoomLoop.includes('await instance.cdp.setPageZoom(2)'), '200% uses the real mobile-enabled CDP page-scale mechanism')
 })

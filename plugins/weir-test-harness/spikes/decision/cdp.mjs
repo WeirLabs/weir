@@ -53,15 +53,17 @@ export async function connectCdp(port) {
       await request('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
       await request('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
     },
-    async setViewport(width, height = 900) {
-      await request('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+    async setViewport(width, height = 900, mobile = false) {
+      await request('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile })
     },
     async setPageZoom(scale = 1) {
       await request('Emulation.setPageScaleFactor', { pageScaleFactor: scale })
+      await waitFor(() => this.evaluate(`Math.abs((visualViewport?.scale ?? 1) - ${JSON.stringify(scale)}) < 0.01`), 10_000)
     },
     async setColorScheme(scheme) {
       if (!['light', 'dark'].includes(scheme)) throw new Error(`unsupported color scheme: ${scheme}`)
       await request('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] })
+      await waitFor(() => this.evaluate(`matchMedia('(prefers-color-scheme: ${scheme})').matches`), 10_000)
     },
     async key(key, modifiers = 0) {
       const codes = { Enter: 13, Escape: 27, Tab: 9, Space: 32, ArrowDown: 40, ArrowUp: 38 }
