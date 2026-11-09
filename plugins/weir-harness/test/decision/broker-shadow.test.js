@@ -50,6 +50,7 @@ async function fixture(t) {
   routing = { contract: 'router-contract/1', outcome: 'selected', agentId: alternative.agentId, reason: 'Alternative is the shadow suggestion' }
   await broker.setSelector('root', 'agent', pinned.agentId)
   const agent = { id: 'root', session: { header: { id: 'root', cwd: dir, delegationDepth: 0 }, requestContext: () => ({ provider: 'p', model: 'm' }) } }
+  ctx.agents = { get: id => id === 'root' ? agent : undefined }
   t.after(async () => { await broker.flush(); rmSync(dir, { recursive: true, force: true }) })
   return {
     broker, agent, pinned, alternative, workspace, config, calls,
@@ -73,6 +74,7 @@ function callsOf(f, contract) {
 
 test('a new classless pinned Hook appends one non-authoritative Shadow after the real pinned route', async t => {
   const f = await fixture(t)
+  Object.defineProperty(f.config, 'decisionAgentAutoAnswerClasses', { get() { throw new Error('Shadow must not read the Active whitelist') } })
   const request = hookRequest('shadow-hook')
   const snapshot = structuredClone(request)
   const evidence = await f.broker.ensureProfileEvidence(f.pinned)
@@ -182,5 +184,146 @@ test('Shadow classification, routing, and route-write failures never alter or re
       assert.equal(routes[1].chosen, null)
       assert.equal(routes[1].reason, 'failure:invalid_output')
     }
+  }
+})
+
+test('Off, global-off, Active Auto, explicit, unavailable, and excluded requests never sample Shadow', async t => {
+  const f = await fixture(t)
+  await f.broker.setSelector('root', 'off')
+  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: hookRequest('off') }), { kind: 'pass', why: 'bypass' })
+  f.config.decisionAgentsEnabled = false
+  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: hookRequest('global-off') }), { kind: 'pass', why: 'bypass' })
+
+  f.config.decisionAgentsEnabled = true
+  f.config.decisionAgentAutoAnswerClasses = ['A']
+  await f.broker.setSelector('root', 'auto')
+  const activeRequest = hookRequest('active-auto')
+  activeRequest.questions[0].authorizationClass = 'A'
+  const active = await f.broker.hook({ agent: f.agent, request: activeRequest })
+  assert.deepEqual(routesFor(f, active.caseId).map(route => route.mode), ['auto'])
+
+  await f.broker.setSelector('root', 'agent', f.pinned.agentId)
+  const explicit = await f.broker.consult({ agent: f.agent, args: {
+    question: 'Use only the explicit Agent?', authorization_class: 'A', agent_id: f.alternative.agentId, request_id: 'explicit-no-shadow',
+  } })
+  assert.deepEqual(routesFor(f, explicit.caseId).map(route => route.mode), ['explicit'])
+
+  await f.broker.profileSetState(f.pinned.agentId, 'disabled')
+  const unavailableHook = await f.broker.hook({ agent: f.agent, request: hookRequest('unavailable-hook') })
+  assert.deepEqual(routesFor(f, unavailableHook.caseId).map(route => route.mode), ['none'])
+  const unavailableConsult = await f.broker.consult({ agent: f.agent, args: { question: 'Pinned is unavailable?', authorization_class: 'A', request_id: 'unavailable-consult' } })
+  assert.deepEqual(routesFor(f, unavailableConsult.caseId).map(route => route.mode), ['pinned'])
+
+  await f.broker.profileSetState(f.pinned.agentId, 'enabled')
+  const excludedHook = hookRequest('excluded-hook')
+  excludedHook.questions[0].intent = { kind: 'approval' }
+  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: excludedHook }), { kind: 'pass', why: 'bypass' })
+  const excludedConsult = await f.broker.consult({ agent: f.agent, args: { question: 'Native authority?', authorization_class: 'D', request_id: 'excluded-consult' } })
+  assert.deepEqual(routesFor(f, excludedConsult.caseId).map(route => route.mode), ['pinned'])
+
+  assert.equal(f.broker.store.db.prepare("SELECT COUNT(*) AS n FROM route_decisions WHERE mode='auto_shadow'").get().n, 0)
+  assert.equal(callsOf(f, 'router-classification-contract/1').length, 0)
+  assert.equal(callsOf(f, 'router-contract/1').length, 1)
+})
+
+test('replay, retry, revise, reassign, and restart never add or compensate a Shadow', async t => {
+  const f = await fixture(t)
+  const request = hookRequest('shadow-lifecycle')
+  const first = await f.broker.hook({ agent: f.agent, request })
+  const replay = await f.broker.hook({ agent: f.agent, request })
+  assert.deepEqual(replay, first)
+  assert.equal(routesFor(f, first.caseId).filter(route => route.mode === 'auto_shadow').length, 1)
+  assert.equal(callsOf(f, 'router-contract/1').length, 1)
+
+  await f.broker.retry({ caseId: first.caseId })
+  await f.broker.reassign({ caseId: first.caseId, agentId: f.alternative.agentId })
+  assert.equal(routesFor(f, first.caseId).filter(route => route.mode === 'auto_shadow').length, 1)
+  assert.equal(callsOf(f, 'router-contract/1').length, 1)
+
+  f.respond({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Add the missing context.' })
+  const args = { question: 'Initial pinned consultation?', authorization_class: 'A', request_id: 'shadow-revision' }
+  const initial = await f.broker.consult({ agent: f.agent, args })
+  assert.deepEqual(await f.broker.consult({ agent: f.agent, args }), initial)
+  f.respond({ outcome: 'escalate', missing: ['A revised judgment is required'] })
+  await f.broker.consult({ agent: f.agent, args: { ...args, question: 'Actually revised consultation?' } })
+  assert.equal(routesFor(f, initial.caseId).filter(route => route.mode === 'auto_shadow').length, 1)
+  assert.equal(callsOf(f, 'router-contract/1').length, 2)
+
+  const crashed = await fixture(t)
+  const current = (await crashed.broker.cases.createCase({
+    workspaceKey: crashed.workspace, rootSessionId: 'root', entry: 'hook', agentId: crashed.pinned.agentId,
+    request: hookRequest('crash-after-pinned'), scope: { workspaces: [crashed.workspace] }, idempotencyKey: 'crash-after-pinned',
+  })).case
+  await crashed.broker.cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'pinned', chosen: crashed.pinned.agentId, reason: 'Pinned by user' })
+  const path = crashed.broker.databasePath()
+  await crashed.broker.flush()
+  const restarted = new DecisionBroker({ profileContext: crashed.broker.profileContext, ctx: crashed.broker.ctx, config: () => crashed.config })
+  t.after(async () => { await restarted.flush() })
+  await restarted.open(path)
+  assert.equal(restarted.cases.getCase(current.caseId).state, 'received')
+  assert.equal(restarted.store.db.prepare("SELECT COUNT(*) AS n FROM route_decisions WHERE case_id=? AND mode='auto_shadow'").get(current.caseId).n, 0)
+  assert.equal(callsOf(crashed, 'router-classification-contract/1').length, 0)
+  assert.equal(callsOf(crashed, 'router-contract/1').length, 0)
+})
+
+test('Shadow authority classes stay non-authoritative and add no retrieval, profile, Attempt, or learning effects', async t => {
+  const f = await fixture(t)
+  const profilesBefore = [f.pinned, f.alternative].map(profile => f.broker.profiles.getProfile(profile.agentId))
+  let retrievals = 0
+  let generatedDescriptionReads = 0
+  const retrieve = f.broker.retriever.retrieve.bind(f.broker.retriever)
+  f.broker.retriever.retrieve = (...args) => { retrievals++; return retrieve(...args) }
+  const listProfiles = f.broker.profiles.listProfiles.bind(f.broker.profiles)
+  f.broker.profiles.listProfiles = (...args) => listProfiles(...args).map(profile => {
+    Object.defineProperty(profile, 'generatedDescription', { configurable: true, get() { generatedDescriptionReads++; throw new Error('Shadow must not read generatedDescription') } })
+    return profile
+  })
+
+  const selected = await f.broker.hook({ agent: f.agent, request: hookRequest('shadow-normal') })
+  assert.equal(routesFor(f, selected.caseId)[1].chosen, f.alternative.agentId)
+  for (const authorizationClass of ['unknown', 'D', 'E', 'F']) {
+    f.classifyAs(authorizationClass)
+    const verdict = await f.broker.hook({ agent: f.agent, request: hookRequest(`shadow-${authorizationClass}`) })
+    const current = f.broker.cases.getCase(verdict.caseId)
+    const shadow = routesFor(f, verdict.caseId).find(route => route.mode === 'auto_shadow')
+    assert.equal(current.agentId, f.pinned.agentId)
+    assert.equal(current.attemptCount, 1)
+    assert.equal(current.maxAttempts, 3)
+    assert.equal(shadow.chosen, null)
+    assert.equal(shadow.reason, 'admission:authority')
+    assert.equal(current.request.questions[0].authorizationClass, undefined)
+  }
+
+  assert.equal(retrievals, 5)
+  assert.equal(generatedDescriptionReads, 0)
+  assert.equal(callsOf(f, 'router-classification-contract/1').length, 5)
+  assert.equal(callsOf(f, 'router-contract/1').length, 1)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, 5)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM attempts').get().n, 5)
+  assert.equal(f.broker.store.db.prepare("SELECT COUNT(*) AS n FROM evidence WHERE source='user_decision'").get().n, 0)
+  for (const table of ['feedback', 'corrections', 'learning_runs', 'memory_snapshots']) {
+    assert.equal(f.broker.store.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n, 0, table)
+  }
+  assert.deepEqual([f.pinned, f.alternative].map(profile => f.broker.profiles.getProfile(profile.agentId)), profilesBefore)
+  assert.equal(f.broker.activeEvaluations, 0)
+})
+
+test('Shadow none and ambiguity remain suggestions with no real Case or Attempt changes', async t => {
+  for (const outcome of ['none', 'ambiguous']) {
+    const f = await fixture(t)
+    f.routeWith(outcome === 'none'
+      ? { contract: 'router-contract/1', outcome, reason: 'No candidate fits' }
+      : { contract: 'router-contract/1', outcome, reason: 'Both candidates overlap', ambiguity: { candidates: [f.pinned.agentId, f.alternative.agentId], conflict: 'Both claim the decision' } })
+    const verdict = await f.broker.hook({ agent: f.agent, request: hookRequest(`shadow-${outcome}`) })
+    const current = f.broker.cases.getCase(verdict.caseId)
+    const routes = routesFor(f, verdict.caseId)
+    assert.equal(current.agentId, f.pinned.agentId)
+    assert.equal(current.state, 'awaiting_user')
+    assert.equal(current.attemptCount, 1)
+    assert.deepEqual(routes.map(route => route.mode), ['pinned', 'auto_shadow'])
+    assert.equal(routes[1].chosen, null)
+    assert.equal(routes[1].reason, outcome === 'none' ? 'No candidate fits' : 'Both candidates overlap')
+    assert.equal(routes[1].ambiguity_json === null, outcome === 'none')
+    assert.equal(f.broker.attempts.forCase(current.caseId).length, 1)
   }
 })
