@@ -87,3 +87,20 @@ test('turn-stopping passes only the current agent to Broker cleanup', async () =
   await listeners['agent/turn-stopping']({ agent: root })
   assert.deepEqual(calls, [{ agent: root }])
 })
+
+test('Broker route storage failure uses native next without fabricating a persisted result', async () => {
+  const writes = []
+  const broker = {
+    status: () => ({ available: true }),
+    hook: async () => { throw new Error('route store unavailable') },
+    hookUserAnswer: async input => writes.push(input),
+    hookUserAborted: async input => writes.push(input),
+  }
+  const { listeners } = setup(broker)
+  const native = { answers: [{ id: 'q', selected: ['A'] }] }
+  let nextCalls = 0
+  const result = await listeners['user-questions/request'](request, async () => { nextCalls++; return native })
+  assert.equal(result, native)
+  assert.equal(nextCalls, 1)
+  assert.deepEqual(writes, [])
+})

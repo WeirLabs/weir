@@ -296,3 +296,71 @@ test('Auto revalidates a model-selected target after model return and before any
   assert.equal(attemptCount(f), 0)
   assert.deepEqual(request, snapshot)
 })
+
+test('Auto ambiguity, invalid output, and timeout persist fail-closed outcomes without partial Attempts', async t => {
+  const ambiguousFixture = await fixture(t)
+  const a = await ambiguousFixture.broker.profileUpsert({ workspaceKey: ambiguousFixture.workspace, name: 'A' })
+  const b = await ambiguousFixture.broker.profileUpsert({ workspaceKey: ambiguousFixture.workspace, name: 'B' })
+  ambiguousFixture.routeWith({
+    contract: 'router-contract/1', outcome: 'ambiguous', reason: 'Both scopes overlap',
+    ambiguity: { candidates: [a.agentId, b.agentId], conflict: 'Both claim the same product decision' },
+  })
+  const batch = {
+    questions: [
+      { ...hookRequest('ambiguous-a').questions[0], authorizationClass: 'A' },
+      { ...hookRequest('ambiguous-b').questions[0], authorizationClass: 'A' },
+    ],
+  }
+  const ambiguous = await ambiguousFixture.broker.hook({ agent: ambiguousFixture.agent, request: batch })
+  const ambiguousCase = ambiguousFixture.broker.cases.getCase(ambiguous.caseId)
+  assert.equal(ambiguous.kind, 'pass')
+  assert.equal(ambiguous.why, 'awaiting_user')
+  assert.equal(ambiguousCase.awaitingReason, 'route_ambiguous')
+  assert.equal(ambiguousCase.agentId, null)
+  assert.equal(routeFor(ambiguousFixture, ambiguous.caseId).reason, 'Both scopes overlap')
+  assert.equal(attemptCount(ambiguousFixture), 0)
+
+  const invalidFixture = await fixture(t)
+  await invalidFixture.broker.profileUpsert({ workspaceKey: invalidFixture.workspace, name: 'A' })
+  await invalidFixture.broker.profileUpsert({ workspaceKey: invalidFixture.workspace, name: 'B' })
+  invalidFixture.routeWith({ contract: 'router-contract/1', outcome: 'selected', agentId: 'not-a-candidate', reason: 'Unknown Agent' })
+  const invalid = await invalidFixture.broker.consult({ agent: invalidFixture.agent, args: { question: 'Reject an unknown route?', authorization_class: 'A', request_id: 'invalid-route-output' } })
+  assert.equal(invalid.outcome, 'awaiting_user')
+  assert.equal(invalid.reason, 'no_route')
+  assert.equal(routeFor(invalidFixture, invalid.caseId).reason, 'failure:invalid_output')
+  assert.equal(invalidFixture.broker.cases.getCase(invalid.caseId).agentId, null)
+  assert.equal(attemptCount(invalidFixture), 0)
+
+  const timeoutFixture = await fixture(t)
+  await timeoutFixture.broker.profileUpsert({ workspaceKey: timeoutFixture.workspace, name: 'A' })
+  await timeoutFixture.broker.profileUpsert({ workspaceKey: timeoutFixture.workspace, name: 'B' })
+  timeoutFixture.config.decisionAgentAnswerTimeoutMs = 5
+  const stream = timeoutFixture.broker.ctx.llm.stream
+  timeoutFixture.broker.ctx.llm.stream = options => options.system.includes('router-contract/1')
+    ? (async function * () { await new Promise(() => {}) })()
+    : stream(options)
+  const timedOut = await timeoutFixture.broker.consult({ agent: timeoutFixture.agent, args: { question: 'Bound a Router timeout?', authorization_class: 'A', request_id: 'route-timeout' } })
+  assert.equal(timedOut.outcome, 'awaiting_user')
+  assert.equal(timedOut.reason, 'no_route')
+  assert.equal(routeFor(timeoutFixture, timedOut.caseId).reason, 'failure:timeout')
+  assert.equal(attemptCount(timeoutFixture), 0)
+})
+
+test('Auto consult commit failure stays an explicit storage failure without recovery or an Attempt', async t => {
+  const f = await fixture(t)
+  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
+  f.broker.cases.transitionWithRoute = async () => { throw new Error('consult route commit failed') }
+  let evaluations = 0
+  let recoveries = 0
+  f.broker.evaluateCase = () => { evaluations++; throw new Error('domain evaluation must not run') }
+  f.broker.recoverUnexpected = () => { recoveries++; throw new Error('route failures must not enter domain recovery') }
+  const args = { question: 'Persist the route before evaluation?', authorization_class: 'A', request_id: 'consult-commit-failure' }
+  await assert.rejects(f.broker.consult({ agent: f.agent, args }), /consult route commit failed/)
+  const current = f.broker.cases.byIdempotencyKey('consult:root:consult-commit-failure')
+  assert.equal(current.state, 'received')
+  assert.equal(current.agentId, null)
+  assert.equal(evaluations, 0)
+  assert.equal(recoveries, 0)
+  assert.equal(attemptCount(f), 0)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions').get().n, 0)
+})
