@@ -176,6 +176,26 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(!driver.includes('127.0.0.1:52011'))
 })
 
+test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(state, 'cardState exists')
+  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===6']) assert.ok(state.includes(token), token)
+  const revealBody = driver.match(/async function revealCard\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(revealBody, 'revealCard exists')
+  assert.match(revealBody, /Input\.dispatchMouseEvent/, 'a collapsed native process group opens through real CDP pointer input')
+  assert.match(revealBody, /button\[data-process-activity="tools"\]/)
+  assert.ok(!/\.click\(|\.focus\(/.test(revealBody), 'the reveal never uses DOM click or focus')
+  const held = driver.indexOf("check('consultSingleWritableCardBeforeToolResult'")
+  const reveal = driver.indexOf('beforeCard = await revealCard(consult.caseId)', held)
+  const focused = driver.indexOf("check('consultWaitingCardPutsDecisionFirst'")
+  const release = driver.indexOf("writeFileSync(join(out, 'consult-result.release')")
+  assert.ok(held >= 0 && reveal > held && focused > reveal && release > focused, 'the held card is revealed and asserted before tool result release')
+  const acceptance = driver.slice(reveal, release)
+  for (const condition of ['beforeCard.cards === 1', 'beforeCard.forms === 1', 'beforeCard.formImmediatelyAfterHeader', 'beforeCard.formBeforeSecondary', 'beforeCard.recordAnswerSummaries === 0', 'beforeCard.suggestionReviews === 0', "beforeCard.text.includes('GUI_B_DECIDE')"]) assert.ok(acceptance.includes(condition), condition)
+  assert.ok(acceptance.includes('beforeCard = await revealCard(consult.caseId)'), 'the held card is scrolled into view and must expose non-empty rendered text before its screenshot')
+})
+
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {
