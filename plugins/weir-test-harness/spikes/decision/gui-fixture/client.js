@@ -36,7 +36,13 @@ window.__ModuleLoader__.load({
             toolviews: ctx.slots.entries('tool.call.toolview').map(entry => entry.options.key),
           }
         }
-        window.__decisionQA = { fixture, decision, createSession, openSession, selectDecisions, getState }
+        function sessionBinding(sessionId) {
+          const binding = ctx.uiWorkspace.sessions.binding(sessionId)
+          const snapshot = binding?.session.getSnapshot()
+          const retention = ctx.uiWorkspace.sessions.retainInfo(sessionId).getSnapshot()
+          return { sessionId, live: Boolean(binding), openState: snapshot?.openState ?? null, openError: snapshot?.openError ?? null, retainedBy: { ...(retention?.retainedBy ?? {}) } }
+        }
+        window.__decisionQA = { fixture, decision, createSession, openSession, selectDecisions, getState, sessionBinding }
         ctx.on('dispose', () => { delete window.__decisionQA })
       },
     }
