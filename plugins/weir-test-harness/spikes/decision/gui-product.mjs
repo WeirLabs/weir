@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorEnvelope, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorCopyProblems, selectorEnvelope, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -40,7 +40,7 @@ const visualAudits = []
 const accessibility = {}
 const accessibilityRequirements = {
   selectorTrigger: { role: 'button', name: /决策助手|Decision/i },
-  selectorPanel: { role: 'dialog', name: /选择决策助手|Select.*assistant/i, autoChecked: true },
+  selectorPanel: { role: 'dialog', name: /选择决策助手|Choose.*assistant|Select.*assistant/i, autoChecked: true },
   longRecord: { role: 'article', name: '' },
   snapshotPublishDialog: { role: 'dialog', name: /采用这些原则变化|Apply these principle changes/i },
   snapshotRejectDialog: { role: 'dialog', name: /放弃这个候选|Discard this candidate/i },
@@ -118,7 +118,7 @@ function validateAccessibility() {
     for (const [key, value] of Object.entries(expected.properties ?? {})) {
       if (root.properties?.[key] !== value) problems.push(`${name}: expected ${key}=${value}`)
     }
-    if (expected.autoChecked && !nodes.some(node => !node.ignored && node.role === 'radio' && /Auto/i.test(node.name ?? '') && (node.properties?.checked === true || node.properties?.checked === 'true' || node.properties?.checked === 'checked'))) problems.push(`${name}: checked Auto radio is missing`)
+    if (expected.autoChecked && !nodes.some(node => !node.ignored && node.role === 'radio' && /自动选择助手|Automatically choose an assistant/i.test(node.name ?? '') && (node.properties?.checked === true || node.properties?.checked === 'true' || node.properties?.checked === 'checked'))) problems.push(`${name}: checked automatic-assistant radio with ordinary-language name is missing`)
     return problems
   })
   const requiredGroups = Object.keys(accessibilityRequirements)
@@ -1110,11 +1110,12 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   await shot('p4-empty-whitelist-native')
   await answerNative('Native empty')
   p4Evidence.empty = await waitCase(autoSession, 'gui-auto-empty', value => value.state === 'closed')
-  await setAutoSettings('p4-allow-a', { answerClasses: ['A'] })
+  await setAutoSettings('p4-allow-two', { answerClasses: ['A', 'C'] })
   await openIsolatedSession(autoSession)
   await selectorOpen()
   const autoCopy = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
-  check('autoSelectorShowsRealAllowedAAndShadowCopy', /Auto/.test(autoCopy) && /A/.test(autoCopy) && /Shadow/.test(autoCopy) && !/白名单为空|whitelist is empty/i.test(autoCopy), autoCopy)
+  const autoCopyProblems = selectorCopyProblems(autoCopy, { language: 'zh', allowedCount: 2, shadow: false })
+  check('autoSelectorShowsRealAllowedTwoAndComparisonCopy', autoCopyProblems.length === 0, { text: autoCopy, problems: autoCopyProblems })
   await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
   await keyboardKey('Close Auto settings proof selector', 'Escape')
 
@@ -1213,7 +1214,8 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   await openIsolatedSession(shadowObservedSession)
   await selectorOpen()
   const shadowOnCopy = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
-  check('selectorShowsRealShadowOnCopy', /Shadow/.test(shadowOnCopy) && /已开启|are on/i.test(shadowOnCopy), shadowOnCopy)
+  const shadowCopyProblems = selectorCopyProblems(shadowOnCopy, { language: 'zh', allowedCount: 2, shadow: true })
+  check('selectorShowsRealShadowOnCopy', shadowCopyProblems.length === 0, { text: shadowOnCopy, problems: shadowCopyProblems })
   await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
   await keyboardKey('Close Shadow-on selector proof', 'Escape')
   await selectorChoose(shadowObservedSession, 'agent', primary.agentId)
@@ -1709,9 +1711,10 @@ try {
   writeJson(join(out, 'slots.json'), slots)
   check('newSlotsActive', slots.sidebar.includes('weir-decisions') && slots.main.includes('weir-decisions') && slots.composer.includes('weir-decision-selector') && slots.toolviews.includes('ask_user_question') && slots.toolviews.includes('decision_consult'), slots)
   await selectorOpen()
-  const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label'),checked:el.checked})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]')),auto:/\\bAuto\\b|自动路由/.test(panel.innerText)} })()`)
+  const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label'),checked:el.checked})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]'))} })()`)
   const initialAuthority = await rpc(sessionId, 'initial-fresh-auto', 'overview')
-  check('dedicatedFreshSelectorOffAutoAndPersistedDefaultAuto', !initialSelector.legacy && initialSelector.auto && initialSelector.radios.map(radio => radio.value).join(',') === 'off,auto' && initialSelector.radios.find(radio => radio.value === 'auto')?.checked === true && selectorMatches(initialAuthority.selector, 'auto') && /白名单为空|whitelist is empty/i.test(initialSelector.text) && /Shadow/.test(initialSelector.text), { initialSelector, authority: initialAuthority.selector })
+  const initialCopyProblems = selectorCopyProblems(initialSelector.text, { language: 'zh', emptyScope: true, shadow: false })
+  check('dedicatedFreshSelectorOffAutoAndPersistedDefaultAuto', !initialSelector.legacy && initialCopyProblems.length === 0 && initialSelector.radios.map(radio => radio.value).join(',') === 'off,auto' && initialSelector.radios.find(radio => radio.value === 'auto')?.checked === true && initialSelector.radios.every(radio => radio.name === (radio.value === 'off' ? '不启用助手' : '自动选择助手')) && selectorMatches(initialAuthority.selector, 'auto'), { initialSelector, authority: initialAuthority.selector, copyProblems: initialCopyProblems })
   await shot('01-selector-empty')
   await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'] })
   const longName = '桌面验收助手 · Decision Product QA with an intentionally long English assistant name'
