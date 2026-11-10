@@ -503,7 +503,7 @@ async function openDecisionSettings() {
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("Auto Shadow")'), 60_000)
 }
 
-async function setAutoSettings(phase, { shadow, answerClasses }) {
+async function setAutoSettings(phase, { shadow, answerClasses, answerTimeoutMs }) {
   await openDecisionSettings()
   if (shadow !== undefined) {
     const selector = '[aria-label="Auto Shadow 诊断"],[aria-label="Auto Shadow diagnostics"]'
@@ -515,8 +515,11 @@ async function setAutoSettings(phase, { shadow, answerClasses }) {
     const value = JSON.stringify(answerClasses)
     await keyboardFill('Edit Auto answer-class whitelist', 'input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses', value)
   }
+  if (answerTimeoutMs !== undefined) {
+    await keyboardFill('Edit Auto answer timeout', 'input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs', String(answerTimeoutMs))
+  }
   await keyboardActivate('Save Decision Auto settings', '[data-save-bar] button', { namePattern: '^(保存|Save)' })
-  const expected = value => (shadow === undefined || value.effective?.decisionAgentAutoShadow === shadow) && (answerClasses === undefined || JSON.stringify(value.effective?.decisionAgentAutoAnswerClasses) === JSON.stringify(answerClasses))
+  const expected = value => (shadow === undefined || value.effective?.decisionAgentAutoShadow === shadow) && (answerClasses === undefined || JSON.stringify(value.effective?.decisionAgentAutoAnswerClasses) === JSON.stringify(answerClasses)) && (answerTimeoutMs === undefined || value.effective?.decisionAgentAnswerTimeoutMs === answerTimeoutMs)
   const config = await waitFor(async () => { const value = await decisionConfig(phase); return expected(value) ? value : null }, 30_000)
   await shot(`settings-${phase}`)
   await keyboardKey('Close settings after authority reread', 'Escape', { phase })
@@ -1299,14 +1302,14 @@ async function runP4AfterRestart(state, legacySession, primary, secondary) {
   await instance.cdp.setPageZoom(1)
   await instance.cdp.setViewport(1440)
 
-  const restoredConfig = await setAutoSettings('p4-restored', { shadow: false, answerClasses: [] })
+  const restoredConfig = await setAutoSettings('p4-restored', { shadow: false, answerClasses: [], answerTimeoutMs: 150 })
   const restoreAutoSessions = [state.sessionId, state.autoSession, state.explicitOffSession, state.shadowControlSession, state.shadowObservedSession, state.pendingSession, state.foreignSession]
   const restoredSelectors = {}
   for (const id of restoreAutoSessions) {
     await openIsolatedSession(id, true)
     restoredSelectors[id] = await selectorChoose(id, 'auto')
   }
-  check('testOwnedSelectorsAndSettingsRestored', Object.values(restoredSelectors).every(selector => selectorMatches(selector, 'auto')) && restoredConfig.effective?.decisionAgentAutoShadow === false && JSON.stringify(restoredConfig.effective?.decisionAgentAutoAnswerClasses) === '[]' && restoredConfig.effective?.decisionAgentSelectorDefault === 'auto', { selectors: restoredSelectors, config: restoredConfig.effective })
+  check('testOwnedSelectorsAndSettingsRestored', Object.values(restoredSelectors).every(selector => selectorMatches(selector, 'auto')) && restoredConfig.effective?.decisionAgentAutoShadow === false && JSON.stringify(restoredConfig.effective?.decisionAgentAutoAnswerClasses) === '[]' && restoredConfig.effective?.decisionAgentSelectorDefault === 'auto' && restoredConfig.effective?.decisionAgentAnswerTimeoutMs === 150, { selectors: restoredSelectors, config: restoredConfig.effective })
 
   const archivedPrimary = await agentState(state.sessionId, primary.agentId, 'archived')
   const archivedSecondary = await agentState(state.sessionId, secondary.agentId, 'archived')
@@ -1762,6 +1765,8 @@ try {
   check('noCommandOrCustomDecisionSessionEvents', scanBefore.commandEvents.length === 0 && scanBefore.customDecisionEvents.length === 0)
 
   const beforeGlobalOff = await records(sessionId)
+  const interruptionConfig = await setAutoSettings('p4-interruption-window', { answerTimeoutMs: 30000 })
+  check('interruptionUsesExplicitBoundedHoldWindow', interruptionConfig.effective?.decisionAgentAnswerTimeoutMs === 30000, interruptionConfig.effective)
   await openIsolatedSession(p4State.autoSession)
   await submitMarker(instance, 'GUI_AUTO_INTERRUPT')
   await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready')), 30_000)
