@@ -158,6 +158,29 @@ export function immutableChanges(phases) {
   return changes
 }
 
+const SELECTOR_FORBIDDEN_COPY = [
+  { label: 'Off', pattern: /\bOff\b/i },
+  { label: 'Auto', pattern: /\bAuto\b/i },
+  { label: 'Shadow', pattern: /\bShadow\b/i },
+  { label: 'whitelist', pattern: /白名单|whitelist/i },
+  { label: 'A/B/C codes', pattern: /\b[ABC]\s*\/\s*[ABC]\s*\/\s*[ABC]\b|\b[ABC]\s*,\s*[ABC](?:\s*,\s*[ABC])?\b/ },
+]
+
+export function selectorCopyProblems(value, expected = {}) {
+  const text = typeof value === 'string' ? value : ''
+  const problems = SELECTOR_FORBIDDEN_COPY.filter(({ pattern }) => pattern.test(text)).map(({ label }) => `forbidden default selector jargon: ${label}`)
+  const zh = expected.language !== 'en'
+  const required = zh
+    ? [{ label: 'off task label', pattern: /不启用助手/ }, { label: 'auto task label', pattern: /自动选择助手/ }]
+    : [{ label: 'off task label', pattern: /Do not use an assistant/i }, { label: 'auto task label', pattern: /Automatically choose an assistant/i }]
+  if (expected.emptyScope) required.push({ label: 'empty scope and continued asking', pattern: zh ? /尚未允许自动回答[；;。\s]*新判断仍会询问你/ : /No decisions are currently allowed for automatic answers[;,.\s]*new decisions will still ask you/i })
+  if (Number.isInteger(expected.allowedCount)) required.push({ label: `allowedCount ${expected.allowedCount}`, pattern: zh ? new RegExp(`当前允许自动回答\\s*${expected.allowedCount}\\s*类判断`) : new RegExp(`allowed for\\s*${expected.allowedCount}\\s*decision categories`, 'i') })
+  if (expected.unknown) required.push({ label: 'unknown automatic-answer state', pattern: zh ? /自动回答状态未知/ : /Automatic-answer status is unknown/i }, { label: 'unknown comparison state', pattern: zh ? /选择对比状态未知/ : /Selection comparison status is unknown/i })
+  if (expected.shadow === true) required.push({ label: 'comparison on', pattern: zh ? /选择对比已开启/ : /Selection comparison is on/i })
+  if (expected.shadow === false) required.push({ label: 'comparison off', pattern: zh ? /选择对比未开启/ : /Selection comparison is not enabled/i })
+  for (const item of required) if (!item.pattern.test(text)) problems.push(`missing ${item.label}`)
+  return problems
+}
 function cssRectProblems(value, label = 'CSS rect') {
   if (!value || typeof value !== 'object') return [`missing ${label}`]
   const fields = ['x', 'y', 'left', 'top', 'width', 'height', 'right', 'bottom']
@@ -166,14 +189,14 @@ function cssRectProblems(value, label = 'CSS rect') {
   return problems
 }
 
-export function nativeModalProblems(measurement) {
+export function nativeModalProblems(measurement, options = {}) {
   const problems = []
   if (measurement?.implementation !== 'native-dialog' || measurement?.tagName !== 'DIALOG') problems.push('expected a native <dialog>, not an absolute/fixed substitute')
   if (measurement?.open !== true) problems.push('native dialog is not open')
   if (measurement?.modal !== true) problems.push('native dialog does not match :modal')
   if (measurement?.ariaModal !== 'true') problems.push('native dialog lacks aria-modal=true')
   if (measurement?.showModalCalls !== 1 || measurement?.showModalError !== null) problems.push('showModal must succeed exactly once without an opening error')
-  if (measurement?.composerContainsDialog !== true) problems.push('native dialog is not mounted from the composer probe origin')
+  if (options.requireComposer !== false && measurement?.composerContainsDialog !== true) problems.push('native dialog is not mounted from the composer probe origin')
   if (measurement?.focusInside !== true) problems.push('native modal focus did not enter the dialog')
   problems.push(...cssRectProblems(measurement?.rect, 'native dialog CSS rect'))
   return problems
@@ -213,7 +236,47 @@ export function browserZoomProblems(evidence, expectedScale = 2) {
   return problems
 }
 
-export function scrollLockProblems({ before, during, after }, requiredContainers = []) {
+export function selectorLayoutProblems(measurement, expected = {}) {
+  const problems = [...nativeModalProblems(measurement?.native)]
+  const viewport = measurement?.viewport
+  const visual = viewport?.visualViewport
+  problems.push(...viewportMeasurementProblems(viewport, { scale: expected.scale, withinVisualViewport: ['dialog', 'header', 'body', 'footer'] }))
+  const dialog = viewport?.rects?.dialog
+  if (dialog && dialog.width > 360 + 1) problems.push(`selector dialog width ${dialog.width} exceeds 360 CSS px`)
+  if (dialog && visual) {
+    const left = visual.offsetLeft ?? 0
+    const top = visual.offsetTop ?? 0
+    if (dialog.left < left + 7.5 || dialog.right > left + visual.width - 7.5 || dialog.top < top + 7.5 || dialog.bottom > top + visual.height - 7.5) problems.push('selector dialog does not retain 8 CSS px visual viewport margins')
+    if (dialog.height > Math.min(560, visual.height - 16) + 1) problems.push('selector dialog exceeds its compact dynamic-viewport height')
+  }
+  if (measurement?.native?.backdropCoversVisualViewport !== true) problems.push('native backdrop does not cover the full visual viewport')
+  if (measurement?.native?.backgroundInert !== true) problems.push('native modal background is not inert')
+  if (measurement?.panelOverflow !== 'hidden') problems.push('selector panel itself must not scroll')
+  if (!['auto', 'scroll'].includes(measurement?.bodyOverflow) || measurement?.bodyOverscroll !== 'contain') problems.push('selector body is not an independent contained scroller')
+  if (measurement?.horizontalOverflow !== false) problems.push('selector introduces horizontal overflow')
+  if (expected.scrollable) {
+    if (!(measurement?.bodyScrollHeight > measurement?.bodyClientHeight)) problems.push('selector fixture did not produce a genuinely scrollable body')
+    if (!(measurement?.bodyScrollTopAfter > measurement?.bodyScrollTopBefore)) problems.push('selector body did not scroll independently')
+  } else {
+    if (measurement?.bodyScrollHeight > measurement?.bodyClientHeight + 1) problems.push('few-option selector unexpectedly overflows its body')
+    if (measurement?.bodyScrollTopAfter !== measurement?.bodyScrollTopBefore) problems.push('few-option selector body moved without scrollable content')
+  }
+  for (const [name, before, after] of [['header', measurement?.headerBefore, measurement?.headerAfter], ['footer', measurement?.footerBefore, measurement?.footerAfter]]) {
+    if (!before || !after || Math.abs(before.top - after.top) > 0.5 || Math.abs(before.bottom - after.bottom) > 0.5) problems.push(`${name} moved while only the selector body scrolled`)
+  }
+  return problems
+}
+
+export function confirmationFocusProblems({ beforeSettle, afterSettle } = {}) {
+  const problems = []
+  if (beforeSettle?.promiseSettled !== false || beforeSettle?.targetFocused || beforeSettle?.fallbackFocused) problems.push('confirmation restored focus before the action Promise settled')
+  if (afterSettle?.promiseSettled !== true) problems.push('confirmation focus evidence was captured before Promise settlement')
+  const valid = target => target?.connected === true && target?.enabled === true && target?.visible === true && target?.focused === true
+  if (!valid(afterSettle?.target) && !(valid(afterSettle?.fallback) && afterSettle?.fallback?.logical === true)) problems.push('confirmation did not focus a valid target or logical fallback')
+  return problems
+}
+
+export function scrollLockProblems({ before, during, after, attempts = [] }, requiredContainers = [], requiredAttempts = []) {
   const problems = []
   for (const name of requiredContainers) {
     const initial = before?.[name]
@@ -226,6 +289,7 @@ export function scrollLockProblems({ before, during, after }, requiredContainers
     if (!same(restored.inline, initial.inline)) problems.push(`${name}: inline styles were not restored exactly`)
     if (restored.scrollTop !== initial.scrollTop || restored.scrollLeft !== initial.scrollLeft) problems.push(`${name}: scroll position was not restored exactly`)
   }
+  for (const type of requiredAttempts) if (!attempts.some(attempt => attempt?.type === type && attempt?.observed === true)) problems.push(`missing observed ${type} background-scroll attempt`)
   return problems
 }
 
@@ -256,6 +320,7 @@ export function masterDetailProblems({ desktop, narrowList, drillIn, returned, r
     if (!same(stage?.draft, drillIn?.draft)) problems.push(`${name}: exact draft changed`)
     if (!same(stage?.learning, drillIn?.learning)) problems.push(`${name}: learning review context changed`)
   }
+  if (returned?.readCount !== drillIn?.readCount) problems.push('Back caused an authority reread')
   if (restored?.readCount !== drillIn?.readCount) problems.push('same-target restoration caused an authority reread')
   return problems
 }

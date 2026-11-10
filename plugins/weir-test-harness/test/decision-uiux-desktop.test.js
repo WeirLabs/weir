@@ -70,3 +70,27 @@ test('Desktop UIUX preflight uses native dialog capabilities without running the
   for (const helper of ['measureNativeModal', 'measureScrollContainers', 'measureColdReveal', 'measureMasterDetail']) assert.ok(driver.includes(`async function ${helper}(`), `${helper} is available to the later merged Client candidate`)
   assert.match(driver, /screenshots\.push\(\{ name, path, bytes: bytes\.length, \.\.\.\(details \?\? \{\}\) \}\)/, 'the screenshot index retains structured zoom and rect evidence')
 })
+
+test('isolated UIUX fixture controls real Decision RPC settlement without product changes', () => {
+  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  for (const token of ['controlDecision', 'releaseDecisionControl', 'decisionControlState', "action==='fail'", "action==='hold'", "action==='unknown-auto'", 'originalRpcCall', 'JSON.stringify(control.args)']) assert.ok(fixture.includes(token), token)
+  assert.ok(fixture.includes('connection.rpc.call=controlledCall'), 'the isolated client wraps the live RPC method')
+  assert.match(fixture, /controlledConnection\.rpc\.call=originalRpcCall/, 'fixture disposal restores the exact original RPC method')
+  assert.ok(!fixture.includes('weir-harness/lib'), 'the fixture does not patch product chunks')
+})
+
+test('5.2 product matrix wires raw modal scroll and settled-focus audits into every confirmation family', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(matrix.includes('installUiuxInstrumentation'), 'product dialogs are instrumented before the first selector opens')
+  for (const helper of ['agentState', 'confirmLearning', 'cancelUnownedInbox']) {
+    const body = driver.match(new RegExp(`async function ${helper}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`))?.[0] ?? ''
+    assert.ok(body.includes('beginModalAudit'), `${helper} measures native modal and all background scrollers`)
+    assert.ok(body.includes('finishModalAudit'), `${helper} verifies restoration after closing`)
+    assert.ok(body.includes('holdDecision'), `${helper} controls action Promise settlement`)
+    assert.ok(body.includes('confirmationFocusProblems'), `${helper} rejects premature focus restoration`)
+  }
+  for (const token of ['beginModalAudit', 'runSelectorFailureMatrix', 'runColdRevealMatrix', 'runAgentResumeMatrix', 'browserZoomProblems', 'uiux-acceptance.json']) assert.ok(matrix.includes(token), token)
+  const failure = driver.slice(driver.indexOf('} catch (error)', driver.indexOf('async function runProductMatrix()')))
+  for (const token of ['logErrorCount', 'importFailures', 'desktop-enabled.log', 'desktop-disabled.log']) assert.ok(failure.includes(token), `failure runtime scan retains ${token}`)
+})
