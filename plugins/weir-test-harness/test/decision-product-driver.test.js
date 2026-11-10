@@ -281,7 +281,7 @@ test('all product write paths use native keyboard helpers instead of DOM actions
   for (const call of ["await keyboardActivate('Submit note'", "await keyboardActivate('Submit correction'", "await keyboardFill('Edit assistant name'", "await keyboardFill('Enter independent note'", "await keyboardFill('Enter correction'"]) {
     assert.ok(driver.includes(call), `missing traced keyboard action: ${call}`)
   }
-  assert.ok(driver.includes("artifacts: { networkRpc:") && driver.includes("keyboard: join(out, 'keyboard-interactions.json')"), 'the result indexes structured keyboard evidence')
+  assert.ok(driver.includes("artifacts: { uiux:") && driver.includes("keyboard: join(out, 'keyboard-interactions.json')"), 'the result indexes structured UIUX and keyboard evidence')
 })
 
 function fakeTransitionCdp(t) {

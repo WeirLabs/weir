@@ -71,6 +71,7 @@ test('native modal guard requires genuine showModal top-layer semantics in the c
   assert.match(nativeModalProblems({ ...genuine, implementation: 'absolute-fallback' }).join('\n'), /native <dialog>/)
   assert.match(nativeModalProblems({ ...genuine, showModalCalls: 0, showModalError: 'unsupported' }).join('\n'), /showModal/)
   assert.match(nativeModalProblems({ ...genuine, composerContainsDialog: false }).join('\n'), /composer/)
+  assert.deepEqual(nativeModalProblems({ ...genuine, composerContainsDialog: false }, { requireComposer: false }), [], 'management-page confirmations use the same native guard without a composer-only mount assumption')
   assert.match(nativeModalProblems({ ...genuine, rect: { ...genuine.rect, width: 0 } }).join('\n'), /rect/)
 })
 
@@ -136,6 +137,7 @@ test('master-detail guard preserves narrow drill-in context and same-target rest
   assert.match(masterDetailProblems({ desktop: { ...desktop, listVisible: false }, narrowList, drillIn, returned, restored }).join('\n'), /desktop.*list/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: { ...restored, draft: { name: 'lost' } } }).join('\n'), /draft/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: { ...restored, readCount: 5 } }).join('\n'), /reread/)
+  assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned: { ...returned, readCount: 5 }, restored }).join('\n'), /Back.*reread/)
 })
 
 test('selector layout guard requires visual-viewport containment fixed ends and independent body scrolling', () => {

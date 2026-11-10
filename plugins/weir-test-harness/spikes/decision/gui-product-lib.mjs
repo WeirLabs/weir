@@ -189,14 +189,14 @@ function cssRectProblems(value, label = 'CSS rect') {
   return problems
 }
 
-export function nativeModalProblems(measurement) {
+export function nativeModalProblems(measurement, options = {}) {
   const problems = []
   if (measurement?.implementation !== 'native-dialog' || measurement?.tagName !== 'DIALOG') problems.push('expected a native <dialog>, not an absolute/fixed substitute')
   if (measurement?.open !== true) problems.push('native dialog is not open')
   if (measurement?.modal !== true) problems.push('native dialog does not match :modal')
   if (measurement?.ariaModal !== 'true') problems.push('native dialog lacks aria-modal=true')
   if (measurement?.showModalCalls !== 1 || measurement?.showModalError !== null) problems.push('showModal must succeed exactly once without an opening error')
-  if (measurement?.composerContainsDialog !== true) problems.push('native dialog is not mounted from the composer probe origin')
+  if (options.requireComposer !== false && measurement?.composerContainsDialog !== true) problems.push('native dialog is not mounted from the composer probe origin')
   if (measurement?.focusInside !== true) problems.push('native modal focus did not enter the dialog')
   problems.push(...cssRectProblems(measurement?.rect, 'native dialog CSS rect'))
   return problems
@@ -320,6 +320,7 @@ export function masterDetailProblems({ desktop, narrowList, drillIn, returned, r
     if (!same(stage?.draft, drillIn?.draft)) problems.push(`${name}: exact draft changed`)
     if (!same(stage?.learning, drillIn?.learning)) problems.push(`${name}: learning review context changed`)
   }
+  if (returned?.readCount !== drillIn?.readCount) problems.push('Back caused an authority reread')
   if (restored?.readCount !== drillIn?.readCount) problems.push('same-target restoration caused an authority reread')
   return problems
 }

@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorCopyProblems, selectorEnvelope, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -37,6 +37,7 @@ const cleanups = []
 const sqlitePhases = []
 const comparisons = []
 const visualAudits = []
+const uiuxEvidence = { modalAudits: [], selectorLayouts: [], selectorStates: [], confirmations: [], coldReveals: [], masterDetail: [], zoom: [], languages: [] }
 const accessibility = {}
 const accessibilityRequirements = {
   selectorTrigger: { role: 'button', name: /决策助手|Decision/i },
@@ -479,11 +480,23 @@ async function openAgent(sessionId, agentId) {
 async function agentState(sessionId, agentId, state) {
   await openIsolatedSession(sessionId, true)
   await openAgent(sessionId, agentId)
-  await keyboardActivate(`Request assistant ${state}`, `[data-agent-detail="${agentId}"] [data-agent-state="${state}"]`)
+  const originSelector = `[data-agent-detail="${agentId}"] [data-agent-state="${state}"]`
+  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
+  await keyboardActivate(`Request assistant ${state}`, originSelector)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-agent-state"))'), 30_000)
+  const audit = await beginModalAudit(`assistant-${state}-${agentId}`, '#weir-da-agent-state', originSelector, { before: scrollBefore })
+  const controlId = await holdDecision('profileSetState', { sessionId, agentId, state })
   await keyboardActivate(`Confirm assistant ${state}`, `#weir-da-agent-state .weir-da-actions button${state === 'enabled' ? '[data-variant="primary"]' : ':last-child'}`)
+  await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
+  const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await releaseDecision(controlId)
   const agent = await waitFor(async () => { const value = await rpc(sessionId, 'agent-state', 'agent', { agentId }); return value.state === state ? value : null }, 30_000)
   await expectMutation('profileSetState', { sessionId, agentId, state })
+  const afterFocus = await waitFor(async () => { const focus = await measureConfirmationFocus(originSelector, controlId); return focus.control.settled && (focus.targetFocused || focus.fallbackFocused) ? focus : null }, 30_000).catch(() => measureConfirmationFocus(originSelector, controlId))
+  const focus = { beforeSettle: { ...beforeFocus, promiseSettled: beforeFocus.control.settled }, afterSettle: { ...afterFocus, promiseSettled: afterFocus.control.settled } }
+  const focusProblems = confirmationFocusProblems(focus)
+  uiuxEvidence.confirmations.push({ kind: `assistant-${state}`, agentId, controlId, focus, problems: focusProblems })
+  await finishModalAudit(audit, { focus, focusProblems })
   return agent
 }
 
@@ -753,19 +766,31 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   const dialog = { snapshotPublish: 'weir-da-learning-publish', snapshotReject: 'weir-da-learning-reject', snapshotRollback: 'weir-da-learning-rollback' }[kind]
   const snapshotId = candidate.snapshot.snapshotId
   const expectedRevision = candidate.snapshot.revision
-  await keyboardActivate(`Request ${kind}`, `[data-action="${action}"]`)
+  const originSelector = `[data-action="${action}"]`
+  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
+  await keyboardActivate(`Request ${kind}`, originSelector)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#${dialog}'))`), 30_000)
   const confirmation = await instance.cdp.evaluate(`document.querySelector('#${dialog}').innerText`)
   requireEvidence(/只影响|历史|future|history/i.test(confirmation), `${kind} consequence confirmation`)
   await captureAccessibility(`${kind}Dialog`, `#${dialog}`)
   await shot(`${kind}-v${candidate.snapshot.version}-confirm`)
+  const audit = await beginModalAudit(`${kind}-v${candidate.snapshot.version}`, `#${dialog}`, originSelector, { before: scrollBefore })
+  const controlId = await holdDecision(kind, { sessionId, snapshotId, expectedRevision })
   await keyboardActivate(`Confirm ${kind}`, `#${dialog} .weir-da-actions button:last-child`)
+  await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
+  const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await releaseDecision(controlId)
   const agent = await waitAgent(sessionId, candidate.agent.agentId, value => {
     if (kind === 'snapshotPublish') return value.currentSnapshotId === snapshotId
     if (kind === 'snapshotReject') return value.learningRuns.some(run => run.learningRunId === candidate.run.learningRunId && run.outcome === 'rejected')
     return value.snapshots.some(snapshot => snapshot.snapshotId === snapshotId && snapshot.state === 'rolled_back') && (value.currentSnapshotId ?? null) === expectedCurrentId
   })
   const mutation = await expectMutation(kind, { sessionId, snapshotId, expectedRevision })
+  const afterFocus = await waitFor(async () => { const focus = await measureConfirmationFocus(originSelector, controlId); return focus.control.settled && (focus.targetFocused || focus.fallbackFocused) ? focus : null }, 30_000).catch(() => measureConfirmationFocus(originSelector, controlId))
+  const focus = { beforeSettle: { ...beforeFocus, promiseSettled: beforeFocus.control.settled }, afterSettle: { ...afterFocus, promiseSettled: afterFocus.control.settled } }
+  const focusProblems = confirmationFocusProblems(focus)
+  uiuxEvidence.confirmations.push({ kind, snapshotId, controlId, focus, problems: focusProblems })
+  await finishModalAudit(audit, { focus, focusProblems })
   const snapshot = await rpc(sessionId, `${kind}-snapshot`, 'memorySnapshot', { snapshotId })
   const run = candidate.run?.learningRunId ? await rpc(sessionId, `${kind}-run`, 'learningRun', { learningRunId: candidate.run.learningRunId }) : null
   comparisons.push({ phase: kind, kind: 'learning', snapshotId, expectedRevision, rpcId: mutation.rpcId, response: mutation.response, authoritative: { currentSnapshotId: agent.currentSnapshotId ?? null, snapshotState: snapshot.state, snapshotRevision: snapshot.revision, runOutcome: run?.outcome ?? null } })
@@ -794,13 +819,15 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
     const primaries=[...document.querySelectorAll('.weir-da-page .weir-da-button[data-variant="primary"],.weir-da-conversation-card .weir-da-button[data-variant="primary"]')].filter(visible)
     const surfaces=[...document.querySelectorAll('.weir-da-page,.weir-da-selector-panel')].filter(visible)
     const page=document.querySelector('.weir-da-page')
+    const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0}
+    const defaultText=page?.innerText??''
     return {
       viewport:{width:innerWidth,height:innerHeight,visualWidth:visualViewport?.width??null,scale:visualViewport?.scale??1},
       document:{clientWidth:document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1},
       surfaceOverflow:surfaces.filter(el=>el.scrollWidth>el.clientWidth+1).map(el=>el.className),
-      clippedPrimary:primaries.filter(el=>el.scrollWidth>el.clientWidth+1||el.getBoundingClientRect().left < -1||el.getBoundingClientRect().right>innerWidth+1).map(el=>el.innerText||el.getAttribute('aria-label')),
+      clippedPrimary:primaries.filter(el=>{const rect=el.getBoundingClientRect();return el.scrollWidth>el.clientWidth+1||rect.left<visual.offsetLeft-1||rect.right>visual.offsetLeft+visual.width+1}).map(el=>el.innerText||el.getAttribute('aria-label')),
       unnamedControls:controls.filter(el=>!String(nameOf(el)).trim()).map(el=>el.outerHTML.slice(0,200)),
-      internalVocabulary:[],
+      internalVocabulary:[...new Set((defaultText.match(/\b(?:Case|Attempt|L2|L3|L5|Learning Run|Snapshot|generatedDescription)\b/g)??[]))],
       colors:page?{background:getComputedStyle(page).backgroundColor,color:getComputedStyle(page).color}:null,
     }
   })()`)
@@ -810,11 +837,11 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
   }, 10_000).catch(() => {})
   requireEvidence(audit, `${name} produced a real layout measurement`)
   const problems = layoutProblems(audit)
-  const row = { name, theme, zoom, audit, problems }
+  const row = { name, theme, zoom, audit, problems, ax: await instance.cdp.accessibility('.weir-da-page') }
   visualAudits.push(row)
   writeJson(join(out, 'visual-audits.json'), visualAudits)
   check(`visual-${name}`, problems.length === 0 && audit.colors?.background===expectedColors.background && audit.colors?.color===expectedColors.color && Math.abs((audit.viewport.scale ?? 1) - zoom) < 0.01, { problems, viewport: audit.viewport, colors: audit.colors })
-  await shot(`visual-${name}`)
+  await shot(`visual-${name}`, { kind: 'layout-ax', viewport: audit.viewport, axNodes: row.ax.length })
   return row
 }
 
@@ -1051,12 +1078,24 @@ async function cancelUnownedInbox(sessionId, caseId, label, routeRequired = true
   await unownedInbox(sessionId, caseId, label, routeRequired)
   const article = `article[data-case-id=${JSON.stringify(caseId)}]`
   await openDisclosure(`weir-da-recovery-${caseId}`)
+  const originSelector = `${article} .weir-da-disclosure .weir-da-button[data-variant="danger"]`
+  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
   await keyboardActivate(`Request cancel ${label}`, 'button', { scope: article, labels: ['取消', 'Cancel'] })
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-cancel-decision"))'), 30_000)
   if (!accessibility.cancelDecisionDialog) await captureAccessibility('cancelDecisionDialog', '#weir-da-cancel-decision')
+  const audit = await beginModalAudit(`cancel-decision-${label}`, '#weir-da-cancel-decision', originSelector, { before: scrollBefore })
+  const controlId = await holdDecision('cancel', { sessionId, caseId })
   await keyboardActivate(`Confirm cancel ${label}`, '#weir-da-cancel-decision .weir-da-actions button:last-child')
+  await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
+  const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await releaseDecision(controlId)
   const closed = await waitFor(async () => { const value=await record(sessionId, `${label}-cancelled`, caseId); return value.case.state==='closed'?value:null }, 30_000)
   await expectMutation('cancel', { sessionId, caseId })
+  const afterFocus = await waitFor(async () => { const focus = await measureConfirmationFocus(originSelector, controlId); return focus.control.settled && (focus.targetFocused || focus.fallbackFocused) ? focus : null }, 30_000).catch(() => measureConfirmationFocus(originSelector, controlId))
+  const focus = { beforeSettle: { ...beforeFocus, promiseSettled: beforeFocus.control.settled }, afterSettle: { ...afterFocus, promiseSettled: afterFocus.control.settled } }
+  const focusProblems = confirmationFocusProblems(focus)
+  uiuxEvidence.confirmations.push({ kind: 'cancel-decision', caseId, controlId, focus, problems: focusProblems })
+  await finishModalAudit(audit, { focus, focusProblems })
   check(`${label}ExplicitCancelHasNoAttemptOrEvidence`, closed.case.agentId === null && closed.case.closing === 'cancelled' && closed.attempts.length === 0 && closed.feedback.length === 0, { caseId })
   await settleNativeSkip(sessionId, caseId, label)
   return closed
@@ -1472,10 +1511,20 @@ async function measureNativeModal(selector, originSelector = '[data-weir-decisio
     if(!dialog)return null
     const origin=document.querySelector(${JSON.stringify(originSelector)})
     const value=dialog.getBoundingClientRect()
+    const visual=visualViewport?{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale,offsetLeft:visualViewport.offsetLeft,offsetTop:visualViewport.offsetTop}:{width:innerWidth,height:innerHeight,scale:1,offsetLeft:0,offsetTop:0}
+    const points=[[visual.offsetLeft+2,visual.offsetTop+2],[visual.offsetLeft+visual.width-2,visual.offsetTop+2],[visual.offsetLeft+2,visual.offsetTop+visual.height-2],[visual.offsetLeft+visual.width-2,visual.offsetTop+visual.height-2]]
+    if(origin){const rect=origin.getBoundingClientRect();points.push([rect.left+rect.width/2,rect.top+rect.height/2])}
+    const hitTests=points.filter(([x,y])=>x>=0&&y>=0&&x<innerWidth&&y<innerHeight).map(([x,y])=>{const hits=document.elementsFromPoint(x,y);return {x,y,hitsDialog:hits.includes(dialog),hitsOrigin:Boolean(origin&&hits.includes(origin)),stack:hits.slice(0,4).map(el=>({tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,160):''}))}})
+    const backdrop=getComputedStyle(dialog,'::backdrop')
+    const inset=['top','right','bottom','left'].every(name=>Math.abs(Number.parseFloat(backdrop[name])||0)<0.01)
+    const backdropCoversVisualViewport=dialog.matches(':modal')&&backdrop.position==='fixed'&&inset&&hitTests.length>=4&&hitTests.every(hit=>hit.hitsDialog)
+    const backgroundInert=dialog.matches(':modal')&&hitTests.every(hit=>hit.hitsDialog&&!hit.hitsOrigin)
     return {
       implementation:'native-dialog',tagName:dialog.tagName,open:dialog.open,modal:dialog.matches(':modal'),ariaModal:dialog.getAttribute('aria-modal'),
       showModalCalls:dialog.__uiuxShowModalCalls??0,showModalError:dialog.__uiuxShowModalError??null,
       composerContainsDialog:Boolean(origin?.parentElement?.contains(dialog)),focusInside:dialog.contains(document.activeElement),
+      backdropCoversVisualViewport,backgroundInert,visualViewport:visual,hitTests,
+      backdrop:{position:backdrop.position,top:backdrop.top,right:backdrop.right,bottom:backdrop.bottom,left:backdrop.left,backgroundColor:backdrop.backgroundColor},
       rect:{x:value.x,y:value.y,left:value.left,top:value.top,width:value.width,height:value.height,right:value.right,bottom:value.bottom},
     }
   })()`)
@@ -1489,11 +1538,17 @@ async function measureScrollContainers(selectors = {}, originSelector = null) {
     const entries=[]
     const add=(name,el)=>{if(!el||seen.has(el))return;seen.add(el);entries.push([name,el])}
     for(const [name,selector] of Object.entries(definitions))add(name,name==='root'?document.documentElement:name==='body'?document.body:document.querySelector(selector))
-    let originElement=origin?document.querySelector(origin):null
-    for(let index=0;originElement;index+=1,originElement=originElement.parentElement){const overflow=getComputedStyle(originElement).overflowY;if(['auto','scroll','overlay'].includes(overflow))add('ancestor-'+index,originElement)}
-    return Object.fromEntries(entries.map(([name,el])=>{const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
+    for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))add(el.getAttribute('data-weir-uiux-scroll'),el)
+    add('decisionPage',document.querySelector('main.weir-da-page'))
+    const originElement=origin?document.querySelector(origin):null
+    const chain=[]
+    for(let current=originElement;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(['auto','scroll','overlay'].includes(overflow))chain.push(current)}
+    if(originElement?.matches?.('[data-weir-decision-trigger="weir-decision-selector"]')){add('composer',chain[0]);add('session',chain[1])}
+    for(let index=0;index<chain.length;index+=1)add('ancestor-'+index,chain[index])
+    return Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
+      identity:{tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):''},
       scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,scrollWidth:el.scrollWidth,
-      inline:{overflow:el.style.overflow,overscrollBehavior:el.style.overscrollBehavior,paddingRight:el.style.paddingRight},
+      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight'].map(key=>[key,el.style[key]??''])),
       computed:{overflowY:computed.overflowY,overscrollBehavior:computed.overscrollBehavior},
       rect:{x:rect.x,y:rect.y,left:rect.left,top:rect.top,width:rect.width,height:rect.height,right:rect.right,bottom:rect.bottom},
     }]}))
@@ -1507,9 +1562,13 @@ async function measureColdReveal(targetSelector, scrollerSelector, state = {}) {
     const scroller=document.querySelector(${JSON.stringify(scrollerSelector)})
     const draft=options.draftSelector?document.querySelector(options.draftSelector):null
     const active=document.activeElement
+    const calls=(window.__weirUiuxRevealCalls??[]).filter(call=>call.id===target?.id)
+    const latest=calls.at(-1)?.options??{}
+    const draftValue=draft?draft.matches?.('form')?JSON.stringify([...draft.querySelectorAll('input,textarea')].map(el=>({name:el.name||el.getAttribute('aria-label'),value:el.value,checked:el.checked}))):draft.value??draft.textContent:null
     return {
       ...options,targetBottom:target?.getBoundingClientRect().bottom??null,scrollerBottom:scroller?.getBoundingClientRect().bottom??null,
-      scrollTop:scroller?.scrollTop??null,active:active?.id||active?.tagName?.toLowerCase()||null,draft:draft?.value??null,
+      scrollTop:scroller?.scrollTop??null,active:[active?.id,active?.tagName?.toLowerCase(),active?.getAttribute?.('aria-label'),active?.value].filter(Boolean).join(':')||null,draft:draftValue,
+      revealCount:calls.length,behavior:latest.behavior??null,block:latest.block??null,revealCalls:calls,
     }
   })()`)
 }
@@ -1525,6 +1584,122 @@ async function measureMasterDetail(selectors = {}) {
       horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1,listRect:rect(list),detailRect:rect(detail),
     }
   })()`)
+}
+
+function saveUiuxEvidence() {
+  writeJson(join(out, 'uiux-acceptance.json'), uiuxEvidence)
+}
+
+async function installUiuxInstrumentation() {
+  const installed = await instance.cdp.evaluate(`(() => {
+    if(window.__weirUiuxDriverInstalled)return true
+    const dialog=window.HTMLDialogElement?.prototype
+    if(!dialog?.showModal||!window.Element?.prototype?.scrollIntoView)return false
+    const showModal=dialog.showModal
+    dialog.showModal=function(...args){
+      this.__uiuxShowModalCalls=(this.__uiuxShowModalCalls??0)+1
+      this.__uiuxShowModalError=null
+      try{return showModal.apply(this,args)}catch(error){this.__uiuxShowModalError=error?.message??String(error);throw error}
+    }
+    const scrollIntoView=window.Element.prototype.scrollIntoView
+    window.__weirUiuxRevealCalls=[]
+    window.Element.prototype.scrollIntoView=function(...args){
+      window.__weirUiuxRevealCalls.push({id:this.id||null,at:Date.now(),options:args[0]??null})
+      return scrollIntoView.apply(this,args)
+    }
+    window.__weirUiuxDriverInstalled=true
+    return true
+  })()`)
+  requireEvidence(installed, 'real Desktop accepts UIUX showModal and reveal instrumentation')
+}
+
+async function holdDecision(method, args) {
+  const id = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method, args, action: 'hold' })})`)
+  requireEvidence(typeof id === 'string', `hold control created for ${method}`)
+  return id
+}
+
+async function releaseDecision(id) {
+  return instance.cdp.evaluate(`window.__decisionQA.releaseDecisionControl(${JSON.stringify(id)})`)
+}
+
+async function decisionControl(id) {
+  const states = await instance.cdp.evaluate('window.__decisionQA.decisionControlState()')
+  const control = states.find(item => item.id === id)
+  requireEvidence(control, `known UIUX RPC control ${id}`)
+  return control
+}
+
+async function measureConfirmationFocus(originSelector, controlId = null) {
+  return instance.cdp.evaluate(`(() => {
+    const origin=${JSON.stringify(originSelector)}
+    const describe=el=>el?{connected:el.isConnected,enabled:!el.disabled&&el.getAttribute('aria-disabled')!=='true',visible:el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden',focused:document.activeElement===el}:null
+    const target=document.querySelector(origin)
+    const fallback=document.querySelector('[data-decision-primary-nav]')||document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')
+    return {target:describe(target),fallback:{...describe(fallback),logical:true},targetFocused:document.activeElement===target,fallbackFocused:document.activeElement===fallback,active:{tag:document.activeElement?.tagName??null,id:document.activeElement?.id??null,class:typeof document.activeElement?.className==='string'?document.activeElement.className.slice(0,160):''}}
+  })()`).then(async focus => ({ ...focus, control: controlId ? await decisionControl(controlId) : null }))
+}
+
+async function auditSelectorLayout(name, { scale = 1, scrollable = false } = {}) {
+  const panel = '#weir-da-selector-panel'
+  const body = '.weir-da-selector-body'
+  const native = await measureNativeModal(panel)
+  const viewport = await instance.cdp.measureViewport({ dialog: panel, header: '.weir-da-selector-header', body, footer: '.weir-da-selector-footer' })
+  const read = () => instance.cdp.evaluate(`(() => {
+    const panel=document.querySelector('#weir-da-selector-panel')
+    const body=document.querySelector('.weir-da-selector-body')
+    const rect=el=>{const value=el.getBoundingClientRect();return {x:value.x,y:value.y,left:value.left,top:value.top,width:value.width,height:value.height,right:value.right,bottom:value.bottom}}
+    return {panelOverflow:getComputedStyle(panel).overflow,bodyOverflow:getComputedStyle(body).overflowY,bodyOverscroll:getComputedStyle(body).overscrollBehavior,bodyScrollHeight:body.scrollHeight,bodyClientHeight:body.clientHeight,bodyScrollTop:body.scrollTop,header:rect(document.querySelector('.weir-da-selector-header')),footer:rect(document.querySelector('.weir-da-selector-footer')),horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1}
+  })()`)
+  const before = await read()
+  const point = await instance.cdp.evaluate(`(() => {const rect=document.querySelector('.weir-da-selector-body').getBoundingClientRect();return {x:rect.left+rect.width/2,y:rect.top+Math.min(rect.height/2,80)}})()`)
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseWheel', x: point.x, y: point.y, deltaX: 0, deltaY: 180 })
+  if (scrollable) await waitFor(() => instance.cdp.evaluate(`document.querySelector('.weir-da-selector-body').scrollTop>${before.bodyScrollTop}`), 10_000).catch(() => {})
+  else await new Promise(resolve => setTimeout(resolve, 120))
+  const after = await read()
+  const evidence = { name, native, viewport, panelOverflow: before.panelOverflow, bodyOverflow: before.bodyOverflow, bodyOverscroll: before.bodyOverscroll, bodyScrollHeight: before.bodyScrollHeight, bodyClientHeight: before.bodyClientHeight, bodyScrollTopBefore: before.bodyScrollTop, bodyScrollTopAfter: after.bodyScrollTop, headerBefore: before.header, headerAfter: after.header, footerBefore: before.footer, footerAfter: after.footer, horizontalOverflow: after.horizontalOverflow }
+  evidence.problems = selectorLayoutProblems(evidence, { scale, scrollable })
+  uiuxEvidence.selectorLayouts.push(evidence)
+  saveUiuxEvidence()
+  await shot(`uiux-${name}`, { kind: 'selector-layout', scale, scrollable, viewport, native, problems: evidence.problems })
+  check(`selectorLayout:${name}`, evidence.problems.length === 0, { problems: evidence.problems, viewport, body: { before: before.bodyScrollTop, after: after.bodyScrollTop, scrollHeight: before.bodyScrollHeight, clientHeight: before.bodyClientHeight } })
+  return evidence
+}
+
+async function beginModalAudit(kind, selector, originSelector, options = {}) {
+  const before = options.before ?? await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
+  requireEvidence(before.root && before.body, `${kind} has root and body scroll measurements`)
+  let selectorLayout = null
+  if (options.selector) selectorLayout = await auditSelectorLayout(kind, options.selector)
+  const native = await measureNativeModal(selector, originSelector)
+  requireEvidence(native, `${kind} native dialog exists`)
+  const point = await instance.cdp.evaluate(`(() => {const origin=document.querySelector(${JSON.stringify(originSelector)});const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};const rect=origin?.getBoundingClientRect();return {x:Math.max(visual.offsetLeft+4,Math.min(visual.offsetLeft+visual.width-4,rect?rect.left+rect.width/2:visual.offsetLeft+visual.width/2)),y:Math.max(visual.offsetTop+4,Math.min(visual.offsetTop+visual.height-4,rect?rect.top+rect.height/2:visual.offsetTop+visual.height/2))}})()`)
+  const attempts = []
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseWheel', x: point.x, y: point.y, deltaX: 0, deltaY: 240 })
+  attempts.push({ type: 'wheel', observed: true, point, deltaY: 240 })
+  await instance.cdp.request('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y }] })
+  await instance.cdp.request('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: point.x, y: Math.max(4, point.y - 80) }] })
+  await instance.cdp.request('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  attempts.push({ type: 'touch', observed: true, point, deltaY: -80 })
+  await instance.cdp.key('PageDown')
+  attempts.push({ type: 'PageDown', observed: true })
+  const during = await measureScrollContainers({}, originSelector)
+  const audit = { kind, selector, originSelector, before, during, after: null, native, selectorLayout, attempts, problems: [] }
+  uiuxEvidence.modalAudits.push(audit)
+  saveUiuxEvidence()
+  await shot(`uiux-${kind}-modal`, { kind: 'native-product-modal', native, scroll: { before, during }, attempts })
+  return audit
+}
+
+async function finishModalAudit(audit, { focus = null, focusProblems = [] } = {}) {
+  audit.after = await measureScrollContainers({}, audit.originSelector)
+  const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
+  audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...focusProblems]
+  if (focus) audit.focus = focus
+  saveUiuxEvidence()
+  await instance.cdp.evaluate(`(() => {for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))el.removeAttribute('data-weir-uiux-scroll');return true})()`)
+  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), focus: focus ?? null })
+  return audit
 }
 
 async function runUiuxCapabilityPreflight() {
@@ -1691,6 +1866,332 @@ async function runStartupPreflight() {
   }
 }
 
+async function runSelectorFailureMatrix(sessionId, primary, secondary) {
+  const trigger = '[data-weir-decision-trigger="weir-decision-selector"]'
+  await openIsolatedSession(sessionId, true)
+  await instance.cdp.setViewport(360, 420, false)
+  await waitFor(() => instance.cdp.evaluate('innerWidth===360&&innerHeight===420'), 10_000)
+  await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+  const manyBefore = await measureScrollContainers({ root: 'html', body: 'body' }, trigger)
+  await selectorOpen()
+  const manyText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const manyCopyProblems = selectorCopyProblems(manyText, { language: 'zh', emptyScope: true, shadow: false })
+  const manyCount = await instance.cdp.evaluate(`document.querySelectorAll('#weir-da-selector-panel input[type="radio"]').length`)
+  check('selectorManyLongNamesUseOrdinaryCopy', manyCount === 4 && manyCopyProblems.length === 0 && manyText.includes(primary.name) && manyText.includes(secondary.name), { manyCount, problems: manyCopyProblems, text: manyText })
+  const manyModal = await beginModalAudit('selector-many-compact-height', '#weir-da-selector-panel', trigger, { before: manyBefore, selector: { scale: 1, scrollable: true } })
+  await keyboardKey('Close measured many-option selector', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(manyModal)
+
+  const otherSession = (await newIsolatedSession('uiux-selector-load-other')).sessionId
+  const loadControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'fail' })})`)
+  await openIsolatedSession(sessionId, true)
+  await selectorOpen()
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="alert"]'))`), 30_000)
+  const loadText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const loadState = { kind: 'load-failure', control: await decisionControl(loadControl), text: loadText, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
+  uiuxEvidence.selectorStates.push(loadState)
+  saveUiuxEvidence()
+  await shot('uiux-selector-load-failure', { kind: 'selector-load-failure', controlId: loadControl })
+  check('selectorLoadFailureIsVisibleAndRetryable', loadState.control.used && /决策操作失败|Decision action failed/i.test(loadText) && /重试|Retry/i.test(loadText), { control: loadState.control, text: loadText })
+
+  const unknownControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'unknown-auto' })})`)
+  await keyboardActivate('Retry selector read with unknown status', 'button', { scope: '#weir-da-selector-panel', labels: ['重试', 'Retry'] })
+  await waitFor(() => instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel')?.innerText.includes('自动回答状态未知')`), 30_000)
+  const unknownText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const unknownProblems = selectorCopyProblems(unknownText, { language: 'zh', unknown: true })
+  const unknownState = { kind: 'unknown', control: await decisionControl(unknownControl), text: unknownText, problems: unknownProblems, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
+  uiuxEvidence.selectorStates.push(unknownState)
+  saveUiuxEvidence()
+  await shot('uiux-selector-unknown', { kind: 'selector-unknown', controlId: unknownControl, problems: unknownProblems })
+  check('selectorUnknownStateUsesOrdinaryCopy', unknownProblems.length === 0, { text: unknownText, problems: unknownProblems })
+  await keyboardKey('Close unknown selector state', 'Escape')
+  await openIsolatedSession(otherSession, true)
+  await openIsolatedSession(sessionId, true)
+
+  await selectorOpen()
+  const saveControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'setSelector', args: { sessionId, mode: 'agent', agentId: primary.agentId }, action: 'fail' })})`)
+  await keyboardFocus('Current automatic selection before failed save', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
+  await keyboardKey('Attempt assistant selection with injected save failure', 'ArrowDown', { target: primary.agentId })
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="alert"]'))`), 30_000)
+  const failedAuthority = await rpc(sessionId, 'selector-save-failure', 'overview')
+  const saveText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const saveState = { kind: 'save-failure', control: await decisionControl(saveControl), text: saveText, authority: failedAuthority.selector, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
+  uiuxEvidence.selectorStates.push(saveState)
+  saveUiuxEvidence()
+  await shot('uiux-selector-save-failure', { kind: 'selector-save-failure', controlId: saveControl })
+  check('selectorSaveFailurePreservesAuthorityAndAllowsRetry', saveState.control.used && selectorMatches(failedAuthority.selector, 'auto') && /决策操作失败|Decision action failed/i.test(saveText) && /重试|Retry/i.test(saveText), { control: saveState.control, authority: failedAuthority.selector, text: saveText })
+  await keyboardKey('Close failed selector save before real retry', 'Escape')
+  const retryControl = await holdDecision('setSelector', { sessionId, mode: 'agent', agentId: primary.agentId })
+  await selectorOpen()
+  await keyboardFocus('Current automatic selection before held retry', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
+  await keyboardKey('Retry assistant selection with controlled settlement', 'ArrowDown', { target: primary.agentId })
+  await waitFor(async () => (await decisionControl(retryControl)).started, 30_000)
+  const pending = await instance.cdp.evaluate(`(() => {const panel=document.querySelector('#weir-da-selector-panel');const status=panel?.querySelector('[role="status"][aria-live="polite"]');return {modal:panel?.matches(':modal'),busy:panel?.getAttribute('aria-busy'),status:status?.textContent??'',open:Boolean(panel)}})()`)
+  const pendingAx = await instance.cdp.accessibility('#weir-da-selector-panel')
+  await shot('uiux-selector-save-pending-live-status', { kind: 'selector-pending', pending })
+  await keyboardKey('Pending selector must not close on Escape', 'Escape')
+  const pendingAfterEscape = await instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel')?.matches(':modal'))`)
+  uiuxEvidence.selectorStates.push({ kind: 'save-pending', control: await decisionControl(retryControl), pending, pendingAfterEscape, ax: pendingAx })
+  saveUiuxEvidence()
+  check('selectorPendingHasLiveStatusAndCannotEscape', pending.modal && pending.busy === 'true' && /保存中|Saving/i.test(pending.status) && pendingAfterEscape, { pending, pendingAfterEscape })
+  await releaseDecision(retryControl)
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')`), 30_000)
+  const retried = await rpc(sessionId, 'selector-save-retry', 'overview')
+  requireEvidence(selectorMatches(retried.selector, 'agent', primary.agentId), 'held selector retry returns the exact authoritative assistant')
+  await expectMutation('setSelector', selectorEnvelope(sessionId, 'agent', primary.agentId))
+  await instance.cdp.setViewport(1440, 900, false)
+}
+
+async function authorityReadCount() {
+  await collectNetwork()
+  return networkRpc.filter(entry => ['agent', 'agents', 'learningRun', 'memorySnapshot'].includes(entry.method)).length
+}
+
+async function measureAgentStage(selectedAgentId = null, learning = {}) {
+  const measurement = await measureMasterDetail({ list: '.weir-da-agent-list', detail: '[data-agent-detail],form[data-agent-editor]' })
+  const dom = await instance.cdp.evaluate(`(() => {
+    const form=document.querySelector('form[data-agent-editor]')
+    const detail=document.querySelector('[data-agent-detail]')
+    const run=${JSON.stringify(learning.run ?? null)}
+    const snapshot=${JSON.stringify(learning.snapshot ?? null)}
+    const runDetail=run?document.querySelector('[data-learning-run-detail="'+run+'"]'):null
+    const diagnostics=runDetail?.textContent??''
+    return {draft:form?Object.fromEntries([...form.querySelectorAll('[data-agent-field]')].map(el=>[el.getAttribute('data-agent-field'),el.value])):{},detailAgentId:detail?.getAttribute('data-agent-detail')??null,formMode:form?.getAttribute('data-agent-editor')??null,learning:{run:runDetail?.getAttribute('data-learning-run-detail')??null,snapshot:run&&snapshot&&diagnostics.includes(snapshot)?snapshot:null}}
+  })()`)
+  return { ...measurement, selectedAgentId: dom.detailAgentId ?? (dom.formMode === 'create' ? null : selectedAgentId), draft: dom.draft, learning: learning.run ? dom.learning : {}, readCount: await authorityReadCount() }
+}
+
+async function confirmDiscardEditor(sessionId, targetAgentId, originSelector, scrollBefore) {
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-discard-editor"))'), 30_000)
+  const audit = await beginModalAudit(`discard-editor-to-${targetAgentId}`, '#weir-da-discard-editor', originSelector, { before: scrollBefore })
+  const controlId = await holdDecision('agent', { sessionId, agentId: targetAgentId })
+  await keyboardActivate('Confirm discard editor and change target', '#weir-da-discard-editor .weir-da-actions button:last-child')
+  await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
+  const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await releaseDecision(controlId)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail=${JSON.stringify(targetAgentId)}]'))`), 30_000)
+  const afterFocus = await waitFor(async () => { const focus = await measureConfirmationFocus(originSelector, controlId); return focus.control.settled && (focus.targetFocused || focus.fallbackFocused) ? focus : null }, 30_000).catch(() => measureConfirmationFocus(originSelector, controlId))
+  const focus = { beforeSettle: { ...beforeFocus, promiseSettled: beforeFocus.control.settled }, afterSettle: { ...afterFocus, promiseSettled: afterFocus.control.settled } }
+  const focusProblems = confirmationFocusProblems(focus)
+  uiuxEvidence.confirmations.push({ kind: 'discard-editor', targetAgentId, controlId, focus, problems: focusProblems })
+  await finishModalAudit(audit, { focus, focusProblems })
+}
+
+async function runAgentResumeMatrix(sessionId, primary, secondary) {
+  await openAgent(sessionId, primary.agentId)
+  await instance.cdp.setViewport(1440, 900, false)
+  const desktop = await measureAgentStage(primary.agentId)
+  await shot('uiux-assistant-desktop-master-detail', { kind: 'master-detail', measurement: desktop })
+  await instance.cdp.setViewport(360, 900, false)
+  await keyboardActivate('Back to narrow assistant list', '.weir-da-agent-back')
+  const narrowList = await measureAgentStage(primary.agentId)
+
+  await keyboardActivate('Open narrow create draft', '[data-action="create-agent"]')
+  const createDraft = { name: '未保存创建草稿 · Exact create draft with a long bilingual name', preference: '保留这个创建草稿的每一个字符； Back → same create must not reread or confirm.' }
+  await keyboardFill('Enter exact create draft name', '[data-agent-field="name"]', createDraft.name)
+  await keyboardFill('Enter exact create draft preference', '[data-agent-field="preference"]', createDraft.preference)
+  const createDrill = await measureAgentStage(null)
+  await shot('uiux-create-draft-drill-in', { kind: 'master-detail', measurement: createDrill })
+  await keyboardActivate('Back with preserved create draft', '.weir-da-agent-back')
+  const createReturned = await measureAgentStage(null)
+  await keyboardActivate('Resume same create draft', '[data-action="create-agent"]')
+  const createRestored = await measureAgentStage(null)
+  const createEvidence = { kind: 'create', desktop, narrowList, drillIn: createDrill, returned: createReturned, restored: createRestored }
+  createEvidence.problems = masterDetailProblems(createEvidence)
+  uiuxEvidence.masterDetail.push(createEvidence)
+  saveUiuxEvidence()
+  await shot('uiux-create-draft-restored', { kind: 'master-detail', measurement: createRestored, problems: createEvidence.problems })
+  check('narrowCreateBackSameTargetPreservesExactDraftWithoutReread', createEvidence.problems.length === 0, { problems: createEvidence.problems, readCount: [createDrill.readCount, createReturned.readCount, createRestored.readCount] })
+  await keyboardActivate('Back before real create target change', '.weir-da-agent-back')
+  const createTargetOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
+  const createTargetScrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, createTargetOrigin)
+  await keyboardActivate('Change from dirty create to assistant', createTargetOrigin)
+  await confirmDiscardEditor(sessionId, primary.agentId, createTargetOrigin, createTargetScrollBefore)
+
+  await keyboardActivate('Open narrow edit draft', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
+  const editDraft = { name: `${primary.name} · 未保存编辑 / exact unsaved edit`, preference: 'Exact edit draft survives Back and same-assistant re-entry without confirmation or authority rereads.' }
+  await keyboardFill('Enter exact edit draft name', '[data-agent-field="name"]', editDraft.name)
+  await keyboardFill('Enter exact edit draft preference', '[data-agent-field="preference"]', editDraft.preference)
+  const editDrill = await measureAgentStage(primary.agentId)
+  await shot('uiux-edit-draft-drill-in', { kind: 'master-detail', measurement: editDrill })
+  await keyboardActivate('Back with preserved edit draft', '.weir-da-agent-back')
+  const editReturned = await measureAgentStage(primary.agentId)
+  const editSameOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
+  await keyboardActivate('Resume same assistant edit draft', editSameOrigin)
+  const editRestored = await measureAgentStage(primary.agentId)
+  const editEvidence = { kind: 'edit', desktop, narrowList, drillIn: editDrill, returned: editReturned, restored: editRestored }
+  editEvidence.problems = masterDetailProblems(editEvidence)
+  uiuxEvidence.masterDetail.push(editEvidence)
+  saveUiuxEvidence()
+  await shot('uiux-edit-draft-restored', { kind: 'master-detail', measurement: editRestored, problems: editEvidence.problems })
+  check('narrowEditBackSameTargetPreservesExactDraftWithoutReread', editEvidence.problems.length === 0, { problems: editEvidence.problems, readCount: [editDrill.readCount, editReturned.readCount, editRestored.readCount] })
+  await keyboardActivate('Back before real edit target change', '.weir-da-agent-back')
+  const editTargetOrigin = `[data-agent-summary="${secondary.agentId}"] [data-action="open-agent"]`
+  const editTargetScrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, editTargetOrigin)
+  await keyboardActivate('Change from dirty edit to another assistant', editTargetOrigin)
+  await confirmDiscardEditor(sessionId, secondary.agentId, editTargetOrigin, editTargetScrollBefore)
+  await instance.cdp.setViewport(1440, 900, false)
+}
+
+async function runLearningResumeMatrix(sessionId, primary, candidate) {
+  await openAgent(sessionId, primary.agentId)
+  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  await keyboardActivate('Select exact learning run for narrow resume', `[data-learning-run-id="${candidate.run.learningRunId}"]`)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-learning-run-detail=${JSON.stringify(candidate.run.learningRunId)}]'))`), 30_000)
+  await keyboardActivate('Select exact learning snapshot for narrow resume', `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
+  await waitFor(() => instance.cdp.evaluate(`document.querySelector('[data-learning-run-detail=${JSON.stringify(candidate.run.learningRunId)}]')?.textContent.includes(${JSON.stringify(candidate.snapshot.snapshotId)})`), 30_000)
+  const learning = { run: candidate.run.learningRunId, snapshot: candidate.snapshot.snapshotId }
+  const desktop = await measureAgentStage(primary.agentId, learning)
+  await instance.cdp.setViewport(360, 900, false)
+  const drillIn = await measureAgentStage(primary.agentId, learning)
+  await shot('uiux-learning-context-drill-in', { kind: 'learning-resume', measurement: drillIn })
+  await keyboardActivate('Back with selected learning context', '.weir-da-agent-back')
+  const returned = await measureAgentStage(primary.agentId, learning)
+  const sameOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
+  await keyboardActivate('Resume same assistant learning context', sameOrigin)
+  const restored = await measureAgentStage(primary.agentId, learning)
+  const evidence = { kind: 'learning', desktop, narrowList: returned, drillIn, returned, restored }
+  evidence.problems = masterDetailProblems(evidence)
+  uiuxEvidence.masterDetail.push(evidence)
+  saveUiuxEvidence()
+  await shot('uiux-learning-context-restored', { kind: 'learning-resume', measurement: restored, problems: evidence.problems })
+  check('narrowLearningBackSameTargetPreservesRunSnapshotWithoutReread', evidence.problems.length === 0, { problems: evidence.problems, learning, readCount: [drillIn.readCount, returned.readCount, restored.readCount] })
+  await instance.cdp.setViewport(1440, 900, false)
+}
+
+async function runColdRevealMatrix(sessionId, caseId) {
+  await openPage('inbox')
+  const article = `article[data-case-id="${caseId}"]`
+  const form = `${article} form.weir-da-answers`
+  await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
+  const scroller = 'main.weir-da-page'
+  const routeTarget = `#weir-da-inbox-routes-${caseId}-content`
+  const routeControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'record', args: { sessionId, caseId }, action: 'fail' })})`)
+  await openDisclosure(`weir-da-inbox-routes-${caseId}`)
+  const routeLoading = await measureColdReveal(routeTarget, scroller, { status: 'loading', draftSelector: form })
+  await shot('uiux-cold-error-loading', { kind: 'cold-reveal', measurement: routeLoading })
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(routeTarget)} [role="alert"]))`), 30_000)
+  await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+  const routeReady = await measureColdReveal(routeTarget, scroller, { status: 'error', draftSelector: form })
+  routeReady.ax = await instance.cdp.accessibility(routeTarget)
+  await shot('uiux-cold-error-end', { kind: 'cold-reveal', measurement: routeReady })
+
+  const evidenceTarget = `#weir-da-evidence-${caseId}-content`
+  const successControl = await holdDecision('record', { sessionId, caseId })
+  await openDisclosure(`weir-da-evidence-${caseId}`)
+  let evidenceLoading = await measureColdReveal(evidenceTarget, scroller, { status: 'loading', draftSelector: form })
+  await keyboardFocus('Retain inbox input focus during cold success', `${form} input[type="radio"],${form} textarea`)
+  evidenceLoading = await measureColdReveal(evidenceTarget, scroller, { status: 'loading', draftSelector: form })
+  await shot('uiux-cold-success-loading', { kind: 'cold-reveal', measurement: evidenceLoading })
+  await releaseDecision(successControl)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(evidenceTarget)} .weir-da-evidence-list'))`), 30_000)
+  await waitFor(async () => (await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })).revealCount === 1, 30_000)
+  await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+  const evidenceReady = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
+  evidenceReady.ax = await instance.cdp.accessibility(evidenceTarget)
+  await shot('uiux-cold-success-end', { kind: 'cold-reveal', measurement: evidenceReady })
+
+  await collectNetwork()
+  const refreshBefore = networkRpc.length
+  await openPage('inbox')
+  await waitFor(async () => { await collectNetwork(); return networkRpc.length > refreshBefore }, 10_000)
+  const routeRefreshed = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
+  const evidenceRefreshed = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
+  const errorEvidence = { kind: 'error', loading: routeLoading, ready: routeReady, refreshed: routeRefreshed }
+  const successEvidence = { kind: 'success', loading: evidenceLoading, ready: evidenceReady, refreshed: evidenceRefreshed, control: await decisionControl(successControl) }
+  errorEvidence.problems = coldRevealProblems(errorEvidence)
+  successEvidence.problems = coldRevealProblems(successEvidence)
+  uiuxEvidence.coldReveals.push(errorEvidence, successEvidence)
+  saveUiuxEvidence()
+  await shot('uiux-cold-refresh-stable', { kind: 'cold-reveal-refresh', error: routeRefreshed, success: evidenceRefreshed })
+  check('coldErrorRevealsActualEndOnceWithoutFocusDraftTheft', errorEvidence.problems.length === 0, { problems: errorEvidence.problems, loading: routeLoading, ready: routeReady, refreshed: routeRefreshed })
+  check('coldSuccessRevealsActualEndOnceAndRefreshDoesNotJump', successEvidence.problems.length === 0, { problems: successEvidence.problems, loading: evidenceLoading, ready: evidenceReady, refreshed: evidenceRefreshed })
+}
+
+async function setGuiLanguage(language) {
+  const before = await instance.cdp.evaluate('document.documentElement.lang||null')
+  await instance.cdp.setViewport(1440, 900, false)
+  await keyboardActivate('Open account menu for language', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
+  await keyboardActivate('Open Settings for language', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
+  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
+  await keyboardActivate('Open real Language preference', '[role="dialog"] button[aria-haspopup="menu"]', { namePattern: '简体中文|English|Chinese' })
+  const label = language === 'en' ? 'English' : '简体中文'
+  await keyboardActivate(`Select ${label} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { labels: [label] })
+  await waitFor(() => instance.cdp.evaluate(`document.documentElement.lang.toLowerCase().startsWith(${JSON.stringify(language)})`), 30_000)
+  const after = await instance.cdp.evaluate('document.documentElement.lang')
+  await shot(`uiux-language-${language}-settings`, { kind: 'language-settings', before, after })
+  await keyboardKey('Close Settings after language change', 'Escape')
+  await waitFor(() => instance.cdp.evaluate('!document.body.innerText.includes("当前版本") && !document.body.innerText.includes("Current version")'), 30_000)
+  return { before, after }
+}
+
+async function runEnglishVisualMatrix(sessionId) {
+  const original = await instance.cdp.evaluate('document.documentElement.lang||"zh"')
+  const change = await setGuiLanguage('en')
+  for (const theme of ['light', 'dark']) {
+    await instance.cdp.setColorScheme(theme)
+    for (const width of [360, 768, 1440]) {
+      await instance.cdp.setViewport(width, 900, false)
+      await layoutAudit(`en-${theme}-${width}`, theme, 1)
+    }
+  }
+  await instance.cdp.setColorScheme('light')
+  await openPage('agents')
+  for (const width of [360, 1440]) {
+    await instance.cdp.setViewport(width, 900, false)
+    await layoutAudit(`en-agents-${width}`, 'light', 1)
+  }
+  await openIsolatedSession(sessionId, true)
+  await instance.cdp.setViewport(360, 900, false)
+  const trigger = '[data-weir-decision-trigger="weir-decision-selector"]'
+  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, trigger)
+  await selectorOpen()
+  const text = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const copyProblems = selectorCopyProblems(text, { language: 'en', emptyScope: true, shadow: false })
+  const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
+  const audit = await beginModalAudit('selector-english', '#weir-da-selector-panel', trigger, { before: scrollBefore, selector: { scale: 1, scrollable } })
+  const ax = await instance.cdp.accessibility('#weir-da-selector-panel')
+  uiuxEvidence.languages.push({ language: 'en', surface: 'selector', text, copyProblems, ax, change })
+  saveUiuxEvidence()
+  check('englishSelectorUsesNaturalCopyAndAccessibleNames', copyProblems.length === 0 && ax.some(node => !node.ignored && node.role === 'radio' && /Automatically choose an assistant/i.test(node.name ?? '')), { text, copyProblems })
+  await keyboardKey('Close English selector', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(audit)
+  const restore = await setGuiLanguage(original.toLowerCase().startsWith('zh') ? 'zh' : 'en')
+  const restored = await instance.cdp.evaluate('document.documentElement.lang')
+  uiuxEvidence.languages.push({ language: 'restored', restore, restored })
+  saveUiuxEvidence()
+  check('testOwnedGuiLanguageRestored', restored.toLowerCase().startsWith(original.toLowerCase().startsWith('zh') ? 'zh' : 'en'), { original, restored })
+}
+
+async function runSelectorZoomMatrix(sessionId) {
+  const trigger = '[data-weir-decision-trigger="weir-decision-selector"]'
+  for (const width of [360, 768, 1440]) {
+    await openIsolatedSession(sessionId, true)
+    await instance.cdp.setPageZoom(1)
+    const metricsOperation = await instance.cdp.setViewport(width, 900, true)
+    await waitFor(() => instance.cdp.evaluate(`innerWidth===${width}&&innerHeight===900`), 10_000)
+    const before = await instance.cdp.measureViewport({ reference: trigger })
+    const operation = await instance.cdp.setPageZoom(2)
+    const after = await instance.cdp.measureViewport({ reference: trigger })
+    const row = { surface: 'selector', width, metricsOperation, operation, before, after, devicePixelRatio: after.devicePixelRatio }
+    row.zoomProblems = [...browserZoomProblems(row, 2), ...viewportMeasurementProblems(after, { innerWidth: width, scale: 2 })]
+    uiuxEvidence.zoom.push(row)
+    saveUiuxEvidence()
+    check(`selectorRealBrowserZoom200At${width}`, row.zoomProblems.length === 0, { width, problems: row.zoomProblems, before: before.visualViewport, after: after.visualViewport, innerWidth: after.innerWidth, devicePixelRatio: after.devicePixelRatio, rect: after.rects.reference })
+    const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, trigger)
+    await selectorOpen()
+    const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
+    const audit = await beginModalAudit(`selector-zoom200-${width}`, '#weir-da-selector-panel', trigger, { before: scrollBefore, selector: { scale: 2, scrollable } })
+    await keyboardKey(`Close 200 percent selector ${width}`, 'Escape')
+    await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+    await finishModalAudit(audit)
+    await instance.cdp.setPageZoom(1)
+  }
+  await instance.cdp.setViewport(1440, 900, false)
+}
+
 async function runProductMatrix() {
 try {
   process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT = 'auto'
@@ -1701,6 +2202,7 @@ try {
   writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running' })
   prepareProfile(root, PORT)
   instance = await startDesktop(true)
+  await installUiuxInstrumentation()
   const initialPreflight = JSON.parse(readFileSync(join(out, 'process-1-preflight.json'), 'utf8'))
   check('freshRunStartsWithoutDecisionStore', initialPreflight.databaseExists === false && initialPreflight.databasePath === databasePath, { databasePath, databaseExists: initialPreflight.databaseExists })
   const created = await createSession(instance)
@@ -1710,12 +2212,18 @@ try {
   const slots = await instance.cdp.evaluate('window.__decisionQA.getState()')
   writeJson(join(out, 'slots.json'), slots)
   check('newSlotsActive', slots.sidebar.includes('weir-decisions') && slots.main.includes('weir-decisions') && slots.composer.includes('weir-decision-selector') && slots.toolviews.includes('ask_user_question') && slots.toolviews.includes('decision_consult'), slots)
+  const initialScrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, '[data-weir-decision-trigger="weir-decision-selector"]')
   await selectorOpen()
   const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label'),checked:el.checked})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]'))} })()`)
   const initialAuthority = await rpc(sessionId, 'initial-fresh-auto', 'overview')
   const initialCopyProblems = selectorCopyProblems(initialSelector.text, { language: 'zh', emptyScope: true, shadow: false })
   check('dedicatedFreshSelectorOffAutoAndPersistedDefaultAuto', !initialSelector.legacy && initialCopyProblems.length === 0 && initialSelector.radios.map(radio => radio.value).join(',') === 'off,auto' && initialSelector.radios.find(radio => radio.value === 'auto')?.checked === true && initialSelector.radios.every(radio => radio.name === (radio.value === 'off' ? '不启用助手' : '自动选择助手')) && selectorMatches(initialAuthority.selector, 'auto'), { initialSelector, authority: initialAuthority.selector, copyProblems: initialCopyProblems })
   await shot('01-selector-empty')
+  const initialModal = await beginModalAudit('selector-empty-few', '#weir-da-selector-panel', '[data-weir-decision-trigger="weir-decision-selector"]', { before: initialScrollBefore, selector: { scale: 1, scrollable: false } })
+  await keyboardKey('Close measured empty selector', 'Escape')
+  await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel") && document.activeElement===document.querySelector(\'[data-weir-decision-trigger="weir-decision-selector"]\')'), 30_000)
+  await finishModalAudit(initialModal)
+  await selectorOpen()
   await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'] })
   const longName = '桌面验收助手 · Decision Product QA with an intentionally long English assistant name'
   const preference = '只依据可核验证据；高风险操作仍由用户决定。Prefer source-backed concise answers and preserve the existing approval boundary. 这是用于长文本与编辑验收的用户原创判断偏好。'
@@ -1725,6 +2233,8 @@ try {
   await expectMutation('profileUpsert', { sessionId, name: longName, userDescription: preference })
   check('selectorCreateUsesNewPage', primary.state === 'enabled' && primary.scope?.workspaces?.includes(LANE), { agentId: primary.agentId })
   const secondary = await createAgent(sessionId, '空候选与键盘备用助手 · Empty review assistant', 'No existing decisions: the isolated fixture returns no candidate operations for this assistant only.')
+  await runSelectorFailureMatrix(sessionId, primary, secondary)
+  await runAgentResumeMatrix(sessionId, primary, secondary)
   await openAgent(sessionId, primary.agentId)
   await keyboardActivate('Edit assistant', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
   const editedName = `${longName} · 已编辑 / edited`
@@ -1878,10 +2388,12 @@ try {
   await keyboardSelector(sessionId, secondary.agentId)
   await keyboardSelector(sessionId, 'auto')
   await keyboardSelector(sessionId, primary.agentId)
+  await runSelectorZoomMatrix(sessionId)
 
   const longCase = await askLongNative(sessionId)
   await openPage('inbox')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('article[data-case-id=${JSON.stringify(longCase.caseId)}]'))`), 30_000)
+  await runColdRevealMatrix(sessionId, longCase.caseId)
   await instance.cdp.setPageZoom(1)
   for (const theme of ['light', 'dark']) {
     await instance.cdp.setColorScheme(theme)
@@ -1894,8 +2406,17 @@ try {
   check('lightDarkProduceDifferentComputedSurfaces', visualAudits.find(item => item.name === 'light-1440')?.audit.colors?.background !== visualAudits.find(item => item.name === 'dark-1440')?.audit.colors?.background, { light: visualAudits.find(item => item.name === 'light-1440')?.audit.colors, dark: visualAudits.find(item => item.name === 'dark-1440')?.audit.colors })
   await instance.cdp.setColorScheme('light')
   for (const width of [360, 768, 1440]) {
-    await instance.cdp.setViewport(width, 900, true)
-    await instance.cdp.setPageZoom(2)
+    await instance.cdp.setPageZoom(1)
+    const metricsOperation = await instance.cdp.setViewport(width, 900, true)
+    await waitFor(() => instance.cdp.evaluate(`innerWidth===${width}&&innerHeight===900`), 10_000)
+    const before = await instance.cdp.measureViewport({ page: '.weir-da-page' })
+    const operation = await instance.cdp.setPageZoom(2)
+    const after = await instance.cdp.measureViewport({ page: '.weir-da-page' })
+    const zoomEvidence = { surface: 'inbox', width, metricsOperation, operation, before, after, devicePixelRatio: after.devicePixelRatio }
+    zoomEvidence.problems = [...browserZoomProblems(zoomEvidence, 2), ...viewportMeasurementProblems(after, { innerWidth: width, scale: 2 })]
+    uiuxEvidence.zoom.push(zoomEvidence)
+    saveUiuxEvidence()
+    check(`inboxRealBrowserZoom200At${width}`, zoomEvidence.problems.length === 0, { width, problems: zoomEvidence.problems, before: before.visualViewport, after: after.visualViewport, innerWidth: after.innerWidth, devicePixelRatio: after.devicePixelRatio, cssRect: after.rects.page })
     await layoutAudit(`zoom200-${width}`, 'light', 2)
   }
   await instance.cdp.setPageZoom(1)
@@ -1906,6 +2427,7 @@ try {
   // The decided long Case leaves its native question pending, and a pending native question
   // occupies the composer; finish it with the rendered Skip before any later marker.
   await finishLongNativeWithSkip(sessionId, longCase.caseId)
+  await runEnglishVisualMatrix(sessionId)
   await openPage('metrics')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("[data-metrics-view]"))'), 30_000)
   const metrics = await rpc(sessionId, 'metrics', 'metrics', { window: 'all' })
@@ -1957,6 +2479,7 @@ try {
   requireEvidence(candidateV3.run.operations[0]?.sources?.[0] === learningCorrection.feedbackId && candidateV3.run.operations[0]?.text === 'Reviewed GUI successor principle: prefer the second source-backed answer.', 'v3 keeps the actual correction source and advances beyond restored v1')
   const rejectedV3 = await confirmLearning('snapshotReject', sessionId, candidateV3, candidateV1.snapshot.snapshotId)
   check('discardRetainsUnpublishedCandidateAndCurrentV1', rejectedV3.run.outcome === 'rejected' && rejectedV3.snapshot.state === 'draft' && rejectedV3.snapshot.revision === 1 && rejectedV3.agent.currentSnapshotId === candidateV1.snapshot.snapshotId)
+  await runLearningResumeMatrix(sessionId, primary, rejectedV3)
   const p4State = await runP4BeforeRestart(sessionId, primary, secondary)
   const beforeRestart = { agent: rejectedV3.agent, run: rejectedV3.run, snapshot: rejectedV3.snapshot, learned: learnedDetail, selector: await rpc(sessionId, 'before-restart', 'overview') }
   writeJson(join(out, 'before-restart.json'), beforeRestart)
@@ -1979,6 +2502,7 @@ try {
   check('interruptedIntakeIsReceivedWithoutRouteOrAttemptBeforeCrash', interruptedRow.agent_id === null && interruptedRow.state === 'received' && interruptedAttempts.length === 0 && interruptedRoutes.length === 0, { caseId: interruptedRow.case_id, state: interruptedRow.state, attempts: interruptedAttempts.length, routes: interruptedRoutes.length })
   p4Evidence.interrupted = { case: { caseId: interruptedRow.case_id, agentId: interruptedRow.agent_id, state: interruptedRow.state }, attempts: interruptedAttempts, routeDecisions: interruptedRoutes }
   instance = await startDesktop(false)
+  await installUiuxInstrumentation()
   await openSession(instance, sessionId)
   await selectorOpen()
   const globalOff = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
@@ -1998,6 +2522,7 @@ try {
   await keyboardKey('Close legacy global-off selector', 'Escape')
   await stopOwned('process-2')
   instance = await startDesktop(true)
+  await installUiuxInstrumentation()
   await openSession(instance, sessionId)
   const restartedRun = await rpc(sessionId, 'restart', 'learningRun', { learningRunId: rejectedV3.run.learningRunId })
   const restartedSnapshot = await rpc(sessionId, 'restart', 'memorySnapshot', { snapshotId: rejectedV3.snapshot.snapshotId })
@@ -2037,7 +2562,24 @@ try {
   check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
   check('nativeKeyPacketsPersisted', nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === '\r') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === ' ') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.key === 'Tab') && nativeKeyPackets.some(packet => packet.method === 'Input.insertText'), { packets: nativeKeyPackets.length })
   check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 3 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 3 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
-  result = { phase: 'GUI-product-P4-9.2-9.3', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, p4: { sessions: p4State, caseIds: { selected: p4Evidence.selected.case.caseId, one: p4Evidence.one.case.caseId, none: p4Evidence.none.case.caseId, ambiguous: p4Evidence.ambiguous.case.caseId, invalid: p4Evidence.invalid.case.caseId, timeout: p4Evidence.timeout.case.caseId, explicit: p4Evidence.explicit.case.caseId, returned: p4Evidence.returned.case.caseId, pending: p4Evidence.pending.case.caseId, interrupted: p4Evidence.interrupted.case.caseId }, processProvenance }, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), stockClassification: join(out, 'stock-classification-proof.json'), sqliteReadModel: join(out, 'sqlite-read-model-comparison.json'), p4Restoration: join(out, 'p4-restoration.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
+  const confirmationKinds = new Set(uiuxEvidence.confirmations.map(item => item.kind))
+  const requiredConfirmations = ['cancel-decision', 'discard-editor', 'assistant-disabled', 'assistant-enabled', 'assistant-archived', 'snapshotPublish', 'snapshotReject', 'snapshotRollback']
+  const selectorStateKinds = new Set(uiuxEvidence.selectorStates.map(item => item.kind))
+  const masterDetailKinds = new Set(uiuxEvidence.masterDetail.map(item => item.kind))
+  const zoomComplete = [360, 768, 1440].every(width => ['selector', 'inbox'].every(surface => uiuxEvidence.zoom.some(item => item.width === width && item.surface === surface && item.operation?.method === 'Emulation.setPageScaleFactor' && item.operation?.pageScaleFactor === 2 && item.after?.visualViewport?.scale === 2)))
+  const uiuxCoverage = {
+    confirmations: requiredConfirmations.filter(kind => !confirmationKinds.has(kind)),
+    selectorStates: ['load-failure', 'unknown', 'save-failure', 'save-pending'].filter(kind => !selectorStateKinds.has(kind)),
+    masterDetail: ['create', 'edit', 'learning'].filter(kind => !masterDetailKinds.has(kind)),
+    coldReveals: ['success', 'error'].filter(kind => !uiuxEvidence.coldReveals.some(item => item.kind === kind && item.problems.length === 0)),
+    zoomComplete,
+    english: uiuxEvidence.languages.some(item => item.language === 'en' && item.copyProblems?.length === 0),
+    languageRestored: uiuxEvidence.languages.some(item => item.language === 'restored'),
+    modalAudits: uiuxEvidence.modalAudits.length,
+  }
+  check('completeUiux52And53AcceptanceCoverage', Object.values(uiuxCoverage).every(value => Array.isArray(value) ? value.length === 0 : value === true || typeof value === 'number' && value > 0), uiuxCoverage)
+  saveUiuxEvidence()
+  result = { phase: 'GUI-decision-uiux-5.2-5.3', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, uiux: { coverage: uiuxCoverage, modalAudits: uiuxEvidence.modalAudits.length, selectorLayouts: uiuxEvidence.selectorLayouts.length, confirmations: uiuxEvidence.confirmations.length, coldReveals: uiuxEvidence.coldReveals.length, masterDetail: uiuxEvidence.masterDetail.length, zoomMeasurements: uiuxEvidence.zoom.length }, p4: { sessions: p4State, caseIds: { selected: p4Evidence.selected.case.caseId, one: p4Evidence.one.case.caseId, none: p4Evidence.none.case.caseId, ambiguous: p4Evidence.ambiguous.case.caseId, invalid: p4Evidence.invalid.case.caseId, timeout: p4Evidence.timeout.case.caseId, explicit: p4Evidence.explicit.case.caseId, returned: p4Evidence.returned.case.caseId, pending: p4Evidence.pending.case.caseId, interrupted: p4Evidence.interrupted.case.caseId }, processProvenance }, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { uiux: join(out, 'uiux-acceptance.json'), networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), stockClassification: join(out, 'stock-classification-proof.json'), sqliteReadModel: join(out, 'sqlite-read-model-comparison.json'), p4Restoration: join(out, 'p4-restoration.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
   result.artifacts.nativeKeyPackets = join(out, 'native-key-packets.json')
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)
@@ -2063,7 +2605,7 @@ try {
   writeJson(join(out, 'authoritative-rpc.json'), authoritativeRpc)
   writeJson(join(out, 'runtime-events.json'), runtimeEvents)
   if (failure) {
-    result = { phase: 'GUI-product-UX-8.1-8.2', verdict: 'BLOCKED', pass: false, runId, root, out, port: PORT, checks, checkDetails, error: failure?.message ?? String(failure), cleanup: cleanups }
+    result = { phase: 'GUI-decision-uiux-5.2-5.3', verdict: 'BLOCKED', pass: false, runId, root, out, port: PORT, checks, checkDetails, error: failure?.message ?? String(failure), cleanup: cleanups, artifacts: { uiux: join(out, 'uiux-acceptance.json'), runtime: join(out, 'runtime-scan.json'), screenshots: join(out, 'screenshots.json') } }
     writeJson(join(out, 'result.json'), result)
     writeJson(join(GUI, 'result.json'), result)
     writeJson(join(out, 'driver-error.json'), { message: failure?.message ?? String(failure), stack: failure?.stack ?? null, checks, checkDetails, cleanups })
