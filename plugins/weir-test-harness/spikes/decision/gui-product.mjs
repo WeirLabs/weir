@@ -924,11 +924,16 @@ async function finishLongNativeWithSkip(sessionId, caseId) {
     steps.push(previous)
     native = await nativeState()
   }
-  const settled = await waitFor(() => instance.cdp.evaluate(`(() => { const state=window.__decisionProductLong; return state?.settled===true?state:null })()`), 30_000)
+  const settled = await waitFor(async () => {
+    const sessionScan = await scanSession(sessionId, 'long-native-skip-session.json')
+    const stockCall = sessionScan.stockAskCalls.find(event => event.data?.arguments?.includes('"product-long-choice"'))
+    if (!stockCall || !sessionScan.events.some(event => event.type === 'tool/result' && event.callId === stockCall.callId)) return null
+    return { settled: true, callId: stockCall.callId, error: null }
+  }, 30_000)
   const after = await record(sessionId, 'long-native-skip-after', caseId)
   writeJson(join(out, 'long-native-skip.json'), { caseId, steps, native: settled, before: before.case, after: after.case })
   await shot('18b-long-native-skip-closed')
-  check('longNativeSkipKeepsClosedRecord', after.case.state === 'closed' && after.case.revision === before.case.revision && JSON.stringify(after) === JSON.stringify(before), { caseId, revision: after.case.revision, skipSteps: steps.length, nativeSettled: settled.settled, nativeError: settled.error ?? null })
+  check('longNativeSkipKeepsClosedRecord', settled.settled && after.case.state === 'closed' && after.case.revision === before.case.revision && JSON.stringify(after) === JSON.stringify(before), { caseId, revision: after.case.revision, skipSteps: steps.length, nativeSettled: settled.settled, nativeError: settled.error ?? null })
 }
 async function planReviewState() {
   return instance.cdp.evaluate(`(() => { const pending=[...document.querySelectorAll('[data-plan-review-key]')].find(el=>el.offsetParent!==null); return {pending:Boolean(pending),key:pending?.getAttribute('data-plan-review-key')??null,text:pending?.innerText??'',actions:pending?[...pending.querySelectorAll('button')].filter(el=>el.offsetParent!==null).map(el=>el.textContent.trim()):[]} })()`)
