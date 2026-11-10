@@ -1666,7 +1666,10 @@ async function measureConfirmationFocus(originSelector, controlId = null) {
   return instance.cdp.evaluate(`(() => {
     const origin=${JSON.stringify(originSelector)}
     const describe=el=>el?{connected:el.isConnected,enabled:!el.disabled&&el.getAttribute('aria-disabled')!=='true',visible:el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden',focused:document.activeElement===el}:null
-    const target=document.querySelector(origin)
+    const key=${JSON.stringify(controlId)}
+    const origins=window.__weirUiuxConfirmationOrigins??=new Map()
+    let target=key?origins.get(key):document.querySelector(origin)
+    if(key&&!origins.has(key)){target=document.querySelector(origin);origins.set(key,target)}
     const fallback=document.querySelector('[data-decision-primary-nav]')||document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')
     return {target:describe(target),fallback:{...describe(fallback),logical:true},targetFocused:document.activeElement===target,fallbackFocused:document.activeElement===fallback,active:{tag:document.activeElement?.tagName??null,id:document.activeElement?.id??null,class:typeof document.activeElement?.className==='string'?document.activeElement.className.slice(0,160):''}}
   })()`).then(async focus => ({ ...focus, control: controlId ? await decisionControl(controlId) : null }))

@@ -234,6 +234,37 @@ test('delayed host welcome onboarding is resolved around native keyboard targeti
   assert.ok((driver.match(/result\.artifacts\.hostOnboarding = join\(out, 'host-onboarding\.json'\)/g) ?? []).length === 2, 'final and blocked result indexes include the dismissal evidence')
 })
 
+test('confirmation focus measurement retains original element identity across a state-dependent selector change', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const source = driver.match(/async function measureConfirmationFocus\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'the public Desktop measurement helper exists')
+  const originSelector = '[data-agent-detail="agent-1"] [data-agent-state="disabled"]'
+  const button = () => ({ isConnected: true, disabled: false, id: '', className: 'weir-da-button', tagName: 'BUTTON', getAttribute: () => null, getClientRects: () => [{}] })
+  const origin = button()
+  const fallback = button()
+  const body = { tagName: 'BODY', id: '', className: '' }
+  let originMatches = true
+  const document = {
+    activeElement: body,
+    querySelector(selector) {
+      if (selector === originSelector) return originMatches ? origin : null
+      if (selector === '[data-decision-primary-nav]') return fallback
+      return null
+    },
+  }
+  const window = {}
+  const instance = { cdp: { evaluate: async expression => new Function('document', 'window', 'getComputedStyle', `return (${expression})`)(document, window, () => ({ visibility: 'visible' })) } }
+  const measure = new Function('instance', 'decisionControl', `${source};return measureConfirmationFocus`)(instance, async () => ({ settled: true }))
+  const before = await measure(originSelector, 'control-1')
+  assert.equal(before.targetFocused, false)
+  originMatches = false
+  document.activeElement = origin
+  const after = await measure(originSelector, 'control-1')
+  assert.equal(after.targetFocused, true, 'the original connected enabled element remains the focus target even when its old state selector no longer matches')
+  assert.equal(after.target?.focused, true)
+  assert.equal(after.fallbackFocused, false)
+})
+
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
