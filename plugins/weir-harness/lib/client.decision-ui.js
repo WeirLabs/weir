@@ -36,14 +36,16 @@ window.__ModuleLoader__.load({
 .weir-da-choice-copy { min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
 .weir-da-choice-description { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 16px; }
 .weir-da-actions { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.weir-da-dialog-shade { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; background: color-mix(in srgb, var(--dsw-alias-bg-base) 64%, transparent); }
-.weir-da-dialog { width: min(420px, 100%); max-height: min(70vh, 560px); overflow: auto; padding: 16px; }
+.weir-da-dialog { width: min(420px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: auto; overscroll-behavior: contain; margin: auto; padding: 16px; }
+.weir-da-dialog::backdrop, .weir-da-selector-panel::backdrop { background: color-mix(in srgb, var(--dsw-alias-bg-base) 64%, transparent); }
 .weir-da-selector { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
 .weir-da-selector-trigger { box-sizing: border-box; min-width: 0; max-width: 280px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 16px; cursor: pointer; }
 .weir-da-selector-trigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .weir-da-selector-trigger[data-unavailable="true"] { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-warn-primary)); border-color: var(--dsw-alias-state-warn-primary); }
 .weir-da-selector-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.weir-da-selector-panel { position: absolute; inset-inline-end: 0; bottom: calc(100% + 8px); z-index: 30; width: min(320px, calc(100vw - 24px)); max-height: min(420px, 70vh); overflow: auto; overscroll-behavior: contain; padding: 12px; display: grid; gap: 10px; }
+.weir-da-selector-panel { margin: auto; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.weir-da-selector-header { min-width: 0; display: grid; gap: 4px; padding: 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 10px 12px; display: grid; gap: 10px; align-content: start; }
 .weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 20px; }
 .weir-da-selector-title + .weir-da-caption { margin: 0; }
 .weir-da-selector-options { min-width: 0; display: grid; gap: 4px; }
@@ -53,7 +55,7 @@ window.__ModuleLoader__.load({
 .weir-da-selector-option input { flex: none; margin: 3px 0 0; }
 .weir-da-selector-option > span { min-width: 0; display: grid; gap: 2px; }
 .weir-da-selector-option .weir-da-caption { display: block; }
-.weir-da-selector-footer { padding-top: 8px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-selector-footer { padding: 8px 12px 12px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
 .weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
 .weir-da-page-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
@@ -141,7 +143,6 @@ window.__ModuleLoader__.load({
   .weir-da-button { min-height: 36px; }
   .weir-da-actions { align-items: stretch; }
   .weir-da-actions .weir-da-button { flex: 1 1 auto; }
-  .weir-da-dialog-shade { padding: 8px; }
 }
 `;
 
@@ -221,6 +222,38 @@ window.__ModuleLoader__.load({
       const id = props.id ?? `weir-da-${generatedId}`;
       const triggerRef = react.useRef(null);
       const [open, setOpen] = react.useState(props.defaultOpen === true);
+      const contentRef = react.useRef(null);
+      const revealTokenRef = react.useRef(0);
+      const revealedRef = react.useRef(false);
+      const revealFrameRef = react.useRef(null);
+      const cancelReveal = () => {
+        const frame = revealFrameRef.current;
+        revealFrameRef.current = null;
+        if (frame !== null) globalThis.cancelAnimationFrame?.(frame);
+      };
+      react.useEffect(() => {
+        const token = ++revealTokenRef.current;
+        revealedRef.current = false;
+        cancelReveal();
+        return () => {
+          if (revealTokenRef.current === token) revealTokenRef.current += 1;
+          cancelReveal();
+        };
+      }, [open]);
+      react.useEffect(() => {
+        if (!open || props.revealOnOpen !== "end" || props.revealReady === false || revealedRef.current || revealFrameRef.current !== null) return undefined;
+        if (typeof globalThis.requestAnimationFrame !== "function") return undefined;
+        const token = revealTokenRef.current;
+        revealFrameRef.current = globalThis.requestAnimationFrame(() => {
+          revealFrameRef.current = null;
+          if (token !== revealTokenRef.current || !open || revealedRef.current) return;
+          const target = contentRef.current;
+          if (typeof target?.scrollIntoView !== "function") return;
+          revealedRef.current = true;
+          target.scrollIntoView({ block: "end", inline: "nearest", behavior: "instant" });
+        });
+        return cancelReveal;
+      }, [open, props.revealOnOpen, props.revealReady]);
       const close = () => {
         setOpen(false);
         const target = props.returnFocus?.current ?? props.returnFocus ?? triggerRef.current;
@@ -237,8 +270,160 @@ window.__ModuleLoader__.load({
           onClick: () => { if (open) close(); else { setOpen(true); props.onOpen?.(); } },
           children: props.label,
         }, "trigger"),
-        open ? jsx.jsx("div", { id: `${id}-content`, role: "region", "aria-label": props.label, children: typeof props.children === "function" ? props.children() : props.children }, "content") : null,
+        open ? jsx.jsx("div", { ref: contentRef, id: `${id}-content`, role: "region", "aria-label": props.label, children: typeof props.children === "function" ? props.children() : props.children }, "content") : null,
       ] });
+    }
+
+    const decisionScrollLocks = new WeakMap();
+    const DECISION_SCROLL_STYLES = ["overflow", "overflowX", "overflowY", "overscrollBehavior", "overscrollBehaviorX", "overscrollBehaviorY", "paddingRight"];
+
+    function acquireDecisionScrollLock(hostDocument, originElement) {
+      if (!hostDocument || typeof hostDocument !== "object") return () => {};
+      const view = hostDocument.defaultView ?? null;
+      const root = hostDocument.documentElement ?? null;
+      const body = hostDocument.body ?? null;
+      const targets = [];
+      const add = target => { if (target && !targets.includes(target)) targets.push(target); };
+      add(view); add(root); add(body);
+      for (const page of hostDocument.querySelectorAll?.(".weir-da-page") ?? []) add(page);
+      let current = focusTarget(originElement);
+      while (current && current !== hostDocument) {
+        const computed = view?.getComputedStyle?.(current) ?? current.computed;
+        const overflowY = computed?.overflowY ?? current.style?.overflowY ?? current.style?.overflow;
+        if (["auto", "scroll", "overlay"].includes(overflowY)) add(current);
+        current = current.parentElement ?? null;
+      }
+      let state = decisionScrollLocks.get(hostDocument);
+      if (!state) {
+        state = { count: 0, snapshots: new Map() };
+        decisionScrollLocks.set(hostDocument, state);
+      }
+      for (const target of targets) {
+        if (state.snapshots.has(target)) continue;
+        if (target === view) {
+          state.snapshots.set(target, { target, window: true, scrollX: view.scrollX, scrollY: view.scrollY });
+          continue;
+        }
+        const style = target.style;
+        if (!style) continue;
+        const inline = Object.fromEntries(DECISION_SCROLL_STYLES.map(name => [name, style[name] ?? ""]));
+        state.snapshots.set(target, { target, inline, scrollTop: target.scrollTop, scrollLeft: target.scrollLeft });
+        const scrollbarWidth = target === root
+          ? Math.max(0, (view?.innerWidth ?? 0) - (root.clientWidth ?? 0))
+          : Math.max(0, (target.offsetWidth ?? 0) - (target.clientWidth ?? 0));
+        if (scrollbarWidth > 0) {
+          const computed = view?.getComputedStyle?.(target) ?? target.computed;
+          const padding = Number.parseFloat(computed?.paddingRight ?? "0") || 0;
+          style.paddingRight = `${padding + scrollbarWidth}px`;
+        }
+        style.overflow = "hidden";
+        style.overflowX = "hidden";
+        style.overflowY = "hidden";
+        style.overscrollBehavior = "none";
+        style.overscrollBehaviorX = "none";
+        style.overscrollBehaviorY = "none";
+      }
+      state.count += 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        if (decisionScrollLocks.get(hostDocument) !== state) return;
+        state.count -= 1;
+        if (state.count > 0) return;
+        for (const snapshot of [...state.snapshots.values()].reverse()) {
+          const target = snapshot.target;
+          if (snapshot.window) {
+            if (typeof target.scrollTo === "function") target.scrollTo(snapshot.scrollX, snapshot.scrollY);
+            else { target.scrollX = snapshot.scrollX; target.scrollY = snapshot.scrollY; }
+            continue;
+          }
+          for (const name of DECISION_SCROLL_STYLES) target.style[name] = snapshot.inline[name];
+          target.scrollTop = snapshot.scrollTop;
+          target.scrollLeft = snapshot.scrollLeft;
+        }
+        decisionScrollLocks.delete(hostDocument);
+      };
+    }
+
+    function focusTarget(value) {
+      const resolved = typeof value === "function" ? value() : value;
+      return resolved && typeof resolved === "object" && "current" in resolved ? resolved.current : resolved;
+    }
+
+    function canRestoreFocus(target) {
+      if (!target || target.isConnected === false || target.disabled === true || target.hidden === true) return false;
+      if (target.getAttribute?.("aria-hidden") === "true") return false;
+      if (typeof target.getClientRects === "function" && target.getClientRects().length === 0) return false;
+      return typeof target.focus === "function";
+    }
+
+    function restoreDecisionFocus(target, fallback) {
+      const preferred = focusTarget(target);
+      const alternate = focusTarget(fallback);
+      const destination = canRestoreFocus(preferred) ? preferred : canRestoreFocus(alternate) ? alternate : null;
+      destination?.focus?.();
+    }
+
+    function DecisionModalFrame(props) {
+      const internalDialogRef = react.useRef(null);
+      const dialogRef = props.dialogRef ?? internalDialogRef;
+      const [openError, setOpenError] = react.useState(null);
+      const requestClose = reason => {
+        if (props.pending !== true) props.onRequestClose?.(reason);
+      };
+      react.useEffect(() => {
+        const hostDocument = globalThis.document;
+        const dialog = dialogRef.current;
+        const previous = focusTarget(props.returnFocus) ?? hostDocument?.activeElement ?? null;
+        if (!dialog || typeof dialog.showModal !== "function") {
+          const error = new Error("Native Decision dialog is unavailable");
+          setOpenError(error);
+          restoreDecisionFocus(previous, props.returnFocusFallback);
+          props.onOpenError?.(error);
+          return undefined;
+        }
+        try {
+          dialog.showModal();
+        } catch (reason) {
+          const error = reason instanceof Error ? reason : new Error(String(reason));
+          setOpenError(error);
+          restoreDecisionFocus(previous, props.returnFocusFallback);
+          props.onOpenError?.(error);
+          return undefined;
+        }
+        const releaseScrollLock = acquireDecisionScrollLock(hostDocument, focusTarget(props.scrollOrigin) ?? previous);
+        const initial = focusTarget(props.initialFocus) ?? dialog;
+        initial?.focus?.();
+        return () => {
+          dialog.close?.();
+          releaseScrollLock();
+          const restore = props.shouldRestoreFocus ? props.shouldRestoreFocus() : props.restoreFocus !== false;
+          if (restore) restoreDecisionFocus(previous, props.returnFocusFallback);
+        };
+      }, []);
+      if (openError) return jsx.jsxs(ErrorState, { children: [
+        jsx.jsx("span", { children: props.openErrorLabel ?? "The dialog could not be opened." }, "message"),
+        jsx.jsx(Button, { variant: "secondary", onClick: () => {
+          if (props.onDismissError) props.onDismissError(openError);
+          else requestClose("open-error");
+        }, children: props.dismissLabel ?? "Close" }, "dismiss"),
+      ] });
+      return jsx.jsx("dialog", {
+        ref: dialogRef, id: props.id, className: props.className,
+        role: "dialog", "aria-modal": true,
+        "aria-labelledby": props["aria-labelledby"], "aria-describedby": props["aria-describedby"],
+        "aria-busy": props.pending === true, tabIndex: props.tabIndex,
+        onCancel: event => { event.preventDefault?.(); requestClose("escape"); },
+        onClick: event => {
+          if (!props.closeOnBackdrop || event.target !== dialogRef.current) return;
+          const bounds = dialogRef.current?.getBoundingClientRect?.();
+          const outside = !bounds || event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom;
+          if (outside) requestClose("backdrop");
+        },
+        onKeyDown: props.onKeyDown,
+        children: props.children,
+      });
     }
 
     function ConfirmDialog(props) {
@@ -246,34 +431,52 @@ window.__ModuleLoader__.load({
       const internalConfirmRef = react.useRef(null);
       const cancelRef = props.cancelRef ?? internalCancelRef;
       const confirmRef = props.confirmRef ?? internalConfirmRef;
-      react.useEffect(() => {
-        const previous = props.returnFocus?.current ?? props.returnFocus ?? globalThis.document?.activeElement;
-        cancelRef.current?.focus?.();
-        return () => previous?.focus?.();
-      }, []);
+      const confirmStartedRef = react.useRef(false);
+      const focusOriginRef = react.useRef(null);
+      if (!focusOriginRef.current) {
+        focusOriginRef.current = { target: focusTarget(props.returnFocus) ?? globalThis.document?.activeElement ?? null };
+      }
+      const returnFocusFallback = props.returnFocusFallback ?? (() => globalThis.document?.querySelector?.('[data-weir-decision-trigger="weir-decision-selector"]'));
+      const onCancel = () => { if (!props.pending) props.onCancel?.(); };
+      const onConfirm = () => {
+        if (props.pending || confirmStartedRef.current) return undefined;
+        confirmStartedRef.current = true;
+        let result;
+        try { result = props.onConfirm?.(); }
+        catch (error) {
+          restoreDecisionFocus(focusOriginRef.current.target, returnFocusFallback);
+          throw error;
+        }
+        return Promise.resolve(result).finally(() => restoreDecisionFocus(focusOriginRef.current.target, returnFocusFallback));
+      };
       const onKeyDown = event => {
         if (event.key === "Escape") {
           event.preventDefault();
-          if (!props.pending) props.onCancel?.();
+          onCancel();
           return;
         }
         if (event.key !== "Tab" || !cancelRef.current || !confirmRef.current) return;
         event.preventDefault();
         (event.target === confirmRef.current ? cancelRef : confirmRef).current?.focus?.();
       };
-      return jsx.jsx("div", { className: "weir-da-dialog-shade", children: jsx.jsxs("section", {
-        id: props.id, className: "weir-da-overlay weir-da-dialog", role: "dialog", "aria-modal": true,
+      return jsx.jsx(DecisionModalFrame, {
+        id: props.id, className: "weir-da-overlay weir-da-dialog",
         "aria-labelledby": `${props.id}-title`, "aria-describedby": `${props.id}-body`,
-        "aria-busy": props.pending === true, onKeyDown,
+        pending: props.pending === true, onKeyDown, onRequestClose: onCancel,
+        initialFocus: cancelRef, returnFocus: props.returnFocus, returnFocusFallback,
+        shouldRestoreFocus: () => !confirmStartedRef.current,
+        scrollOrigin: props.scrollOrigin ?? props.returnFocus,
+        openErrorLabel: props.openErrorLabel, dismissLabel: props.dismissLabel, onOpenError: props.onOpenError,
+        onDismissError: props.onDismissError,
         children: [
           jsx.jsx("h2", { id: `${props.id}-title`, children: props.title }, "title"),
           jsx.jsx("div", { id: `${props.id}-body`, children: props.body }, "body"),
           jsx.jsxs("div", { className: "weir-da-actions", children: [
-            jsx.jsx(Button, { ref: cancelRef, variant: "secondary", disabled: props.pending, onClick: props.onCancel, children: props.cancelLabel }, "cancel"),
-            jsx.jsx(Button, { ref: confirmRef, variant: props.danger ? "danger" : "primary", disabled: props.pending, onClick: props.onConfirm, children: props.confirmLabel }, "confirm"),
+            jsx.jsx(Button, { ref: cancelRef, variant: "secondary", disabled: props.pending, onClick: onCancel, children: props.cancelLabel }, "cancel"),
+            jsx.jsx(Button, { ref: confirmRef, variant: props.danger ? "danger" : "primary", disabled: props.pending, onClick: onConfirm, children: props.confirmLabel }, "confirm"),
           ] }, "actions"),
         ],
-      }) });
+      });
     }
 
     function DecisionAnswers(props) {
@@ -392,6 +595,7 @@ window.__ModuleLoader__.load({
     exports.EmptyState = EmptyState;
     exports.ErrorState = ErrorState;
     exports.Disclosure = Disclosure;
+    exports.DecisionModalFrame = DecisionModalFrame;
     exports.ConfirmDialog = ConfirmDialog;
     exports.DecisionAnswers = DecisionAnswers;
     exports.DecisionRouteHistory = DecisionRouteHistory;

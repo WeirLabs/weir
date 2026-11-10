@@ -122,7 +122,7 @@ async function load(t, overview, behavior = {}) {
     t: key => key,
   }
   return {
-    ...selector, calls, document, props,
+    ...selector, calls, document, props, model,
     render: () => runtime.render(selector.DecisionSelector, props),
     flush: async () => { await Promise.resolve(); await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0)) },
   }
@@ -130,6 +130,7 @@ async function load(t, overview, behavior = {}) {
 
 const triggerOf = tree => findAll(tree, node => node.type === 'button' && node['data-weir-decision-trigger'] !== undefined)[0]
 const panelOf = tree => findAll(tree, node => node.role === 'dialog')[0]
+const partOf = (tree, part) => findAll(tree, node => node['data-selector-part'] === part)[0]
 const radioOf = (tree, value) => findAll(tree, node => node.type === 'input' && node.inputType === 'radio' && node.value === value)[0]
 const buttonOf = (tree, ui, label) => findAll(tree, node => node.type === ui.Button && node.children === label)[0]
 const textOf = tree => JSON.stringify(tree)
@@ -145,7 +146,7 @@ const enabledOverview = {
   ],
 }
 
-test('selector opens a non-modal radio panel with Off, truthful Auto, and enabled assistants', async t => {
+test('selector opens a native modal radio panel with localized options and enabled assistants', async t => {
   const h = await load(t, enabledOverview)
   let tree = h.render()
   let trigger = triggerOf(tree)
@@ -163,9 +164,12 @@ test('selector opens a non-modal radio panel with Off, truthful Auto, and enable
   tree = h.render()
   const panel = panelOf(tree)
   assert.ok(panel)
-  assert.equal(panel['aria-modal'], false)
+  assert.equal(panel['aria-modal'], true)
+  assert.equal(panel.type, h.props.ui.DecisionModalFrame)
+  assert.equal(panel.closeOnBackdrop, true)
+  assert.equal(panel.restoreFocus, false)
   assert.equal(panel['aria-labelledby'], 'weir-da-selector-title')
-  assert.equal(h.document.activeElement, panel.ref.current)
+  assert.equal(panel.initialFocus, panel.dialogRef)
   assert.deepEqual(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').map(node => node.value), ['off', 'auto', 'a', 'b'])
   assert.ok(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').every(node => node.name === 'weir-da-selector-choice'))
   assert.ok(findAll(panel, node => node.type === 'label' && node.className?.includes('weir-da-selector-option')).length === 4)
@@ -173,9 +177,58 @@ test('selector opens a non-modal radio panel with Off, truthful Auto, and enable
   assert.equal(textOf(panel).includes('Archived'), false)
   assert.equal(textOf(panel).includes('Auto'), true)
   assert.equal(textOf(panel).includes('decisionAutoWhitelist'), true)
-  assert.equal(textOf(panel).includes('A, C'), true)
+  assert.equal(textOf(panel).includes('A, C'), false)
   assert.equal(textOf(panel).includes('decisionAutoShadowOn'), true)
   assert.equal(findAll(tree, node => node.type === h.props.ui.DecisionStyles).length, 1)
+})
+
+test('selector renders localized compact option labels and a real category count without technical copy', async t => {
+  const h = await load(t, enabledOverview)
+  h.props.t = key => h.model.dictionaries.en[key] ?? key
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  const panel = panelOf(tree)
+  const text = textOf(panel)
+  assert.equal(radioOf(tree, 'off')['aria-label'], 'Do not use an assistant')
+  assert.equal(radioOf(tree, 'auto')['aria-label'], 'Automatically choose an assistant')
+  assert.equal(text.includes('Automatic answers are currently allowed for 2 decision categories.'), true)
+  assert.equal(text.includes('Selection comparison is on; it never changes the actual result.'), true)
+  for (const forbidden of ['A, C', 'Auto routes', 'authorization-class whitelist', 'Shadow diagnostics']) assert.equal(text.includes(forbidden), false, forbidden)
+  assert.equal(text.includes('A very long assistant name that must remain readable'), true)
+})
+
+test('selector uses fixed header/footer regions and one compact independently scrolling body', async t => {
+  const h = await load(t, enabledOverview)
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  const panel = panelOf(tree)
+  assert.deepEqual(findAll(panel, node => node['data-selector-part']).map(node => node['data-selector-part']), ['header', 'body', 'footer'])
+  const header = partOf(panel, 'header')
+  const body = partOf(panel, 'body')
+  const footer = partOf(panel, 'footer')
+  assert.equal(findAll(header, node => node.id === 'weir-da-selector-title').length, 1)
+  assert.equal(findAll(header, node => node.id === 'weir-da-selector-safety').length, 1)
+  assert.equal(findAll(body, node => node.role === 'radiogroup').length, 1)
+  assert.equal(findAll(body, node => node.inputType === 'radio').length, 4)
+  assert.equal(findAll(header, node => node.inputType === 'radio').length, 0)
+  assert.equal(findAll(footer, node => node.inputType === 'radio').length, 0)
+  assert.ok(buttonOf(footer, h.props.ui, 'decisionManageAgents'))
+  const panelCss = h.props.ui.DECISION_UI_CSS.match(/\.weir-da-selector-panel \{([^}]*)\}/)?.[1] ?? ''
+  assert.match(panelCss, /width: min\(360px, calc\(100vw - 32px\)\)/)
+  assert.match(panelCss, /max-height: min\(560px, calc\(100dvh - 32px\)\)/)
+  assert.match(panelCss, /overflow: hidden/)
+  assert.match(panelCss, /grid-template-rows: auto minmax\(0, 1fr\) auto/)
+  assert.doesNotMatch(panelCss, /(?:^|;)\s*height:/)
+  const bodyCss = h.props.ui.DECISION_UI_CSS.match(/\.weir-da-selector-body \{([^}]*)\}/)?.[1] ?? ''
+  assert.match(bodyCss, /min-height: 0/)
+  assert.match(bodyCss, /overflow: auto/)
+  assert.match(bodyCss, /overscroll-behavior: contain/)
 })
 
 test('initial read failure is not Off and an explicit retry loads the real selection', async t => {
@@ -194,6 +247,7 @@ test('initial read failure is not Off and an explicit retry loads the real selec
   assert.equal(textOf(readDiagnostics.children()).includes('read offline'), true)
   assert.equal(textOf(readDiagnostics.children()).includes('NETWORK'), true)
   assert.equal(findAll(panelOf(tree), node => node.inputType === 'radio').length, 0)
+  assert.ok(findAll(partOf(panelOf(tree), 'body'), node => node.type === h.props.ui.ErrorState).length > 0)
   fail = false
   buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
   tree = h.render()
@@ -221,6 +275,11 @@ test('selection saves exactly once and closes without confirmation', async t => 
   assert.equal(textOf(tree).includes('decisionSaving'), true)
   assert.equal(panelOf(tree)['aria-busy'], true)
   assert.ok(findAll(tree, node => node.type === 'input' && node.inputType === 'radio').every(node => node.disabled))
+  const pendingPanel = panelOf(tree)
+  assert.equal(pendingPanel.pending, true)
+  pendingPanel.onRequestClose('escape')
+  pendingPanel.onRequestClose('backdrop')
+  assert.ok(panelOf(h.render()))
   release({ mode: 'agent', agentId: 'a' })
   await h.flush()
   tree = h.render()
@@ -319,6 +378,8 @@ test('unavailable, zero-agent, and globally disabled views never silently reassi
   triggerOf(tree).onClick()
   tree = zero.render()
   assert.equal(textOf(panelOf(tree)).includes('decisionNoAgents'), true)
+  assert.ok(findAll(partOf(panelOf(tree), 'body'), node => node.type === zero.props.ui.EmptyState).length > 0)
+  assert.ok(buttonOf(partOf(panelOf(tree), 'footer'), zero.props.ui, 'decisionCreateAgent'))
   buttonOf(tree, zero.props.ui, 'decisionCreateAgent').onClick()
   tree = zero.render()
   assert.equal(panelOf(tree), undefined)
@@ -436,7 +497,7 @@ test('root and child session reads restore their own persisted Auto selection', 
   assert.equal(h.calls.filter(call => call.method === 'overview').at(-1).args.sessionId, 'child')
 })
 
-test('outside click and Escape close without saving and return focus to the trigger', async t => {
+test('native backdrop and Escape close without saving and return focus to the trigger', async t => {
   const h = await load(t, enabledOverview)
   h.render()
   await h.flush()
@@ -444,17 +505,13 @@ test('outside click and Escape close without saving and return focus to the trig
   triggerOf(tree).onClick()
   tree = h.render()
   const trigger = triggerOf(tree).ref.current
-  const root = findAll(tree, node => node['data-weir-decision-selector'] !== undefined)[0]
-  h.document.emit('pointerdown', { target: root.ref.current })
-  tree = h.render()
-  assert.ok(panelOf(tree))
-  h.document.emit('pointerdown', { target: {} })
+  panelOf(tree).onRequestClose('backdrop')
   tree = h.render()
   assert.equal(panelOf(tree), undefined)
   assert.equal(trigger.focused, 1)
   triggerOf(tree).onClick()
   tree = h.render()
-  h.document.emit('keydown', { key: 'Escape', preventDefault() {} })
+  panelOf(tree).onRequestClose('escape')
   tree = h.render()
   assert.equal(panelOf(tree), undefined)
   assert.equal(trigger.focused, 2)
@@ -475,6 +532,10 @@ test('selector keeps composition ids and uses bounded responsive styles without 
   assert.match(styles, /\.weir-da-selector-panel/)
   assert.match(styles, /max-height:/)
   assert.match(styles, /overflow: auto/)
-  assert.match(styles, /width: min\(320px, calc\(100vw - 24px\)\)/)
+  assert.match(styles, /width: min\(360px, calc\(100vw - 32px\)\)/)
+  assert.match(styles, /\.weir-da-selector-panel::backdrop/)
+  const panelCss = styles.match(/\.weir-da-selector-panel \{([^}]*)\}/)?.[1] ?? ''
+  assert.doesNotMatch(panelCss, /position: absolute|bottom:|70vh|320px/)
+  assert.match(panelCss, /margin: auto/)
   assert.match(styles, /@media \(max-width: 600px\)/)
 })

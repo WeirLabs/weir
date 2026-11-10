@@ -8,7 +8,7 @@ async function load() {
   return exports
 }
 
-test('selector offers Off, sanitized Auto readiness, and enabled Agents as distinct modes', async () => {
+test('selector offers localized Off/Auto labels, sanitized readiness, and enabled Agents as distinct modes', async () => {
   const model = await load()
   const options = model.selectorOptions({ ok: true, value: {
     auto: { answerClasses: ['A', 'A', 'B', 'D'], shadow: true },
@@ -19,6 +19,10 @@ test('selector offers Off, sanitized Auto readiness, and enabled Agents as disti
     ],
   } })
   assert.deepEqual(options.map(option => option.value), ['off', 'auto', 'a'])
+  assert.equal(options[0].labelKey, 'decisionOff')
+  assert.equal(options[0].label, undefined)
+  assert.equal(options[1].labelKey, 'decisionAuto')
+  assert.equal(options[1].label, undefined)
   assert.equal(options[1].mode, 'auto')
   assert.deepEqual(options[1].auto, { known: true, answerClasses: ['A', 'B'], shadow: true, ready: true })
   assert.equal(options[1].descriptionKey, 'decisionAutoWhitelist')
@@ -32,6 +36,28 @@ test('selector offers Off, sanitized Auto readiness, and enabled Agents as disti
   assert.equal(unknown[1].descriptionKey, 'decisionAutoReadinessUnknown')
   assert.equal(unknown[1].shadowKey, 'decisionAutoShadowUnknown')
   assert.deepEqual(model.selectorOptions({ ok: false, error: { message: 'off' } }).map(option => option.value), ['off', 'auto'])
+})
+
+test('selector dictionaries use ordinary bilingual task language without hiding real Auto state', async () => {
+  const model = await load()
+  const { en, zh } = model.dictionaries
+  assert.equal(en.decisionOff, 'Do not use an assistant')
+  assert.equal(zh.decisionOff, '不启用助手')
+  assert.equal(en.decisionAuto, 'Automatically choose an assistant')
+  assert.equal(zh.decisionAuto, '自动选择助手')
+  assert.equal(zh.decisionAutoEmptyWhitelist, '尚未允许自动回答；新判断仍会询问你。')
+  assert.match(en.decisionAutoEmptyWhitelist, /new decisions will still ask you/i)
+  assert.equal(en.decisionAutoWhitelist, 'Automatic answers are currently allowed for {count} decision categories.')
+  assert.equal(zh.decisionAutoWhitelist, '当前允许自动回答 {count} 类判断。')
+  assert.match(en.decisionAutoReadinessUnknown, /status is unknown/i)
+  assert.match(zh.decisionAutoReadinessUnknown, /状态未知/)
+  assert.match(en.decisionAutoShadowOn, /Selection comparison/)
+  assert.match(zh.decisionAutoShadowOn, /选择对比/)
+  assert.match(en.decisionAutoShadowOn, /never changes the actual result/)
+  for (const key of ['decisionOff', 'decisionAuto', 'decisionAutoWhitelist', 'decisionAutoEmptyWhitelist', 'decisionAutoReadinessUnknown', 'decisionAutoShadowOn', 'decisionAutoShadowOff', 'decisionAutoShadowUnknown']) {
+    assert.doesNotMatch(en[key], /\b(?:Off|Auto|Shadow)\b|whitelist|A\/B\/C/i, key)
+    assert.doesNotMatch(zh[key], /\b(?:Off|Auto|Shadow)\b|白名单|A\/B\/C/i, key)
+  }
 })
 
 test('card and page projections are complete and malformed payloads stay neutral', async () => {

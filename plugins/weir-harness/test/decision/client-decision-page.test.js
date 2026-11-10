@@ -176,10 +176,20 @@ test('inbox uses shared answers, readable tentative guidance, on-demand current 
   assert.ok(disclosures.some(node => node.label === 'decisionRecoveryActions'))
   const evidence = disclosures.find(node => node.label === 'decisionEvidence')
   assert.ok(evidence)
+  assert.equal(evidence.revealOnOpen, 'end')
+  assert.equal(evidence.revealReady, false)
   evidence.onOpen()
+  const loadingEvidence = findAll(renderedInboxCard(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(loadingEvidence.revealReady, false)
   await harness.flush()
   assert.equal(reads, 1)
   let reopened = findAll(renderedInboxCard(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(reopened.revealReady, true)
+  const routes = findAll(renderedInboxCard(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.equal(routes.revealOnOpen, 'end')
+  assert.equal(routes.revealReady, true)
+  const recovery = findAll(renderedInboxCard(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+  assert.equal(recovery.revealOnOpen, 'end')
   assert.equal(textOf(reopened.children()).includes('Current evidence'), true)
   assert.equal(textOf(reopened.children()).includes('Old evidence'), false)
   reopened.onOpen()
@@ -188,6 +198,32 @@ test('inbox uses shared answers, readable tentative guidance, on-demand current 
   reopened.onOpen()
   await harness.flush()
   assert.equal(reads, 1, 'cached evidence is not reread on close/reopen')
+  harness.unmount()
+})
+
+test('cold inbox evidence and route errors settle reveal readiness without losing error content', async () => {
+  const item = waitingFixture()
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [item],
+    record: async () => { throw Object.assign(new Error('cold read failed'), { code: 'NETWORK' }) },
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let card = renderedInboxCard(harness)
+  let evidence = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealOnOpen, 'end')
+  evidence.onOpen()
+  card = renderedInboxCard(harness)
+  evidence = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealReady, false)
+  await harness.flush()
+  card = renderedInboxCard(harness)
+  evidence = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealReady, true)
+  assert.ok(findAll(evidence.children(), node => node.type === harness.ui.ErrorState).length > 0)
+  const routes = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.equal(routes.revealReady, true)
+  assert.ok(findAll(routes.children(), node => node.type === harness.ui.ErrorState).length > 0)
   harness.unmount()
 })
 
@@ -277,6 +313,10 @@ test('reassign and retry stay secondary while cancel requires explicit confirmat
   assert.equal(calls.some(call => call[0] === 'cancel'), false)
   const dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
   assert.ok(dialog)
+  const navigation = findAll(harness.render(), node => node['data-decision-primary-nav'] === true)[0]
+  assert.ok(navigation)
+  assert.equal(navigation.tabIndex, -1)
+  assert.equal(dialog.returnFocusFallback, navigation.ref)
   await dialog.onConfirm()
   await harness.flush()
   assert.deepEqual(calls[2], ['cancel', 'dc-waiting'])
@@ -673,6 +713,7 @@ test('assistant edit keeps simple fields primary and preserves exact advanced sc
   agentField(harness, 'name').onChange({ target: { value: 'Tone editor' } })
   const advanced = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0]
   assert.ok(advanced)
+  assert.equal(advanced.revealOnOpen, 'end')
   const advancedTree = advanced.children()
   const scope = findAll(advancedTree, node => node['data-agent-field'] === 'scope')[0]
   const route = findAll(advancedTree, node => node['data-agent-field'] === 'modelRoute')[0]
@@ -813,9 +854,13 @@ test('record detail groups prior evaluations, shows truthful memory limits, and 
   assert.equal(findAll(record, node => node.type === 'pre').length, 0)
   const advanced = findAll(record, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
   assert.ok(advanced)
+  assert.equal(advanced.revealOnOpen, 'end')
+  const routeDisclosure = findAll(record, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.equal(routeDisclosure.revealOnOpen, 'end')
   const diagnostics = advanced.children()
   assert.equal(findAll(diagnostics, node => node.type === 'pre' && node.children === JSON.stringify(detail, null, 2)).length, 1)
   assert.deepEqual(findAll(diagnostics, node => node['data-attempt-context-pack']).map(node => node['data-attempt-context-pack']), ['da-old', 'da-new'])
+  assert.equal(findAll(diagnostics, node => node['data-attempt-context-pack'] && node.revealOnOpen !== undefined).length, 0, 'nested Context Packs have no second reveal mechanism')
   assert.equal(textOf(diagnostics).includes('dc-history'), true)
   harness.unmount()
 })

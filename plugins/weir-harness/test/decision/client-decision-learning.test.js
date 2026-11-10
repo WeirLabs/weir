@@ -94,6 +94,7 @@ test('Agent details use the learning chunk product surface instead of legacy but
   const elements = findAll(detail, node => node.type === harness.learning.AgentLearning)
   assert.equal(elements.length, 1)
   const agentAdvanced = findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.equal(agentAdvanced.revealOnOpen, 'end')
   assert.equal(findAll(agentAdvanced.children(), node => node.type === harness.learning.AgentLearning).length, 0)
 
   const rendered = harness.learning.AgentLearning(elements[0])
@@ -101,6 +102,8 @@ test('Agent details use the learning chunk product surface instead of legacy but
   for (const key of ['decisionLearningGovernance', 'decisionNoCurrentSnapshot', 'decisionLearningIdle', 'decisionConsolidate']) assert.ok(text.includes(key), key)
   for (const key of ['decisionPublish', 'decisionReject', 'decisionRollback', 'decisionLearningRuns', 'decisionSnapshots', 'learningRuns', 'snapshots']) assert.equal(text.includes(key), false, key)
   assert.equal(findAll(rendered, node => node.type === 'pre').length, 0)
+  const learningAdvanced = findAll(rendered, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  assert.equal(learningAdvanced.revealOnOpen, 'end')
   harness.unmount()
 })
 

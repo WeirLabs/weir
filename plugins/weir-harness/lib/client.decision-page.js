@@ -94,7 +94,7 @@ window.__ModuleLoader__.load({
           jsx.jsx("h3", { children: t("decisionEvaluationHistory") }, "title"),
           previous.length ? previous.map((group, index) => EvaluationGroup({ ...group, index, model, ui, t })) : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionNoEarlierEvaluations") }),
         ] }, "history"),
-        jsx.jsx(ui.Disclosure, { id: `weir-da-record-routes-${current.caseId}`, label: t("decisionRouteHistory"), children: () => jsx.jsx(ui.DecisionRouteHistory, { history: view?.routeHistory, t }) }, "route-history"),
+        jsx.jsx(ui.Disclosure, { id: `weir-da-record-routes-${current.caseId}`, label: t("decisionRouteHistory"), revealOnOpen: "end", children: () => jsx.jsx(ui.DecisionRouteHistory, { history: view?.routeHistory, t }) }, "route-history"),
         jsx.jsxs("section", { children: [
           jsx.jsx("h3", { children: t("decisionFeedbackHistory") }, "title"),
           feedback.length ? jsx.jsx("ul", { children: feedback.map((entry, index) => jsx.jsx("li", { children: `${t(feedbackKeys[entry?.kind] ?? "decisionComment")}: ${entry?.payload?.text ?? entry?.payload?.direction ?? t("decisionNoAnswer")}` }, entry?.feedbackId ?? index)) }) : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionNoFeedback") }),
@@ -119,7 +119,7 @@ window.__ModuleLoader__.load({
           ] }, "preview") : null,
           jsx.jsx(ui.Button, { "data-action": "correction", disabled: pending || !draft.correction, onClick: () => props.run("correction", current.caseId, draft.correction, current.scope, [current.caseId]), children: t("decisionSubmitCorrection") }, "correction-action"),
         ] }, "feedback-actions") : null,
-        jsx.jsx(ui.Disclosure, { id: `weir-da-record-advanced-${current.caseId}`, label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsxs("div", { className: "weir-da-advanced-record", children: [
+        jsx.jsx(ui.Disclosure, { id: `weir-da-record-advanced-${current.caseId}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-advanced-record", children: [
           ...(view?.history ?? []).map((group, index) => AttemptContextPack({ attempt: group.attempt, t })),
           jsx.jsx("pre", { children: JSON.stringify(detail, null, 2) }, "raw"),
         ] }) }, "advanced"),
@@ -136,6 +136,7 @@ window.__ModuleLoader__.load({
       const perQuestion = Array.isArray(current.escalation?.perQuestion) ? current.escalation.perQuestion : [];
       const detail = props.evidence?.value;
       const evidenceView = detail ? model.cardView(detail, props.agents, t) : null;
+      const evidenceRevealReady = props.evidence?.status === "ready" || props.evidence?.status === "error";
       return jsx.jsxs("article", { className: "weir-da-card weir-da-inbox-card", "data-case-id": current.caseId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [
@@ -163,17 +164,19 @@ window.__ModuleLoader__.load({
         }, "answers"),
         jsx.jsx(ui.Disclosure, {
           id: `weir-da-evidence-${current.caseId}`, label: t("decisionEvidence"), onOpen: () => props.loadEvidence(false),
+          revealOnOpen: "end", revealReady: evidenceRevealReady,
           children: () => props.evidence?.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
             : props.evidence?.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsx(ui.Button, { onClick: () => props.loadEvidence(true), children: t("decisionRetry") }) })
             : evidenceView ? EvidenceList({ evidence: evidenceView.evidence, ui, t }) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEvidence") }),
         }, "evidence"),
         jsx.jsx(ui.Disclosure, {
           id: `weir-da-inbox-routes-${current.caseId}`, label: t("decisionRouteHistory"), onOpen: () => props.loadEvidence(false),
+          revealOnOpen: "end", revealReady: evidenceRevealReady,
           children: () => props.evidence?.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
             : props.evidence?.status === "error" ? jsx.jsx(ui.ErrorState, { children: jsx.jsx(ui.Button, { onClick: () => props.loadEvidence(true), children: t("decisionRetry") }) })
               : jsx.jsx(ui.DecisionRouteHistory, { history: evidenceView?.routeHistory ?? [], t }),
         }, "route-history"),
-        jsx.jsx(ui.Disclosure, { id: `weir-da-recovery-${current.caseId}`, label: t("decisionRecoveryActions"), children: jsx.jsxs("div", { className: "weir-da-actions", children: [
+        jsx.jsx(ui.Disclosure, { id: `weir-da-recovery-${current.caseId}`, label: t("decisionRecoveryActions"), revealOnOpen: "end", children: jsx.jsxs("div", { className: "weir-da-actions", children: [
           jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => props.updateDraft("reassignTarget", event.target.value), "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: pending, children: [
             jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
             ...props.agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId)),
@@ -270,7 +273,7 @@ window.__ModuleLoader__.load({
           id: `weir-da-agent-preference-${suffix}`, "data-agent-field": "preference", "aria-label": t("decisionAgentPreference"), value: editor.preference, rows: 3, disabled: props.pending,
           onChange: event => props.onField("preference", event.target.value),
         }) }, "preference"),
-        jsx.jsx(ui.Disclosure, { id: `weir-da-agent-settings-${suffix}`, label: t("decisionAdvancedSettings"), children: () => jsx.jsxs("div", { className: "weir-da-agent-advanced", children: [
+        jsx.jsx(ui.Disclosure, { id: `weir-da-agent-settings-${suffix}`, label: t("decisionAdvancedSettings"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-agent-advanced", children: [
           jsx.jsx("p", { className: "weir-da-caption", children: t("decisionAdvancedSettingsHint") }, "hint"),
           jsx.jsx(ui.Field, { id: `weir-da-agent-scope-${suffix}`, label: t("decisionAgentScopeJson"), children: jsx.jsx("textarea", {
             id: `weir-da-agent-scope-${suffix}`, "data-agent-field": "scope", "aria-label": t("decisionAgentScopeJson"), value: editor.scopeText, rows: 6, disabled: props.pending,
@@ -301,7 +304,7 @@ window.__ModuleLoader__.load({
           jsx.jsx(ui.Button, { variant: "danger", "data-agent-state": "archived", disabled: agent.state === "archived", onClick: () => props.requestState("archived"), children: t("decisionArchiveAgent") }, "archive"),
         ] }, "actions"),
         jsx.jsx(props.learningProps.learning.AgentLearning, { ...props.learningProps, agent, ui }, "learning"),
-        jsx.jsx(ui.Disclosure, { id: `weir-da-agent-advanced-${agent.agentId}`, label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsxs("div", { className: "weir-da-agent-diagnostics", children: [
+        jsx.jsx(ui.Disclosure, { id: `weir-da-agent-advanced-${agent.agentId}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-agent-diagnostics", children: [
           jsx.jsx("h3", { children: t("decisionProfileHistory") }, "history-title"),
           jsx.jsx("ul", { children: (agent.descriptionHistory ?? []).map(item => jsx.jsx("li", { children: `v${item.revision}: ${item.text}` }, item.revision)) }, "history"),
           jsx.jsx("pre", { children: JSON.stringify(agent, null, 2) }, "raw"),
@@ -492,6 +495,7 @@ window.__ModuleLoader__.load({
       const tabRef = react.useRef(tab);
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
+      const primaryNavRef = react.useRef(null);
       tabRef.current = tab;
       filterRef.current = appliedFilter;
       selectedCaseRef.current = selectedCaseId;
@@ -901,21 +905,22 @@ window.__ModuleLoader__.load({
           }) : null,
         ] }, "content"),
       ] });
-      const confirmation = confirm?.kind === "cancel" ? jsx.jsx(ui.ConfirmDialog, {
+      const confirmationFocus = { returnFocusFallback: primaryNavRef, openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel") };
+      const confirmation = confirm?.kind === "cancel" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-cancel-decision", title: t("decisionCancelTitle"), body: t("decisionCancelConfirmation"),
         confirmLabel: t("decisionCancel"), cancelLabel: t("decisionKeepEditing"), danger: true, pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const caseId = confirm.caseId; setConfirm(null); return run("cancel", caseId); },
-      }) : confirm?.kind === "discard-editor" ? jsx.jsx(ui.ConfirmDialog, {
+      }) : confirm?.kind === "discard-editor" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-discard-editor", title: t("decisionDiscardTitle"), body: t("decisionDiscardConfirmation"),
         confirmLabel: t("decisionDiscard"), cancelLabel: t("decisionKeepEditing"), danger: true,
         onCancel: () => setConfirm(null), onConfirm: () => { const after = confirm.after; setConfirm(null); setEditor(null); return after?.(); },
-      }) : confirm?.kind === "agent-state" ? jsx.jsx(ui.ConfirmDialog, {
+      }) : confirm?.kind === "agent-state" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-agent-state", title: t(confirm.state === "archived" ? "decisionArchiveTitle" : confirm.state === "disabled" ? "decisionDisableTitle" : "decisionEnableTitle"),
         body: t(confirm.state === "archived" ? "decisionArchiveConfirmation" : confirm.state === "disabled" ? "decisionDisableConfirmation" : "decisionEnableConfirmation"),
         confirmLabel: t(confirm.state === "archived" ? "decisionArchiveAgent" : confirm.state === "disabled" ? "decisionDisableAgent" : "decisionEnableAgent"),
         cancelLabel: t("decisionCancel"), danger: confirm.state === "archived", pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const { agentId, state } = confirm; setConfirm(null); return run("profileSetState", agentId, state); },
-      }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, {
+      }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: `weir-da-learning-${confirm.kind === "snapshotPublish" ? "publish" : confirm.kind === "snapshotReject" ? "reject" : "rollback"}`,
         title: t(confirm.kind === "snapshotPublish" ? "decisionApplyTitle" : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateTitle" : "decisionRollbackTitle"),
         body: jsx.jsxs("div", { children: [
@@ -943,7 +948,7 @@ window.__ModuleLoader__.load({
             jsx.jsxs("div", { children: [jsx.jsx("h1", { children: t("decisionSelector") }, "title"), jsx.jsx("p", { children: t("decisionPageDescription") }, "description")] }, "copy"),
             jsx.jsx(ui.Button, { variant: "ghost", "data-view": "metrics", onClick: () => navigate("metrics"), "aria-pressed": view.tab === "metrics", children: t("decisionAdvancedDiagnostics") }, "advanced"),
           ] }, "header"),
-          jsx.jsx("nav", { className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
+          jsx.jsx("nav", { ref: primaryNavRef, tabIndex: -1, className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
             "data-view": id, onClick: () => navigate(id), "aria-pressed": view.tab === id,
             children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, "aria-label": `${resources.inbox.value.length}` }, "count") : null] }),
           }, id)) }, "nav"),
