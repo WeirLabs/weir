@@ -341,6 +341,18 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   assert.ok(acceptance.includes('beforeCard = await revealCard(consult.caseId)'), 'the held card is scrolled into view and must expose non-empty rendered text before its screenshot')
 })
 
+test('Host language matrix activates General settings through native keyboard before General-only controls', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body, 'setGuiLanguage exists')
+  const settings = body.indexOf("await keyboardActivate('Open Settings for language'")
+  const general = body.indexOf("await keyboardActivate('Open General settings for language', '[role=\"dialog\"] button', { labels: ['通用设置', 'General', 'General settings'] })")
+  const version = body.indexOf('当前版本')
+  const language = body.indexOf("await keyboardActivate('Open real Language preference'")
+  assert.ok(settings >= 0 && general > settings && version > general && language > version, 'Settings → General → version readiness → real Language selector is the required navigation order')
+  assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(body), 'Host Settings navigation remains native-keyboard only')
+})
+
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {
