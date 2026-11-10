@@ -609,6 +609,10 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   assert.match(driver, /setAutoSettings\('p4-restored', \{ shadow: false, answerClasses: \[\], answerTimeoutMs: 150 \}\)/, 'final real-UI restoration includes the original 150ms timeout')
   assert.match(driver, /compareRoutingReview\(reviewSession, 'p4-routing-before-visuals', allAgain\)/, 'a fresh session mount compares to its authoritative first page')
   assert.ok(!driver.includes("compareRoutingReview(reviewSession, 'p4-routing-before-visuals', combined)"), 'the prior expanded page is not expected after a fresh mount')
+  const agentStateBody = driver.match(/async function agentState\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const owningSession = agentStateBody.indexOf('await openIsolatedSession(sessionId, true)')
+  const agentPage = agentStateBody.indexOf('await openAgent(sessionId, agentId)')
+  assert.ok(owningSession >= 0 && agentPage > owningSession, 'Agent state actions restore their owning session before opening the management page')
 })
 
 test('P4 Desktop settings default closed and forward only explicit isolated overrides', t => {

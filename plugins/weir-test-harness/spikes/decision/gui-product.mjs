@@ -459,6 +459,7 @@ async function openAgent(sessionId, agentId) {
 }
 
 async function agentState(sessionId, agentId, state) {
+  await openIsolatedSession(sessionId, true)
   await openAgent(sessionId, agentId)
   await keyboardActivate(`Request assistant ${state}`, `[data-agent-detail="${agentId}"] [data-agent-state="${state}"]`)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-agent-state"))'), 30_000)
