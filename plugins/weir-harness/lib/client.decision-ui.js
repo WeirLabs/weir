@@ -111,6 +111,13 @@ window.__ModuleLoader__.load({
 .weir-da-agent-summary-preference { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .weir-da-agent-summary[data-selected="true"] { border-color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, var(--dsw-alias-bg-layer-1)); }
 .weir-da-agent-summary .weir-da-button { justify-self: start; }
+.weir-da-agent-back { display: none; }
+@media (max-width: 760px) {
+  .weir-da-agents-layout { grid-template-columns: minmax(0, 1fr); }
+  .weir-da-agents-layout[data-agent-drill-in="true"] .weir-da-agent-list { display: none; }
+  .weir-da-agents-layout[data-agent-drill-in="false"] .weir-da-agent-detail-pane { display: none; }
+  .weir-da-agent-back { display: inline-flex; }
+}
 .weir-da-agent-editor .weir-da-field textarea, .weir-da-agent-advanced textarea { resize: vertical; max-height: 40vh; overflow: auto; overflow-wrap: normal; }
 .weir-da-correction-preview { padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
 .weir-da-evaluation { min-width: 0; display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--dsw-alias-border-l2); }

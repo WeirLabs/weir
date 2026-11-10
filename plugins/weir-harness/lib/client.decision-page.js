@@ -762,8 +762,14 @@ window.__ModuleLoader__.load({
         if (editorDirty()) { setConfirm({ kind: "discard-editor", after }); return; }
         setEditor(null); after?.();
       };
-      const openCreate = () => closeEditor(() => { setSelectedAgentId(null); patchResource("agent", emptyResource()); setEditor(newAgentEditor()); });
-      const openAgent = agentId => closeEditor(() => selectAgent(agentId));
+      const openCreate = () => {
+        if (!agentDrillIn && editor?.mode === "create") { setAgentDrillIn(true); return; }
+        closeEditor(() => { setAgentDrillIn(true); setSelectedAgentId(null); patchResource("agent", emptyResource()); setEditor(newAgentEditor()); });
+      };
+      const openAgent = agentId => {
+        if (!agentDrillIn && selectedAgentId === agentId) { setAgentDrillIn(true); return; }
+        closeEditor(() => { setAgentDrillIn(true); return selectAgent(agentId); });
+      };
       const saveEditor = async () => {
         if (!editor || pendingRef.current) return;
         let payload;
@@ -802,6 +808,7 @@ window.__ModuleLoader__.load({
         learningIntentRef.current = null;
         setPending(null); setActionError(null); setResources(emptyResources());
         setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
+        setAgentDrillIn(agentDestination === "create" && !openCaseId);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
         if (sessionId) {
@@ -900,7 +907,10 @@ window.__ModuleLoader__.load({
         ] }, "header"),
         jsx.jsxs("div", { className: "weir-da-agents-layout", "data-agent-drill-in": agentDrillIn, children: [
           jsx.jsx("div", { className: "weir-da-agent-list", "aria-label": t("decisionAgents"), children: agentList }, "list"),
-          jsx.jsx("div", { className: "weir-da-agent-detail-pane", children: agentPane }, "detail"),
+          jsx.jsxs("div", { className: "weir-da-agent-detail-pane", children: [
+            jsx.jsx(ui.Button, { variant: "ghost", className: "weir-da-agent-back", onClick: () => setAgentDrillIn(false), children: `← ${t("decisionAgents")}` }, "back"),
+            agentPane,
+          ] }, "detail"),
         ] }, "layout"),
       ] });
       const confirmationFocus = { returnFocusFallback: primaryNavRef, openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel") };
