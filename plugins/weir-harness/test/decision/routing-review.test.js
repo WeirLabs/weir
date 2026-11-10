@@ -281,6 +281,129 @@ test('routingReview derives equal-time chains by SQLite rowid without changing p
   assert.deepEqual(history(), before)
 })
 
+test('routingReview keeps an out-of-window auto baseline for manual reassignment direction', async t => {
+  const f = reviewFixture(t)
+  const outside = f.at - 25 * 60 * 60 * 1000
+  const reassigned = await f.addCase('split-reassigned')
+  await f.addRoute(reassigned, {
+    mode: 'auto', chosen: 'agent-a', reason: 'deterministic:single_candidate',
+    createdAt: outside, routeDecisionId: 'rd-split-auto',
+  })
+  await f.addRoute(reassigned, {
+    mode: 'manual_reassign', chosen: 'agent-b', createdAt: f.at - 60_000, routeDecisionId: 'rd-split-manual',
+  })
+  const old = await f.addCase('split-old-only')
+  await f.addRoute(old, {
+    mode: 'auto', reason: 'failure:timeout', createdAt: outside, routeDecisionId: 'rd-split-old-only',
+  })
+  const history = () => f.store.db.prepare('SELECT rowid,* FROM route_decisions ORDER BY rowid').all()
+  const before = history()
+
+  const all = f.query.routingReview({ sessionId: 'root', window: 'all' })
+  assert.equal(all.items.length, 3)
+  assert.deepEqual(all.items.find(item => item.routeDecisionId === 'rd-split-manual').reassignment, { from: 'agent-a', to: 'agent-b' })
+  assert.equal(all.summary.autoFailure, 1)
+
+  const review = f.query.routingReview({ sessionId: 'root', window: '24h' })
+
+  assert.deepEqual(review.items.map(item => item.routeDecisionId), ['rd-split-manual'])
+  assert.deepEqual(review.items[0].reassignment, { from: 'agent-a', to: 'agent-b' })
+  assert.deepEqual(review.summary, {
+    agreement: 0,
+    disagreement: 0,
+    shadowNone: 0,
+    shadowAmbiguous: 0,
+    shadowFailure: 0,
+    autoNone: 0,
+    autoAmbiguous: 0,
+    autoFailure: 0,
+    manualReassign: 1,
+    uncomparable: 0,
+  })
+  assert.deepEqual(f.query.metrics({ sessionId: 'root', window: '24h' }).routing, review.summary)
+  assert.deepEqual(history(), before)
+})
+
+test('routingReview keeps an out-of-window pinned baseline for Shadow comparison', async t => {
+  const f = reviewFixture(t)
+  const outside = f.at - 25 * 60 * 60 * 1000
+  const compared = await f.addCase('split-compared')
+  await f.addRoute(compared, {
+    mode: 'pinned', chosen: 'agent-a', createdAt: outside, routeDecisionId: 'rd-split-pinned',
+  })
+  await f.addRoute(compared, {
+    mode: 'auto_shadow', chosen: 'agent-a', createdAt: f.at - 60_000, routeDecisionId: 'rd-split-shadow',
+  })
+  const history = () => f.store.db.prepare('SELECT rowid,* FROM route_decisions ORDER BY rowid').all()
+  const before = history()
+
+  const all = f.query.routingReview({ sessionId: 'root', window: 'all' })
+  assert.equal(all.items.length, 2)
+  assert.equal(all.items.find(item => item.routeDecisionId === 'rd-split-shadow').outcome, 'agreement')
+
+  const review = f.query.routingReview({ sessionId: 'root', window: '24h' })
+
+  assert.deepEqual(review.items.map(item => item.routeDecisionId), ['rd-split-shadow'])
+  assert.equal(review.items[0].outcome, 'agreement')
+  assert.equal(review.items[0].baselineAgentId, 'agent-a')
+  assert.deepEqual(review.summary, {
+    agreement: 1,
+    disagreement: 0,
+    shadowNone: 0,
+    shadowAmbiguous: 0,
+    shadowFailure: 0,
+    autoNone: 0,
+    autoAmbiguous: 0,
+    autoFailure: 0,
+    manualReassign: 0,
+    uncomparable: 0,
+  })
+  assert.deepEqual(history(), before)
+})
+
+test('routingReview paginates windowed outcomes after complete-chain derivation', async t => {
+  const f = reviewFixture(t)
+  const outside = f.at - 25 * 60 * 60 * 1000
+  const expected = []
+  for (let index = 0; index < 22; index++) {
+    const suffix = String(index).padStart(2, '0')
+    const current = await f.addCase(`split-page-${suffix}`)
+    await f.addRoute(current, {
+      mode: 'pinned', chosen: 'agent-a', createdAt: outside, routeDecisionId: `rd-old-pinned-${suffix}`,
+    })
+    const routeDecisionId = `rd-new-shadow-${suffix}`
+    await f.addRoute(current, {
+      mode: 'auto_shadow', chosen: 'agent-a', createdAt: f.at - index * 1000, routeDecisionId,
+    })
+    expected.push(routeDecisionId)
+  }
+  const old = await f.addCase('split-page-old-only')
+  await f.addRoute(old, {
+    mode: 'auto', reason: 'failure:timeout', createdAt: outside, routeDecisionId: 'rd-page-old-only',
+  })
+  const history = () => f.store.db.prepare('SELECT rowid,* FROM route_decisions ORDER BY rowid').all()
+  const before = history()
+
+  const first = f.query.routingReview({ sessionId: 'root', window: '24h' })
+  assert.equal(first.items.length, 20)
+  assert.equal(first.summary.agreement, 22)
+  assert.equal(first.summary.uncomparable, 0)
+  assert.equal(first.summary.autoFailure, 0)
+  assert.ok(first.nextCursor)
+  const second = f.query.routingReview({ sessionId: 'root', window: '24h', cursor: first.nextCursor })
+  assert.equal(second.items.length, 2)
+  assert.equal(second.nextCursor, null)
+  assert.deepEqual(second.summary, first.summary)
+
+  const items = [...first.items, ...second.items]
+  assert.deepEqual(items.map(item => item.routeDecisionId), expected)
+  assert.equal(new Set(items.map(item => item.routeDecisionId)).size, 22)
+  assert.equal(items.every(item => item.outcome === 'agreement' && item.baselineAgentId === 'agent-a'), true)
+  assert.deepEqual(f.query.routingReview({ sessionId: 'root', window: '24h' }), first)
+  assert.deepEqual(f.query.routingReview({ sessionId: 'root', window: '24h', cursor: first.nextCursor }), second)
+  assert.deepEqual(history(), before)
+})
+
 test('routingReview pages exactly 20 stable items with duplicate-resistant, root-and-window-bound cursors', async t => {
   const f = reviewFixture(t)
   for (let index = 0; index < 45; index++) {
