@@ -53,6 +53,66 @@ test('page defaults to inbox with a real count, three primary destinations, and 
   harness.unmount()
 })
 
+test('DecisionPage keeps inbox primary actions inside a 180px visual viewport at real 200% page scale', async () => {
+  const listeners = new Map([['resize', new Set()], ['scroll', new Set()]])
+  const visualViewport = {
+    width: 180, height: 450, scale: 2, offsetLeft: 0, offsetTop: 0,
+    addEventListener(type, listener) { listeners.get(type)?.add(listener) },
+    removeEventListener(type, listener) { listeners.get(type)?.delete(listener) },
+    emit(type) { for (const listener of listeners.get(type) ?? []) listener() },
+  }
+  const previousWindow = globalThis.window
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => [waitingFixture()],
+  } })
+  Object.assign(globalThis.window, { innerWidth: 360, innerHeight: 900, devicePixelRatio: 1, visualViewport })
+  const pageFrom = tree => {
+    const page = findAll(tree, node => node.type === 'main' && node.className === 'weir-da-page')[0]
+    assert.ok(page, 'Decision page exists')
+    return page
+  }
+  try {
+    let tree = (await harness.settle()).tree
+    let page = pageFrom(tree)
+    assert.equal(page.style?.position, 'fixed')
+    assert.equal(page.style?.left, '0px')
+    assert.equal(page.style?.top, '0px')
+    assert.equal(page.style?.width, '180px')
+    assert.equal(page.style?.height, '450px')
+    assert.equal(page.style?.zIndex, 1000, 'the scaled page paints above the host shell instead of being occluded by its sidebar')
+    assert.equal(page['data-visual-viewport'], 'compact')
+    assert.equal(listeners.get('resize').size, 1)
+    assert.equal(listeners.get('scroll').size, 1)
+    const inbox = renderedInboxCard(harness, tree)
+    assert.equal(findAll(inbox, node => node.type === harness.ui.DecisionAnswers).length, 1, 'the primary answer form remains mounted in the contained page')
+
+    Object.assign(visualViewport, { width: 160, height: 400, offsetLeft: 20, offsetTop: 30 })
+    visualViewport.emit('scroll')
+    tree = harness.render()
+    page = pageFrom(tree)
+    assert.equal(page.style?.left, '20px')
+    assert.equal(page.style?.top, '30px')
+    assert.equal(page.style?.width, '160px')
+    assert.equal(page.style?.height, '400px')
+
+    Object.assign(visualViewport, { width: 360, height: 900, scale: 1, offsetLeft: 0, offsetTop: 0 })
+    globalThis.window.devicePixelRatio = 2
+    visualViewport.emit('resize')
+    page = pageFrom(harness.render())
+    assert.equal(page.style, undefined, 'DPR alone is not page zoom and all temporary viewport styles are removed')
+    assert.equal(page['data-visual-viewport'], undefined)
+
+    harness.unmount()
+    assert.equal(listeners.get('resize').size, 0)
+    assert.equal(listeners.get('scroll').size, 0)
+  } finally {
+    harness.unmount()
+    if (previousWindow === undefined) delete globalThis.window
+    else globalThis.window = previousWindow
+  }
+})
+
 test('directed openCase takes precedence over defaults and loads only that raw record detail', async () => {
   const calls = []
   let openCase = 'dc-directed'

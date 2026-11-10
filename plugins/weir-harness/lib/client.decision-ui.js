@@ -158,6 +158,14 @@ window.__ModuleLoader__.load({
   .weir-da-actions { align-items: stretch; }
   .weir-da-actions .weir-da-button { flex: 1 1 auto; }
 }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-page-inner { padding: 12px; gap: 16px; }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-records-layout, .weir-da-page[data-visual-viewport="compact"] .weir-da-agents-layout { grid-template-columns: minmax(0, 1fr); }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-records-layout[data-drill-in="true"] .weir-da-record-list, .weir-da-page[data-visual-viewport="compact"] .weir-da-agents-layout[data-agent-drill-in="true"] .weir-da-agent-list { display: none; }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-records-layout[data-drill-in="false"] .weir-da-record-detail-pane, .weir-da-page[data-visual-viewport="compact"] .weir-da-agents-layout[data-agent-drill-in="false"] .weir-da-agent-detail-pane { display: none; }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-record-back, .weir-da-page[data-visual-viewport="compact"] .weir-da-agent-back { display: inline-flex; }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-button { min-height: 36px; }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-actions { align-items: stretch; }
+.weir-da-page[data-visual-viewport="compact"] .weir-da-actions .weir-da-button { flex: 1 1 auto; }
 `;
 
     function DecisionStyles() {
