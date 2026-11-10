@@ -80,6 +80,7 @@ test('DecisionPage keeps inbox primary actions inside a 180px visual viewport at
     assert.equal(page.style?.top, '0px')
     assert.equal(page.style?.width, '180px')
     assert.equal(page.style?.height, '450px')
+    assert.equal(page.style?.zIndex, 1000, 'the scaled page paints above the host shell instead of being occluded by its sidebar')
     assert.equal(page['data-visual-viewport'], 'compact')
     assert.equal(listeners.get('resize').size, 1)
     assert.equal(listeners.get('scroll').size, 1)
