@@ -215,6 +215,25 @@ test('product driver settles host credit onboarding with scoped native keyboard 
   assert.ok(driver.includes('consoleErrors.length === 0'), 'the zero-console-error runtime gate remains unchanged')
 })
 
+test('delayed host welcome onboarding is resolved around native keyboard targeting with durable evidence', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const dismiss = driver.match(/async function settleDelayedHostOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(dismiss, 'the delayed host onboarding guard exists')
+  assert.ok(dismiss.includes('[data-desktop-onboarding="welcome"]'), 'only the exact visible host welcome page is classified as delayed onboarding')
+  assert.ok(dismiss.includes("#weir-da-selector-panel,dialog.weir-da-dialog"), 'an active native Decision modal is never bypassed as host onboarding')
+  assert.ok(dismiss.includes('chooseDefaultWorkspace()'), 'the existing real host UI flow resolves the welcome page')
+  assert.match(dismiss, /resolution\?\.dismissed === true/, 'host dismissal must be observed')
+  assert.ok(dismiss.includes('resolution.selection'), 'default workspace selection must be observed')
+  assert.ok(dismiss.includes("host-onboarding.json"), 'every delayed dismissal is persisted with its triggering product action')
+  assert.ok(!/\.click\(|\.focus\(|body\.innerText\.includes/.test(dismiss), 'the guard neither uses DOM actions nor classifies product error copy as onboarding')
+
+  const focus = driver.match(/async function keyboardFocus\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok((focus.match(/await settleHost\(\)/g) ?? []).length >= 2, 'host state is checked both before target readiness and during native Tab traversal')
+  assert.ok(focus.includes('step < 500'), 'the existing focus traversal bound is not expanded to conceal a trap')
+  assert.ok(!/\.click\(|\.focus\(/.test(focus), 'product targeting remains native-keyboard only')
+  assert.ok((driver.match(/result\.artifacts\.hostOnboarding = join\(out, 'host-onboarding\.json'\)/g) ?? []).length === 2, 'final and blocked result indexes include the dismissal evidence')
+})
+
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''

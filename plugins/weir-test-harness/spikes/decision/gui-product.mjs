@@ -58,6 +58,8 @@ const knownSessionIds = new Set()
 const processProvenance = []
 const p4Evidence = {}
 const nativeKeyPackets = []
+const hostOnboardingDismissals = []
+writeJson(join(out, 'host-onboarding.json'), hostOnboardingDismissals)
 let instance = null
 let instanceNumber = 0
 let failure = null
@@ -309,14 +311,43 @@ async function keyboardSnapshot(selector, options = {}) {
   })()`)
 }
 
+async function settleDelayedHostOnboarding(action) {
+  const detected = await instance.cdp.evaluate(`(() => {
+    const host=document.querySelector('[data-desktop-onboarding="welcome"]')
+    if(!host||host.getClientRects().length===0)return null
+    const decisionDialog=[...document.querySelectorAll('#weir-da-selector-panel,dialog.weir-da-dialog')].find(dialog=>dialog.open&&dialog.matches(':modal'))
+    if(decisionDialog)return null
+    const start=[...host.querySelectorAll('button')].find(button=>button.offsetParent!==null&&['开始设置','Start setup','Get started'].includes(button.textContent.trim()))
+    if(!start)throw new Error('Delayed host welcome onboarding has no visible native start action')
+    return {page:host.getAttribute('data-desktop-onboarding'),title:host.querySelector('h1')?.textContent?.trim()??null,start:start.textContent.trim(),activeInside:host.contains(document.activeElement)}
+  })()`)
+  if (!detected) return null
+  const resolution = await instance.cdp.chooseDefaultWorkspace()
+  requireEvidence(resolution?.onboarding === true && resolution?.dismissed === true && resolution.start && resolution.selection, `delayed host welcome onboarding is dismissed through the real host UI before ${action}`)
+  const receipt = { sequence: hostOnboardingDismissals.length + 1, action, detected, resolution }
+  hostOnboardingDismissals.push(receipt)
+  writeJson(join(out, 'host-onboarding.json'), hostOnboardingDismissals)
+  return receipt
+}
+
 async function keyboardFocus(action, selector, options = {}) {
-  const audit = { action: `Focus: ${action}`, selector, options, steps: [], reached: false }
+  const audit = { action: `Focus: ${action}`, selector, options, hostOnboardingDismissals: [], steps: [], reached: false }
   keyboardAudits.push(audit)
   saveKeyboardAudits()
   const deadline = Date.now() + 30_000
-  await waitFor(async () => (await keyboardSnapshot(selector, options)).ready, 30_000)
+  const settleHost = async () => {
+    const receipt = await settleDelayedHostOnboarding(action)
+    if (!receipt) return
+    audit.hostOnboardingDismissals.push(receipt.sequence)
+    saveKeyboardAudits()
+  }
+  await waitFor(async () => {
+    await settleHost()
+    return (await keyboardSnapshot(selector, options)).ready
+  }, 30_000)
   const direction = (await keyboardSnapshot(selector, options)).direction
   for (let step = 0; step < 500 && Date.now() < deadline; step += 1) {
+    await settleHost()
     const before = await keyboardSnapshot(selector, options)
     if (before.reached) {
       audit.reached = true
@@ -1472,6 +1503,7 @@ function writeReport(verdict, error = null) {
     `- 真实 PNG：${screenshots.length} 张（均校验 PNG 签名与非空字节）`,
     `- 原始网络 RPC：${networkRpc.length} 条；权威直读：${authoritativeRpc.length} 条`,
     `- Runtime.exceptionThrown：${exceptionCount}；Slot crash 事件：${slotCrashCount}`, '',
+    `- 延迟宿主欢迎页处理：${hostOnboardingDismissals.length} 次；host-onboarding.json 记录触发动作、真实宿主开始设置与默认工作区完成证据。`,
     '## 验收矩阵', '',
     '| 检查 | 结果 |', '|---|---|',
     ...Object.entries(checks).map(([name, pass]) => `| \`${name}\` | ${pass ? 'PASS' : 'BLOCKED'} |`), '',
@@ -2580,6 +2612,7 @@ try {
   check('completeUiux52And53AcceptanceCoverage', Object.values(uiuxCoverage).every(value => Array.isArray(value) ? value.length === 0 : value === true || typeof value === 'number' && value > 0), uiuxCoverage)
   saveUiuxEvidence()
   result = { phase: 'GUI-decision-uiux-5.2-5.3', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, uiux: { coverage: uiuxCoverage, modalAudits: uiuxEvidence.modalAudits.length, selectorLayouts: uiuxEvidence.selectorLayouts.length, confirmations: uiuxEvidence.confirmations.length, coldReveals: uiuxEvidence.coldReveals.length, masterDetail: uiuxEvidence.masterDetail.length, zoomMeasurements: uiuxEvidence.zoom.length }, p4: { sessions: p4State, caseIds: { selected: p4Evidence.selected.case.caseId, one: p4Evidence.one.case.caseId, none: p4Evidence.none.case.caseId, ambiguous: p4Evidence.ambiguous.case.caseId, invalid: p4Evidence.invalid.case.caseId, timeout: p4Evidence.timeout.case.caseId, explicit: p4Evidence.explicit.case.caseId, returned: p4Evidence.returned.case.caseId, pending: p4Evidence.pending.case.caseId, interrupted: p4Evidence.interrupted.case.caseId }, processProvenance }, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { uiux: join(out, 'uiux-acceptance.json'), networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), stockClassification: join(out, 'stock-classification-proof.json'), sqliteReadModel: join(out, 'sqlite-read-model-comparison.json'), p4Restoration: join(out, 'p4-restoration.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
+  result.artifacts.hostOnboarding = join(out, 'host-onboarding.json')
   result.artifacts.nativeKeyPackets = join(out, 'native-key-packets.json')
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)
@@ -2613,6 +2646,7 @@ try {
   writeJson(join(out, 'runtime-events.json'), runtimeEvents)
   if (failure) {
     result = { phase: 'GUI-decision-uiux-5.2-5.3', verdict: 'BLOCKED', pass: false, runId, root, out, port: PORT, checks, checkDetails, error: failure?.message ?? String(failure), cleanup: cleanups, artifacts: { uiux: join(out, 'uiux-acceptance.json'), runtime: join(out, 'runtime-scan.json'), screenshots: join(out, 'screenshots.json') } }
+    result.artifacts.hostOnboarding = join(out, 'host-onboarding.json')
     writeJson(join(out, 'result.json'), result)
     writeJson(join(GUI, 'result.json'), result)
     writeJson(join(out, 'driver-error.json'), { message: failure?.message ?? String(failure), stack: failure?.stack ?? null, checks, checkDetails, cleanups })
