@@ -782,7 +782,9 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
     const colors = await instance.cdp.evaluate(`(() => { const page=document.querySelector('.weir-da-page'); return page?{background:getComputedStyle(page).backgroundColor,color:getComputedStyle(page).color}:null })()`)
     return colors?.background === expectedColors.background && colors?.color === expectedColors.color ? colors : null
   }, 10_000)
-  const audit = await instance.cdp.evaluate(`(() => {
+  let audit = null
+  await waitFor(async () => {
+    const candidate = await instance.cdp.evaluate(`(() => {
     const visible=el=>Boolean(el&&el.offsetParent!==null)
     const nameOf=el=>el.getAttribute('aria-label')||el.innerText?.trim()||[...(el.labels??[])].map(label=>label.innerText).join(' ')||el.closest('label')?.innerText||''
     const controls=[...document.querySelectorAll('.weir-da-page button,.weir-da-page input,.weir-da-page textarea,.weir-da-page select,.weir-da-selector-panel button,.weir-da-selector-panel input')].filter(visible)
@@ -799,6 +801,11 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
       colors:page?{background:getComputedStyle(page).backgroundColor,color:getComputedStyle(page).color}:null,
     }
   })()`)
+    audit = candidate
+    const settled = layoutProblems(candidate).length===0 && candidate.colors?.background===expectedColors.background && candidate.colors?.color===expectedColors.color && Math.abs((candidate.viewport.scale ?? 1) - zoom) < 0.01
+    return settled ? candidate : null
+  }, 10_000).catch(() => {})
+  requireEvidence(audit, `${name} produced a real layout measurement`)
   const problems = layoutProblems(audit)
   const row = { name, theme, zoom, audit, problems }
   visualAudits.push(row)

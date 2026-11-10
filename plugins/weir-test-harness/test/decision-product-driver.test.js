@@ -386,6 +386,8 @@ test('product visual audit waits for target computed colors and retains strict z
   assert.match(audit, /audit\.colors\?\.background===expectedColors\.background/)
   assert.match(audit, /audit\.colors\?\.color===expectedColors\.color/)
   assert.match(audit, /layoutProblems\(audit\)/)
+  assert.ok(audit.includes('layoutProblems(candidate).length===0') && audit.includes('candidate.colors?.background===expectedColors.background') && audit.includes('Math.abs((candidate.viewport.scale ?? 1) - zoom) < 0.01'), 'the audit waits for the same strict layout, color, and zoom predicates before the screenshot')
+  assert.ok(audit.includes('audit = candidate'), 'the latest real measurements remain available if settling fails')
   assert.match(audit, /Math\.abs\(\(audit\.viewport\.scale \?\? 1\) - zoom\) < 0\.01/)
   for (const guard of ['surfaceOverflow', 'clippedPrimary', 'unnamedControls']) assert.ok(audit.includes(guard), guard)
   const zoomLoop = driver.match(/for \(const width of \[360, 768, 1440\]\) \{\s*await instance\.cdp\.setViewport\(width, 900, true\)[\s\S]*?await instance\.cdp\.setPageZoom\(1\)/)?.[0] ?? ''
