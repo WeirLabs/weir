@@ -292,9 +292,20 @@ export class DecisionBroker {
     return Boolean(this.store.db.prepare("SELECT 1 FROM route_decisions WHERE case_id=? AND mode='auto' LIMIT 1").get(current.caseId))
   }
 
+  assertAutoAttemptAuthority(request) {
+    const configured = this.config().decisionAgentAutoAnswerClasses
+    const allowedClasses = Array.isArray(configured) && configured.every(value => ['A', 'B', 'C'].includes(value))
+      ? [...new Set(configured)]
+      : []
+    if (excludedRequest(request) || allowedClasses.length === 0 || !autoAdmission(request, allowedClasses).ok) {
+      throw new DecisionContractError('AUTHORITY', 'This Auto Case requires native user authority')
+    }
+  }
+
   async consultAutoReplay({ current, request, scope, agent, signal, heldSlot }) {
     if (current.state === 'awaiting_revision'
       && callerRevisionFingerprint(current.request, current.scope) !== callerRevisionFingerprint(request, scope)) {
+      this.assertAutoAttemptAuthority(request)
       const selected = current.agentId
       if (typeof selected !== 'string' || !selected) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Auto Case requires explicit reassignment')
       const profile = this.profiles.getProfile(selected)
@@ -625,6 +636,8 @@ export class DecisionBroker {
         timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000, signal: controller.signal,
         workspaceKey: current.workspaceKey, scope: current.scope,
         questions: current.request.questions, attemptStartedAt,
+        authorizationClass: domainAuthorizationClass(current.request, profile),
+        intentKind: domainIntentKind(current.request),
         conflictPairs: retrieval.conflictPairs,
         currentObservationHashes: retrieval.currentObservationHashes,
         recheckEvidence: evidenceId => {
@@ -731,6 +744,7 @@ export class DecisionBroker {
       case 'cancel': return this.hookUserAborted({ caseId: current.caseId })
       case 'reassign': {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be reassigned')
+        if (this.hasAutoRoute(current)) this.assertAutoAttemptAuthority(current.request)
         const target = this.profiles.getProfile(input.agentId)
         if (target.state !== 'enabled' || target.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: target.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: input.agentId })
         const evaluating = await this.cases.transitionWithRoute({
@@ -747,6 +761,7 @@ export class DecisionBroker {
       case 'retry': {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be retried')
         if (typeof current.agentId !== 'string' || !current.agentId) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Case requires reassignment before retry')
+        if (this.hasAutoRoute(current)) this.assertAutoAttemptAuthority(current.request)
         const profile = this.profiles.getProfile(current.agentId)
         if (profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: current.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: current.agentId })
         const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })
@@ -1155,4 +1170,14 @@ function callerRevisionFingerprint(request, scope) {
     return callerQuestion
   })
   return canonicalJson({ questions, context: request.context, taskSummary: request.taskSummary, evidence: request.evidence, scope })
+}
+
+function domainAuthorizationClass(request, profile) {
+  const classes = (request.questions ?? []).map(question => question?.authorizationClass).filter(value => value !== undefined)
+  return classes.find(value => !profile.scope?.authorizationClasses?.includes(value)) ?? classes[0]
+}
+
+function domainIntentKind(request) {
+  const kinds = (request.questions ?? []).map(question => question?.intent?.kind).filter(value => value !== undefined)
+  return kinds.find(value => ['approval', 'plan-review'].includes(value)) ?? kinds[0]
 }

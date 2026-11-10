@@ -102,6 +102,9 @@ function decideDecision(options, obs) {
   if (question?.question?.startsWith('AUTO_REPLAY')) {
     return textChunks(JSON.stringify({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'AUTO_REPLAY requires a real caller revision' }))
   }
+  if (question?.question?.startsWith('AUTO_SAFETY_RETRY')) {
+    return textChunks(JSON.stringify({ outcome: 'escalate', missing: ['The owned Auto retry fixture requires user judgment'] }))
+  }
   const evidenceId = pack?.L5?.find(evidence => evidence.source === 'user_profile')?.evidenceId
   if (!question || !evidenceId) return textChunks(JSON.stringify({ outcome: 'escalate', missing: ['The Auto fixture requires selected Agent evidence'] }))
   const answered = question.question?.startsWith('AUTO_PARTIAL') ? questions.slice(0, 1) : questions
@@ -229,6 +232,7 @@ function assert(run) {
 
   const revisionAttempts = replayReport?.revisions?.map(item => item.attempts).join(',')
   run.check('post-flight identical classless replay adds nothing while question/context/options/scope changes are real revisions', replayReport?.initial?.state === 'awaiting_revision' && replayReport?.initial?.flights === 0 && replayReport?.initial?.derivedClass === 'B' && replayReport?.initial?.derivedSource === 'auto_classifier' && replayReport?.replay?.sameResult === true && replayReport?.replay?.routes === 1 && replayReport?.replay?.attempts === 1 && revisionAttempts === '2,3,4,5' && replayReport?.revisions?.every(item => item.state === 'awaiting_revision' && item.routes === 1 && item.sameAgent === true) && replayReport?.revisions?.map(item => item.field).join(',') === 'question,context,options,scope' && wiresFor('AUTO_REPLAY', 'classification').length === 1 && evaluationFor('AUTO_REPLAY').length === 5, JSON.stringify({ replayReport, replay, route: routeFor(replay) }))
+  run.check('Auto content revisions revalidate exclusion and caller/current whitelist authority without a new Attempt', replayReport?.denials?.length === 4 && replayReport.denials.every(item => item.errorCode === 'AUTHORITY' && item.unchanged === true && item.sameAgent === true && item.routes === 1 && item.attempts === 5), JSON.stringify({ denials: replayReport?.denials }))
 
   run.check('real classless decision_consult persists derived B and answers through Auto without native questions', autoConsult?.entry === 'consult' && autoConsult?.closing === 'answered' && autoConsult?.agent_id === agentB && routeFor(autoConsult)?.mode === 'auto' && autoConsult?.request.questions[0].authorizationClass === 'B' && autoConsult?.request.questions[0].authorizationClassSource === 'auto_classifier' && attemptsFor(autoConsult).length === 1 && allGates(attemptsFor(autoConsult)[0]), JSON.stringify({ autoConsult, route: routeFor(autoConsult) }))
 
@@ -280,6 +284,7 @@ function assert(run) {
 
   const unowned = safety?.unowned
   run.check('unowned answer/cancel/retry/reassign preserve user authority, create no premature Evidence or Attempt, and retry only after ownership', unowned?.answer?.opened?.case?.agentId === null && unowned.answer.answered?.agentId === null && unowned.answer.answered?.closing === 'escalated' && unowned.answer.answered?.decision?.answers?.[0]?.selected?.[0] === 'Unowned user answer' && unowned.answer.reread?.userDecided === true && unowned.answer.reread?.evidence?.length === 0 && unowned.answer.evidence === 0 && unowned.cancel.cancelled?.closing === 'cancelled' && unowned.cancel.counts?.attempts === 0 && unowned.retry.error?.code === 'AGENT_UNAVAILABLE' && unowned.retry.unchanged === true && unowned.retry.counts?.attempts === 0 && unowned.reassign.current?.agentId !== null && unowned.reassign.current?.closing === 'answered' && unowned.reassign.routes?.map(route => route.mode).join(',') === 'auto,manual_reassign' && unowned.reassign.counts?.attempts === 1 && unowned.final?.cases === 4 && unowned.final?.routes === 5 && unowned.final?.attempts === 1, JSON.stringify(unowned))
+  run.check('Auto retry rechecks persisted native exclusion and unowned reassignment rechecks the current whitelist', safety?.retryAuthority?.error?.code === 'AUTHORITY' && safety.retryAuthority.unchanged === true && safety.retryAuthority.counts?.routes === 1 && safety.retryAuthority.counts?.attempts === 1 && safety?.reassignAuthority?.error?.code === 'AUTHORITY' && safety.reassignAuthority.unchanged === true && safety.reassignAuthority.counts?.routes === 1 && safety.reassignAuthority.counts?.attempts === 0, JSON.stringify({ retry: safety?.retryAuthority, reassign: safety?.reassignAuthority }))
 
   const flush = safety?.flush
   run.check('flush aborts and awaits real routing, persists no answer or Attempt, and leaves no late writes or jobs', flush?.before?.cases === 1 && flush.before.routes === 0 && flush.before.attempts === 0 && flush.received?.length === 1 && flush.received[0].state === 'received' && flush.received[0].agent_id === null && flush.result?.outcome === 'awaiting_user' && flush.result?.reason === 'no_route' && flush.after?.cases?.length === 1 && flush.after.cases[0].state === 'awaiting_user' && flush.after.cases[0].awaiting_reason === 'no_route' && flush.after.cases[0].agent_id === null && flush.after.cases[0].decision_json === null && flush.after.routes?.length === 1 && flush.after.routes[0].reason === 'failure:aborted' && flush.after.attempts?.length === 0 && flush.lateStable === true && flush.settled === true && flush.flights === 0 && flush.controllers === 0 && flush.jobs === 0 && flush.active === 0, JSON.stringify(flush))
@@ -309,6 +314,6 @@ export default {
   id, prompt, decide, decideDecision, decideRouterClassification, decideRouterRoute, observe, assert,
   env: {
     WEIR_IT_DECISION: '1', WEIR_IT_DECISION_EVENTS: DECISION_EVENTS, WEIR_IT_DECISION_STORE_PATH: decisionStoreDirectory(id),
-    WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_SELECTOR_DEFAULT: 'auto', WEIR_IT_DECISION_TIMEOUT_MS: '100', WEIR_IT_DECISION_MAX_ATTEMPTS: '8',
+    WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_SELECTOR_DEFAULT: 'auto', WEIR_IT_DECISION_TIMEOUT_MS: '100', WEIR_IT_DECISION_MAX_ATTEMPTS: '16',
   },
 }

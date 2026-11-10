@@ -198,7 +198,7 @@ async function autoReplay(broker, agent) {
   const revisions = []
   let currentArgs = original
   for (const [field, change] of changes) {
-    currentArgs = change(currentArgs)
+    currentArgs = { ...change(currentArgs), authorization_class: 'B' }
     const result = await broker.consult({ agent, args: currentArgs })
     const current = broker.cases.getCase(first.caseId)
     revisions.push({
@@ -206,7 +206,24 @@ async function autoReplay(broker, agent) {
       ...autoCaseCounts(broker, first.caseId),
     })
   }
-  return { completed: true, op: 'auto-replay', caseId: first.caseId, initial, replay, revisions }
+  const denials = []
+  const eligibleArgs = currentArgs
+  for (const [label, change] of [
+    ['D', args => ({ ...args, authorization_class: 'D' })],
+    ['missing', args => { const value = { ...args }; delete value.authorization_class; return value }],
+    ['approval', args => ({ ...args, question: 'AUTO_REPLAY: approve this revised deployment?' })],
+    ['execution', args => ({ ...args, question: 'AUTO_REPLAY: edit this file with execution authority?' })],
+  ]) {
+    const before = broker.cases.getCase(first.caseId)
+    const outcome = await broker.consult({ agent, args: change({ ...eligibleArgs, question: `AUTO_REPLAY: denied ${label}` }) })
+      .then(value => ({ value }), error => ({ error }))
+    const after = broker.cases.getCase(first.caseId)
+    denials.push({
+      label, errorCode: outcome.error?.code ?? null, unchanged: JSON.stringify(after) === JSON.stringify(before),
+      sameAgent: after.agentId === initialCase.agentId, ...autoCaseCounts(broker, first.caseId),
+    })
+  }
+  return { completed: true, op: 'auto-replay', caseId: first.caseId, initial, replay, revisions, denials }
 }
 
 function autoSafetyCounts(broker) {
@@ -424,7 +441,7 @@ async function autoSafety(broker, agent, signal) {
     const unownedAgents = await setupAgents(unowned)
     await unowned.broker.setSelector(agent.id, 'auto')
     const open = async action => {
-      const args = { question: `AUTO_SAFETY_UNOWNED_${action.toUpperCase()}: user must decide`, options: [{ label: 'Unowned user answer' }, { label: 'Other' }], request_id: `auto-safety-unowned-${action}` }
+      const args = { question: `AUTO_SAFETY_UNOWNED_${action.toUpperCase()}: user must decide`, options: [{ label: 'Unowned user answer' }, { label: 'Other' }], authorization_class: 'A', request_id: `auto-safety-unowned-${action}` }
       const result = await unowned.broker.consult({ agent, args, signal })
       return { args, result, case: unowned.broker.cases.getCase(result.caseId) }
     }
@@ -445,6 +462,45 @@ async function autoSafety(broker, agent, signal) {
       retry: { opened: retry, error: retryError, unchanged: JSON.stringify(retryAfter) === retryBefore, after: retryAfter, counts: autoCaseCounts(unowned.broker, retry.result.caseId) },
       reassign: { opened: reassign, reassigned, current: unowned.broker.cases.getCase(reassign.result.caseId), routes: unowned.broker.store.db.prepare('SELECT mode,chosen,reason FROM route_decisions WHERE case_id=? ORDER BY rowid').all(reassign.result.caseId), counts: autoCaseCounts(unowned.broker, reassign.result.caseId) },
       final: autoSafetyCounts(unowned.broker),
+    }
+
+    const retryAuthority = await make('retry-authority')
+    await setupAgents(retryAuthority)
+    await retryAuthority.broker.setSelector(agent.id, 'auto')
+    const retryOpened = await retryAuthority.broker.consult({ agent, args: {
+      question: 'AUTO_SAFETY_RETRY: owned Auto Case must revalidate exclusion', options: [{ label: 'Retry must be denied' }],
+      authorization_class: 'A', request_id: 'auto-safety-retry-authority',
+    }, signal })
+    const retryOwned = retryAuthority.broker.cases.getCase(retryOpened.caseId)
+    const retryDeniedRequest = {
+      ...retryOwned.request,
+      questions: retryOwned.request.questions.map(question => ({ ...question, authorizationClass: 'D' })),
+    }
+    await retryAuthority.broker.store.write(db => {
+      db.prepare('UPDATE cases SET request_json=? WHERE case_id=?').run(JSON.stringify(retryDeniedRequest), retryOwned.caseId)
+    })
+    const retryAuthorityBefore = retryAuthority.broker.cases.getCase(retryOwned.caseId)
+    const authorityRetryError = await retryAuthority.broker.retry({ caseId: retryOwned.caseId }).catch(error => ({ code: error.code }))
+    const retryAuthorityAfter = retryAuthority.broker.cases.getCase(retryOwned.caseId)
+    report.retryAuthority = {
+      before: retryAuthorityBefore, error: authorityRetryError, unchanged: JSON.stringify(retryAuthorityAfter) === JSON.stringify(retryAuthorityBefore),
+      counts: autoCaseCounts(retryAuthority.broker, retryOwned.caseId),
+    }
+
+    const reassignAuthority = await make('reassign-authority')
+    const reassignAgents = await setupAgents(reassignAuthority)
+    await reassignAuthority.broker.setSelector(agent.id, 'auto')
+    const reassignOpened = await reassignAuthority.broker.consult({ agent, args: {
+      question: 'AUTO_SAFETY_UNOWNED_REASSIGN_AUTHORITY: current whitelist must be rechecked',
+      options: [{ label: 'Reassign must be denied' }], authorization_class: 'A', request_id: 'auto-safety-reassign-authority',
+    }, signal })
+    reassignAuthority.config.decisionAgentAutoAnswerClasses = []
+    const reassignBefore = reassignAuthority.broker.cases.getCase(reassignOpened.caseId)
+    const reassignError = await reassignAuthority.broker.reassign({ caseId: reassignOpened.caseId, agentId: reassignAgents.pinned.agentId }).catch(error => ({ code: error.code }))
+    const reassignAfter = reassignAuthority.broker.cases.getCase(reassignOpened.caseId)
+    report.reassignAuthority = {
+      before: reassignBefore, error: reassignError, unchanged: JSON.stringify(reassignAfter) === JSON.stringify(reassignBefore),
+      counts: autoCaseCounts(reassignAuthority.broker, reassignOpened.caseId),
     }
 
     const flush = await make('flush')

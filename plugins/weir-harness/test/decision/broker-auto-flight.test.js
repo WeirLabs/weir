@@ -150,7 +150,7 @@ test('before-commit same-key Hook and consult deliveries join one Auto flight', 
   assert.equal(consultedFixture.broker.routingJobs.size, 0)
 })
 
-test('post-flight classless Auto replay is idempotent while every caller-facing change is a real revision', async t => {
+test('post-flight classless Auto replay is idempotent while authorized caller changes are real revisions', async t => {
   const changes = [
     ['question', args => ({ ...args, question: 'Changed question?' })],
     ['options', args => ({ ...args, options: [{ label: 'C' }] })],
@@ -171,7 +171,7 @@ test('post-flight classless Auto replay is idempotent while every caller-facing 
     assert.deepEqual(replay, first, label)
     assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 1 }, label)
 
-    const revised = await f.broker.consult({ agent: f.agent, args: change(args, f) })
+    const revised = await f.broker.consult({ agent: f.agent, args: { ...change(args, f), authorization_class: 'B' } })
     assert.equal(revised.caseId, first.caseId, label)
     assert.equal(revised.outcome, 'returned', label)
     assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 2 }, label)
@@ -188,9 +188,9 @@ test('post-flight classless Auto replay is idempotent while every caller-facing 
   const replay = await removal.broker.consult({ agent: removal.agent, args: initial })
   assert.deepEqual(replay, first)
   const { authorization_class, ...classless } = initial
-  await removal.broker.consult({ agent: removal.agent, args: classless })
-  assert.deepEqual(counts(removal, first.caseId), { cases: 1, routes: 1, attempts: 2 })
-  assert.equal(callsOf(removal, CLASSIFICATION).length, 0, 'removing a caller class is a revision, not a new classification flight')
+  await assert.rejects(removal.broker.consult({ agent: removal.agent, args: classless }), error => error.code === 'AUTHORITY')
+  assert.deepEqual(counts(removal, first.caseId), { cases: 1, routes: 1, attempts: 1 })
+  assert.equal(callsOf(removal, CLASSIFICATION).length, 0, 'removing a caller class fails closed without reclassification')
 })
 
 test('Auto revision and retry keep the established Agent despite selector and Router changes', async t => {
@@ -222,6 +222,57 @@ test('Auto revision and retry keep the established Agent despite selector and Ro
   assert.equal(callsOf(f, CLASSIFICATION).length, 0)
 })
 
+const AUTO_REVISION_DENIALS = [
+  ['D', { authorization_class: 'D' }],
+  ['E', { authorization_class: 'E' }],
+  ['F', { authorization_class: 'F' }],
+  ['unknown', { authorization_class: 'unknown' }],
+  ['invalid', { authorization_class: 'G' }],
+  ['missing', {}],
+  ['unallowed', { authorization_class: 'B', allowedClasses: ['A'] }],
+  ['approval', { question: 'Revised request: approve this deployment?' }],
+  ['high-risk', { question: 'Revised request: execute this irreversible operation?' }],
+  ['execution', { question: 'Revised request: edit this file with execution authority?' }],
+]
+
+for (const [label, denial] of AUTO_REVISION_DENIALS) {
+  test(`Auto revision rejects ${label} authority before changing the Case or starting an Attempt`, async t => {
+    const f = await fixture(t)
+    const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
+    f.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
+    const initial = { question: 'Initial safe content?', options: [{ label: 'A' }, { label: 'B' }], authorization_class: 'A', request_id: `revision-denial-${label}` }
+    const first = await f.broker.consult({ agent: f.agent, args: initial })
+    const before = f.broker.cases.getCase(first.caseId)
+    if (denial.allowedClasses) f.config.decisionAgentAutoAnswerClasses = denial.allowedClasses
+    const revised = { ...initial, question: denial.question ?? `Revised ${label}?` }
+    if (denial.authorization_class === undefined) delete revised.authorization_class
+    else revised.authorization_class = denial.authorization_class
+
+    await assert.rejects(f.broker.consult({ agent: f.agent, args: revised }), error => error.code === 'AUTHORITY')
+    assert.deepEqual(f.broker.cases.getCase(first.caseId), before)
+    assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 1 })
+    assert.equal(before.agentId, selected.agentId)
+    assert.equal(callsOf(f, CLASSIFICATION).length, 0)
+    assert.equal(callsOf(f, ROUTER).length, 0)
+  })
+}
+
+test('a classless content revision cannot inherit a derived class from different content', async t => {
+  const f = await fixture(t)
+  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
+  f.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'question', authorizationClass: 'A' }] })
+  f.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
+  const initial = { question: 'Original derived classification?', options: [{ label: 'A' }], request_id: 'derived-class-revision' }
+  const first = await f.broker.consult({ agent: f.agent, args: initial })
+  const before = f.broker.cases.getCase(first.caseId)
+  assert.equal(before.request.questions[0].authorizationClassSource, 'auto_classifier')
+
+  await assert.rejects(f.broker.consult({ agent: f.agent, args: { ...initial, question: 'Different content without a caller class?' } }), error => error.code === 'AUTHORITY')
+  assert.deepEqual(f.broker.cases.getCase(first.caseId), before)
+  assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 1 })
+  assert.equal(callsOf(f, CLASSIFICATION).length, 1)
+  assert.equal(callsOf(f, ROUTER).length, 0)
+})
 test('one Auto permit is held through routing and evaluation, then released for later work', async t => {
   const f = await fixture(t, { decisionAgentMaxConcurrentAttempts: 1 })
   const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
