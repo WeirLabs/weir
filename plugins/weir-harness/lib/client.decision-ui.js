@@ -289,7 +289,7 @@ window.__ModuleLoader__.load({
     }
 
     const decisionScrollLocks = new WeakMap();
-    const DECISION_SCROLL_STYLES = ["overflow", "overflowX", "overflowY", "overscrollBehavior", "overscrollBehaviorX", "overscrollBehaviorY", "paddingRight"];
+    const DECISION_SCROLL_STYLES = ["overflow", "overflowX", "overflowY", "overscrollBehavior", "overscrollBehaviorX", "overscrollBehaviorY", "paddingRight", "paddingBottom"];
 
     function acquireDecisionScrollLock(hostDocument, originElement) {
       if (!hostDocument || typeof hostDocument !== "object") return () => {};
@@ -322,13 +322,20 @@ window.__ModuleLoader__.load({
         if (!style) continue;
         const inline = Object.fromEntries(DECISION_SCROLL_STYLES.map(name => [name, style[name] ?? ""]));
         state.snapshots.set(target, { target, inline, scrollTop: target.scrollTop, scrollLeft: target.scrollLeft });
+        const computed = view?.getComputedStyle?.(target) ?? target.computed;
         const scrollbarWidth = target === root
           ? Math.max(0, (view?.innerWidth ?? 0) - (root.clientWidth ?? 0))
           : Math.max(0, (target.offsetWidth ?? 0) - (target.clientWidth ?? 0));
+        const scrollbarHeight = target === root
+          ? Math.max(0, (view?.innerHeight ?? 0) - (root.clientHeight ?? 0))
+          : Math.max(0, (target.offsetHeight ?? 0) - (target.clientHeight ?? 0));
         if (scrollbarWidth > 0) {
-          const computed = view?.getComputedStyle?.(target) ?? target.computed;
           const padding = Number.parseFloat(computed?.paddingRight ?? "0") || 0;
           style.paddingRight = `${padding + scrollbarWidth}px`;
+        }
+        if (scrollbarHeight > 0) {
+          const padding = Number.parseFloat(computed?.paddingBottom ?? "0") || 0;
+          style.paddingBottom = `${padding + scrollbarHeight}px`;
         }
         style.overflow = "hidden";
         style.overflowX = "hidden";

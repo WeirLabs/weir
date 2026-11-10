@@ -342,6 +342,64 @@ test('native modal locks and restores root, Decision page, session, and composer
   }
 })
 
+test('native modal preserves both background offsets when scrollbar removal changes client size', async () => {
+  const fixture = makeScrollFixture()
+  const target = fixture.composer
+  let scrollTop = 39
+  let scrollLeft = 17
+  target.style.paddingBottom = '3px'
+  target.computed.paddingBottom = '3px'
+  const originalStyle = { ...target.style }
+  const padding = name => Number.parseFloat(target.style[name] || target.computed[name] || '0') || 0
+  const locked = () => target.style.overflow === 'hidden'
+  const clientHeight = () => 344 - (locked() ? 0 : 5)
+  const clientWidth = () => 358 - (locked() ? 0 : 5)
+  const scrollHeight = () => 378 + Math.max(0, padding('paddingBottom') - 3)
+  const scrollWidth = () => 469 + Math.max(0, padding('paddingRight') - 7)
+  Object.defineProperties(target, {
+    offsetHeight: { value: 344 },
+    offsetWidth: { value: 358 },
+    clientHeight: { get: clientHeight },
+    clientWidth: { get: clientWidth },
+    scrollHeight: { get: scrollHeight },
+    scrollWidth: { get: scrollWidth },
+    scrollTop: {
+      get: () => Math.max(0, Math.min(scrollTop, scrollHeight() - clientHeight())),
+      set: value => { scrollTop = value },
+    },
+    scrollLeft: {
+      get: () => Math.max(0, Math.min(scrollLeft, scrollWidth() - clientWidth())),
+      set: value => { scrollLeft = value },
+    },
+  })
+  const native = { open: false, showModal() { this.open = true }, close() { this.open = false } }
+  const runtime = makeModalReact(node => node.type === 'dialog' ? native : undefined)
+  const oldDocument = globalThis.document
+  globalThis.document = fixture.document
+  try {
+    const ui = await load(runtime.react)
+    assert.equal(target.scrollTop, 39)
+    assert.equal(target.scrollLeft, 17)
+    runtime.render(ui.ConfirmDialog, {
+      id: 'scroll-lock-two-axis', title: 'Confirm', body: 'Body', confirmLabel: 'Confirm', cancelLabel: 'Cancel',
+      returnFocus: fixture.origin, onConfirm() {}, onCancel() {},
+    })
+    assertScrollLocked(fixture)
+    assert.equal(target.clientHeight, 344)
+    assert.equal(target.clientWidth, 358)
+    assert.equal(target.scrollTop, 39)
+    assert.equal(target.scrollLeft, 17)
+    runtime.unmount()
+    assert.deepEqual(target.style, originalStyle)
+    assert.equal(target.scrollTop, 39)
+    assert.equal(target.scrollLeft, 17)
+  } finally {
+    runtime.unmount()
+    if (oldDocument === undefined) delete globalThis.document
+    else globalThis.document = oldDocument
+  }
+})
+
 test('nested native modals release shared scroll locks only once and tolerate out-of-order repeated cleanup', async () => {
   const fixture = makeScrollFixture()
   const extra = {
