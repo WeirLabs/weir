@@ -12,6 +12,7 @@ const EVENTS = join(IT_ROOT, 'decision-integration-events.jsonl')
 const QUESTIONS = {
   off: { id: 'decision-hook-off', question: 'While Off, who should answer?', options: [{ label: 'Native Off' }, { label: 'Automatic Off' }] },
   answer: { id: 'decision-hook-answer', question: 'Which title style is evidenced?', options: [{ label: 'Native fallback' }, { label: 'Concise' }] },
+  stockPlan: { id: 'decision-hook-legacy-stock-plan-review', question: 'LEGACY_STOCK_PLAN_REVIEW: should the native plan proceed?', detail: 'Review the legacy native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept legacy plan' }, options: [{ label: 'Accept legacy plan' }, { label: 'Revise legacy plan' }] },
   missing: { id: 'decision-hook-missing', question: 'Which title fits the unstated audience?', options: [{ label: 'User context' }, { label: 'Guess' }] },
   invalid: { id: 'decision-hook-invalid', question: 'Which option survives malformed evaluator output?', options: [{ label: 'User judgment' }, { label: 'Malformed output' }] },
 }
@@ -25,6 +26,7 @@ function decide(options, obs) {
   if (history.includes('DECISION_TEST error')) return textChunks('DECISION_HOOK_FAILED')
   if (!history.includes(QUESTIONS.off.id)) return ask('off')
   if (!history.includes('DECISION_TEST done setup')) return toolCallChunks('decision_integration_probe', { op: 'setup' })
+  if (!history.includes(QUESTIONS.stockPlan.id)) return ask('stockPlan')
   if (!history.includes(QUESTIONS.answer.id)) return ask('answer')
   if (!history.includes(QUESTIONS.missing.id)) return ask('missing')
   if (!history.includes(QUESTIONS.invalid.id)) return ask('invalid')
@@ -62,7 +64,11 @@ function decideConsolidation() {
 }
 
 function observe(obs) {
-  return observeDecision(obs)
+  const base = observeDecision(obs)
+  const pack = packOf(obs)
+  const stockAuthorityWire = base.decisionQuestionIds.includes(QUESTIONS.stockPlan.id)
+    || (pack?.questions?.some(question => question.id === QUESTIONS.stockPlan.id) ?? false)
+  return { ...base, stockAuthorityWire }
 }
 
 function readEvents() {
@@ -96,12 +102,18 @@ function assert(run) {
   const answered = caseFor(QUESTIONS.answer.id)
   const missing = caseFor(QUESTIONS.missing.id)
   const invalid = caseFor(QUESTIONS.invalid.id)
+  const stockCase = caseFor(QUESTIONS.stockPlan.id)
+  const stockNative = events.find(event => event.listener === 'user-questions-stub' && event.questionIds?.includes(QUESTIONS.stockPlan.id))
+  const stockRoutes = store.routes.filter(route => route.case_id === stockCase?.case_id)
+  const stockAttempts = store.attempts.filter(attempt => attempt.case_id === stockCase?.case_id)
+  const stockWires = run.requests.filter(request => request.stockAuthorityWire)
   const stubIds = events.filter(event => event.listener === 'user-questions-stub').flatMap(event => event.questionIds ?? [])
   const answerAttempts = store.attempts.filter(attempt => attempt.case_id === answered?.case_id)
   const invalidAttempts = store.attempts.filter(attempt => attempt.case_id === invalid?.case_id)
   const evaluatorAnswer = run.requests.find(request => request.decisionEvaluator && request.decisionQuestionIds?.includes(QUESTIONS.answer.id))
 
   run.check('Off creates no Case, route sample, evaluator call or pre-setup store', !off && store.cases.length === 3 && store.routes.length === 3 && !run.requests.some(request => request.decisionQuestionIds?.includes(QUESTIONS.off.id)) && run.requests.some(request => request.lastTool.includes('"storeExistedBeforeSetup":false')), JSON.stringify({ cases: store.cases.map(item => item.request.questions?.map(question => question.id)), routes: store.routes }))
+  run.check('legacy no-wait stock plan-review stays native without Case, Route, Attempt, classification, Router, or evaluation', !stockCase && stockRoutes.length === 0 && stockAttempts.length === 0 && stockWires.length === 0 && stockNative?.caseSnapshot === null && stockNative?.answer?.answers?.[0]?.selected?.[0] === QUESTIONS.stockPlan.options[0].label, JSON.stringify({ stockCase, stockRoutes, stockAttempts, stockWires, stockNative }))
   run.check('answerable Hook returns the evidenced complete batch without the native stub', answered?.state === 'closed' && answered?.closing === 'answered' && answered?.decision?.answers?.[0]?.selected?.[0] === 'Concise' && answerAttempts.length === 1 && answerAttempts[0].outcome === 'answer' && !stubIds.includes(QUESTIONS.answer.id) && (evaluatorAnswer?.decisionEvidenceIds?.length ?? 0) > 0, JSON.stringify({ answered, answerAttempts, stubIds, evaluatorAnswer }))
   run.check('missing context falls through next() and closes returned at turn stopping', missing?.state === 'closed' && missing?.closing === 'returned' && missing?.decision?.code === 'MISSING_CONTEXT' && stubIds.includes(QUESTIONS.missing.id), JSON.stringify({ missing, stubIds }))
   run.check('malformed evaluator output retries then escalates without fabricating an answer', invalid?.state === 'closed' && invalid?.closing === 'escalated' && invalid?.decision?.kind === 'user_decision' && invalidAttempts.length === 3 && invalidAttempts.every(attempt => attempt.outcome === 'failed' && attempt.error?.kind === 'invalid_output') && stubIds.includes(QUESTIONS.invalid.id), JSON.stringify({ invalid, invalidAttempts }))

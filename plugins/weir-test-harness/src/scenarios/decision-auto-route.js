@@ -9,10 +9,11 @@ const prompt = 'decision-auto-route-probe'
 const STOCK_AUTHORITY = process.env.WEIR_IT_DECISION_STOCK_AUTHORITY === '1'
 const STOCK_PLAN_REVIEW = { id: 'decision-auto-stock-plan-review', question: 'STOCK_PLAN_REVIEW: choose whether the native plan is ready', detail: 'Review the proposed native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept plan' }, options: [{ label: 'Accept plan' }, { label: 'Revise plan' }] }
 const STOCK_PLAN_BLOCKING = { id: 'decision-auto-stock-blocking-plan-review', question: 'STOCK_BLOCKING_PLAN_REVIEW: choose whether the blocking native plan is ready', detail: 'Review the blocking native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept blocking plan' }, options: [{ label: 'Accept blocking plan' }, { label: 'Revise blocking plan' }] }
-const STOCK_REQUESTS = [STOCK_PLAN_REVIEW, STOCK_PLAN_BLOCKING]
+const STOCK_PLAN_LEGACY = { id: 'decision-auto-stock-legacy-plan-review', question: 'STOCK_LEGACY_PLAN_REVIEW: choose whether the legacy native plan is ready', detail: 'Review the legacy native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept legacy plan' }, options: [{ label: 'Accept legacy plan' }, { label: 'Revise legacy plan' }] }
+const STOCK_REQUESTS = STOCK_AUTHORITY ? [STOCK_PLAN_REVIEW, STOCK_PLAN_BLOCKING] : [STOCK_PLAN_LEGACY]
 const HOOKS = {
   selected: { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }, { label: 'Other' }] },
-  ...(STOCK_AUTHORITY ? { stockPlanReview: STOCK_PLAN_REVIEW, stockPlanBlocking: STOCK_PLAN_BLOCKING } : {}),
+  ...(STOCK_AUTHORITY ? { stockPlanReview: STOCK_PLAN_REVIEW, stockPlanBlocking: STOCK_PLAN_BLOCKING } : { stockPlanLegacy: STOCK_PLAN_LEGACY }),
   zero: { id: 'decision-auto-zero', question: 'AUTO_ZERO: no Agent authorizes class C', options: [{ label: 'Native zero' }, { label: 'Fallback' }] },
   one: { id: 'decision-auto-one', question: 'AUTO_ONE: only B authorizes class B', options: [{ label: 'Selected B' }, { label: 'Other' }] },
   none: { id: 'decision-auto-none', question: 'AUTO_NONE: no candidate matches', options: [{ label: 'Native none' }, { label: 'Fallback' }] },
@@ -220,13 +221,11 @@ function assert(run) {
   const selectedRouteWire = wiresFor('decision-auto-selected', 'route')[0]
   run.check('classless stock Hook uses bounded derived A classification and selects only A through the real multi-candidate Router', selected?.closing === 'answered' && selected?.agent_id === agentA && selectedRoute?.mode === 'auto' && selectedRoute?.chosen === agentA && selected?.request.questions[0].authorizationClassSource === 'auto_classifier' && selected?.request.questions[0].authorizationClass === 'A' && selectedRouteWire?.autoRouter.pack.candidates?.map(candidate => candidate.agentId).sort().join(',') === [agentA, agentB].sort().join(',') && selectedWire?.autoRouter.pack.candidates === undefined && selectedWire?.autoRouter.pack.questions.every(question => !Object.hasOwn(question, 'authorizationClass') && !Object.hasOwn(question, 'authorizationClassSource')) && !nativeFor('decision-auto-selected') && allGates(selectedAttempt), JSON.stringify({ selected, route: selectedRoute, selectedWire, selectedRouteWire, attempt: selectedAttempt }))
 
-  if (STOCK_AUTHORITY) {
-    for (const stock of STOCK_REQUESTS) {
-      const stockCase = caseFor(stock.id)
-      const stockNative = nativeFor(stock.id)
-      const shape = stock === STOCK_PLAN_BLOCKING ? 'timeout=-1 blocking' : 'timed'
-      run.check(`unmodified stock ${shape} plan-review intent bypasses SQLite and every model wire`, !stockCase && stockNative?.caseSnapshot === null && stockNative?.answer?.answers?.[0]?.selected?.[0] === stock.options[0].label && wiresFor(stock.id, 'classification').length === 0 && wiresFor(stock.id, 'route').length === 0 && evaluationFor(stock.id).length === 0, JSON.stringify({ stock, stockCase, native: stockNative, classifications: wiresFor(stock.id, 'classification'), routes: wiresFor(stock.id, 'route'), evaluations: evaluationFor(stock.id) }))
-    }
+  for (const stock of STOCK_REQUESTS) {
+    const stockCase = caseFor(stock.id)
+    const stockNative = nativeFor(stock.id)
+    const shape = stock === STOCK_PLAN_BLOCKING ? 'timeout=-1 blocking' : stock === STOCK_PLAN_REVIEW ? 'timed' : 'legacy no-wait'
+    run.check(`unmodified stock ${shape} plan-review intent bypasses SQLite and every model wire`, !stockCase && stockNative?.caseSnapshot === null && stockNative?.answer?.answers?.[0]?.selected?.[0] === stock.options[0].label && wiresFor(stock.id, 'classification').length === 0 && wiresFor(stock.id, 'route').length === 0 && evaluationFor(stock.id).length === 0, JSON.stringify({ stock, stockCase, native: stockNative, classifications: wiresFor(stock.id, 'classification'), routes: wiresFor(stock.id, 'route'), evaluations: evaluationFor(stock.id) }))
   }
 
   const zeroRoute = routeFor(zero)
@@ -282,8 +281,8 @@ function assert(run) {
   run.check('Router model wire is bounded, tool-free, temperature-free and excludes domain history/profile memory', classificationWires.length === 13 && routeWires.length === 6 && routerWires.every(cleanWire) && classificationWires.every(request => !forbiddenWireKeys.test(JSON.stringify(request.autoRouter.pack)) && !JSON.stringify(request.autoRouter.pack).includes('Decision Auto')) && routeWires.every(request => !forbiddenWireKeys.test(JSON.stringify(request.autoRouter.pack))), JSON.stringify({ classifications: classificationWires.length, routes: routeWires.length, bad: routerWires.filter(request => !cleanWire(request)) }))
 
   const nativeIds = events.flatMap(event => event.questionIds ?? [])
-  const expectedNativeIds = [...(STOCK_AUTHORITY ? STOCK_REQUESTS.map(stock => stock.id) : []), 'decision-auto-zero', 'decision-auto-none', 'decision-auto-ambiguous', 'decision-auto-invalid', 'decision-auto-timeout', 'decision-auto-partial-1', 'decision-auto-partial-2']
-  run.check('native-question events occur only for native authority or persisted recoverable failure, never for answered Auto/consult work', events.length === 6 + (STOCK_AUTHORITY ? STOCK_REQUESTS.length : 0) && nativeIds.slice().sort().join(',') === expectedNativeIds.slice().sort().join(',') && events.every(event => STOCK_AUTHORITY && STOCK_REQUESTS.some(stock => event.questionIds?.includes(stock.id)) ? event.caseSnapshot === null : event.caseSnapshot?.case?.state === 'awaiting_user') && !nativeIds.some(questionId => ['decision-auto-selected', 'decision-auto-one'].includes(questionId)), JSON.stringify({ events }))
+  const expectedNativeIds = [...STOCK_REQUESTS.map(stock => stock.id), 'decision-auto-zero', 'decision-auto-none', 'decision-auto-ambiguous', 'decision-auto-invalid', 'decision-auto-timeout', 'decision-auto-partial-1', 'decision-auto-partial-2']
+  run.check('native-question events occur only for native authority or persisted recoverable failure, never for answered Auto/consult work', events.length === 6 + STOCK_REQUESTS.length && nativeIds.slice().sort().join(',') === expectedNativeIds.slice().sort().join(',') && events.every(event => STOCK_REQUESTS.some(stock => event.questionIds?.includes(stock.id)) ? event.caseSnapshot === null : event.caseSnapshot?.case?.state === 'awaiting_user') && !nativeIds.some(questionId => ['decision-auto-selected', 'decision-auto-one'].includes(questionId)), JSON.stringify({ events }))
 
   const knownAgents = new Set([agentA, agentB, null])
   run.check('exact authority census has no duplicate flight, false revision, partial answer, or generic fallback Agent', store.cases.length === 14 && store.routes.length === 14 && store.attempts.length === 13 && store.profiles.length === 2 && store.cases.every(item => knownAgents.has(item.agent_id)) && store.routes.every(route => route.chosen === null || knownAgents.has(route.chosen)), JSON.stringify({ cases: store.cases.length, routes: store.routes.length, attempts: store.attempts.length, profiles: store.profiles.map(profile => ({ id: profile.agent_id, name: profile.name })) }))

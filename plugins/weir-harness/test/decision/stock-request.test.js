@@ -49,8 +49,16 @@ function requestFor(callId, liveQuestions = questions(), agent, timed = true) {
   return { questions: liveQuestions, ...(agent ? { agent } : {}), wait: { callId, ...(timed ? { timed: true } : {}) } }
 }
 
+function legacyRequestFor(liveQuestions = questions(), agent) {
+  return { questions: liveQuestions, ...(agent ? { agent } : {}) }
+}
+
 function toolCall(callId, args, name = 'ask_user_question') {
   return { type: 'tool/call', data: { callId, name, arguments: typeof args === 'string' ? args : JSON.stringify({ questions: args }) } }
+}
+
+function toolResult(callId) {
+  return { type: 'tool/result', data: { message: { toolCallId: callId, source: { kind: 'tool', callId } } } }
 }
 
 function snapshot(sessionId, events) {
@@ -90,6 +98,42 @@ for (const kind of ['plan-review', 'approval']) {
     })
   }
 }
+
+for (const kind of ['plan-review', 'approval']) {
+  test(`legacy no-wait stock ${kind} intent is recovered only from the unresolved current tool call`, async t => {
+    const liveQuestions = questions(`legacy-${kind}`)
+    const rawQuestions = liveQuestions.map(question => ({
+      ...question,
+      detail: 'Raw legacy authority detail omitted by stock normalization',
+      intent: { kind, ...(kind === 'plan-review' ? { approve: 'First' } : { approve: 'First', reject: 'Second' }) },
+    }))
+    const f = await fixture(t, { reader: async id => snapshot(id, [toolCall(`legacy-call-${kind}`, rawQuestions)]) })
+    const request = legacyRequestFor(liveQuestions, f.agent)
+    assert.equal(request.wait, undefined)
+
+    const verdict = await f.broker.hook({ agent: f.agent, request })
+
+    assert.deepEqual(verdict, { kind: 'pass', why: 'bypass' })
+    assert.deepEqual(f.reads, ['root'])
+    assert.deepEqual(counts(f.broker), { cases: 0, routes: 0, attempts: 0 })
+    assert.equal(f.calls.length, 0)
+  })
+}
+
+test('legacy no-wait binding selects the unresolved current call, not historical settled or reused-id evidence', async t => {
+  const liveQuestions = questions('legacy-current')
+  const rawQuestions = [{ ...liveQuestions[0], detail: 'Current raw plan', intent: { kind: 'plan-review', approve: 'First' } }]
+  const f = await fixture(t, { reader: async id => snapshot(id, [
+    toolCall('reused-call', rawQuestions),
+    toolResult('reused-call'),
+    toolCall('reused-call', rawQuestions),
+  ]) })
+
+  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: legacyRequestFor(liveQuestions, f.agent) }), { kind: 'pass', why: 'bypass' })
+  assert.deepEqual(f.reads, ['root'])
+  assert.deepEqual(counts(f.broker), { cases: 0, routes: 0, attempts: 0 })
+  assert.equal(f.calls.length, 0)
+})
 
 const malformedControls = [
   ['missing current call', async id => snapshot(id, [])],
@@ -133,6 +177,53 @@ test('blocking Host stock calls fail closed on missing evidence and read failure
   }
 })
 
+const legacyMalformedControls = [
+  ['missing current call', async id => snapshot(id, [])],
+  ['duplicate unresolved matching calls', async id => snapshot(id, [toolCall('legacy-a', questions()), toolCall('legacy-b', questions())])],
+  ['already settled current call', async id => snapshot(id, [toolCall('legacy-call', questions()), toolResult('legacy-call')])],
+  ['historical settled call without a current call', async id => snapshot(id, [toolCall('legacy-call', questions()), toolResult('legacy-call')])],
+  ['historical match with mismatched current text', async id => snapshot(id, [
+    toolCall('historical', questions()),
+    toolCall('current', [{ ...questions()[0], question: 'A different current question?' }]),
+  ])],
+  ['wrong current tool name', async id => snapshot(id, [toolCall('legacy-call', questions(), 'decision_consult')])],
+  ['wrong snapshot session', async () => snapshot('other-root', [toolCall('legacy-call', questions())])],
+  ['missing current call id', async id => snapshot(id, [toolCall(undefined, questions())])],
+  ['mismatched question id', async id => snapshot(id, [toolCall('legacy-call', questions('other-q'))])],
+  ['mismatched question options', async id => snapshot(id, [
+    toolCall('legacy-call', [{ ...questions()[0], options: [{ label: 'Different' }] }]),
+  ])],
+  ['mismatched question order', async id => snapshot(id, [toolCall('legacy-call', [questions('second')[0], questions('first')[0]])])],
+  ['duplicate raw question ids', async id => snapshot(id, [toolCall('legacy-call', [questions()[0], questions()[0]])])],
+  ['malformed raw JSON', async id => snapshot(id, [toolCall('legacy-call', '{not-json')])],
+  ['malformed raw question batch', async id => snapshot(id, [{ type: 'tool/call', data: { callId: 'legacy-call', name: 'ask_user_question', arguments: '{"questions":{}}' } }])],
+  ['unreadable snapshot', async () => undefined],
+  ['read failure', async () => { throw new Error('session log unavailable') }],
+]
+
+for (const [label, reader] of legacyMalformedControls) {
+  test(`legacy no-wait stock Hook ${label} fails closed to native`, async t => {
+    const liveQuestions = label === 'mismatched question order' ? [questions('first')[0], questions('second')[0]] : questions()
+    const f = await fixture(t, { reader })
+    const verdict = await f.broker.hook({ agent: f.agent, request: legacyRequestFor(liveQuestions, f.agent) })
+    assert.deepEqual(verdict, { kind: 'pass', why: 'bypass' })
+    assert.deepEqual(f.reads, ['root'])
+    assert.deepEqual(counts(f.broker), { cases: 0, routes: 0, attempts: 0 })
+    assert.equal(f.calls.length, 0)
+  })
+}
+
+test('legacy no-wait Host stock calls without a reader or with foreign request ownership fail closed', async t => {
+  const missingReader = await fixture(t)
+  assert.deepEqual(await missingReader.broker.hook({ agent: missingReader.agent, request: legacyRequestFor(questions(), missingReader.agent) }), { kind: 'pass', why: 'bypass' })
+  assert.deepEqual(counts(missingReader.broker), { cases: 0, routes: 0, attempts: 0 })
+
+  const foreign = await fixture(t, { reader: async () => { throw new Error('foreign ownership must not read') } })
+  assert.deepEqual(await foreign.broker.hook({ agent: foreign.agent, request: legacyRequestFor(questions(), { id: 'other-root' }) }), { kind: 'pass', why: 'bypass' })
+  assert.deepEqual(foreign.reads, [])
+  assert.deepEqual(counts(foreign.broker), { cases: 0, routes: 0, attempts: 0 })
+})
+
 test('stock Hook with no usable reader fails closed instead of trusting normalized metadata', async t => {
   const f = await fixture(t)
   const verdict = await f.broker.hook({ agent: f.agent, request: requestFor('stock-call', questions(), f.agent) })
@@ -166,6 +257,33 @@ test('a valid ordinary stock call remains classless Auto and does not persist ra
   assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
 })
 
+test('an ordinary legacy no-wait stock call remains Auto and never persists raw authority metadata', async t => {
+  const liveQuestions = questions('ordinary-legacy')
+  const rawQuestions = [{ ...liveQuestions[0], detail: 'Raw legacy detail must remain evidence-only', intent: { kind: 'custom' } }]
+  const f = await fixture(t, { reader: async id => snapshot(id, [toolCall('ordinary-legacy-call', rawQuestions)]) })
+  const request = legacyRequestFor(liveQuestions, f.agent)
+
+  const verdict = await f.broker.hook({ agent: f.agent, request })
+
+  assert.equal(verdict.why, 'awaiting_user')
+  const current = f.broker.cases.getCase(verdict.caseId)
+  assert.deepEqual(current.request, { entry: 'hook', questions: [{ ...liveQuestions[0], authorizationClass: 'A', authorizationClassSource: 'auto_classifier' }] })
+  assert.equal(current.request.questions[0].detail, undefined)
+  assert.equal(current.request.questions[0].intent, undefined)
+  assert.deepEqual(f.reads, ['root'])
+  assert.equal(f.calls.filter(call => call.system.includes('router-classification-contract/1')).length, 1)
+  assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
+})
+
+test('a no-wait direct Broker call without Host request.agent retains legacy Auto without a session read', async t => {
+  const f = await fixture(t, { reader: async () => { throw new Error('must not read direct Broker fixtures') } })
+  const verdict = await f.broker.hook({ agent: f.agent, request: legacyRequestFor(questions('direct-legacy')) })
+  assert.equal(verdict.why, 'awaiting_user')
+  assert.deepEqual(f.reads, [])
+  assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
+  assert.equal(f.calls.filter(call => call.system.includes('router-classification-contract/1')).length, 1)
+})
+
 test('an untimed direct Broker call without Host request.agent retains legacy Auto without a session read', async t => {
   const f = await fixture(t, { reader: async () => { throw new Error('must not read direct Broker fixtures') } })
   const request = { questions: questions('direct-broker'), wait: { callId: 'direct-broker' } }
@@ -182,7 +300,7 @@ test('direct exclusions and Off bypass without session reads or Decision artifac
   direct.questions[0].intent = { kind: 'plan-review', approve: 'First' }
   assert.deepEqual(await f.broker.hook({ agent: f.agent, request: direct }), { kind: 'pass', why: 'bypass' })
   await f.broker.setSelector('root', 'off')
-  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: requestFor('off', questions(), f.agent) }), { kind: 'pass', why: 'bypass' })
+  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: legacyRequestFor(questions('off'), f.agent) }), { kind: 'pass', why: 'bypass' })
   assert.deepEqual(f.reads, [])
   assert.deepEqual(counts(f.broker), { cases: 0, routes: 0, attempts: 0 })
   assert.equal(f.calls.length, 0)
@@ -190,7 +308,7 @@ test('direct exclusions and Off bypass without session reads or Decision artifac
 
 test('global-off remains zero-read and does not initialize the Decision database', async t => {
   const f = await fixture(t, { enabled: false, reader: async () => { throw new Error('must not read') } })
-  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: requestFor('global-off', questions(), f.agent) }), { kind: 'pass', why: 'bypass' })
+  assert.deepEqual(await f.broker.hook({ agent: f.agent, request: legacyRequestFor(questions('global-off'), f.agent) }), { kind: 'pass', why: 'bypass' })
   assert.deepEqual(f.reads, [])
   assert.equal(f.broker.store, undefined)
   assert.equal(existsSync(join(f.dir, 'weir', 'profiles', 'test', 'decisions')), false)
