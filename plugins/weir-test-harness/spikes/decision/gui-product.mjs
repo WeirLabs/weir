@@ -292,7 +292,7 @@ async function keyboardSnapshot(selector, options = {}) {
       return el.offsetParent!==null&&!el.disabled&&(!labels||labels.includes(el.textContent.trim())||labels.includes(named))&&(!namePattern||new RegExp(namePattern,'i').test(named))
     })
     if(!target)return {ready:false,reached:false,active,direction:'Tab'}
-    const items=[...document.querySelectorAll('button,input,textarea,select,a[href],[tabindex],[role="button"],[role="radio"]')].filter(el=>el.offsetParent!==null&&!el.disabled&&el.tabIndex>=0)
+    const items=[...document.querySelectorAll('button,input,textarea,select,a[href],[tabindex],[role="button"],[role="radio"],[role="textbox"],[contenteditable="true"]')].filter(el=>el.offsetParent!==null&&!el.disabled&&el.tabIndex>=0)
     const activeIndex=items.indexOf(document.activeElement)
     const targetIndex=items.indexOf(target)
     let direction='Tab'

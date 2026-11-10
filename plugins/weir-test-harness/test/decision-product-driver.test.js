@@ -223,6 +223,7 @@ test('product driver keyboard helpers record native focus traversal and text ent
   assert.ok(!focus.includes('before.direction'), 'a per-step direction flip cannot recreate the composer Tab/Shift+Tab livelock')
   const snapshot = driver.match(/async function keyboardSnapshot\(selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(snapshot, /accessibleName/, 'each trace records the accessible name')
+  assert.ok(snapshot.includes('[role="textbox"],[contenteditable="true"]'), 'the actual composer textbox participates in initial direction calculation')
   assert.match(snapshot, /const namePattern=\$\{JSON\.stringify\(options\.namePattern \?\? null\)\}/, 'the browser receives the serialized name pattern instead of an undefined options reference')
   assert.ok(!/!options\.namePattern/.test(snapshot), 'no browser-side expression dereferences the Node-only options object')
   assert.match(focus, /activeElement/, 'each trace records the actual active element')
