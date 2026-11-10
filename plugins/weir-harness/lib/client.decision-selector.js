@@ -135,21 +135,27 @@ window.__ModuleLoader__.load({
         ? `${t("decisionSelector")} · ${view.selectedName}`
         : `${t("decisionSelector")} · ${t(view.triggerKey ?? "decisionSelector")}`;
       const triggerLabel = view.unavailable ? `${triggerText} · ${t("decisionSelectionUnavailable")}` : triggerText;
-      const optionRow = option => jsx.jsxs("label", {
-        className: "weir-da-selector-option", "data-selected": view.selected === option.value,
-        children: [
-          jsx.jsx("input", {
-            type: "radio", name: "weir-da-selector-choice", value: option.value,
-            checked: view.selected === option.value, disabled: pending,
-            onChange: () => choose(option), "aria-label": option.label,
-          }, "input"),
-          jsx.jsxs("span", { children: [
-            jsx.jsx("span", { children: option.label }, "label"),
-            option.descriptionKey ? jsx.jsx("span", { className: "weir-da-caption", children: `${t(option.descriptionKey)}${option.auto?.ready ? ` ${option.auto.answerClasses.join(", ")}.` : ""}` }, "description") : null,
-            option.shadowKey ? jsx.jsx("span", { className: "weir-da-caption", children: t(option.shadowKey) }, "shadow") : null,
-          ] }, "copy"),
-        ],
-      }, option.value);
+      const optionRow = option => {
+        const label = option.labelKey ? t(option.labelKey) : option.label;
+        const description = option.descriptionKey
+          ? t(option.descriptionKey).replace(/\{count\}/g, String(option.auto?.answerClasses.length ?? 0))
+          : "";
+        return jsx.jsxs("label", {
+          className: "weir-da-selector-option", "data-selected": view.selected === option.value,
+          children: [
+            jsx.jsx("input", {
+              type: "radio", name: "weir-da-selector-choice", value: option.value,
+              checked: view.selected === option.value, disabled: pending,
+              onChange: () => choose(option), "aria-label": label,
+            }, "input"),
+            jsx.jsxs("span", { children: [
+              jsx.jsx("span", { children: label }, "label"),
+              option.descriptionKey ? jsx.jsx("span", { className: "weir-da-caption", children: description }, "description") : null,
+              option.shadowKey ? jsx.jsx("span", { className: "weir-da-caption", children: t(option.shadowKey) }, "shadow") : null,
+            ] }, "copy"),
+          ],
+        }, option.value);
+      };
       const errorText = snapshot.error ? t(view.errorKey ?? "decisionFailed") : "";
       const rawError = snapshot.error ? { code: snapshot.error.code, message: snapshot.error.message ?? String(snapshot.error) } : null;
       const panel = open ? jsx.jsxs("section", {
@@ -158,30 +164,34 @@ window.__ModuleLoader__.load({
         "aria-describedby": "weir-da-selector-safety", tabIndex: -1,
         "aria-busy": pending,
         children: [
-          jsx.jsx("h2", { id: TITLE_ID, className: "weir-da-selector-title", children: t("decisionSelectTitle") }, "title"),
-          jsx.jsx("p", { id: "weir-da-selector-safety", className: "weir-da-caption", children: t("decisionSelectorSafety") }, "safety"),
-          view.globalOff ? jsx.jsxs(ui.EmptyState, { children: [
-            jsx.jsx("strong", { children: t("decisionGlobalOff") }, "title"),
-            jsx.jsx("div", { children: t("decisionGlobalOffHint") }, "hint"),
-          ] }, "global-off") : null,
-          view.unavailable ? jsx.jsx(ui.Badge, { variant: "warn", children: `${view.selectedName ?? t("decisionSelector")} · ${t("decisionSelectionUnavailable")}` }, "unavailable") : null,
-          view.phase === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") }, "loading") : null,
-          view.phase === "error" && !failedTarget ? jsx.jsxs(ui.ErrorState, { children: [
-            jsx.jsx("span", { children: errorText }, "message"),
-            jsx.jsx(ui.Button, { variant: "secondary", onClick: retryRead, children: t("decisionRetry") }, "retry"),
-          ] }, "read-error") : null,
-          failedTarget ? jsx.jsxs(ui.ErrorState, { children: [
-            jsx.jsx("span", { children: errorText }, "message"),
-            jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => choose(failedTarget), children: t("decisionRetry") }, "retry"),
-          ] }, "save-error") : null,
-          rawError ? jsx.jsx(ui.Disclosure, { label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsx("pre", { children: JSON.stringify(rawError, null, 2) }) }, "error-diagnostics") : null,
-          view.phase !== "loading" && view.options.length > 0 ? jsx.jsx("div", {
-            role: "radiogroup", "aria-label": t("decisionSelectTitle"), className: "weir-da-selector-options",
-            children: view.options.map(optionRow),
-          }, "options") : null,
-          pending ? jsx.jsx("div", { role: "status", "aria-live": "polite", className: "weir-da-caption", children: t("decisionSaving") }, "saving") : null,
-          view.emptyKey ? jsx.jsx(ui.EmptyState, { children: t(view.emptyKey) }, "empty") : null,
-          jsx.jsxs("div", { className: "weir-da-actions weir-da-selector-footer", children: [
+          jsx.jsxs("div", { className: "weir-da-selector-header", "data-selector-part": "header", children: [
+            jsx.jsx("h2", { id: TITLE_ID, className: "weir-da-selector-title", children: t("decisionSelectTitle") }, "title"),
+            jsx.jsx("p", { id: "weir-da-selector-safety", className: "weir-da-caption", children: t("decisionSelectorSafety") }, "safety"),
+          ] }, "header"),
+          jsx.jsxs("div", { className: "weir-da-selector-body", "data-selector-part": "body", children: [
+            view.globalOff ? jsx.jsxs(ui.EmptyState, { children: [
+              jsx.jsx("strong", { children: t("decisionGlobalOff") }, "title"),
+              jsx.jsx("div", { children: t("decisionGlobalOffHint") }, "hint"),
+            ] }, "global-off") : null,
+            view.unavailable ? jsx.jsx(ui.Badge, { variant: "warn", children: `${view.selectedName ?? t("decisionSelector")} · ${t("decisionSelectionUnavailable")}` }, "unavailable") : null,
+            view.phase === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") }, "loading") : null,
+            view.phase === "error" && !failedTarget ? jsx.jsxs(ui.ErrorState, { children: [
+              jsx.jsx("span", { children: errorText }, "message"),
+              jsx.jsx(ui.Button, { variant: "secondary", onClick: retryRead, children: t("decisionRetry") }, "retry"),
+            ] }, "read-error") : null,
+            failedTarget ? jsx.jsxs(ui.ErrorState, { children: [
+              jsx.jsx("span", { children: errorText }, "message"),
+              jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => choose(failedTarget), children: t("decisionRetry") }, "retry"),
+            ] }, "save-error") : null,
+            rawError ? jsx.jsx(ui.Disclosure, { label: t("decisionAdvancedDiagnostics"), children: () => jsx.jsx("pre", { children: JSON.stringify(rawError, null, 2) }) }, "error-diagnostics") : null,
+            view.phase !== "loading" && view.options.length > 0 ? jsx.jsx("div", {
+              role: "radiogroup", "aria-label": t("decisionSelectTitle"), className: "weir-da-selector-options",
+              children: view.options.map(optionRow),
+            }, "options") : null,
+            pending ? jsx.jsx("div", { role: "status", "aria-live": "polite", className: "weir-da-caption", children: t("decisionSaving") }, "saving") : null,
+            view.emptyKey ? jsx.jsx(ui.EmptyState, { children: t(view.emptyKey) }, "empty") : null,
+          ] }, "body"),
+          jsx.jsxs("div", { className: "weir-da-actions weir-da-selector-footer", "data-selector-part": "footer", children: [
             view.emptyKey ? jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => bridge(props.onCreate), children: t("decisionCreateAgent") }, "create") : null,
             jsx.jsx(ui.Button, { variant: "ghost", disabled: pending, onClick: () => bridge(props.onManage), children: t("decisionManageAgents") }, "manage"),
           ] }, "footer"),

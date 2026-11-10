@@ -122,7 +122,7 @@ async function load(t, overview, behavior = {}) {
     t: key => key,
   }
   return {
-    ...selector, calls, document, props,
+    ...selector, calls, document, props, model,
     render: () => runtime.render(selector.DecisionSelector, props),
     flush: async () => { await Promise.resolve(); await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0)) },
   }
@@ -130,6 +130,7 @@ async function load(t, overview, behavior = {}) {
 
 const triggerOf = tree => findAll(tree, node => node.type === 'button' && node['data-weir-decision-trigger'] !== undefined)[0]
 const panelOf = tree => findAll(tree, node => node.role === 'dialog')[0]
+const partOf = (tree, part) => findAll(tree, node => node['data-selector-part'] === part)[0]
 const radioOf = (tree, value) => findAll(tree, node => node.type === 'input' && node.inputType === 'radio' && node.value === value)[0]
 const buttonOf = (tree, ui, label) => findAll(tree, node => node.type === ui.Button && node.children === label)[0]
 const textOf = tree => JSON.stringify(tree)
@@ -173,9 +174,58 @@ test('selector opens a non-modal radio panel with Off, truthful Auto, and enable
   assert.equal(textOf(panel).includes('Archived'), false)
   assert.equal(textOf(panel).includes('Auto'), true)
   assert.equal(textOf(panel).includes('decisionAutoWhitelist'), true)
-  assert.equal(textOf(panel).includes('A, C'), true)
+  assert.equal(textOf(panel).includes('A, C'), false)
   assert.equal(textOf(panel).includes('decisionAutoShadowOn'), true)
   assert.equal(findAll(tree, node => node.type === h.props.ui.DecisionStyles).length, 1)
+})
+
+test('selector renders localized compact option labels and a real category count without technical copy', async t => {
+  const h = await load(t, enabledOverview)
+  h.props.t = key => h.model.dictionaries.en[key] ?? key
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  const panel = panelOf(tree)
+  const text = textOf(panel)
+  assert.equal(radioOf(tree, 'off')['aria-label'], 'Do not use an assistant')
+  assert.equal(radioOf(tree, 'auto')['aria-label'], 'Automatically choose an assistant')
+  assert.equal(text.includes('Automatic answers are currently allowed for 2 decision categories.'), true)
+  assert.equal(text.includes('Selection comparison is on; it never changes the actual result.'), true)
+  for (const forbidden of ['A, C', 'Auto routes', 'authorization-class whitelist', 'Shadow diagnostics']) assert.equal(text.includes(forbidden), false, forbidden)
+  assert.equal(text.includes('A very long assistant name that must remain readable'), true)
+})
+
+test('selector uses fixed header/footer regions and one compact independently scrolling body', async t => {
+  const h = await load(t, enabledOverview)
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  const panel = panelOf(tree)
+  assert.deepEqual(findAll(panel, node => node['data-selector-part']).map(node => node['data-selector-part']), ['header', 'body', 'footer'])
+  const header = partOf(panel, 'header')
+  const body = partOf(panel, 'body')
+  const footer = partOf(panel, 'footer')
+  assert.equal(findAll(header, node => node.id === 'weir-da-selector-title').length, 1)
+  assert.equal(findAll(header, node => node.id === 'weir-da-selector-safety').length, 1)
+  assert.equal(findAll(body, node => node.role === 'radiogroup').length, 1)
+  assert.equal(findAll(body, node => node.inputType === 'radio').length, 4)
+  assert.equal(findAll(header, node => node.inputType === 'radio').length, 0)
+  assert.equal(findAll(footer, node => node.inputType === 'radio').length, 0)
+  assert.ok(buttonOf(footer, h.props.ui, 'decisionManageAgents'))
+  const panelCss = h.props.ui.DECISION_UI_CSS.match(/\.weir-da-selector-panel \{([^}]*)\}/)?.[1] ?? ''
+  assert.match(panelCss, /width: min\(360px, calc\(100vw - 32px\)\)/)
+  assert.match(panelCss, /max-height: min\(560px, calc\(100dvh - 32px\)\)/)
+  assert.match(panelCss, /overflow: hidden/)
+  assert.match(panelCss, /grid-template-rows: auto minmax\(0, 1fr\) auto/)
+  assert.doesNotMatch(panelCss, /(?:^|;)\s*height:/)
+  const bodyCss = h.props.ui.DECISION_UI_CSS.match(/\.weir-da-selector-body \{([^}]*)\}/)?.[1] ?? ''
+  assert.match(bodyCss, /min-height: 0/)
+  assert.match(bodyCss, /overflow: auto/)
+  assert.match(bodyCss, /overscroll-behavior: contain/)
 })
 
 test('initial read failure is not Off and an explicit retry loads the real selection', async t => {
@@ -194,6 +244,7 @@ test('initial read failure is not Off and an explicit retry loads the real selec
   assert.equal(textOf(readDiagnostics.children()).includes('read offline'), true)
   assert.equal(textOf(readDiagnostics.children()).includes('NETWORK'), true)
   assert.equal(findAll(panelOf(tree), node => node.inputType === 'radio').length, 0)
+  assert.ok(findAll(partOf(panelOf(tree), 'body'), node => node.type === h.props.ui.ErrorState).length > 0)
   fail = false
   buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
   tree = h.render()
@@ -319,6 +370,8 @@ test('unavailable, zero-agent, and globally disabled views never silently reassi
   triggerOf(tree).onClick()
   tree = zero.render()
   assert.equal(textOf(panelOf(tree)).includes('decisionNoAgents'), true)
+  assert.ok(findAll(partOf(panelOf(tree), 'body'), node => node.type === zero.props.ui.EmptyState).length > 0)
+  assert.ok(buttonOf(partOf(panelOf(tree), 'footer'), zero.props.ui, 'decisionCreateAgent'))
   buttonOf(tree, zero.props.ui, 'decisionCreateAgent').onClick()
   tree = zero.render()
   assert.equal(panelOf(tree), undefined)
@@ -475,6 +528,6 @@ test('selector keeps composition ids and uses bounded responsive styles without 
   assert.match(styles, /\.weir-da-selector-panel/)
   assert.match(styles, /max-height:/)
   assert.match(styles, /overflow: auto/)
-  assert.match(styles, /width: min\(320px, calc\(100vw - 24px\)\)/)
+  assert.match(styles, /width: min\(360px, calc\(100vw - 32px\)\)/)
   assert.match(styles, /@media \(max-width: 600px\)/)
 })

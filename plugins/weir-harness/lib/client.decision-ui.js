@@ -43,7 +43,9 @@ window.__ModuleLoader__.load({
 .weir-da-selector-trigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .weir-da-selector-trigger[data-unavailable="true"] { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-warn-primary)); border-color: var(--dsw-alias-state-warn-primary); }
 .weir-da-selector-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.weir-da-selector-panel { position: absolute; inset-inline-end: 0; bottom: calc(100% + 8px); z-index: 30; width: min(320px, calc(100vw - 24px)); max-height: min(420px, 70vh); overflow: auto; overscroll-behavior: contain; padding: 12px; display: grid; gap: 10px; }
+.weir-da-selector-panel { position: absolute; inset-inline-end: 0; bottom: calc(100% + 8px); z-index: 30; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.weir-da-selector-header { min-width: 0; display: grid; gap: 4px; padding: 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 10px 12px; display: grid; gap: 10px; align-content: start; }
 .weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 20px; }
 .weir-da-selector-title + .weir-da-caption { margin: 0; }
 .weir-da-selector-options { min-width: 0; display: grid; gap: 4px; }
@@ -53,7 +55,7 @@ window.__ModuleLoader__.load({
 .weir-da-selector-option input { flex: none; margin: 3px 0 0; }
 .weir-da-selector-option > span { min-width: 0; display: grid; gap: 2px; }
 .weir-da-selector-option .weir-da-caption { display: block; }
-.weir-da-selector-footer { padding-top: 8px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-selector-footer { padding: 8px 12px 12px; border-top: 1px solid var(--dsw-alias-border-l2); }
 .weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
 .weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
 .weir-da-page-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
