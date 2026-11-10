@@ -235,11 +235,10 @@ test('product driver keyboard helpers record native focus traversal and text ent
   assert.match(fill, /Input\.insertText/, 'text is inserted through the native CDP input channel')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(`${activate}\n${fill}`))
   const select = driver.match(/async function keyboardSelect\(action, selector, value, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const open = select.indexOf("await instance.cdp.key('Space')")
-  const arrow = select.indexOf('await instance.cdp.key(key)')
-  const commit = select.indexOf("await instance.cdp.key('Enter')")
-  const expanded = select.indexOf('instance.cdp.accessibility(selector)')
-  assert.ok(open >= 0 && expanded > open && arrow > expanded && commit > arrow, 'native select waits for AX expansion between Space, Arrow, and Enter')
+  assert.ok(select.includes('const target = current.options.find(option => option.value === value)'), 'the target comes from actual authoritative options')
+  assert.ok(select.includes('prefix += char') && select.includes('option.label.startsWith(prefix)'), 'a unique visible-label prefix drives native typeahead')
+  assert.ok(select.includes("type: 'char'") && select.includes('text: char'), 'selection uses the real-proven native char packet')
+  assert.ok(!select.includes("instance.cdp.key('Space')"), 'the failed native-popup path is not retained')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLSelectElement/.test(select), 'select remains keyboard-only without DOM value mutation')
 })
 

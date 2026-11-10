@@ -346,25 +346,25 @@ async function keyboardFill(action, selector, value) {
 async function keyboardSelect(action, selector, value, options = {}) {
   const audit = await keyboardFocus(action, selector, options)
   audit.selection = { value, steps: [] }
-  for (let step = 0; step < 20; step += 1) {
-    const current = await instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); return el?{value:el.value,values:[...el.options].map(option=>option.value)}:null })()`)
-    requireEvidence(current?.values.includes(value), `${action} exposes the authoritative target option`)
-    if (current.value === value) { saveKeyboardAudits(); return audit }
-    const from = current.values.indexOf(current.value)
-    const to = current.values.indexOf(value)
-    const key = to > from ? 'ArrowDown' : 'ArrowUp'
-    await instance.cdp.key('Space')
-    const expanded = await waitFor(async () => {
-      const nodes = await instance.cdp.accessibility(selector)
-      return nodes.some(node => node.properties?.expanded === true || node.properties?.expanded === 'true') ? true : null
-    }, 10_000)
-    await instance.cdp.key(key)
-    await instance.cdp.key('Enter')
-    audit.selection.steps.push({ from: current.value, open: 'Space', expanded, key, commit: 'Enter' })
-    saveKeyboardAudits()
-    await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value!==${JSON.stringify(current.value)}`), 10_000)
+  const current = await instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); return el?{value:el.value,options:[...el.options].map(option=>({value:option.value,label:option.label}))}:null })()`)
+  const target = current.options.find(option => option.value === value)
+  requireEvidence(target, `${action} exposes the authoritative target option`)
+  if (current.value === value) { saveKeyboardAudits(); return audit }
+  let prefix = ''
+  for (const char of target.label) {
+    prefix += char
+    if (current.options.filter(option => option.label.startsWith(prefix)).length === 1) break
   }
-  throw new Error(`Keyboard select did not reach ${value}: ${action}`)
+  const matches = current.options.filter(option => option.label.startsWith(prefix))
+  requireEvidence(matches.length === 1 && matches[0].value === value, `${action} has a unique typeahead prefix`)
+  for (const char of prefix) {
+    await instance.cdp.request('Input.dispatchKeyEvent', { type: 'char', key: char, code: /^[a-z]$/i.test(char) ? `Key${char.toUpperCase()}` : '', text: char, unmodifiedText: char })
+  }
+  audit.selection.steps.push({ from: current.value, typeahead: prefix })
+  audit.input = { method: 'Input.dispatchKeyEvent', type: 'char', text: prefix }
+  saveKeyboardAudits()
+  await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`), 10_000)
+  return audit
 }
 
 async function newIsolatedSession(label, cwd = LANE) {
