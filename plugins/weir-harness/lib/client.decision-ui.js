@@ -222,6 +222,38 @@ window.__ModuleLoader__.load({
       const id = props.id ?? `weir-da-${generatedId}`;
       const triggerRef = react.useRef(null);
       const [open, setOpen] = react.useState(props.defaultOpen === true);
+      const contentRef = react.useRef(null);
+      const revealTokenRef = react.useRef(0);
+      const revealedRef = react.useRef(false);
+      const revealFrameRef = react.useRef(null);
+      const cancelReveal = () => {
+        const frame = revealFrameRef.current;
+        revealFrameRef.current = null;
+        if (frame !== null) globalThis.cancelAnimationFrame?.(frame);
+      };
+      react.useEffect(() => {
+        const token = ++revealTokenRef.current;
+        revealedRef.current = false;
+        cancelReveal();
+        return () => {
+          if (revealTokenRef.current === token) revealTokenRef.current += 1;
+          cancelReveal();
+        };
+      }, [open]);
+      react.useEffect(() => {
+        if (!open || props.revealOnOpen !== "end" || props.revealReady === false || revealedRef.current || revealFrameRef.current !== null) return undefined;
+        if (typeof globalThis.requestAnimationFrame !== "function") return undefined;
+        const token = revealTokenRef.current;
+        revealFrameRef.current = globalThis.requestAnimationFrame(() => {
+          revealFrameRef.current = null;
+          if (token !== revealTokenRef.current || !open || revealedRef.current) return;
+          const target = contentRef.current;
+          if (typeof target?.scrollIntoView !== "function") return;
+          revealedRef.current = true;
+          target.scrollIntoView({ block: "end", inline: "nearest", behavior: "instant" });
+        });
+        return cancelReveal;
+      }, [open, props.revealOnOpen, props.revealReady]);
       const close = () => {
         setOpen(false);
         const target = props.returnFocus?.current ?? props.returnFocus ?? triggerRef.current;
@@ -238,7 +270,7 @@ window.__ModuleLoader__.load({
           onClick: () => { if (open) close(); else { setOpen(true); props.onOpen?.(); } },
           children: props.label,
         }, "trigger"),
-        open ? jsx.jsx("div", { id: `${id}-content`, role: "region", "aria-label": props.label, children: typeof props.children === "function" ? props.children() : props.children }, "content") : null,
+        open ? jsx.jsx("div", { ref: contentRef, id: `${id}-content`, role: "region", "aria-label": props.label, children: typeof props.children === "function" ? props.children() : props.children }, "content") : null,
       ] });
     }
 

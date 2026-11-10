@@ -111,7 +111,7 @@ window.__ModuleLoader__.load({
             jsx.jsx(ui.Button, { "data-action": "learning-reject", disabled: !view.canReview, onClick: () => confirm("snapshotReject"), children: t("decisionReject") }, "reject"),
           ] }, "actions"),
         ] }, "candidate") : null,
-        jsx.jsx(ui.Disclosure, { id: `weir-da-learning-advanced-${props.agent?.agentId ?? "unknown"}`, label: t("decisionAdvancedDiagnostics"), children: () => LearningDiagnostics({ view, ui, t, pending: props.pending, selectRun: props.selectRun, selectSnapshot: props.selectSnapshot }) }, "advanced"),
+        jsx.jsx(ui.Disclosure, { id: `weir-da-learning-advanced-${props.agent?.agentId ?? "unknown"}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => LearningDiagnostics({ view, ui, t, pending: props.pending, selectRun: props.selectRun, selectSnapshot: props.selectSnapshot }) }, "advanced"),
       ] });
     }
 

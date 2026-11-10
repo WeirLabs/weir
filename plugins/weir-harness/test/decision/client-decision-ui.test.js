@@ -631,6 +631,112 @@ test('Disclosure opens lazily and notifies the owner without rendering hidden di
   assert.equal(builds, 1)
 })
 
+function makeRaf() {
+  const pending = new Map()
+  let next = 0
+  return {
+    pending,
+    request(callback) { const id = ++next; pending.set(id, callback); return id },
+    cancel(id) { pending.delete(id) },
+    run() { for (const [id, callback] of [...pending]) { pending.delete(id); callback() } },
+  }
+}
+
+test('Disclosure reveals only the first settled success or error content once per open cycle', async () => {
+  for (const settled of ['success', 'error']) {
+    const raf = makeRaf()
+    const calls = []
+    const content = {
+      isConnected: true,
+      scrollIntoView(options) { calls.push(options) },
+      focus() { throw new Error('reveal must not move focus') },
+    }
+    const runtime = makeModalReact(node => node.role === 'region' ? content : undefined)
+    const oldRequest = globalThis.requestAnimationFrame
+    const oldCancel = globalThis.cancelAnimationFrame
+    globalThis.requestAnimationFrame = raf.request
+    globalThis.cancelAnimationFrame = raf.cancel
+    try {
+      const ui = await load(runtime.react)
+      const props = {
+        id: `reveal-${settled}`, label: 'Evidence', revealOnOpen: 'end', revealReady: false,
+        children: () => ({ type: settled === 'error' ? 'alert' : 'p', children: settled }),
+      }
+      let tree = runtime.render(ui.Disclosure, props)
+      findAll(tree, node => node.type === 'button')[0].onClick()
+      tree = runtime.render(ui.Disclosure, props)
+      assert.equal(raf.pending.size, 0, 'loading placeholder must not reveal')
+      props.revealReady = true
+      tree = runtime.render(ui.Disclosure, props)
+      tree = runtime.render(ui.Disclosure, props)
+      assert.equal(raf.pending.size, 1)
+      raf.run()
+      assert.deepEqual(calls, [{ block: 'end', inline: 'nearest', behavior: 'instant' }])
+      props.children = () => ({ type: 'p', children: 'refreshed content' })
+      runtime.render(ui.Disclosure, props)
+      raf.run()
+      assert.equal(calls.length, 1, 'refresh and unrelated renders must not reveal again')
+      findAll(tree, node => node.type === 'button')[0].onClick()
+      tree = runtime.render(ui.Disclosure, props)
+      findAll(tree, node => node.type === 'button')[0].onClick()
+      runtime.render(ui.Disclosure, props)
+      assert.equal(raf.pending.size, 1, 'a new open cycle gets one new reveal')
+      raf.run()
+      assert.equal(calls.length, 2)
+    } finally {
+      runtime.unmount()
+      if (oldRequest === undefined) delete globalThis.requestAnimationFrame
+      else globalThis.requestAnimationFrame = oldRequest
+      if (oldCancel === undefined) delete globalThis.cancelAnimationFrame
+      else globalThis.cancelAnimationFrame = oldCancel
+    }
+  }
+})
+
+test('Disclosure reveal frames cancel on close and unmount while ordinary disclosures never schedule them', async () => {
+  const raf = makeRaf()
+  const calls = []
+  const content = { scrollIntoView: options => calls.push(options), focus() { throw new Error('no focus') } }
+  const runtime = makeModalReact(node => node.role === 'region' ? content : undefined)
+  const oldRequest = globalThis.requestAnimationFrame
+  const oldCancel = globalThis.cancelAnimationFrame
+  globalThis.requestAnimationFrame = raf.request
+  globalThis.cancelAnimationFrame = raf.cancel
+  try {
+    const ui = await load(runtime.react)
+    const props = { id: 'static-reveal', label: 'Details', revealOnOpen: 'end', children: 'Static content' }
+    let tree = runtime.render(ui.Disclosure, props)
+    findAll(tree, node => node.type === 'button')[0].onClick()
+    tree = runtime.render(ui.Disclosure, props)
+    assert.equal(raf.pending.size, 1, 'static content is ready by default')
+    findAll(tree, node => node.type === 'button')[0].onClick()
+    tree = runtime.render(ui.Disclosure, props)
+    raf.run()
+    assert.equal(calls.length, 0, 'close cancels the pending reveal')
+    findAll(tree, node => node.type === 'button')[0].onClick()
+    runtime.render(ui.Disclosure, props)
+    assert.equal(raf.pending.size, 1)
+    runtime.unmount()
+    raf.run()
+    assert.equal(calls.length, 0, 'unmount cancels the pending reveal')
+
+    const ordinaryRuntime = makeModalReact(node => node.role === 'region' ? content : undefined)
+    const ordinaryUi = await load(ordinaryRuntime.react)
+    const ordinary = { id: 'ordinary', label: 'Small diagnostics', children: 'Raw value' }
+    tree = ordinaryRuntime.render(ordinaryUi.Disclosure, ordinary)
+    findAll(tree, node => node.type === 'button')[0].onClick()
+    ordinaryRuntime.render(ordinaryUi.Disclosure, ordinary)
+    assert.equal(raf.pending.size, 0)
+    ordinaryRuntime.unmount()
+  } finally {
+    runtime.unmount()
+    if (oldRequest === undefined) delete globalThis.requestAnimationFrame
+    else globalThis.requestAnimationFrame = oldRequest
+    if (oldCancel === undefined) delete globalThis.cancelAnimationFrame
+    else globalThis.cancelAnimationFrame = oldCancel
+  }
+})
+
 
 test('RouteDecision history is named, readable, and read-only with a truthful empty state', async () => {
   const ui = await load()

@@ -302,6 +302,63 @@ test('evidence rereads once on open and earlier evaluations keep their own evide
   assert.equal(historyText.includes('current evidence') || historyText.includes('da-old') || historyText.includes('MISSING_CONTEXT'), false)
 })
 
+test('cold card evidence and route disclosures become reveal-ready only after authoritative success', async () => {
+  let resolveCold
+  const cold = new Promise(resolve => { resolveCold = resolve })
+  let coldReads = 0
+  const mounted = await mount(answeredDetail, { decisionRpc: async (_connection, method) => {
+    if (method === 'record') { coldReads += 1; return cold }
+    if (method === 'overview') return { agents }
+    if (method === 'caseForCall' || method === 'caseForToolCall') return answeredDetail
+    return null
+  } })
+  let tree = mounted.render()
+  let evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealOnOpen, 'end')
+  assert.equal(evidence.revealReady, false)
+  const read = evidence.onOpen()
+  tree = mounted.render()
+  evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealReady, false, 'cold loading content is not settled')
+  resolveCold(answeredDetail)
+  await read
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  tree = mounted.render()
+  evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealReady, true)
+  const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.equal(routes.revealOnOpen, 'end')
+  assert.equal(routes.revealReady, true)
+  await routes.onOpen()
+  assert.equal(coldReads, 1, 'route opening reuses the settled authoritative read')
+  for (const label of ['decisionEvaluationHistory', 'decisionAdvancedDiagnostics']) {
+    assert.equal(findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === label)[0].revealOnOpen, 'end', label)
+  }
+  mounted.unmount()
+})
+
+test('cold card evidence errors are settled reveal content and preserve retry semantics', async () => {
+  const mounted = await mount(answeredDetail, { decisionRpc: async (_connection, method) => {
+    if (method === 'record') throw Object.assign(new Error('cold evidence unavailable'), { code: 'NETWORK' })
+    if (method === 'overview') return { agents }
+    if (method === 'caseForCall' || method === 'caseForToolCall') return answeredDetail
+    return null
+  } })
+  let tree = mounted.render()
+  let evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  await evidence.onOpen()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  tree = mounted.render()
+  evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
+  assert.equal(evidence.revealOnOpen, 'end')
+  assert.equal(evidence.revealReady, true)
+  assert.match(textContent(evidence.children()), /decisionReadFailed/)
+  const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  assert.equal(routes.revealReady, true)
+  assert.match(textContent(routes.children()), /decisionReadFailed/)
+  mounted.unmount()
+})
+
 test('stale, conflicting, and missing evidence remain visible in ordinary language', async () => {
   const stale = {
     ...answeredDetail,

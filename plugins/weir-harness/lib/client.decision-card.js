@@ -45,6 +45,7 @@ window.__ModuleLoader__.load({
       const ui = props.ui;
       const model = props.decisionModel;
       const [detail, setDetail] = react.useState(null);
+      const [evidenceReveal, setEvidenceReveal] = react.useState({ key: null, status: "idle" });
       const [agents, setAgents] = react.useState([]);
       const [error, setError] = react.useState(null);
       const [drafts, setDrafts] = react.useState({});
@@ -105,13 +106,21 @@ window.__ModuleLoader__.load({
         if (!caseId || !props.sessionId) return;
         const key = `${props.sessionId}:${caseId}`;
         if (evidenceReadRef.current === key) return;
+        const generation = generationRef.current;
         evidenceReadRef.current = key;
+        setEvidenceReveal({ key, status: "loading" });
         const value = await load(true, caseId);
-        if (!value?.case && evidenceReadRef.current === key) evidenceReadRef.current = null;
+        if (generation !== generationRef.current || evidenceReadRef.current !== key) return;
+        if (value?.case) setEvidenceReveal({ key, status: "ready" });
+        else {
+          evidenceReadRef.current = null;
+          setEvidenceReveal({ key, status: "error" });
+        }
       };
       react.useEffect(() => {
         const generation = ++generationRef.current;
         evidenceReadRef.current = null; setDetail(null); setError(null); setEditor(null); setConfirm(null);
+        setEvidenceReveal({ key: null, status: "idle" });
         let waitController = null;
         const loadAndWait = async () => {
           const value = await load(false);
@@ -137,6 +146,9 @@ window.__ModuleLoader__.load({
       }, [props.sessionId, props.callId, props.refreshKey, pendingInteraction]);
 
       const errorMessage = error ? t(error.kind === "read" ? "decisionReadFailed" : model?.errorKey?.(error.reason) ?? "decisionFailed") : null;
+      const evidenceKey = props.sessionId && caseId ? `${props.sessionId}:${caseId}` : null;
+      const evidenceReady = evidenceReveal.key === evidenceKey && ["ready", "error"].includes(evidenceReveal.status);
+      const evidenceFailed = evidenceReveal.key === evidenceKey && evidenceReveal.status === "error";
       if (!view) return error && props.sessionId ? jsx.jsxs(ui.ErrorState, { children: [
         jsx.jsx("span", { children: errorMessage }, "message"),
         jsx.jsx(ui.Button, { onClick: () => load(false), children: t("decisionRetry") }, "retry"),
@@ -211,19 +223,21 @@ window.__ModuleLoader__.load({
           error ? jsx.jsx(ui.ErrorState, { children: errorMessage }, "error") : null,
           jsx.jsx(ui.Disclosure, {
             id: `weir-da-card-evidence-${view.caseId}`, label: t("decisionEvidence"), onOpen: openEvidence,
-            children: () => EvidenceList({ evidence: view.evidence, ui, t }),
+            revealOnOpen: "end", revealReady: evidenceReady,
+            children: () => evidenceFailed ? jsx.jsx(ui.ErrorState, { children: errorMessage }) : EvidenceList({ evidence: view.evidence, ui, t }),
           }, "evidence"),
           jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-history-${view.caseId}`, label: t("decisionEvaluationHistory"),
+            id: `weir-da-card-history-${view.caseId}`, label: t("decisionEvaluationHistory"), revealOnOpen: "end",
             children: () => previous.length ? previous.map((group, index) => EvaluationGroup({ group, index, model, ui, t })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEarlierEvaluations") }),
           }, "evaluation-history"),
           jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-routes-${view.caseId}`, label: t("decisionRouteHistory"),
-            children: () => jsx.jsx(ui.DecisionRouteHistory, { history: view.routeHistory, t }),
+            id: `weir-da-card-routes-${view.caseId}`, label: t("decisionRouteHistory"), onOpen: openEvidence,
+            revealOnOpen: "end", revealReady: evidenceReady,
+            children: () => evidenceFailed ? jsx.jsx(ui.ErrorState, { children: errorMessage }) : jsx.jsx(ui.DecisionRouteHistory, { history: view.routeHistory, t }),
           }, "route-history"),
           jsx.jsx(ui.Button, { variant: waiting && props.toolName === "decision_consult" ? "secondary" : "primary", onClick: () => props.openRecord?.(view.caseId), children: t("decisionHistory") }, "history"),
           waiting ? jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-recovery-${view.caseId}`, label: t("decisionRecoveryActions"),
+            id: `weir-da-card-recovery-${view.caseId}`, label: t("decisionRecoveryActions"), revealOnOpen: "end",
             children: () => jsx.jsxs("div", { className: "weir-da-actions", children: [
               jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => updateDraft("reassignTarget", event.target.value), "data-draft": "reassignTarget", "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: isPending, children: [
                 jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
@@ -269,7 +283,7 @@ window.__ModuleLoader__.load({
             ] }, "correction-editor") : null,
           ] }, "feedback") : null,
           jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-advanced-${view.caseId}`, label: t("decisionAdvancedDiagnostics"),
+            id: `weir-da-card-advanced-${view.caseId}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end",
             children: () => jsx.jsx("div", { className: "weir-da-advanced-record", children: jsx.jsx("pre", { children: JSON.stringify({ detail, error: rawError }, null, 2) }) }),
           }, "advanced"),
           confirm ? jsx.jsx(ui.ConfirmDialog, {
