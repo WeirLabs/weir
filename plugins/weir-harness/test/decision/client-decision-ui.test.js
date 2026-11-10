@@ -585,6 +585,36 @@ test('ConfirmDialog uses a connected enabled visible fallback after confirm or i
   }
 })
 
+test('ConfirmDialog chooses fallback focus after confirmation layout removes the origin', async () => {
+  const previous = { focused: 0, isConnected: true, getClientRects: () => [1], focus() { this.focused += 1 } }
+  const fallback = { focused: 0, isConnected: true, getClientRects: () => [1], focus() { this.focused += 1 } }
+  const native = { open: false, showModal() { this.open = true }, close() { this.open = false } }
+  const runtime = makeModalReact(node => node.type === 'dialog' ? native : undefined)
+  const frames = []
+  const oldDocument = globalThis.document
+  const oldAnimationFrame = globalThis.requestAnimationFrame
+  globalThis.document = { activeElement: previous }
+  globalThis.requestAnimationFrame = callback => { frames.push(callback); return frames.length }
+  try {
+    const ui = await load(runtime.react)
+    const tree = runtime.render(ui.ConfirmDialog, {
+      id: 'confirm-layout-focus', title: 'Confirm', body: 'Body', confirmLabel: 'Confirm', cancelLabel: 'Cancel',
+      returnFocusFallback: fallback, onCancel() {}, onConfirm: () => Promise.resolve(),
+    })
+    await findAll(tree, node => node.type === ui.Button && node.children === 'Confirm')[0].onClick()
+    previous.isConnected = false
+    for (const frame of frames) frame()
+    assert.equal(previous.focused, 0)
+    assert.equal(fallback.focused, 1)
+  } finally {
+    runtime.unmount()
+    if (oldDocument === undefined) delete globalThis.document
+    else globalThis.document = oldDocument
+    if (oldAnimationFrame === undefined) delete globalThis.requestAnimationFrame
+    else globalThis.requestAnimationFrame = oldAnimationFrame
+  }
+})
+
 test('DecisionAnswers fills suggestions locally and submits one complete original-shaped batch', async () => {
   const runtime = makeReact()
   const ui = await load(runtime.react)

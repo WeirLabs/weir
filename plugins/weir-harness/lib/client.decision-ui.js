@@ -468,7 +468,11 @@ window.__ModuleLoader__.load({
           restoreDecisionFocus(focusOriginRef.current.target, returnFocusFallback);
           throw error;
         }
-        return Promise.resolve(result).finally(() => restoreDecisionFocus(focusOriginRef.current.target, returnFocusFallback));
+        return Promise.resolve(result).finally(() => {
+          const restore = () => restoreDecisionFocus(focusOriginRef.current.target, returnFocusFallback);
+          if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(restore);
+          else restore();
+        });
       };
       const onKeyDown = event => {
         if (event.key === "Escape") {
