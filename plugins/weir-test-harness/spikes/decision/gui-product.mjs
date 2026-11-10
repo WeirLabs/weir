@@ -2163,6 +2163,7 @@ async function setGuiLanguage(language) {
   await instance.cdp.setViewport(1440, 900, false)
   await keyboardActivate('Open account menu for language', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
   await keyboardActivate('Open Settings for language', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
+  await keyboardActivate('Open General settings for language', '[role="dialog"] button', { labels: ['通用设置', 'General', 'General settings'] })
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
   await keyboardActivate('Open real Language preference', '[role="dialog"] button[aria-haspopup="menu"]', { namePattern: '简体中文|English|Chinese' })
   const label = language === 'en' ? 'English' : '简体中文'
