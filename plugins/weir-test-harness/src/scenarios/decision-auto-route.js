@@ -1,14 +1,16 @@
 // P4 Active Auto: real stock Hook/consult routing through the live Decision Broker.
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DECISION_EVENTS, decisionPack, decisionStoreDirectory, observeDecision, readDecisionEvents, readDecisionStore } from '../decision-test-kit.js'
 import { textChunks, toolCallChunks } from '../mock-kit.js'
 
 const id = 'decision-auto-route'
 const prompt = 'decision-auto-route-probe'
+const STOCK_AUTHORITY = process.env.WEIR_IT_DECISION_STOCK_AUTHORITY === '1'
+const STOCK_PLAN_REVIEW = { id: 'decision-auto-stock-plan-review', question: 'STOCK_PLAN_REVIEW: choose whether the native plan is ready', detail: 'Review the proposed native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept plan' }, options: [{ label: 'Accept plan' }, { label: 'Revise plan' }] }
 const HOOKS = {
   selected: { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }, { label: 'Other' }] },
-  stockPlanReview: { id: 'decision-auto-stock-plan-review', question: 'STOCK_PLAN_REVIEW: choose whether the native plan is ready', intent: { kind: 'plan-review', approve: 'Accept plan' }, options: [{ label: 'Accept plan' }, { label: 'Revise plan' }] },
+  ...(STOCK_AUTHORITY ? { stockPlanReview: STOCK_PLAN_REVIEW } : {}),
   zero: { id: 'decision-auto-zero', question: 'AUTO_ZERO: no Agent authorizes class C', options: [{ label: 'Native zero' }, { label: 'Fallback' }] },
   one: { id: 'decision-auto-one', question: 'AUTO_ONE: only B authorizes class B', options: [{ label: 'Selected B' }, { label: 'Other' }] },
   none: { id: 'decision-auto-none', question: 'AUTO_NONE: no candidate matches', options: [{ label: 'Native none' }, { label: 'Fallback' }] },
@@ -24,34 +26,47 @@ const AUTO_CONSULT = { question: 'AUTO_CONSULT: real classless tool consultation
 const EXPLICIT = { question: 'AUTO_EXPLICIT: explicit B wins over Auto', options: [{ label: 'Explicit B' }, { label: 'Other' }], request_id: 'auto-explicit', authorization_class: 'B' }
 const EXPLICIT_UNAVAILABLE = { question: 'AUTO_EXPLICIT_UNAVAILABLE: disabled B must not fall back', options: [{ label: 'Native unavailable' }], request_id: 'auto-explicit-unavailable', authorization_class: 'B' }
 
+function uniqueToolCall(name, args) {
+  if (!STOCK_AUTHORITY) return toolCallChunks(name, args)
+  const key = args.questions?.map(question => question.id).join('-') ?? args.op ?? args.request_id
+  const callId = `mock-${name}-${key}`
+  return (function * () {
+    for (const chunk of toolCallChunks(name, args)) {
+      if (chunk.type === 'tool-call-delta') yield { ...chunk, id: callId }
+      else if (chunk.type === 'block-end' && chunk.block?.type === 'tool-call') yield { ...chunk, block: { ...chunk.block, id: callId } }
+      else yield chunk
+    }
+  })()
+}
+
 function decide(options, obs) {
   const history = obs.transcript
   if (history.includes('DECISION_TEST error')) return textChunks('DECISION_AUTO_ROUTE_FAILED')
-  if (!history.includes('DECISION_TEST done auto-setup')) return toolCallChunks('decision_integration_probe', { op: 'auto-setup' })
+  if (!history.includes('DECISION_TEST done auto-setup')) return uniqueToolCall('decision_integration_probe', { op: 'auto-setup' })
   for (const question of Object.values(HOOKS)) {
-    if (!history.includes(question.id)) return toolCallChunks('ask_user_question', { questions: [question] })
+    if (!history.includes(question.id)) return uniqueToolCall('ask_user_question', { questions: [question] })
   }
-  if (!history.includes(PARTIAL[0].id)) return toolCallChunks('ask_user_question', { questions: PARTIAL })
-  if (!history.includes('DECISION_TEST done auto-singleflight')) return toolCallChunks('decision_integration_probe', { op: 'auto-singleflight' })
-  if (!history.includes('DECISION_TEST done auto-replay')) return toolCallChunks('decision_integration_probe', { op: 'auto-replay' })
-  if (!history.includes('"selected":["Auto Consult B"]')) return toolCallChunks('decision_consult', AUTO_CONSULT)
+  if (!history.includes(PARTIAL[0].id)) return uniqueToolCall('ask_user_question', { questions: PARTIAL })
+  if (!history.includes('DECISION_TEST done auto-singleflight')) return uniqueToolCall('decision_integration_probe', { op: 'auto-singleflight' })
+  if (!history.includes('DECISION_TEST done auto-replay')) return uniqueToolCall('decision_integration_probe', { op: 'auto-replay' })
+  if (!history.includes('"selected":["Auto Consult B"]')) return uniqueToolCall('decision_consult', AUTO_CONSULT)
   if (!history.includes('"selected":["Explicit B"]')) {
     const agentId = /"agentB":"([^"]+)"/.exec(history)?.[1]
     if (!agentId) return textChunks('DECISION_AUTO_ROUTE_FAILED')
-    return toolCallChunks('decision_consult', { ...EXPLICIT, agent_id: agentId })
+    return uniqueToolCall('decision_consult', { ...EXPLICIT, agent_id: agentId })
   }
   if (!history.includes('DECISION_TEST done disable-a')) {
     const agentId = /"agentB":"([^"]+)"/.exec(history)?.[1]
     if (!agentId) return textChunks('DECISION_AUTO_ROUTE_FAILED')
-    return toolCallChunks('decision_integration_probe', { op: 'disable-a', agentId })
+    return uniqueToolCall('decision_integration_probe', { op: 'disable-a', agentId })
   }
   if (history.includes('AGENT_UNAVAILABLE') || history.includes('unavailable for this workspace')) {
-    if (!history.includes('DECISION_TEST done auto-safety')) return toolCallChunks('decision_integration_probe', { op: 'auto-safety' })
+    if (!history.includes('DECISION_TEST done auto-safety')) return uniqueToolCall('decision_integration_probe', { op: 'auto-safety' })
     return textChunks('DECISION_AUTO_ROUTE_DONE')
   }
   const agentId = /"agentB":"([^"]+)"/.exec(history)?.[1]
   if (!agentId) return textChunks('DECISION_AUTO_ROUTE_FAILED')
-  return toolCallChunks('decision_consult', { ...EXPLICIT_UNAVAILABLE, agent_id: agentId })
+  return uniqueToolCall('decision_consult', { ...EXPLICIT_UNAVAILABLE, agent_id: agentId })
 }
 
 function classify(pack) {
@@ -203,9 +218,11 @@ function assert(run) {
   const selectedRouteWire = wiresFor('decision-auto-selected', 'route')[0]
   run.check('classless stock Hook uses bounded derived A classification and selects only A through the real multi-candidate Router', selected?.closing === 'answered' && selected?.agent_id === agentA && selectedRoute?.mode === 'auto' && selectedRoute?.chosen === agentA && selected?.request.questions[0].authorizationClassSource === 'auto_classifier' && selected?.request.questions[0].authorizationClass === 'A' && selectedRouteWire?.autoRouter.pack.candidates?.map(candidate => candidate.agentId).sort().join(',') === [agentA, agentB].sort().join(',') && selectedWire?.autoRouter.pack.candidates === undefined && selectedWire?.autoRouter.pack.questions.every(question => !Object.hasOwn(question, 'authorizationClass') && !Object.hasOwn(question, 'authorizationClassSource')) && !nativeFor('decision-auto-selected') && allGates(selectedAttempt), JSON.stringify({ selected, route: selectedRoute, selectedWire, selectedRouteWire, attempt: selectedAttempt }))
 
-  const stockPlanReview = caseFor('decision-auto-stock-plan-review')
-  const stockPlanNative = nativeFor('decision-auto-stock-plan-review')
-  run.check('unmodified stock plan-review intent is rehydrated from the current tool call and bypasses SQLite and every model wire', !stockPlanReview && stockPlanNative?.caseSnapshot === null && stockPlanNative?.answer?.answers?.[0]?.selected?.[0] === 'Accept plan' && wiresFor('decision-auto-stock-plan-review', 'classification').length === 0 && wiresFor('decision-auto-stock-plan-review', 'route').length === 0 && evaluationFor('decision-auto-stock-plan-review').length === 0, JSON.stringify({ stockPlanReview, native: stockPlanNative, classifications: wiresFor('decision-auto-stock-plan-review', 'classification'), routes: wiresFor('decision-auto-stock-plan-review', 'route'), evaluations: evaluationFor('decision-auto-stock-plan-review') }))
+  if (STOCK_AUTHORITY) {
+    const stockPlanReview = caseFor(STOCK_PLAN_REVIEW.id)
+    const stockPlanNative = nativeFor(STOCK_PLAN_REVIEW.id)
+    run.check('unmodified stock plan-review intent is rehydrated from the current tool call and bypasses SQLite and every model wire', !stockPlanReview && stockPlanNative?.caseSnapshot === null && stockPlanNative?.answer?.answers?.[0]?.selected?.[0] === 'Accept plan' && wiresFor(STOCK_PLAN_REVIEW.id, 'classification').length === 0 && wiresFor(STOCK_PLAN_REVIEW.id, 'route').length === 0 && evaluationFor(STOCK_PLAN_REVIEW.id).length === 0, JSON.stringify({ stockPlanReview, native: stockPlanNative, classifications: wiresFor(STOCK_PLAN_REVIEW.id, 'classification'), routes: wiresFor(STOCK_PLAN_REVIEW.id, 'route'), evaluations: evaluationFor(STOCK_PLAN_REVIEW.id) }))
+  }
 
   const zeroRoute = routeFor(zero)
   run.check('zero eligible candidates fail closed without a Router call or domain Attempt', zero?.closing === 'escalated' && zero?.agent_id === null && zeroRoute?.chosen === null && zeroRoute?.reason === 'none:no_candidates' && zero?.request.questions[0].authorizationClass === 'C' && zero?.request.questions[0].authorizationClassSource === 'auto_classifier' && snapshotFor('decision-auto-zero')?.awaitingReason === 'no_route' && attemptsFor(zero).length === 0 && wiresFor('decision-auto-zero', 'route').length === 0, JSON.stringify({ zero, route: zeroRoute, native: nativeFor('decision-auto-zero') }))
@@ -260,8 +277,8 @@ function assert(run) {
   run.check('Router model wire is bounded, tool-free, temperature-free and excludes domain history/profile memory', classificationWires.length === 13 && routeWires.length === 6 && routerWires.every(cleanWire) && classificationWires.every(request => !forbiddenWireKeys.test(JSON.stringify(request.autoRouter.pack)) && !JSON.stringify(request.autoRouter.pack).includes('Decision Auto')) && routeWires.every(request => !forbiddenWireKeys.test(JSON.stringify(request.autoRouter.pack))), JSON.stringify({ classifications: classificationWires.length, routes: routeWires.length, bad: routerWires.filter(request => !cleanWire(request)) }))
 
   const nativeIds = events.flatMap(event => event.questionIds ?? [])
-  const expectedNativeIds = ['decision-auto-stock-plan-review', 'decision-auto-zero', 'decision-auto-none', 'decision-auto-ambiguous', 'decision-auto-invalid', 'decision-auto-timeout', 'decision-auto-partial-1', 'decision-auto-partial-2']
-  run.check('native-question events occur only for native authority or persisted recoverable failure, never for answered Auto/consult work', events.length === 7 && nativeIds.slice().sort().join(',') === expectedNativeIds.slice().sort().join(',') && events.every(event => event.questionIds?.includes('decision-auto-stock-plan-review') ? event.caseSnapshot === null : event.caseSnapshot?.case?.state === 'awaiting_user') && !nativeIds.some(questionId => ['decision-auto-selected', 'decision-auto-one'].includes(questionId)), JSON.stringify({ events }))
+  const expectedNativeIds = [...(STOCK_AUTHORITY ? [STOCK_PLAN_REVIEW.id] : []), 'decision-auto-zero', 'decision-auto-none', 'decision-auto-ambiguous', 'decision-auto-invalid', 'decision-auto-timeout', 'decision-auto-partial-1', 'decision-auto-partial-2']
+  run.check('native-question events occur only for native authority or persisted recoverable failure, never for answered Auto/consult work', events.length === (STOCK_AUTHORITY ? 7 : 6) && nativeIds.slice().sort().join(',') === expectedNativeIds.slice().sort().join(',') && events.every(event => STOCK_AUTHORITY && event.questionIds?.includes(STOCK_PLAN_REVIEW.id) ? event.caseSnapshot === null : event.caseSnapshot?.case?.state === 'awaiting_user') && !nativeIds.some(questionId => ['decision-auto-selected', 'decision-auto-one'].includes(questionId)), JSON.stringify({ events }))
 
   const knownAgents = new Set([agentA, agentB, null])
   run.check('exact authority census has no duplicate flight, false revision, partial answer, or generic fallback Agent', store.cases.length === 14 && store.routes.length === 14 && store.attempts.length === 13 && store.profiles.length === 2 && store.cases.every(item => knownAgents.has(item.agent_id)) && store.routes.every(route => route.chosen === null || knownAgents.has(route.chosen)), JSON.stringify({ cases: store.cases.length, routes: store.routes.length, attempts: store.attempts.length, profiles: store.profiles.map(profile => ({ id: profile.agent_id, name: profile.name })) }))
@@ -314,7 +331,7 @@ function assert(run) {
     ...store.cases.flatMap(item => item.request.questions?.map(question => question.question) ?? []),
     ...safetyCases.flatMap(item => item.request?.questions?.map(question => question.question) ?? []), ...shadowRequests,
     'Auto A private profile body', 'Auto B private profile body', 'AUTO_REPLAY context secret',
-    HOOKS.stockPlanReview.question,
+    STOCK_PLAN_REVIEW.question,
     'AUTO_SAFETY_OFF: choose the safe fixture', 'AUTO_SAFETY_GLOBAL_OFF: choose the safe fixture',
     'FORBIDDEN FOREIGN ROUTER CANDIDATE', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY',
   ]
@@ -322,10 +339,27 @@ function assert(run) {
   run.check('decision-auto-route real headless run exits cleanly', (run.code === 0 || run.code === null) && run.stdout.includes('DECISION_AUTO_ROUTE_DONE') && !run.stdout.includes('DECISION_AUTO_ROUTE_FAILED'), `code=${run.code} stderr=${run.stderr.slice(-500)}`)
 }
 
+const ENV = {
+  WEIR_IT_DECISION: '1', WEIR_IT_DECISION_EVENTS: DECISION_EVENTS, WEIR_IT_DECISION_STORE_PATH: decisionStoreDirectory(id),
+  WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_SELECTOR_DEFAULT: 'auto', WEIR_IT_DECISION_TIMEOUT_MS: '100', WEIR_IT_DECISION_MAX_ATTEMPTS: '16',
+}
+
+// The stock timed tool supplies wait.callId through the real askTimed path.
+// Override only this generated run profile, then restore it for later scenarios.
+async function run({ IT_ROOT, spawnHeadless, scenarioEnv }) {
+  const patchPath = join(IT_ROOT, 'home', 'profiles', 'weir-it', 'cordis.patch.yml')
+  const originalPatch = readFileSync(patchPath, 'utf8')
+  const trace = join(IT_ROOT, `trace-${id}.jsonl`)
+  writeFileSync(patchPath, '- id: weir-it-ask-user\n  config:\n    mode: timed\n')
+  try {
+    return { scenario: id, trace, ...await spawnHeadless(['weir-it', prompt], scenarioEnv(id, trace, ENV)) }
+  } finally {
+    writeFileSync(patchPath, originalPatch)
+  }
+}
+
 export default {
   id, prompt, decide, decideDecision, decideRouterClassification, decideRouterRoute, observe, assert,
-  env: {
-    WEIR_IT_DECISION: '1', WEIR_IT_DECISION_EVENTS: DECISION_EVENTS, WEIR_IT_DECISION_STORE_PATH: decisionStoreDirectory(id),
-    WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_SELECTOR_DEFAULT: 'auto', WEIR_IT_DECISION_TIMEOUT_MS: '100', WEIR_IT_DECISION_MAX_ATTEMPTS: '16',
-  },
+  ...(STOCK_AUTHORITY ? { run } : {}),
+  env: ENV,
 }

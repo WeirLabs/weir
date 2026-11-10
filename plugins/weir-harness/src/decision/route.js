@@ -15,6 +15,41 @@ export function excludedRequest(request) {
   })
 }
 
+/**
+ * Recheck native authority from the exact persisted stock tool call. Raw
+ * arguments are evidence only: never return them into routing or persistence.
+ * A stock timed call with unusable current evidence fails closed; non-stock
+ * direct Broker callers retain their legacy contract.
+ * @param {any} request @param {string} originSessionId @param {any} ctx
+ */
+export async function excludedStockHookRequest(request, originSessionId, ctx) {
+  if (excludedRequest(request)) return true
+  const callId = request.wait?.callId
+  if (callId === undefined || request.wait?.timed !== true) return false
+  const sessionQuery = ctx?.sessionQuery ?? ctx?.get?.('sessionQuery')
+  if (!sessionQuery) return true
+  if (typeof callId !== 'string' || !callId || typeof sessionQuery.readSession !== 'function') return true
+
+  let snapshot
+  try { snapshot = await sessionQuery.readSession(originSessionId) } catch { return true }
+  if (snapshot?.session?.id !== originSessionId || !Array.isArray(snapshot.events)) return true
+  const matches = snapshot.events.filter(event => event?.type === 'tool/call' && event.data?.callId === callId)
+  if (matches.length !== 1 || matches[0].data?.name !== 'ask_user_question' || typeof matches[0].data.arguments !== 'string') return true
+
+  let raw
+  try { raw = JSON.parse(matches[0].data.arguments)?.questions } catch { return true }
+  const live = request.questions
+  if (!Array.isArray(raw) || !Array.isArray(live) || raw.length !== live.length) return true
+  const ids = new Set()
+  for (let index = 0; index < raw.length; index++) {
+    const question = raw[index]
+    if (typeof question?.id !== 'string' || !question.id || ids.has(question.id)
+      || question.id !== live[index]?.id || question.question !== live[index]?.question) return true
+    ids.add(question.id)
+  }
+  return excludedRequest({ questions: raw })
+}
+
 /** @param {any} agent @param {any} ctx */
 export async function decisionOrigin(agent, ctx) {
   const header = agent?.session?.header

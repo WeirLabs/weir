@@ -46,7 +46,7 @@ function questions(id = 'stock-q') {
 }
 
 function requestFor(callId, liveQuestions = questions()) {
-  return { questions: liveQuestions, wait: { callId } }
+  return { questions: liveQuestions, wait: { callId, timed: true } }
 }
 
 function toolCall(callId, args, name = 'ask_user_question') {
