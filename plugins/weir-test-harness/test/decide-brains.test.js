@@ -991,12 +991,17 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.deepEqual(observed.autoRouter.tools, [])
     assert.equal(observed.autoRouter.hasTemperature, false)
 
-    const route = marker => {
-      const routedQuestion = { ...question, id: `gui-auto-${marker.toLowerCase()}`, question: `GUI_AUTO_${marker}: controlled route` }
-      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion, authorizationClass: 'A' }], context: '', candidates: [{ agentId: 'ag_a', name: 'Primary' }, { agentId: 'ag_b', name: 'Secondary' }] }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
+    const primary = { agentId: 'ag_a', name: 'Primary Decision Product QA' }
+    const secondary = { agentId: 'ag_b', name: 'Secondary Empty review assistant' }
+    const route = (marker, candidates = [primary, secondary]) => {
+      const prefix = marker === 'SHADOW_PARITY' ? 'GUI_SHADOW_PARITY' : `GUI_AUTO_${marker}`
+      const routedQuestion = { ...question, id: `gui-auto-${marker.toLowerCase()}`, question: `${prefix}: controlled route` }
+      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion, authorizationClass: 'A' }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
       return { chunks: [...scenario.decideRouterRoute(options, extract(options))], observed: scenario.observe(extract(options)) }
     }
     assert.equal(JSON.parse(blockEnds(route('SELECTED').chunks)[0].text).agentId, 'ag_a')
+    assert.equal(JSON.parse(blockEnds(route('SELECTED', [secondary, primary]).chunks)[0].text).agentId, 'ag_a', 'Active Auto selection is independent of candidate order')
+    assert.equal(JSON.parse(blockEnds(route('SHADOW_PARITY', [secondary, primary]).chunks)[0].text).agentId, 'ag_b', 'Shadow disagreement target is independent of candidate order')
     assert.equal(JSON.parse(blockEnds(route('NONE').chunks)[0].text).outcome, 'none')
     const ambiguous = JSON.parse(blockEnds(route('AMBIGUOUS').chunks)[0].text)
     assert.equal(ambiguous.outcome, 'ambiguous')

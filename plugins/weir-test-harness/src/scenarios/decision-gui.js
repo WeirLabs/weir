@@ -169,9 +169,10 @@ function decideRouterRoute(options, obs) {
     }))
   }
   if (question.startsWith('GUI_AUTO_INVALID')) return textChunks('{"contract":"router-contract/1","outcome":"selected","agentId":"ag_not_eligible","reason":"Unknown candidate must be rejected"}')
-  const selected = question.startsWith('GUI_SHADOW_PARITY') ? pack?.candidates?.at(-1) : pack?.candidates?.[0]
+  const intendedName = question.startsWith('GUI_SHADOW_PARITY') ? /Empty review assistant|Secondary/ : /Decision Product QA|Primary/
+  const selected = pack?.candidates?.find(candidate => intendedName.test(candidate.name ?? ''))
   if (!selected) throw new Error('decision-gui: selected fixture requires an eligible candidate')
-  return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'The first eligible GUI candidate owns this fixture' }))
+  return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'The intended GUI candidate owns this fixture' }))
 }
 
 function assert(run) {
