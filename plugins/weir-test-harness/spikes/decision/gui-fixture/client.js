@@ -19,11 +19,14 @@ window.__ModuleLoader__.load({
         async function createSession(args) {
           const created = await fixture('createSession', args)
           const sessionId = created.sessionId
-          ctx.uiWorkspace.openSession(sessionId)
-          ctx.layout.selectPanel(null)
+          await openSession(sessionId)
           return created
         }
-        function openSession(sessionId) { ctx.uiWorkspace.openSession(sessionId); ctx.layout.selectPanel(null) }
+        async function openSession(sessionId) {
+          ctx.uiWorkspace.openSession(sessionId)
+          await ctx.uiWorkspace.sessions.using(sessionId, { source: 'decisionQA' }, async () => {})
+          ctx.layout.selectPanel(null)
+        }
         function selectDecisions() { ctx.layout.selectPanel('weir-decisions') }
         function getState() {
           const sessions = ctx.uiWorkspace.sessions?.list?.getSnapshot?.()
@@ -36,13 +39,7 @@ window.__ModuleLoader__.load({
             toolviews: ctx.slots.entries('tool.call.toolview').map(entry => entry.options.key),
           }
         }
-        function sessionBinding(sessionId) {
-          const binding = ctx.uiWorkspace.sessions.binding(sessionId)
-          const snapshot = binding?.session.getSnapshot()
-          const retention = ctx.uiWorkspace.sessions.retainInfo(sessionId).getSnapshot()
-          return { sessionId, live: Boolean(binding), openState: snapshot?.openState ?? null, openError: snapshot?.openError ?? null, retainedBy: { ...(retention?.retainedBy ?? {}) } }
-        }
-        window.__decisionQA = { fixture, decision, createSession, openSession, selectDecisions, getState, sessionBinding }
+        window.__decisionQA = { fixture, decision, createSession, openSession, selectDecisions, getState }
         ctx.on('dispose', () => { delete window.__decisionQA })
       },
     }

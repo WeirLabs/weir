@@ -259,16 +259,12 @@ function composerVisible(instance) {
 function decisionTriggerExpression() {
   return `Boolean(document.querySelector(${JSON.stringify('[data-weir-decision-trigger="weir-decision-selector"]')}))`
 }
-function sessionBindingReady(instance, sessionId) {
-  return waitFor(() => instance.cdp.evaluate(`(() => { const value=window.__decisionQA.sessionBinding(${JSON.stringify(sessionId)}); return value?.live===true&&value.openState==='open'&&(value.retainedBy?.mainView??0)>0 })()`), 60_000)
-}
 async function createSession(instance, cwd = LANE) {
   const created = await instance.cdp.evaluate(`window.__decisionQA.createSession(${JSON.stringify({ cwd, prompt: 'GUI_SESSION_BOOTSTRAP' })})`)
   if (!created?.sessionId) throw new Error(`Session creation failed: ${JSON.stringify(created)}`)
   await waitFor(() => composerVisible(instance), 60_000)
   await waitFor(() => instance.cdp.evaluate(decisionTriggerExpression()), 60_000)
   await waitFor(() => instance.cdp.evaluate(`window.__decisionQA.getState().activeSessionId===${JSON.stringify(created.sessionId)}`), 60_000)
-  await sessionBindingReady(instance, created.sessionId)
   return created
 }
 
@@ -282,7 +278,6 @@ async function openSession(instance, sessionId) {
   await waitFor(() => composerVisible(instance), 60_000)
   await waitFor(() => instance.cdp.evaluate(decisionTriggerExpression()), 60_000)
   await waitFor(() => instance.cdp.evaluate(`window.__decisionQA.getState().activeSessionId===${JSON.stringify(sessionId)}`), 60_000)
-  await sessionBindingReady(instance, sessionId)
 }
 
 async function setInput(instance, selector, value) {
