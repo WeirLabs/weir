@@ -216,6 +216,20 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
     }
   })
 
+  it('rejects prefix and suffix answer prose or fences around classification JSON', async () => {
+    const json = JSON.stringify(validClassification())
+    for (const output of [
+      `The answer is A.\n${json}`,
+      `${json}\nThe answer is A.`,
+      `\`\`\`json\n${json}\n\`\`\``,
+      `${json}\n${json}`,
+    ]) {
+      const { result } = await classifyOutput(output)
+      assert.equal(result.kind, 'failed', JSON.stringify(output))
+      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
+    }
+  })
+
   it('accepts the complete classification vocabulary but fails closed to authority outside A/B/C', async () => {
     for (const authorizationClass of ['D', 'E', 'F', 'unknown']) {
       const output = validClassification()
@@ -262,6 +276,20 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
       'not-json',
     ]
     for (const output of cases) {
+      const { result } = await routeOutput(output)
+      assert.equal(result.kind, 'failed', JSON.stringify(output))
+      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
+    }
+  })
+
+  it('rejects prefix and suffix answer prose or fences around router JSON', async () => {
+    const json = JSON.stringify(validRoute())
+    for (const output of [
+      `The answer is to use agent-b.\n${json}`,
+      `${json}\nThe answer is to use agent-b.`,
+      `\`\`\`json\n${json}\n\`\`\``,
+      `${json}\n${json}`,
+    ]) {
       const { result } = await routeOutput(output)
       assert.equal(result.kind, 'failed', JSON.stringify(output))
       assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
