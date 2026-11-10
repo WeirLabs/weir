@@ -215,6 +215,56 @@ test('product driver settles host credit onboarding with scoped native keyboard 
   assert.ok(driver.includes('consoleErrors.length === 0'), 'the zero-console-error runtime gate remains unchanged')
 })
 
+test('delayed host welcome onboarding is resolved around native keyboard targeting with durable evidence', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const dismiss = driver.match(/async function settleDelayedHostOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(dismiss, 'the delayed host onboarding guard exists')
+  assert.ok(dismiss.includes('[data-desktop-onboarding="welcome"]'), 'only the exact visible host welcome page is classified as delayed onboarding')
+  assert.ok(dismiss.includes("#weir-da-selector-panel,dialog.weir-da-dialog"), 'an active native Decision modal is never bypassed as host onboarding')
+  assert.ok(dismiss.includes('chooseDefaultWorkspace()'), 'the existing real host UI flow resolves the welcome page')
+  assert.match(dismiss, /resolution\?\.dismissed === true/, 'host dismissal must be observed')
+  assert.ok(dismiss.includes('resolution.selection'), 'default workspace selection must be observed')
+  assert.ok(dismiss.includes("host-onboarding.json"), 'every delayed dismissal is persisted with its triggering product action')
+  assert.ok(!/\.click\(|\.focus\(|body\.innerText\.includes/.test(dismiss), 'the guard neither uses DOM actions nor classifies product error copy as onboarding')
+
+  const focus = driver.match(/async function keyboardFocus\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok((focus.match(/await settleHost\(\)/g) ?? []).length >= 2, 'host state is checked both before target readiness and during native Tab traversal')
+  assert.ok(focus.includes('step < 500'), 'the existing focus traversal bound is not expanded to conceal a trap')
+  assert.ok(!/\.click\(|\.focus\(/.test(focus), 'product targeting remains native-keyboard only')
+  assert.ok((driver.match(/result\.artifacts\.hostOnboarding = join\(out, 'host-onboarding\.json'\)/g) ?? []).length === 2, 'final and blocked result indexes include the dismissal evidence')
+})
+
+test('confirmation focus measurement retains original element identity across a state-dependent selector change', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const source = driver.match(/async function measureConfirmationFocus\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'the public Desktop measurement helper exists')
+  const originSelector = '[data-agent-detail="agent-1"] [data-agent-state="disabled"]'
+  const button = () => ({ isConnected: true, disabled: false, id: '', className: 'weir-da-button', tagName: 'BUTTON', getAttribute: () => null, getClientRects: () => [{}] })
+  const origin = button()
+  const fallback = button()
+  const body = { tagName: 'BODY', id: '', className: '' }
+  let originMatches = true
+  const document = {
+    activeElement: body,
+    querySelector(selector) {
+      if (selector === originSelector) return originMatches ? origin : null
+      if (selector === '[data-decision-primary-nav]') return fallback
+      return null
+    },
+  }
+  const window = {}
+  const instance = { cdp: { evaluate: async expression => new Function('document', 'window', 'getComputedStyle', `return (${expression})`)(document, window, () => ({ visibility: 'visible' })) } }
+  const measure = new Function('instance', 'decisionControl', `${source};return measureConfirmationFocus`)(instance, async () => ({ settled: true }))
+  const before = await measure(originSelector, 'control-1')
+  assert.equal(before.targetFocused, false)
+  originMatches = false
+  document.activeElement = origin
+  const after = await measure(originSelector, 'control-1')
+  assert.equal(after.targetFocused, true, 'the original connected enabled element remains the focus target even when its old state selector no longer matches')
+  assert.equal(after.target?.focused, true)
+  assert.equal(after.fallbackFocused, false)
+})
+
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
