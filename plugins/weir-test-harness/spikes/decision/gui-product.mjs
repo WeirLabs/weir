@@ -313,17 +313,20 @@ async function keyboardSnapshot(selector, options = {}) {
 
 async function settleDelayedHostOnboarding(action) {
   const detected = await instance.cdp.evaluate(`(() => {
-    const host=document.querySelector('[data-desktop-onboarding="welcome"]')
+    const host=document.querySelector('[data-desktop-onboarding="welcome"],[data-desktop-onboarding="credit"]')
     if(!host||host.getClientRects().length===0)return null
     const decisionDialog=[...document.querySelectorAll('#weir-da-selector-panel,dialog.weir-da-dialog')].find(dialog=>dialog.open&&dialog.matches(':modal'))
     if(decisionDialog)return null
+    const page=host.getAttribute('data-desktop-onboarding')
+    const title=host.querySelector('h1')?.textContent?.trim()??null
+    if(page==='credit')return {page,title,activeInside:host.contains(document.activeElement)}
     const start=[...host.querySelectorAll('button')].find(button=>button.offsetParent!==null&&['开始设置','Start setup','Get started'].includes(button.textContent.trim()))
     if(!start)throw new Error('Delayed host welcome onboarding has no visible native start action')
-    return {page:host.getAttribute('data-desktop-onboarding'),title:host.querySelector('h1')?.textContent?.trim()??null,start:start.textContent.trim(),activeInside:host.contains(document.activeElement)}
+    return {page,title,start:start.textContent.trim(),activeInside:host.contains(document.activeElement)}
   })()`)
   if (!detected) return null
-  const resolution = await instance.cdp.chooseDefaultWorkspace()
-  requireEvidence(resolution?.onboarding === true && resolution?.dismissed === true && resolution.start && resolution.selection, `delayed host welcome onboarding is dismissed through the real host UI before ${action}`)
+  const resolution = detected.page === 'credit' ? { dismissed: await dismissCreditOnboarding(instance) } : await instance.cdp.chooseDefaultWorkspace(() => dismissCreditOnboarding(instance))
+  requireEvidence(resolution?.dismissed === true && (detected.page === 'credit' || (resolution?.onboarding === true && resolution.start && (resolution.selection || resolution.creditDismissed))), `delayed host onboarding is dismissed through the real host UI before ${action}`)
   const receipt = { sequence: hostOnboardingDismissals.length + 1, action, detected, resolution }
   hostOnboardingDismissals.push(receipt)
   writeJson(join(out, 'host-onboarding.json'), hostOnboardingDismissals)
@@ -336,6 +339,7 @@ async function keyboardFocus(action, selector, options = {}) {
   saveKeyboardAudits()
   const deadline = Date.now() + 30_000
   const settleHost = async () => {
+    if (options.skipDelayedHostOnboarding) return
     const receipt = await settleDelayedHostOnboarding(action)
     if (!receipt) return
     audit.hostOnboardingDismissals.push(receipt.sequence)
@@ -407,9 +411,9 @@ async function dismissCreditOnboarding(instance) {
   const scope = '[data-desktop-onboarding="credit"]'
   const present = await instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(scope)}))`)
   if (!present) return false
-  await keyboardActivate('Skip host credit onboarding', 'button', { scope, labels: ['跳过', 'Skip'] })
+  await keyboardActivate('Skip host credit onboarding', 'button', { scope, labels: ['跳过', 'Skip'], skipDelayedHostOnboarding: true })
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("暂时跳过充值？") || document.body.innerText.includes("Skip adding credits?")'), 30_000)
-  await keyboardActivate('Confirm host credit onboarding skip', 'button', { labels: ['我知道了', 'Got it'] })
+  await keyboardActivate('Confirm host credit onboarding skip', 'button', { labels: ['我知道了', 'Got it'], skipDelayedHostOnboarding: true })
   await waitFor(() => instance.cdp.evaluate('!document.querySelector("[data-desktop-onboarding]")'), 30_000)
   return true
 }
@@ -1645,8 +1649,8 @@ async function installUiuxInstrumentation() {
   requireEvidence(installed, 'real Desktop accepts UIUX showModal and reveal instrumentation')
 }
 
-async function holdDecision(method, args) {
-  const id = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method, args, action: 'hold' })})`)
+async function holdDecision(method, args, action = 'hold') {
+  const id = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method, args, action })})`)
   requireEvidence(typeof id === 'string', `hold control created for ${method}`)
   return id
 }
@@ -2102,11 +2106,12 @@ async function runColdRevealMatrix(sessionId, caseId) {
   await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
   const scroller = 'main.weir-da-page'
   const routeTarget = `#weir-da-inbox-routes-${caseId}-content`
-  const routeControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'record', args: { sessionId, caseId }, action: 'fail' })})`)
+  const routeControl = await holdDecision('record', { sessionId, caseId }, 'hold-fail')
   await openDisclosure(`weir-da-inbox-routes-${caseId}`)
   const routeLoading = await measureColdReveal(routeTarget, scroller, { status: 'loading', draftSelector: form })
   await shot('uiux-cold-error-loading', { kind: 'cold-reveal', measurement: routeLoading })
-  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(routeTarget)} [role="alert"]))`), 30_000)
+  await releaseDecision(routeControl)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(routeTarget + ' [role="alert"]')}))`), 30_000)
   await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
   const routeReady = await measureColdReveal(routeTarget, scroller, { status: 'error', draftSelector: form })
   routeReady.ax = await instance.cdp.accessibility(routeTarget)
@@ -2120,28 +2125,37 @@ async function runColdRevealMatrix(sessionId, caseId) {
   evidenceLoading = await measureColdReveal(evidenceTarget, scroller, { status: 'loading', draftSelector: form })
   await shot('uiux-cold-success-loading', { kind: 'cold-reveal', measurement: evidenceLoading })
   await releaseDecision(successControl)
-  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(evidenceTarget)} .weir-da-evidence-list'))`), 30_000)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(evidenceTarget + ' .weir-da-evidence-list')}))`), 30_000)
   await waitFor(async () => (await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })).revealCount === 1, 30_000)
   await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
   const evidenceReady = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
   evidenceReady.ax = await instance.cdp.accessibility(evidenceTarget)
   await shot('uiux-cold-success-end', { kind: 'cold-reveal', measurement: evidenceReady })
 
-  await collectNetwork()
-  const refreshBefore = networkRpc.length
-  await openPage('inbox')
-  await waitFor(async () => { await collectNetwork(); return networkRpc.length > refreshBefore }, 10_000)
+  // A same-mount draft round-trip forces real parent renders without navigation
+  // or authority writes. Compare against the post-reveal baseline after restoration.
+  const draftSelector = `${form} textarea`
+  const draftBefore = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(draftSelector)})?.value`)
+  requireEvidence(typeof draftBefore === 'string', 'the cold refresh draft is a real textarea value')
+  const routeRefreshBaseline = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
+  const evidenceRefreshBaseline = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
+  const transientDraft = 'Transient cold refresh draft'
+  await keyboardFill('Exercise cold refresh draft', draftSelector, transientDraft)
+  await keyboardFill('Restore cold refresh draft', draftSelector, draftBefore)
+  const restoredDraft = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(draftSelector)})?.value`)
+  writeJson(join(out, 'cold-refresh-draft.json'), { selector: draftSelector, before: draftBefore, transient: transientDraft, restored: restoredDraft })
+  requireEvidence(restoredDraft === draftBefore, 'the cold refresh draft round-trip restored the exact input')
   const routeRefreshed = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
   const evidenceRefreshed = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
-  const errorEvidence = { kind: 'error', loading: routeLoading, ready: routeReady, refreshed: routeRefreshed }
-  const successEvidence = { kind: 'success', loading: evidenceLoading, ready: evidenceReady, refreshed: evidenceRefreshed, control: await decisionControl(successControl) }
+  const errorEvidence = { kind: 'error', loading: routeLoading, ready: routeReady, refreshBaseline: routeRefreshBaseline, refreshed: routeRefreshed, control: await decisionControl(routeControl) }
+  const successEvidence = { kind: 'success', loading: evidenceLoading, ready: evidenceReady, refreshBaseline: evidenceRefreshBaseline, refreshed: evidenceRefreshed, control: await decisionControl(successControl) }
   errorEvidence.problems = coldRevealProblems(errorEvidence)
   successEvidence.problems = coldRevealProblems(successEvidence)
   uiuxEvidence.coldReveals.push(errorEvidence, successEvidence)
   saveUiuxEvidence()
   await shot('uiux-cold-refresh-stable', { kind: 'cold-reveal-refresh', error: routeRefreshed, success: evidenceRefreshed })
-  check('coldErrorRevealsActualEndOnceWithoutFocusDraftTheft', errorEvidence.problems.length === 0, { problems: errorEvidence.problems, loading: routeLoading, ready: routeReady, refreshed: routeRefreshed })
-  check('coldSuccessRevealsActualEndOnceAndRefreshDoesNotJump', successEvidence.problems.length === 0, { problems: successEvidence.problems, loading: evidenceLoading, ready: evidenceReady, refreshed: evidenceRefreshed })
+  check('coldErrorRevealsActualEndOnceWithoutFocusDraftTheft', errorEvidence.problems.length === 0, { problems: errorEvidence.problems, loading: routeLoading, ready: routeReady, refreshBaseline: routeRefreshBaseline, refreshed: routeRefreshed, control: errorEvidence.control })
+  check('coldSuccessRevealsActualEndOnceAndRefreshDoesNotJump', successEvidence.problems.length === 0, { problems: successEvidence.problems, loading: evidenceLoading, ready: evidenceReady, refreshBaseline: evidenceRefreshBaseline, refreshed: evidenceRefreshed })
 }
 
 async function setGuiLanguage(language) {

@@ -45,7 +45,7 @@ export async function connectCdp(port) {
       const result = await request('Page.captureScreenshot', { format: 'png', fromSurface: true, captureBeyondViewport: false })
       writeFileSync(path, Buffer.from(result.data, 'base64'))
     },
-    async chooseDefaultWorkspace() {
+    async chooseDefaultWorkspace(onCredit = null) {
       const activate = async labels => {
         const target = await this.evaluate(`(() => { const labels=${JSON.stringify(labels)}; const items=[...document.querySelectorAll('button,[role="button"],[role="menuitem"]')].filter(e=>e.offsetParent!==null&&labels.includes(e.textContent.trim())); const el=items.at(-1); if(!el)return null; const rect=el.getBoundingClientRect(); return {tag:el.tagName,text:el.textContent.trim(),x:rect.left+rect.width/2,y:rect.top+rect.height/2} })()`)
         if (!target) return null
@@ -57,9 +57,21 @@ export async function connectCdp(port) {
       const onboarding = await this.evaluate(`Boolean(document.querySelector('[data-desktop-onboarding]'))`)
       if (!onboarding) return { onboarding: false, selection: await activate(['默认工作区', 'default-workspace']) }
       const start = await activate(['开始设置', 'Start setup', 'Get started'])
-      const selection = await waitFor(() => activate(['默认工作区', 'default-workspace']), 30_000)
-      await waitFor(() => this.evaluate(`!document.querySelector('[data-desktop-onboarding]')`), 30_000)
-      return { onboarding: true, start, selection, dismissed: true }
+      let selection = null
+      let creditDismissed = false
+      await waitFor(async () => {
+        const credit = await this.evaluate(`Boolean(document.querySelector('[data-desktop-onboarding="credit"]'))`)
+        if (credit) {
+          if (!onCredit) return null
+          await onCredit()
+          creditDismissed = true
+        } else if (!selection) {
+          selection = await activate(['默认工作区', 'default-workspace'])
+        }
+        const remaining = await this.evaluate(`Boolean(document.querySelector('[data-desktop-onboarding]'))`)
+        return !remaining && (selection || creditDismissed) ? true : null
+      }, 30_000)
+      return { onboarding: true, start, selection, creditDismissed, dismissed: true }
     },
     async submit(text) {
       const focused = await this.evaluate(`(() => { const items=[...document.querySelectorAll('textarea,[contenteditable="true"]')].filter(e=>e.offsetParent!==null); const el=items.at(-1); if(!el)return false; el.focus(); return true })()`)

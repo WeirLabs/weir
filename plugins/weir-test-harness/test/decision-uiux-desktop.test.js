@@ -79,6 +79,36 @@ test('isolated UIUX fixture controls real Decision RPC settlement without produc
   assert.ok(!fixture.includes('weir-harness/lib'), 'the fixture does not patch product chunks')
 })
 
+test('held cold failure stays pending until release and then fails exactly once', async () => {
+  const source = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  let registration = null
+  const window = { __ModuleLoader__: { load(value) { registration = value } } }
+  new Function('window', source)(window)
+  let originalCalls = 0
+  const originalRpcCall = async () => { originalCalls += 1; return { ok: true, value: { case: { caseId: 'dc_cold' } } } }
+  const connection = { rpc: { call: originalRpcCall } }
+  const disposers = []
+  const ctx = { get: () => connection, on: (event, dispose) => { if (event === 'dispose') disposers.push(dispose) } }
+  registration.factory().apply(ctx)
+  const args = { sessionId: 'root', caseId: 'dc_cold' }
+  const id = window.__decisionQA.controlDecision({ method: 'record', args, action: 'hold-fail' })
+  const pending = window.__decisionQA.decision('record', args)
+  const before = window.__decisionQA.decisionControlState().find(control => control.id === id)
+  assert.equal(before.started, true)
+  assert.equal(before.released, false)
+  assert.equal(before.settled, false)
+  window.__decisionQA.releaseDecisionControl(id)
+  const result = await pending
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'WEIR_UIUX_INJECTED_FAILURE')
+  assert.equal(originalCalls, 1)
+  const after = window.__decisionQA.decisionControlState().find(control => control.id === id)
+  assert.equal(after.released, true)
+  assert.equal(after.settled, true)
+  for (const dispose of disposers) dispose()
+  assert.equal(connection.rpc.call, originalRpcCall)
+})
+
 test('5.2 product matrix wires raw modal scroll and settled-focus audits into every confirmation family', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
