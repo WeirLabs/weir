@@ -112,7 +112,7 @@ export function routeHistoryProblems(detail, dom) {
   const problems = []
   if (expected.length !== actual.length) problems.push(`route history count ${actual.length} != ${expected.length}`)
   for (let index = 0; index < Math.min(expected.length, actual.length); index += 1) {
-    if (expected[index]?.createdAt !== actual[index]?.createdAt) problems.push(`route history timestamp ${index} differs`)
+    if (String(expected[index]?.createdAt ?? '') !== String(actual[index]?.createdAt ?? '')) problems.push(`route history timestamp ${index} differs`)
     if (!String(actual[index]?.text ?? '').trim()) problems.push(`route history row ${index} is not readable`)
   }
   return problems

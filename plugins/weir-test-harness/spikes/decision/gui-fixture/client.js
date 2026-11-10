@@ -19,14 +19,21 @@ window.__ModuleLoader__.load({
         async function createSession(args) {
           const created = await fixture('createSession', args)
           const sessionId = created.sessionId
-          ctx.uiWorkspace.openSession(sessionId)
-          ctx.layout.selectPanel(null)
+          await openSession(sessionId)
           return created
         }
-        function openSession(sessionId) { ctx.uiWorkspace.openSession(sessionId); ctx.layout.selectPanel(null) }
+        async function openSession(sessionId) {
+          const currentSessionId = ctx.uiWorkspace.mainReference?.sessionId ?? ctx.uiWorkspace.selection?.getSnapshot?.().sessionId ?? null
+          if (currentSessionId && currentSessionId !== sessionId) await ctx.uiWorkspace.sessions.using(currentSessionId, { source: 'decisionQA' }, async () => {})
+          ctx.uiWorkspace.openSession(sessionId)
+          await ctx.uiWorkspace.sessions.using(sessionId, { source: 'decisionQA' }, async () => {})
+          ctx.layout.selectPanel(null)
+        }
         function selectDecisions() { ctx.layout.selectPanel('weir-decisions') }
         function getState() {
+          const sessions = ctx.uiWorkspace.sessions?.list?.getSnapshot?.()
           return {
+            activeSessionId: Object.values(sessions?.byId ?? {}).find(session => (session.retainedBy?.mainView ?? 0) > 0)?.id ?? null,
             activePanelId: ctx.layout.panelInfo.getSnapshot().activePanelId ?? null,
             sidebar: ctx.slots.entries('sidebar.panellist').map(entry => entry.options.id),
             main: ctx.slots.entries('main').map(entry => entry.options.key),

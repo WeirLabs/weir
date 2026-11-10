@@ -876,6 +876,14 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(first.name, 'ask_user_question')
     assert.equal(JSON.parse(first.arguments).questions[0].id, 'gui-a-answer')
   })
+  it('emits the long native case through one real stock tool call', () => {
+    const [call] = blockEnds(run('decision-gui', userOptions('GUI_LONG_NATIVE')))
+    assert.equal(call.name, 'ask_user_question')
+    const questions = JSON.parse(call.arguments).questions
+    assert.deepEqual(questions.map(question => question.id), ['product-long-choice', 'product-long-text'])
+    assert.equal(questions[0].multi_select, true)
+    assert.equal(questions[0].options[0].description, '长选项说明 / Long option description remains readable at every viewport.')
+  })
   it('makes after-down and later turns evidence-driven instead of id-driven', () => {
     const scenario = byId('decision-gui')
     const evaluate = evidence => {
@@ -965,7 +973,7 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
   })
   it('drives classless stock Auto markers through bounded classification and controllable Router outcomes', () => {
     const scenario = byId('decision-gui')
-    for (const marker of ['GUI_AUTO_SELECTED', 'GUI_AUTO_NONE', 'GUI_AUTO_AMBIGUOUS', 'GUI_AUTO_INVALID', 'GUI_AUTO_TIMEOUT']) {
+    for (const marker of ['GUI_AUTO_SELECTED', 'GUI_AUTO_NONE', 'GUI_AUTO_AMBIGUOUS', 'GUI_AUTO_INVALID', 'GUI_AUTO_TIMEOUT', 'GUI_AUTO_EMPTY', 'GUI_AUTO_ZERO', 'GUI_AUTO_ONE', 'GUI_AUTO_PENDING', 'GUI_AUTO_INTERRUPT', 'GUI_AUTO_HIGH_RISK', 'GUI_AUTO_EXECUTION', 'GUI_SHADOW_PARITY', 'GUI_AUTO_PAGE_21']) {
       const [call] = blockEnds(run('decision-gui', userOptions(marker)))
       assert.equal(call.name, 'ask_user_question')
       const args = JSON.parse(call.arguments)
@@ -983,12 +991,17 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.deepEqual(observed.autoRouter.tools, [])
     assert.equal(observed.autoRouter.hasTemperature, false)
 
-    const route = marker => {
-      const routedQuestion = { ...question, id: `gui-auto-${marker.toLowerCase()}`, question: `GUI_AUTO_${marker}: controlled route` }
-      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion, authorizationClass: 'A' }], context: '', candidates: [{ agentId: 'ag_a', name: 'Primary' }, { agentId: 'ag_b', name: 'Secondary' }] }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
+    const primary = { agentId: 'ag_a', name: 'Primary Decision Product QA' }
+    const secondary = { agentId: 'ag_b', name: 'Secondary Empty review assistant' }
+    const route = (marker, candidates = [primary, secondary]) => {
+      const prefix = marker === 'SHADOW_PARITY' ? 'GUI_SHADOW_PARITY' : `GUI_AUTO_${marker}`
+      const routedQuestion = { ...question, id: `gui-auto-${marker.toLowerCase()}`, question: `${prefix}: controlled route` }
+      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion, authorizationClass: 'A' }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
       return { chunks: [...scenario.decideRouterRoute(options, extract(options))], observed: scenario.observe(extract(options)) }
     }
     assert.equal(JSON.parse(blockEnds(route('SELECTED').chunks)[0].text).agentId, 'ag_a')
+    assert.equal(JSON.parse(blockEnds(route('SELECTED', [secondary, primary]).chunks)[0].text).agentId, 'ag_a', 'Active Auto selection is independent of candidate order')
+    assert.equal(JSON.parse(blockEnds(route('SHADOW_PARITY', [secondary, primary]).chunks)[0].text).agentId, 'ag_b', 'Shadow disagreement target is independent of candidate order')
     assert.equal(JSON.parse(blockEnds(route('NONE').chunks)[0].text).outcome, 'none')
     const ambiguous = JSON.parse(blockEnds(route('AMBIGUOUS').chunks)[0].text)
     assert.equal(ambiguous.outcome, 'ambiguous')

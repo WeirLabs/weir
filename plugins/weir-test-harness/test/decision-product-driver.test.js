@@ -177,21 +177,49 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   const cdp = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
   const shared = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-qa.mjs'), 'utf8')
   const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  const fixtureClient = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   assert.ok(driver.includes('data-weir-decision-trigger'))
   assert.ok(driver.includes('data-decision-primary-nav'))
   assert.ok(!driver.includes('selectDecisionTab'))
   assert.ok(!/import[\s\S]*?\bsetSelector\b[\s\S]*?from '\.\/gui-qa\.mjs'/.test(driver.split("from './gui-qa.mjs'")[0]))
   assert.ok(shared.includes('data-weir-decision-trigger'))
-  for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getPartialAXTree']) assert.ok(cdp.includes(method), method)
+  assert.ok(fixtureClient.includes('activeSessionId') && fixtureClient.includes('retainedBy?.mainView'), 'the fixture reads the authoritative mainView session identity')
+  assert.ok(shared.includes('getState().activeSessionId==='), 'session creation/opening waits for the requested active root')
+  const fixtureOpen = fixtureClient.match(/async function openSession\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const openCall = fixtureOpen.indexOf('ctx.uiWorkspace.openSession(sessionId)')
+  const existingReady = fixtureOpen.indexOf("await ctx.uiWorkspace.sessions.using(currentSessionId, { source: 'decisionQA' }, async () => {})")
+  assert.ok(existingReady >= 0 && openCall > existingReady, 'the existing restored root is ready before the driver displaces it')
+  const readyCall = fixtureOpen.indexOf("await ctx.uiWorkspace.sessions.using(sessionId, { source: 'decisionQA' }, async () => {})")
+  const panelSwitch = fixtureOpen.indexOf('ctx.layout.selectPanel(null)')
+  assert.ok(openCall >= 0 && readyCall > openCall && panelSwitch > readyCall, 'uiWorkspace opening awaits ClientSessions.using reference.ready before panel switching; using owns finally release')
+  assert.ok(fixtureClient.includes('await openSession(sessionId)'), 'session creation uses the same readiness handshake')
+  assert.ok(!fixtureClient.includes('sessionBinding') && !shared.includes('sessionBindingReady'), 'the binding-presence workaround is fully removed')
+  for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getFullAXTree']) assert.ok(cdp.includes(method), method)
+  assert.ok(!cdp.includes('Accessibility.getPartialAXTree'), 'partial relatives are not a substitute for the target full subtree')
   assert.ok(fixture.includes("exec.arguments?.request_id !== 'gui_b_decide'"))
   assert.ok(!driver.includes('127.0.0.1:52011'))
+  assert.ok(cdp.includes('data-desktop-onboarding') && cdp.includes('dismissed: true'), 'startup completes and verifies the real host onboarding path')
+})
+
+test('product driver settles host credit onboarding with scoped native keyboard steps', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes('submitMarker as submitMarkerRaw'), 'the shared marker submit is wrapped without changing other callers')
+  const dismiss = driver.match(/async function dismissCreditOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(dismiss.includes('[data-desktop-onboarding="credit"]'), 'only the exact host credit page is handled')
+  assert.ok(dismiss.includes("labels: ['跳过', 'Skip']") && dismiss.includes("labels: ['我知道了', 'Got it']"), 'both real Skip and confirmation steps are covered')
+  assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(dismiss), 'host onboarding remains native-keyboard only')
+  const submit = driver.match(/async function submitMarker\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const dismissFirst = submit.indexOf('await dismissCreditOnboarding(instance)')
+  const rawSubmit = submit.indexOf('await submitMarkerRaw(instance, marker)')
+  assert.ok(dismissFirst >= 0 && rawSubmit > dismissFirst, 'the host surface is settled before marker submission')
+  assert.ok(driver.includes('consoleErrors.length === 0'), 'the zero-console-error runtime gate remains unchanged')
 })
 
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(state, 'cardState exists')
-  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===6']) assert.ok(state.includes(token), token)
+  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===7']) assert.ok(state.includes(token), token)
   const revealBody = driver.match(/async function revealCard\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(revealBody, 'revealCard exists')
   assert.match(revealBody, /Input\.dispatchMouseEvent/, 'a collapsed native process group opens through real CDP pointer input')
@@ -214,8 +242,14 @@ test('product driver keyboard helpers record native focus traversal and text ent
   const focus = driver.match(/async function keyboardFocus\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(focus, 'the shared keyboard focus helper exists')
   assert.match(focus, /instance\.cdp\.key\('Tab',/, 'focus moves only through native Tab packets')
+  assert.match(focus, /const direction = \(await keyboardSnapshot\(selector, options\)\)\.direction/, 'each action chooses its direction once')
+  assert.match(focus, /instance\.cdp\.key\('Tab', direction === 'Shift\+Tab' \? 8 : 0\)/, 'native traversal keeps that direction instead of oscillating around unindexed active elements')
+  assert.ok(!focus.includes('before.direction'), 'a per-step direction flip cannot recreate the composer Tab/Shift+Tab livelock')
   const snapshot = driver.match(/async function keyboardSnapshot\(selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(snapshot, /accessibleName/, 'each trace records the accessible name')
+  assert.ok(snapshot.includes('[role="textbox"],[contenteditable="true"]'), 'the actual composer textbox participates in initial direction calculation')
+  assert.match(snapshot, /const namePattern=\$\{JSON\.stringify\(options\.namePattern \?\? null\)\}/, 'the browser receives the serialized name pattern instead of an undefined options reference')
+  assert.ok(!/!options\.namePattern/.test(snapshot), 'no browser-side expression dereferences the Node-only options object')
   assert.match(focus, /activeElement/, 'each trace records the actual active element')
   assert.match(driver, /writeJson\(join\(out, 'keyboard-interactions\.json'\), keyboardAudits\)/, 'focus evidence is durable after every step')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(focus), 'focus never bypasses keyboard reachability')
@@ -228,6 +262,12 @@ test('product driver keyboard helpers record native focus traversal and text ent
   assert.match(fill, /instance\.cdp\.key\('a', 4\)/, 'editing selects old text with native Meta+A')
   assert.match(fill, /Input\.insertText/, 'text is inserted through the native CDP input channel')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(`${activate}\n${fill}`))
+  const select = driver.match(/async function keyboardSelect\(action, selector, value, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(select.includes('const target = current.options.find(option => option.value === value)'), 'the target comes from actual authoritative options')
+  assert.ok(select.includes('prefix += char') && select.includes('option.label.startsWith(prefix)'), 'a unique visible-label prefix drives native typeahead')
+  assert.ok(select.includes("type: 'char'") && select.includes('text: char'), 'selection uses the real-proven native char packet')
+  assert.ok(!select.includes("instance.cdp.key('Space')"), 'the failed native-popup path is not retained')
+  assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLSelectElement/.test(select), 'select remains keyboard-only without DOM value mutation')
 })
 
 test('all product write paths use native keyboard helpers instead of DOM actions', () => {
@@ -247,6 +287,7 @@ test('all product write paths use native keyboard helpers instead of DOM actions
 function fakeTransitionCdp(t) {
   const state = { scale: 1, scheme: 'light', pendingScale: null, pendingScheme: null }
   const requests = []
+  const fixture = { state, requests, axNodes: [] }
   const originalFetch = globalThis.fetch
   const originalWebSocket = globalThis.WebSocket
   t.after(() => { globalThis.fetch = originalFetch; globalThis.WebSocket = originalWebSocket })
@@ -269,14 +310,55 @@ function fakeTransitionCdp(t) {
       queueMicrotask(() => {
         if (request.method === 'Emulation.setPageScaleFactor') state.pendingScale = { value: request.params.pageScaleFactor, polls: 2 }
         if (request.method === 'Emulation.setEmulatedMedia') state.pendingScheme = { value: request.params.features[0].value, polls: 2 }
-        const result = request.method === 'Runtime.evaluate' ? { result: { value: evaluate(request.params.expression) } } : {}
+        const result = request.method === 'Runtime.evaluate' ? { result: { value: evaluate(request.params.expression) } }
+          : request.method === 'DOM.getDocument' ? { root: { nodeId: 1 } }
+            : request.method === 'DOM.querySelector' ? { nodeId: request.params.selector }
+              : request.method === 'DOM.describeNode' ? { node: { backendNodeId: request.params.nodeId === '#native' ? 43 : 42 } }
+                : request.method === 'Accessibility.getPartialAXTree' ? { nodes: fixture.axNodes.filter(node => node.backendDOMNodeId === request.params.backendNodeId) }
+                  : request.method === 'Accessibility.getFullAXTree' ? { nodes: fixture.axNodes }
+                    : {}
         this.emit('message', { data: JSON.stringify({ id: request.id, result }) })
       })
     }
     close() {}
   }
-  return { state, requests }
+  return fixture
 }
+
+test('CDP accessibility acquires each target full subtree with deep semantics only', async t => {
+  const fake = fakeTransitionCdp(t)
+  const ax = (nodeId, backendDOMNodeId, role, name, childIds = [], extra = {}) => ({ nodeId, backendDOMNodeId, role: { value: role }, name: { value: name }, childIds, ...extra })
+  fake.axNodes = [
+    ax('root', 1, 'RootWebArea', 'Desktop', ['selector', 'native', 'foreign']),
+    ax('selector', 42, 'dialog', 'Choose assistant', ['radiogroup']),
+    ax('radiogroup', 420, 'radiogroup', 'Choose assistant', ['label']),
+    ax('label', 4200, 'generic', '', ['auto']),
+    ax('auto', 42000, 'radio', 'Auto', [], { properties: [{ name: 'checked', value: { value: 'checked' } }] }),
+    ax('native', 43, 'none', null, ['native-body'], { ignored: true }),
+    ax('native-body', 430, 'generic', '', ['options']),
+    ax('options', 4300, 'group', ''),
+    ax('foreign', 44, 'button', 'Foreign control'),
+  ]
+  const cdp = await connectCdp(9495)
+  const selector = await cdp.accessibility('#selector')
+  assert.deepEqual(selector.map(node => [node.role, node.name, node.ignored]), [
+    ['dialog', 'Choose assistant', false],
+    ['radiogroup', 'Choose assistant', false],
+    ['generic', '', false],
+    ['radio', 'Auto', false],
+  ])
+  assert.equal(selector.at(-1).properties.checked, 'checked', 'the nested checked Auto radio survives projection')
+  const native = await cdp.accessibility('#native')
+  assert.deepEqual(native.map(node => [node.role, node.name, node.ignored]), [
+    ['none', null, true],
+    ['generic', '', false],
+    ['group', '', false],
+  ], 'the real pending-question option group is acquired below its ignored frame')
+  assert.ok(![...selector, ...native].some(node => node.name === 'Foreign control' || node.role === 'RootWebArea'), 'full-document acquisition remains target scoped')
+  assert.equal(fake.requests.filter(request => request.method === 'Accessibility.getFullAXTree').length, 2)
+  assert.equal(fake.requests.filter(request => request.method === 'Accessibility.getPartialAXTree').length, 0)
+  cdp.close()
+})
 
 test('CDP key emits native Enter and Space activation packets without changing navigation keys', async t => {
   const fake = fakeTransitionCdp(t)
@@ -297,6 +379,7 @@ test('CDP key emits native Enter and Space activation packets without changing n
     { type: 'rawKeyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38, modifiers: 0 },
     { type: 'keyUp', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38, modifiers: 0 },
   ])
+  assert.deepEqual(cdp.inputPackets.map(packet => packet.params), events, 'the live driver retains every native input packet verbatim')
   cdp.close()
 })
 
@@ -346,6 +429,8 @@ test('product visual audit waits for target computed colors and retains strict z
   assert.match(audit, /audit\.colors\?\.background===expectedColors\.background/)
   assert.match(audit, /audit\.colors\?\.color===expectedColors\.color/)
   assert.match(audit, /layoutProblems\(audit\)/)
+  assert.ok(audit.includes('layoutProblems(candidate).length===0') && audit.includes('candidate.colors?.background===expectedColors.background') && audit.includes('Math.abs((candidate.viewport.scale ?? 1) - zoom) < 0.01'), 'the audit waits for the same strict layout, color, and zoom predicates before the screenshot')
+  assert.ok(audit.includes('audit = candidate'), 'the latest real measurements remain available if settling fails')
   assert.match(audit, /Math\.abs\(\(audit\.viewport\.scale \?\? 1\) - zoom\) < 0\.01/)
   for (const guard of ['surfaceOverflow', 'clippedPrimary', 'unnamedControls']) assert.ok(audit.includes(guard), guard)
   const zoomLoop = driver.match(/for \(const width of \[360, 768, 1440\]\) \{\s*await instance\.cdp\.setViewport\(width, 900, true\)[\s\S]*?await instance\.cdp\.setPageZoom\(1\)/)?.[0] ?? ''
@@ -354,8 +439,8 @@ test('product visual audit waits for target computed colors and retains strict z
 
 test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
-  assert.ok(keyboard360, 'both existing keyboard flows run together at 360px')
+  const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, 'auto'\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
+  assert.ok(keyboard360, 'Agent, Auto, and Agent keyboard flows all run together at 360px')
   const longAsk = driver.indexOf('const longCase = await askLongNative(sessionId)')
   const themeAudit = driver.indexOf("for (const theme of ['light', 'dark'])", longAsk)
   const zoomAudit = driver.indexOf('await layoutAudit(`zoom200-${width}`', longAsk)
@@ -364,6 +449,9 @@ test('keyboard selector audits precede native pending and retain long-case visua
   assert.ok(!driver.slice(longAsk).includes('await keyboardSelector('), 'no selector keyboard audit is retried against the hidden composer')
   assert.ok(themeAudit > longAsk && zoomAudit > themeAudit && answer > zoomAudit, 'the same pending long Case retains every visual audit before its intended answer')
   assert.equal(driver.match(/const longCase = await askLongNative\(sessionId\)/g)?.length, 1, 'the scenario neither closes nor recreates the long Case to pass')
+  const longBody = driver.match(/async function askLongNative\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(longBody.includes("submitMarker(instance, 'GUI_LONG_NATIVE')"), 'the long Case enters through a real unresolved stock tool call')
+  assert.ok(!longBody.includes("fixture('askNative'"), 'a direct userQuestions call cannot satisfy current no-wait stock authority binding')
   assert.match(driver, /pending native question hides the composer/i, 'the ordering documents the verified host contract')
 })
 
@@ -425,18 +513,20 @@ test('long native Skip retires the leftover question without touching the closed
   assert.ok(before >= 0 && firstSkip > before && after > firstSkip, 'the authoritative record is saved before the Skip and reread after it')
   const session = finish.indexOf('await openSession(instance, sessionId)')
   const firstNativeState = finish.indexOf('await nativeState()')
-  const settledWait = finish.indexOf('window.__decisionProductLong; return state?.settled===true?state:null')
+  const settledWait = finish.indexOf('const settled = await waitFor(async () =>')
   assert.ok(session > before, 'the driver returns to the owning session after saving the authoritative record')
   assert.equal(finish.match(/await openSession\(instance, sessionId\)/g)?.length, 1, 'the driver reopens the owning session exactly once')
   assert.ok(session >= 0 && firstNativeState > session, 'the native card is only read inside the owning session, never on whatever page the inbox step left behind')
-  assert.ok(firstSkip > firstNativeState && settledWait > firstSkip && after > settledWait, 'record → openSession → nativeState → Skip → settle → reread is the exact finishing order')
+  assert.ok(firstSkip > firstNativeState && settledWait > firstSkip && after > settledWait, 'record → openSession → nativeState → Skip → persisted stock tool result → reread is the exact finishing order')
   assert.ok(!/await answerInboxWithSuggestions|await answerNative\(|skipLongNativeStep\(\)\s*\/\//.test(finish), 'the finish step only skips: it never answers or decides the Case again')
   assert.match(finish, /requireEvidence\(before\.case\.state === 'closed'/, 'the Skip only finishes an already decided Case')
   assert.match(finish, /requireEvidence\(steps\.length < \d+/, 'the Skip loop is bounded instead of unbounded')
   assert.match(finish, /const next = await nativeState\(\); return !next\.pending/, 'the driver waits for the real pending state to clear')
   assert.match(finish, /value === 'skipped' \|\| value === 'gone' \? value : null/, 'only a real click or a vanished card ends the wait')
   assert.match(finish, /if \(outcome === 'gone'\) break/, 'a card that disappears mid-wait ends the loop instead of clicking nothing')
-  assert.ok(finish.includes('window.__decisionProductLong; return state?.settled===true?state:null'), 'the native ask promise must settle before the record is compared')
+  assert.ok(finish.includes("scanSession(sessionId, 'long-native-skip-session.json')"), 'the real native session is scanned after Skip')
+  assert.ok(finish.includes("event.type === 'tool/result' && event.callId === stockCall.callId"), 'the exact stock call must have a persisted tool result before the record is compared')
+  assert.ok(!finish.includes('__decisionProductLong'), 'no direct-fixture promise state substitutes for stock tool settlement')
   assert.match(finish, /after\.case\.state === 'closed'/, 'the Case is still closed after the Skip')
   assert.match(finish, /after\.case\.revision === before\.case\.revision/, 'the revision is unchanged')
   assert.match(finish, /JSON\.stringify\(after\) === JSON\.stringify\(before\)/, 'the whole record is byte-identical across the no-op')
@@ -486,8 +576,9 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   assert.ok(disabledOrder.every((index, position) => index >= 0 && (position === 0 || index > disabledOrder[position - 1])), 'disabled open → selector evidence → Escape → native bypass → forbidden-event scan stays ordered')
 
   const beforeGlobalOff = driver.indexOf('const beforeGlobalOff = await records(sessionId)')
-  const firstStop = driver.indexOf("await stopOwned('process-1')")
+  const firstStop = driver.indexOf("await stopOwned('process-1', { crash: true })")
   assert.ok(beforeGlobalOff >= 0 && beforeGlobalOff < firstStop, 'the enabled authority captures the record count before process 1 stops')
+  assert.ok(firstStop >= 0, 'process 1 uses the explicit owned crash boundary for received-intake recovery')
 
   const enabledStart = driver.indexOf('instance = await startDesktop(true)', disabledStop)
   const enabledStop = driver.indexOf("await stopOwned('process-3')", enabledStart)
@@ -518,29 +609,93 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix, 'the original matrix is separate from preflight-only startup')
   assert.deepEqual([...matrix.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true'], 'the successful path owns enabled, disabled, then fresh enabled instances')
-  assert.deepEqual([...matrix.matchAll(/await stopOwned\('process-(\d)'\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
+  assert.deepEqual([...matrix.matchAll(/await stopOwned\('process-(\d)'(?:, \{ crash: true \})?\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
   assert.match(driver, /check\(`\$\{label\}ExactOwnedCleanup`, receipt\.pass/, 'each owned cleanup retains its named acceptance check')
   for (const log of ['desktop-enabled.log', 'desktop-disabled.log']) assert.ok(driver.includes(`'${log}'`), `${log} is included in the import scan`)
   assert.match(driver, /const importFailures = desktopLogs\.flatMap\(/, 'runtime import failures are scanned across both log modes')
 })
 
-test('product driver persists and validates all six AX evidence groups', () => {
+test('product driver preserves all legacy AX groups and derives the expanded P4 requirements', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const capture = driver.match(/async function captureAccessibility\(name, selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(capture, 'a single capture helper owns every AX collection')
-  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/)
+  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/, 'every capture owns its complete target subtree')
   assert.match(capture, /writeJson\(join\(out, 'accessibility\.json'\), accessibility\)/, 'every capture is durable before later scenario steps')
   const requirements = driver.match(/const accessibilityRequirements = \{[\s\S]*?\n\}/)?.[0] ?? ''
-  for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog']) {
+  assert.ok(requirements.includes("nativeDecision: { role: 'group', name: '' }"), 'the source-verified pending native option-group semantics stay unchanged')
+  for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog', 'nativeDecision', 'unownedDecision', 'routingReview', 'routingStatus', 'cancelDecisionDialog']) {
     assert.ok(requirements.includes(`${name}:`), `${name} has an explicit AX requirement`)
   }
-  assert.match(driver, /check\('completeAccessibilityEvidence', accessibilityProblems\.length === 0 && Object\.keys\(accessibility\)\.length === 6/)
+  assert.match(driver, /const requiredGroups = Object\.keys\(accessibilityRequirements\)/)
+  assert.match(driver, /missingGroups\.length === 0 && unexpectedGroups\.length === 0/)
+  assert.ok(!/completeAccessibilityEvidence[^\n]*=== 6/.test(driver), 'the old hardcoded six-group acceptance count is gone')
   assert.match(driver, /Object\.keys\(accessibility\)\.length/, 'the report count comes from the persisted object rather than a hard-coded claim')
   const answered = driver.indexOf("await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')")
   const opened = driver.indexOf('await openRecord(sessionId, longCase.caseId)', answered)
   const captured = driver.indexOf("await captureAccessibility('longRecord'", answered)
   const finished = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)', captured)
   assert.ok(answered >= 0 && opened > answered && captured > opened && finished > captured, 'longRecord AX reads the still-rendered authoritative record after inbox closure')
+})
+test('native AX group evidence comes from the pending multi-select stock question', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const scenario = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/src/scenarios/decision-gui.js'), 'utf8')
+  assert.match(scenario, /product-long-choice[\s\S]*?multi_select: true/, 'the real stock long question is the source-verified native group surface')
+  assert.equal(driver.match(/await captureAccessibility\('nativeDecision'/g)?.length, 1, 'single-select pending cases cannot occupy the multi-select AX slot')
+  const finish = driver.match(/async function finishLongNativeWithSkip\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const capture = finish.indexOf("await captureAccessibility('nativeDecision'")
+  const skip = finish.indexOf('await skipLongNativeStep()')
+  assert.ok(finish.includes('长中文题面'), 'the capture waits for the actual long stock question rather than a generic pending card')
+  assert.ok(capture >= 0 && skip > capture, 'the pending native group is captured before any native Skip settles it')
+  const settle = driver.match(/async function settleNativeSkip\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(!settle.includes("captureAccessibility('nativeDecision'"), 'single-select native Skip does not overwrite group evidence')
+})
+
+test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, restoration, and cleanup', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  for (const token of [
+    'runP4BeforeRestart', 'runP4AfterRestart', 'auditP4RawEvidence',
+    'freshRootsDefaultToPersistedAuto', 'restartPreservesAutoExplicitOffAndLegacyNoRowOff',
+    'emptyWhitelistAuthorityWithoutClassificationOrAttempt', 'zeroCandidatesNoRouteOrAttempt',
+    'oneCandidateDeterministicAllGates', 'stockClasslessSelectedRouteHasDerivedAAndAllGates',
+    'ambiguityHasCandidatesConflictAndNoAttempt', 'invalidOutputFailureHasNoOwnerOrAttempt',
+    'timeoutFailureHasNoOwnerOrAttempt', 'explicitConsultPrioritizesSecondaryWithoutChangingAuto',
+    'shadowOnOffIdenticalActualOutcomeAndHistoryExceptAppendOnlyDiagnostic',
+    'routingReviewFirstPageHasExactlyTwentyRealItems', 'routingPaginationAppendsRealRecordsWithoutDuplicates',
+    'interruptedReceivedIntakeRecoversWaitingWithoutRouteOrAttempt',
+    'stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage',
+    'sqliteReadModelAndRouteJoinAgreeWithoutExtraAttempts', 'everyTemporaryAgentArchivedThroughRealProfileSetState',
+    'testOwnedSelectorsAndSettingsRestored', 'allOwnedProcessesAndPortFinallyReleased', 'nativeKeyPacketsPersisted',
+  ]) assert.ok(driver.includes(token), token)
+  const hold = driver.indexOf("await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready'))")
+  const crash = driver.indexOf("await stopOwned('process-1', { crash: true })")
+  const snapshot = driver.indexOf("sqliteSnapshot('p4-interrupted-before-crash')")
+  assert.ok(hold >= 0 && crash > hold && snapshot > crash, 'the owned crash immediately follows the held Router ready marker; SQLite is read only after the process stops')
+  const heldWindow = driver.slice(hold, crash)
+  assert.ok(!heldWindow.includes('waitCase') && !heldWindow.includes('record('), 'no authority RPC can race the 150ms classification timeout before the crash')
+  const holdRoot = driver.indexOf("mkdirSync(join(out, 'it-root'), { recursive: true })")
+  assert.ok(holdRoot >= 0 && holdRoot < hold, 'the Desktop run creates the hold-marker root before any Router hold')
+  assert.match(driver, /await openIsolatedSession\(p4State\.autoSession\)\s*await submitMarker\(instance, 'GUI_AUTO_INTERRUPT'\)/, 'the held interruption uses the existing Auto session without changing the pinned session used by global-off checks')
+  assert.match(driver, /record\(state\.autoSession, 'p4-interrupted-after-restart'/, 'restart authority reads the interrupted Case in its owning Auto session')
+  assert.match(driver, /process\.kill\(mainPid, 'SIGKILL'\)/)
+  assert.match(driver, /process\.kill\(hostPid, 'SIGKILL'\)/)
+  const stopBody = driver.slice(driver.indexOf('async function stopOwned('), driver.indexOf('function saveKeyboardAudits()'))
+  const mainSignal = stopBody.indexOf("process.kill(mainPid, 'SIGKILL')")
+  const networkCollection = stopBody.indexOf('await collectNetwork(value)')
+  assert.ok(mainSignal >= 0 && networkCollection > mainSignal, 'crash signals the owned main PID before any asynchronous network collection')
+  assert.ok(stopBody.indexOf('const mainPid = value.app.pid') < mainSignal && stopBody.indexOf('const before =') < mainSignal, 'ownership identity and liveness are captured synchronously before SIGKILL')
+  assert.match(driver, /knownSessionIds\.has\(sessionId\)/, 'raw authority reads are limited to run-created sessions')
+  assert.ok(driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'settings text entry targets the actual host-namespaced input')
+  assert.match(driver, /keyboardSelect\('Change routing review window', 'select\[data-routing-window\]', '24h'\)/, 'Desktop changes to the first real non-default window before its controlled select starts loading')
+  assert.ok(!driver.includes("keyboardSelect('Change routing review window', 'select[data-routing-window]', '7d')"), 'the known intermediate-onChange 7d prefix path is not retained')
+  assert.ok(driver.includes('input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs'), 'the held interruption uses the real timeout setting input')
+  assert.match(driver, /setAutoSettings\('p4-interruption-window', \{ answerTimeoutMs: 30000 \}\)/, 'only the held interruption receives an explicit bounded longer window')
+  assert.match(driver, /setAutoSettings\('p4-restored', \{ shadow: false, answerClasses: \[\], answerTimeoutMs: 150 \}\)/, 'final real-UI restoration includes the original 150ms timeout')
+  assert.match(driver, /compareRoutingReview\(reviewSession, 'p4-routing-before-visuals', allAgain\)/, 'a fresh session mount compares to its authoritative first page')
+  assert.ok(!driver.includes("compareRoutingReview(reviewSession, 'p4-routing-before-visuals', combined)"), 'the prior expanded page is not expected after a fresh mount')
+  const agentStateBody = driver.match(/async function agentState\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const owningSession = agentStateBody.indexOf('await openIsolatedSession(sessionId, true)')
+  const agentPage = agentStateBody.indexOf('await openAgent(sessionId, agentId)')
+  assert.ok(owningSession >= 0 && agentPage > owningSession, 'Agent state actions restore their owning session before opening the management page')
 })
 
 test('P4 Desktop settings default closed and forward only explicit isolated overrides', t => {
@@ -604,7 +759,19 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   assert.ok(fixture.includes("'decisionConfig'"), 'fixture reads effective Decision settings')
   assert.ok(fixture.includes('stock-tool-calls.jsonl'), 'raw pre-Hook stock tool arguments are durable')
   assert.ok(fixture.includes('event.data'), 'session scans retain raw stock tool-call evidence')
+  assert.ok(driver.includes("typeof event.data?.arguments === 'string' ? JSON.parse(event.data.arguments) : event.data?.arguments"), 'session stock evidence parses the persisted JSON argument string without discarding the raw event')
   assert.ok(!/fixture\('askNative'[\s\S]{0,300}GUI_AUTO_/.test(driver), 'stock Auto proof never uses fixture askNative')
+  const unowned = driver.match(/async function unownedInbox\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const disclosure = unowned.indexOf("await openDisclosure(`weir-da-inbox-routes-${caseId}`)")
+  const routeReady = unowned.indexOf('const routeReady = await waitFor(')
+  const domRead = unowned.indexOf('const dom = await instance.cdp.evaluate(')
+  assert.ok(disclosure >= 0 && routeReady > disclosure && domRead > routeReady, 'inbox RouteDecision history finishes loading before its DOM is asserted')
+  for (const surface of ['card', 'inbox']) assert.ok(unowned.includes(`if (routeRequired) await openDisclosure(\`weir-da-${surface}-routes-\${caseId}\`)`), `${surface} does not require keyboard expansion of a contractually empty route history`)
+  assert.ok(!unowned.includes('weir-da-card-recovery-'), 'the redundant conversation recovery expansion is gone')
+  const recovery = unowned.indexOf('await openDisclosure(`weir-da-recovery-${caseId}`)')
+  assert.ok(recovery > routeReady && domRead > recovery, 'the actual inbox recovery controls render before no-retry is asserted')
+  const selectorOpenBody = driver.match(/async function selectorOpen\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(selectorOpenBody, /正在加载判断记录|Loading decision/i, 'selector opening waits for the real overview loading state to clear')
 })
 
 test('startup isolation contract rejects current App P0 roots ports and foreign Decision stores', async () => {
@@ -649,4 +816,7 @@ test('record route history compares authoritative count and immutable timestamps
   assert.deepEqual(lib.routeHistoryProblems(detail, dom), [])
   assert.match(lib.routeHistoryProblems(detail, { ...dom, routeHistory: dom.routeHistory.slice(1) }).join('\n'), /count/)
   assert.match(lib.routeHistoryProblems(detail, { ...dom, routeHistory: [dom.routeHistory[0], { ...dom.routeHistory[1], createdAt: '2026-01-03T00:00:00.000Z' }] }).join('\n'), /timestamp/)
+  const numeric = { case: { caseId: 'dc_numeric' }, routeDecisions: [{ createdAt: 1794282129137 }] }
+  assert.deepEqual(lib.routeHistoryProblems(numeric, { routeHistory: [{ text: 'Pinned', createdAt: '1794282129137' }] }), [], 'numeric RPC timestamps equal their DOM dateTime strings')
+  assert.match(lib.routeHistoryProblems(numeric, { routeHistory: [{ text: 'Pinned', createdAt: '1794282129138' }] }).join('\n'), /timestamp/)
 })

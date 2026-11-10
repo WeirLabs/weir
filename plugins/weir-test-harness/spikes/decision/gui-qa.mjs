@@ -133,6 +133,7 @@ function appEnvironment(paths, out, enabled) {
     WEIR_DECISION_GUI_SELECTOR_DEFAULT: process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off',
     WEIR_DECISION_GUI_SHADOW: process.env.WEIR_DECISION_GUI_SHADOW === '1' ? '1' : '0',
     WEIR_DECISION_GUI_AUTO_CLASSES: process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]',
+    WEIR_DECISION_GUI_TIMEOUT_MS: process.env.WEIR_DECISION_GUI_TIMEOUT_MS ?? '60000',
     WEIR_DECISION_PRODUCT_UX: process.env.WEIR_DECISION_PRODUCT_UX,
   }
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key]
@@ -263,6 +264,7 @@ async function createSession(instance, cwd = LANE) {
   if (!created?.sessionId) throw new Error(`Session creation failed: ${JSON.stringify(created)}`)
   await waitFor(() => composerVisible(instance), 60_000)
   await waitFor(() => instance.cdp.evaluate(decisionTriggerExpression()), 60_000)
+  await waitFor(() => instance.cdp.evaluate(`window.__decisionQA.getState().activeSessionId===${JSON.stringify(created.sessionId)}`), 60_000)
   return created
 }
 
@@ -275,6 +277,7 @@ async function openSession(instance, sessionId) {
   }, 60_000)
   await waitFor(() => composerVisible(instance), 60_000)
   await waitFor(() => instance.cdp.evaluate(decisionTriggerExpression()), 60_000)
+  await waitFor(() => instance.cdp.evaluate(`window.__decisionQA.getState().activeSessionId===${JSON.stringify(sessionId)}`), 60_000)
 }
 
 async function setInput(instance, selector, value) {
