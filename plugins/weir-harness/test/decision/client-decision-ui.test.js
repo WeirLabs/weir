@@ -497,6 +497,80 @@ test('DecisionModalFrame closes only for real backdrop clicks and blocks Escape/
   runtime.unmount()
 })
 
+test('DecisionModalFrame contains a scaled native dialog within the offset visual viewport and cleans listeners exactly', async () => {
+  const listeners = new Map([['resize', new Set()], ['scroll', new Set()]])
+  const visualViewport = {
+    width: 180, height: 450, scale: 2, offsetLeft: 0, offsetTop: 221,
+    addEventListener(type, listener) { listeners.get(type)?.add(listener) },
+    removeEventListener(type, listener) { listeners.get(type)?.delete(listener) },
+    emit(type) { for (const listener of listeners.get(type) ?? []) listener() },
+  }
+  const native = {
+    open: false,
+    style: { left: '', top: '', right: '', bottom: '', margin: '', maxWidth: '', maxHeight: '', color: 'red' },
+    showModal() { this.open = true },
+    close() { this.open = false },
+    focus() {},
+    getBoundingClientRect() {
+      const maxWidth = Number.parseFloat(this.style.maxWidth)
+      const maxHeight = Number.parseFloat(this.style.maxHeight)
+      const width = Math.min(326, Number.isFinite(maxWidth) ? maxWidth : 326)
+      const height = Math.min(444, Number.isFinite(maxHeight) ? maxHeight : 444)
+      const left = this.style.left === '' ? 17 : Number.parseFloat(this.style.left)
+      const top = this.style.top === '' ? 228 : Number.parseFloat(this.style.top)
+      return { left, top, width, height, right: left + width, bottom: top + height }
+    },
+  }
+  const originalStyle = { ...native.style }
+  const root = { style: {}, scrollTop: 0, scrollLeft: 0, offsetWidth: 360, clientWidth: 360, offsetHeight: 900, clientHeight: 900 }
+  const body = { style: {}, parentElement: root, scrollTop: 0, scrollLeft: 0, offsetWidth: 360, clientWidth: 360 }
+  const origin = { isConnected: true, parentElement: body, getClientRects: () => [1], focus() {} }
+  const view = {
+    innerWidth: 360, innerHeight: 900, visualViewport, scrollX: 0, scrollY: 0,
+    getComputedStyle: element => element.computed ?? {},
+    scrollTo(x, y) { this.scrollX = x; this.scrollY = y },
+  }
+  const runtime = makeModalReact(node => node.type === 'dialog' ? native : undefined)
+  const oldDocument = globalThis.document
+  globalThis.document = {
+    activeElement: origin, defaultView: view, documentElement: root, body,
+    querySelectorAll: () => [],
+  }
+  try {
+    const ui = await load(runtime.react)
+    runtime.render(ui.DecisionModalFrame, {
+      id: 'visual-viewport', className: 'weir-da-overlay weir-da-selector-panel',
+      returnFocus: origin, children: 'Selector',
+    })
+    assert.deepEqual(native.getBoundingClientRect(), { left: 8, top: 229, width: 164, height: 434, right: 172, bottom: 663 })
+    assert.equal(native.open, true)
+    assert.equal(listeners.get('resize').size, 1)
+    assert.equal(listeners.get('scroll').size, 1)
+
+    Object.assign(visualViewport, { width: 200, height: 400, offsetLeft: 12, offsetTop: 240 })
+    visualViewport.emit('scroll')
+    assert.deepEqual(native.getBoundingClientRect(), { left: 20, top: 248, width: 184, height: 384, right: 204, bottom: 632 })
+
+    Object.assign(visualViewport, { width: 360, height: 900, scale: 1, offsetLeft: 0, offsetTop: 0 })
+    visualViewport.emit('resize')
+    assert.deepEqual(native.getBoundingClientRect(), { left: 17, top: 228, width: 326, height: 444, right: 343, bottom: 672 })
+
+    Object.assign(visualViewport, { width: 180, height: 450, scale: 2, offsetLeft: 0, offsetTop: 221 })
+    visualViewport.emit('resize')
+    runtime.unmount()
+    assert.equal(listeners.get('resize').size, 0)
+    assert.equal(listeners.get('scroll').size, 0)
+    assert.deepEqual(native.style, originalStyle)
+    visualViewport.emit('resize')
+    visualViewport.emit('scroll')
+    assert.deepEqual(native.style, originalStyle)
+  } finally {
+    runtime.unmount()
+    if (oldDocument === undefined) delete globalThis.document
+    else globalThis.document = oldDocument
+  }
+})
+
 test('ConfirmDialog defers confirm focus until successful and failed actions settle', async () => {
   for (const outcome of ['success', 'failure']) {
     const settlements = []
