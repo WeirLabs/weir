@@ -36,14 +36,22 @@ const visualAudits = []
 const accessibility = {}
 const accessibilityRequirements = {
   selectorTrigger: { role: 'button', name: /决策助手|Decision/i },
-  selectorPanel: { role: 'dialog', name: /选择决策助手|Select.*assistant/i },
+  selectorPanel: { role: 'dialog', name: /选择决策助手|Select.*assistant/i, autoChecked: true },
   longRecord: { role: 'article', name: '' },
   snapshotPublishDialog: { role: 'dialog', name: /采用这些原则变化|Apply these principle changes/i },
   snapshotRejectDialog: { role: 'dialog', name: /放弃这个候选|Discard this candidate/i },
   snapshotRollbackDialog: { role: 'dialog', name: /恢复前序原则版本|Restore a previous principle version/i },
+  nativeDecision: { role: 'group', name: '' },
+  unownedDecision: { role: 'article', name: '' },
+  routingReview: { role: 'region', name: /路由复盘|Routing review/i },
+  routingStatus: { role: 'status', name: '', properties: { live: 'polite' } },
+  cancelDecisionDialog: { role: 'dialog', name: /取消这次判断|Cancel this decision/i },
 }
 const keyboardAudits = []
 const mutationCounts = new Map()
+const knownSessionIds = new Set()
+const processProvenance = []
+const p4Evidence = {}
 let instance = null
 let instanceNumber = 0
 let failure = null
@@ -100,10 +108,18 @@ function validateAccessibility() {
     if (!Array.isArray(nodes) || nodes.length === 0) return [`${name}: missing or empty AX tree`]
     const root = nodes.find(node => !node.ignored && node.role === expected.role)
     if (!root) return [`${name}: expected role ${expected.role}`]
-    const nameMatches = expected.name instanceof RegExp ? expected.name.test(root.name ?? '') : root.name === expected.name
-    return nameMatches ? [] : [`${name}: unexpected accessible name ${JSON.stringify(root.name)}`]
+    const problems = nameMatches ? [] : [`${name}: unexpected accessible name ${JSON.stringify(root.name)}`]
+    for (const [key, value] of Object.entries(expected.properties ?? {})) {
+      if (root.properties?.[key] !== value) problems.push(`${name}: expected ${key}=${value}`)
+    }
+    if (expected.autoChecked && !nodes.some(node => !node.ignored && node.role === 'radio' && /Auto/i.test(node.name ?? '') && (node.properties?.checked === true || node.properties?.checked === 'true' || node.properties?.checked === 'checked'))) problems.push(`${name}: checked Auto radio is missing`)
+    return problems
   })
-  check('completeAccessibilityEvidence', accessibilityProblems.length === 0 && Object.keys(accessibility).length === 6, { problems: accessibilityProblems, groups: Object.keys(accessibility) })
+  const requiredGroups = Object.keys(accessibilityRequirements)
+  const actualGroups = Object.keys(accessibility)
+  const missingGroups = requiredGroups.filter(name => !actualGroups.includes(name))
+  const unexpectedGroups = actualGroups.filter(name => !requiredGroups.includes(name))
+  check('completeAccessibilityEvidence', accessibilityProblems.length === 0 && missingGroups.length === 0 && unexpectedGroups.length === 0, { problems: accessibilityProblems, requiredGroups, actualGroups, missingGroups, unexpectedGroups })
 }
 
 function collectRuntime(value, phase) {
@@ -121,6 +137,12 @@ async function startDesktop(enabled = true) {
   value.network = { requests: new Map(), responses: new Map(), completed: new Set() }
   value.instanceNumber = instanceNumber
   const host = await value.cdp.evaluate('window.__decisionQA.fixture("hostState", {})')
+  for (const name of ['preflight.json', 'instance.json', 'host.json', 'workspace-selection.json']) {
+    if (existsSync(join(out, name))) copyFileSync(join(out, name), join(out, `process-${instanceNumber}-${name}`))
+  }
+  const provenance = JSON.parse(readFileSync(join(out, `process-${instanceNumber}-preflight.json`), 'utf8'))
+  processProvenance.push(provenance)
+  check(`process${instanceNumber}StartupProvenance`, provenance.pass && provenance.root === root && provenance.owner?.root === root && provenance.portProbe?.freeBeforeSpawn === true && provenance.processArgs.includes(`--remote-debugging-port=${PORT}`), { mainPid: value.app.pid, hostPid: host.pid, databaseExists: provenance.databaseExists })
   writeJson(join(out, `process-${instanceNumber}.json`), { mainPid: value.app.pid, host, root, port: PORT, enabled })
   check(`process${instanceNumber}Isolated`, host.profile?.home === join(root, 'home') && host.profile?.name === 'desktop' && (host.pid === value.app.pid || host.parentPid === value.app.pid), { mainPid: value.app.pid, hostPid: host.pid })
   return value
@@ -165,6 +187,7 @@ async function rpc(sessionId, phase, method, args = {}) {
     throw new Error(`Direct Decision RPC is read-only; refused ${method}`)
   }
   const transport = await instance.cdp.evaluate(`window.__decisionQA.decision(${JSON.stringify(method)}, ${JSON.stringify({ sessionId, ...args })})`)
+  requireEvidence(knownSessionIds.has(sessionId), `Decision read ${method} targets only a session created by this isolated run`)
   authoritativeRpc.push({ phase, method, args: { sessionId, ...args }, transport })
   writeJson(join(out, 'authoritative-rpc.json'), authoritativeRpc)
   const service = transport?.value
@@ -184,7 +207,7 @@ async function expectMutation(method, args) {
   return entry
 }
 
-async function stopOwned(label) {
+async function stopOwned(label, { crash = false } = {}) {
   const value = instance
   if (!value) return null
   await collectNetwork(value).catch(() => {})
@@ -194,30 +217,48 @@ async function stopOwned(label) {
     ?? (existsSync(join(out, 'host.json')) ? JSON.parse(readFileSync(join(out, 'host.json'), 'utf8')) : null)
   const hostPid = host?.pid
   const before = { main: processInfo(mainPid), host: processInfo(hostPid) }
-  const base = await stopInstance(value, join(out, `${label}-cleanup-base.json`))
+  let base
   let hostSignal = hostPid === mainPid ? 'covered-by-main' : 'not-needed'
-  if (hostPid && hostPid !== mainPid && processInfo(hostPid)?.alive) {
-    const current = processInfo(hostPid)
-    if (!before.host?.alive || current.signature !== before.host.signature || host.parentPid !== mainPid || host.profile?.home !== join(root, 'home')) throw new Error(`Refusing to signal changed or unowned Host PID ${hostPid}`)
-    process.kill(hostPid, 'SIGTERM')
-    hostSignal = 'SIGTERM'
-    try { await waitFor(() => !processInfo(hostPid)?.alive, 5000) } catch {
-      const stillOwned = processInfo(hostPid)
-      if (stillOwned?.alive && stillOwned.signature === before.host.signature) {
+  if (crash) {
+    const expectedData = join(root, 'electron-data')
+    if (!before.main?.alive || !before.main.stdout.includes(`--user-data-dir=${expectedData}`) || !before.main.stdout.includes(`--remote-debugging-port=${PORT}`)) throw new Error(`Refusing to crash changed or unowned main PID ${mainPid}`)
+    process.kill(mainPid, 'SIGKILL')
+    if (hostPid && hostPid !== mainPid && before.host?.alive) {
+      const current = processInfo(hostPid)
+      if (current?.alive && current.signature === before.host.signature && host.parentPid === mainPid && host.profile?.home === join(root, 'home')) {
         process.kill(hostPid, 'SIGKILL')
-        hostSignal = 'SIGTERM,SIGKILL'
-        await waitFor(() => !processInfo(hostPid)?.alive, 5000)
+        hostSignal = 'SIGKILL'
+      }
+    }
+    value.cdp?.close()
+    value.log.end()
+    base = { spawnedPid: mainPid, hostPid, hostParentPid: host?.parentPid, expectedHome: join(root, 'home'), hostHome: host?.profile?.home, hostProfile: host?.profile?.name, port: PORT, signalCode: 'SIGKILL', stopped: true, crash: true }
+    writeJson(join(out, `${label}-cleanup-base.json`), base)
+  } else {
+    base = await stopInstance(value, join(out, `${label}-cleanup-base.json`))
+    if (hostPid && hostPid !== mainPid && processInfo(hostPid)?.alive) {
+      const current = processInfo(hostPid)
+      if (!before.host?.alive || current.signature !== before.host.signature || host.parentPid !== mainPid || host.profile?.home !== join(root, 'home')) throw new Error(`Refusing to signal changed or unowned Host PID ${hostPid}`)
+      process.kill(hostPid, 'SIGTERM')
+      hostSignal = 'SIGTERM'
+      try { await waitFor(() => !processInfo(hostPid)?.alive, 5000) } catch {
+        const stillOwned = processInfo(hostPid)
+        if (stillOwned?.alive && stillOwned.signature === before.host.signature) {
+          process.kill(hostPid, 'SIGKILL')
+          hostSignal = 'SIGTERM,SIGKILL'
+          await waitFor(() => !processInfo(hostPid)?.alive, 5000)
+        }
       }
     }
   }
-  await waitFor(async () => await portFree() && !portListeners(), 10_000)
+  await waitFor(async () => await portFree() && !portListeners() && !processInfo(mainPid)?.alive && !processInfo(hostPid)?.alive, 10_000)
   const after = { main: processInfo(mainPid), host: processInfo(hostPid) }
   const receipt = { ...base, label, port: PORT, root, mainPid, hostPid, hostSignal, before, after, mainStopped: !after.main?.alive, hostStopped: !after.host?.alive, portReleased: await portFree() && !portListeners() }
   receipt.pass = receipt.mainStopped && receipt.hostStopped && receipt.portReleased
   cleanups.push(receipt)
   writeJson(join(out, `${label}-exact-pid-cleanup.json`), receipt)
   instance = null
-  check(`${label}ExactOwnedCleanup`, receipt.pass, { mainPid, hostPid, hostSignal, portReleased: receipt.portReleased })
+  check(`${label}ExactOwnedCleanup`, receipt.pass, { mainPid, hostPid, hostSignal, portReleased: receipt.portReleased, crash })
   return receipt
 }
 
@@ -229,6 +270,7 @@ async function keyboardSnapshot(selector, options = {}) {
   return instance.cdp.evaluate(`(() => {
     const scope=${JSON.stringify(options.scope ?? null)}
     const labels=${JSON.stringify(options.labels ?? null)}
+    const namePattern=${JSON.stringify(options.namePattern ?? null)}
     const describe=el=>{
       if(!el)return null
       const labelled=(el.getAttribute?.('aria-labelledby')??'').split(/\\s+/).filter(Boolean).map(id=>document.getElementById(id)?.textContent??'').join(' ')
@@ -240,7 +282,10 @@ async function keyboardSnapshot(selector, options = {}) {
     const root=scope?document.querySelector(scope):document
     if(!root)return {ready:false,reached:false,active,direction:'Tab'}
     const candidates=[...root.querySelectorAll(${JSON.stringify(selector)})]
-    const target=candidates.find(el=>el.offsetParent!==null&&!el.disabled&&(!labels||labels.includes(el.textContent.trim())))
+    const target=candidates.find(el=>{
+      const named=describe(el)?.accessibleName??''
+      return el.offsetParent!==null&&!el.disabled&&(!labels||labels.includes(el.textContent.trim())||labels.includes(named))&&(!namePattern||new RegExp(namePattern,'i').test(named))
+    })
     if(!target)return {ready:false,reached:false,active,direction:'Tab'}
     const items=[...document.querySelectorAll('button,input,textarea,select,a[href],[tabindex],[role="button"],[role="radio"]')].filter(el=>el.offsetParent!==null&&!el.disabled&&el.tabIndex>=0)
     const activeIndex=items.indexOf(document.activeElement)
@@ -293,6 +338,37 @@ async function keyboardFill(action, selector, value) {
   await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`), 30_000)
   audit.input = { method: 'Input.insertText', selectAll: 'Meta+A', value, activeElement: (await keyboardSnapshot(selector)).active }
   saveKeyboardAudits()
+}
+async function keyboardSelect(action, selector, value, options = {}) {
+  const audit = await keyboardFocus(action, selector, options)
+  audit.selection = { value, steps: [] }
+  for (let step = 0; step < 20; step += 1) {
+    const current = await instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); return el?{value:el.value,values:[...el.options].map(option=>option.value)}:null })()`)
+    requireEvidence(current?.values.includes(value), `${action} exposes the authoritative target option`)
+    if (current.value === value) { saveKeyboardAudits(); return audit }
+    const from = current.values.indexOf(current.value)
+    const to = current.values.indexOf(value)
+    const key = to > from ? 'ArrowDown' : 'ArrowUp'
+    await instance.cdp.key(key)
+    await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value!==${JSON.stringify(current.value)}`), 10_000)
+    audit.selection.steps.push({ from: current.value, key })
+    saveKeyboardAudits()
+  }
+  throw new Error(`Keyboard select did not reach ${value}: ${action}`)
+}
+
+async function newIsolatedSession(label, cwd = LANE) {
+  const created = await createSession(instance, cwd)
+  knownSessionIds.add(created.sessionId)
+  writeJson(join(out, `${label}-session.json`), created)
+  return created
+}
+
+async function openIsolatedSession(sessionId, allowNative = false) {
+  requireEvidence(knownSessionIds.has(sessionId), 'only a session created by this run can be opened')
+  if (!allowNative) return openSession(instance, sessionId)
+  await instance.cdp.evaluate(`window.__decisionQA.openSession(${JSON.stringify(sessionId)})`)
+  return waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]'))`), 60_000)
 }
 
 async function keyboardKey(action, key, details = {}) {
@@ -406,6 +482,35 @@ async function decisionConfig(phase) {
   writeJson(join(out, `decision-config-${phase}.json`), value)
   return value
 }
+async function openDecisionSettings() {
+  await instance.cdp.setViewport(1440)
+  await keyboardActivate('Open account menu', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
+  await keyboardActivate('Open Settings', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
+  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
+  await keyboardActivate('Open Weir settings', 'button', { scope: '[role="dialog"]', labels: ['Weir'] })
+  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("Auto Shadow")'), 60_000)
+}
+
+async function setAutoSettings(phase, { shadow, answerClasses }) {
+  await openDecisionSettings()
+  if (shadow !== undefined) {
+    const selector = '[aria-label="Auto Shadow 诊断"],[aria-label="Auto Shadow diagnostics"]'
+    const current = await instance.cdp.evaluate(`(() => { const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(item=>item.offsetParent!==null); return el?{checked:el.getAttribute('aria-checked')==='true'||el.checked===true}:null })()`)
+    requireEvidence(current, 'the real Auto Shadow settings control is visible')
+    if (current.checked !== shadow) await keyboardActivate(`Set Shadow ${shadow ? 'on' : 'off'}`, selector, { key: 'Space' })
+  }
+  if (answerClasses !== undefined) {
+    const value = JSON.stringify(answerClasses)
+    await keyboardFill('Edit Auto answer-class whitelist', 'input[aria-label="Auto 可回答类别（JSON）"],textarea[aria-label="Auto 可回答类别（JSON）"],input[aria-label="Auto answer classes (JSON)"],textarea[aria-label="Auto answer classes (JSON)"]', value)
+  }
+  await keyboardActivate('Save Decision Auto settings', '[data-save-bar] button', { namePattern: '^(保存|Save)' })
+  const expected = value => (shadow === undefined || value.effective?.decisionAgentAutoShadow === shadow) && (answerClasses === undefined || JSON.stringify(value.effective?.decisionAgentAutoAnswerClasses) === JSON.stringify(answerClasses))
+  const config = await waitFor(async () => { const value = await decisionConfig(phase); return expected(value) ? value : null }, 30_000)
+  await shot(`settings-${phase}`)
+  await keyboardKey('Close settings after authority reread', 'Escape', { phase })
+  await waitFor(() => instance.cdp.evaluate('!document.body.innerText.includes("Auto Shadow 诊断") && !document.body.innerText.includes("Auto Shadow diagnostics")'), 30_000)
+  return config
+}
 
 async function routingReviewDom() {
   return instance.cdp.evaluate(`(() => {
@@ -416,6 +521,7 @@ async function routingReviewDom() {
       window:root.querySelector('select[data-routing-window]')?.value??null,
       status:root.querySelector('[data-routing-status]')?.textContent??'',
       text:root.innerText,
+      summary:Object.fromEntries([...root.querySelectorAll('[data-metric-key]')].map(row=>[row.getAttribute('data-metric-key'),row.querySelector('dd')?.textContent??''])),
       items:[...root.querySelectorAll('article[data-routing-case]')].map(article=>({caseId:article.getAttribute('data-routing-case'),text:article.innerText,recordCaseId:article.querySelector('[data-routing-record]')?.getAttribute('data-routing-record')??null})),
       loadMore:more?{disabled:more.disabled,busy:more.getAttribute('aria-busy')}:null,
     }
@@ -427,6 +533,9 @@ async function compareRoutingReview(sessionId, phase, authority) {
   const problems = []
   if (dom.window !== authority.window) problems.push(`window ${dom.window} != ${authority.window}`)
   if (!dom.status.includes(String(authority.items.length))) problems.push('routing status omits the authoritative shown count')
+  for (const [key, value] of Object.entries(authority.summary ?? {})) {
+    if (dom.summary?.[key] !== String(value)) problems.push(`routing summary ${key} ${dom.summary?.[key]} != ${value}`)
+  }
   authority.items.forEach((item, index) => {
     const rendered = dom.items[index]
     if (rendered?.caseId !== item.caseId) problems.push(`routing case ${index} differs`)
@@ -465,7 +574,7 @@ async function cardState(caseId) {
       const content=[...card.children]
       const formIndex=content.indexOf(form)
       const secondary=content.filter(el=>el.classList.contains('weir-da-disclosure')||el.classList.contains('weir-da-feedback-editor')||el.matches('button.weir-da-button'))
-      return secondary.length===6&&secondary.every(el=>content.indexOf(el)>formIndex)
+      return secondary.length===7&&secondary.every(el=>content.indexOf(el)>formIndex)
     })
     return {cards:cards.length,forms,formImmediatelyAfterHeader,formBeforeSecondary,recordAnswerSummaries:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-record-answers').length,0),suggestionReviews:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-suggestion-review').length,0),nativeHints:cards.reduce((sum,card)=>sum+card.querySelectorAll('[data-native-answer]').length,0),text:cards.map(card=>card.innerText).join('\\n---\\n')}
   })()`)
@@ -498,6 +607,7 @@ async function revealCard(caseId) {
 }
 
 async function scanSession(sessionId, path) {
+  requireEvidence(knownSessionIds.has(sessionId), 'session scans are limited to run-created sessions')
   const scan = await instance.cdp.evaluate(`window.__decisionQA.fixture('scanSession', ${JSON.stringify({ sessionId })})`)
   writeJson(join(out, path), scan)
   return scan
@@ -818,6 +928,416 @@ async function finishLongNativeWithSkip(sessionId, caseId) {
   await shot('18b-long-native-skip-closed')
   check('longNativeSkipKeepsClosedRecord', after.case.state === 'closed' && after.case.revision === before.case.revision && JSON.stringify(after) === JSON.stringify(before), { caseId, revision: after.case.revision, skipSteps: steps.length, nativeSettled: settled.settled, nativeError: settled.error ?? null })
 }
+async function planReviewState() {
+  return instance.cdp.evaluate(`(() => { const pending=[...document.querySelectorAll('[data-plan-review-key]')].find(el=>el.offsetParent!==null); return {pending:Boolean(pending),key:pending?.getAttribute('data-plan-review-key')??null,text:pending?.innerText??'',actions:pending?[...pending.querySelectorAll('button')].filter(el=>el.offsetParent!==null).map(el=>el.textContent.trim()):[]} })()`)
+}
+
+async function answerPlanReview() {
+  const state = await waitFor(async () => { const value=await planReviewState(); return value.pending?value:null }, 30_000)
+  await keyboardActivate('Accept native plan review', 'button', { scope: `[data-plan-review-key=${JSON.stringify(state.key)}]`, labels: ['同意执行', 'Accept', 'Approve'] })
+}
+
+async function settleNativeSkip(sessionId, caseId, label) {
+  const before = await record(sessionId, `${label}-skip-before`, caseId)
+  requireEvidence(before.case.state === 'closed', `${label} native Skip follows an already closed record`)
+  await openIsolatedSession(sessionId, true)
+  const steps = []
+  let native = await nativeState()
+  if (native.pending && !accessibility.nativeDecision) await captureAccessibility('nativeDecision', `[data-question-key=${JSON.stringify(native.key)}]`)
+  while (native.pending) {
+    requireEvidence(steps.length < 4, `${label} native Skip stays bounded`)
+    const previous = native.text
+    const outcome = await waitFor(async () => { const value=await skipLongNativeStep(); return value==='skipped'||value==='gone'?value:null }, 30_000)
+    if (outcome === 'gone') break
+    await waitFor(async () => { const next=await nativeState(); return !next.pending||next.text!==previous }, 30_000)
+    steps.push(previous)
+    native = await nativeState()
+  }
+  const after = await record(sessionId, `${label}-skip-after`, caseId)
+  writeJson(join(out, `${label}-native-skip.json`), { caseId, steps, before: before.case, after: after.case })
+  check(`${label}NativeSkipIsNoOp`, JSON.stringify(after) === JSON.stringify(before), { caseId, skipSteps: steps.length })
+}
+
+async function unownedInbox(sessionId, caseId, label, routeRequired = true) {
+  await openIsolatedSession(sessionId, true)
+  const authority = await record(sessionId, `${label}-unowned`, caseId)
+  await waitFor(async () => { const value=await cardState(caseId); return value.cards===1?value:null }, 30_000)
+  await openDisclosure(`weir-da-card-routes-${caseId}`)
+  await openDisclosure(`weir-da-card-recovery-${caseId}`)
+  const card = await instance.cdp.evaluate(`(() => { const root=document.querySelector('[data-weir-decision-card=${JSON.stringify(caseId)}]'); return {text:root.innerText,routeText:root.querySelector('.weir-da-route-history')?.innerText??'',retry:root.querySelectorAll('[data-action="retry"]').length,feedback:root.querySelectorAll('[data-feedback]').length,nativeHint:root.querySelectorAll('[data-native-answer]').length} })()`)
+  check(`${label}UnownedConversationRouteHistory`, card.retry === 0 && card.feedback === 0 && card.nativeHint === 1 && (!routeRequired || card.routeText.trim().length > 0) && (routeRequired || authority.routeDecisions.length === 0), { caseId, card })
+  await openPage('inbox')
+  const article = `article[data-case-id=${JSON.stringify(caseId)}]`
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(article)}))`), 30_000)
+  await openDisclosure(`weir-da-inbox-routes-${caseId}`)
+  const dom = await instance.cdp.evaluate(`(() => { const root=document.querySelector(${JSON.stringify(article)}); return {text:root.innerText,retry:root.querySelectorAll('[data-action="retry"]').length,feedback:root.querySelectorAll('[data-feedback]').length,routeText:root.querySelector('.weir-da-route-history')?.innerText??'',forms:root.querySelectorAll('form.weir-da-answers').length} })()`)
+  if (!accessibility.unownedDecision) await captureAccessibility('unownedDecision', article)
+  check(`${label}UnownedTruthfulUi`, authority.case.agentId === null && authority.case.state === 'awaiting_user' && authority.attempts.length === 0 && dom.retry === 0 && dom.feedback === 0 && dom.forms === 1 && (!routeRequired || dom.routeText.trim().length > 0) && (routeRequired || authority.routeDecisions.length === 0) && /尚未选择助手|No assistant selected/i.test(dom.text), { caseId, dom, awaitingReason: authority.case.awaitingReason, routeRequired })
+  return { authority, dom, card }
+}
+
+async function answerUnownedInbox(sessionId, caseId, label, answer) {
+  await unownedInbox(sessionId, caseId, label)
+  const article = `article[data-case-id=${JSON.stringify(caseId)}]`
+  await keyboardActivate(`Answer unowned ${label}`, 'input[type="radio"]', { scope: article, key: 'Space', labels: [answer] })
+  await keyboardActivate(`Submit unowned ${label}`, 'button[type="submit"]', { scope: article })
+  const closed = await waitFor(async () => { const value=await record(sessionId, `${label}-answered`, caseId); return value.case.state==='closed'?value:null }, 30_000)
+  await expectMutation('decide', { sessionId, caseId, answers: closed.case.decision.answers })
+  check(`${label}DirectAnswerHasNoAgentEvidence`, closed.case.agentId === null && closed.case.closing === 'escalated' && closed.case.decision?.kind === 'user_decision' && closed.attempts.length === 0 && closed.feedback.length === 0, { caseId, answers: closed.case.decision.answers })
+  await openRecord(sessionId, caseId)
+  await compareRecord(sessionId, `${label}-unowned-record`, caseId, true)
+  const forbidden = await instance.cdp.evaluate(`(() => { const root=document.querySelector('[data-record-detail=${JSON.stringify(caseId)}]'); return {retry:root.querySelectorAll('[data-action="retry"]').length,feedback:root.querySelectorAll('[data-feedback]').length} })()`)
+  check(`${label}ClosedUnownedHasNoRetryOrFeedback`, forbidden.retry === 0 && forbidden.feedback === 0, forbidden)
+  await settleNativeSkip(sessionId, caseId, label)
+  return closed
+}
+
+async function cancelUnownedInbox(sessionId, caseId, label, routeRequired = true) {
+  await unownedInbox(sessionId, caseId, label, routeRequired)
+  const article = `article[data-case-id=${JSON.stringify(caseId)}]`
+  await openDisclosure(`weir-da-recovery-${caseId}`)
+  await keyboardActivate(`Request cancel ${label}`, 'button', { scope: article, labels: ['取消', 'Cancel'] })
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-cancel-decision"))'), 30_000)
+  if (!accessibility.cancelDecisionDialog) await captureAccessibility('cancelDecisionDialog', '#weir-da-cancel-decision')
+  await keyboardActivate(`Confirm cancel ${label}`, '#weir-da-cancel-decision .weir-da-actions button:last-child')
+  const closed = await waitFor(async () => { const value=await record(sessionId, `${label}-cancelled`, caseId); return value.case.state==='closed'?value:null }, 30_000)
+  await expectMutation('cancel', { sessionId, caseId })
+  check(`${label}ExplicitCancelHasNoAttemptOrEvidence`, closed.case.agentId === null && closed.case.closing === 'cancelled' && closed.attempts.length === 0 && closed.feedback.length === 0, { caseId })
+  await settleNativeSkip(sessionId, caseId, label)
+  return closed
+}
+
+async function reassignUnownedInbox(sessionId, caseId, label, agentId) {
+  await unownedInbox(sessionId, caseId, label)
+  const article = `article[data-case-id=${JSON.stringify(caseId)}]`
+  await openDisclosure(`weir-da-recovery-${caseId}`)
+  await keyboardSelect(`Choose reassign target ${label}`, `${article} select[aria-label="改派"],${article} select[aria-label="Reassign"]`, agentId)
+  await keyboardActivate(`Confirm reassign ${label}`, 'button', { scope: article, labels: ['改派', 'Reassign'] })
+  const closed = await waitFor(async () => { const value=await record(sessionId, `${label}-reassigned`, caseId); return value.case.state==='closed'?value:null }, 60_000)
+  await expectMutation('reassign', { sessionId, caseId, agentId })
+  const modes = closed.routeDecisions.map(route => route.mode)
+  check(`${label}ExplicitReassignAppendsAndEvaluatesOnce`, closed.case.agentId === agentId && closed.case.closing === 'answered' && closed.attempts.length === 1 && modes.includes('manual_reassign') && modes.filter(mode => mode === 'manual_reassign').length === 1, { caseId, modes, attempts: closed.attempts.length })
+  await openRecord(sessionId, caseId)
+  await compareRecord(sessionId, `${label}-reassigned-record`, caseId, true)
+  await settleNativeSkip(sessionId, caseId, label)
+  return closed
+}
+async function runP4BeforeRestart(sessionId, primary, secondary) {
+  const initialConfig = await decisionConfig('p4-initial')
+  check('p4InitialConfigFreshAutoShadowOffEmptyWhitelist', initialConfig.effective?.decisionAgentSelectorDefault === 'auto' && initialConfig.effective?.decisionAgentAutoShadow === false && JSON.stringify(initialConfig.effective?.decisionAgentAutoAnswerClasses) === '[]' && initialConfig.effective?.decisionAgentAnswerTimeoutMs === 150, initialConfig.effective)
+  const autoSession = (await newIsolatedSession('p4-auto')).sessionId
+  const explicitOffSession = (await newIsolatedSession('p4-explicit-off')).sessionId
+  const shadowControlSession = (await newIsolatedSession('p4-shadow-control')).sessionId
+  const shadowObservedSession = (await newIsolatedSession('p4-shadow-observed')).sessionId
+  const pendingSession = (await newIsolatedSession('p4-pending')).sessionId
+  const foreignWorkspace = join(root, 'foreign-workspace')
+  mkdirSync(foreignWorkspace, { recursive: true })
+  const foreignSession = (await newIsolatedSession('p4-foreign', foreignWorkspace)).sessionId
+  const freshSessions = [autoSession, explicitOffSession, shadowControlSession, shadowObservedSession, pendingSession, foreignSession]
+  const freshOverviews = {}
+  for (const id of freshSessions) {
+    const overview = await rpc(id, 'p4-fresh-default', 'overview')
+    freshOverviews[id] = overview.selector
+  }
+  check('freshRootsDefaultToPersistedAuto', Object.values(freshOverviews).every(selector => selectorMatches(selector, 'auto')), freshOverviews)
+  await openIsolatedSession(explicitOffSession)
+  await selectorChoose(explicitOffSession, 'off')
+  const explicitOff = sqliteSnapshot('p4-explicit-off')
+  check('explicitOffPersistsRowDespiteAutoDefault', explicitOff.rows.selectors.some(row => row.root_session_id === explicitOffSession && row.mode === 'off' && row.agent_id === null), explicitOff.rows.selectors)
+  await openIsolatedSession(foreignSession)
+  const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE · never route', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY must never enter the main Router pack.')
+  await openIsolatedSession(autoSession)
+
+  await submitMarker(instance, 'GUI_AUTO_EMPTY')
+  const emptyPending = await waitCase(autoSession, 'gui-auto-empty', value => value.state === 'awaiting_user')
+  const emptyWaiting = await record(autoSession, 'p4-empty-waiting', emptyPending.caseId)
+  check('emptyWhitelistAuthorityWithoutClassificationOrAttempt', emptyWaiting.case.agentId === null && emptyWaiting.case.awaitingReason === 'authority' && emptyWaiting.attempts.length === 0 && emptyWaiting.routeDecisions.length === 1 && emptyWaiting.routeDecisions[0].reason === 'admission:authority', { caseId: emptyPending.caseId, route: emptyWaiting.routeDecisions[0] })
+  await shot('p4-empty-whitelist-native')
+  await answerNative('Native empty')
+  p4Evidence.empty = await waitCase(autoSession, 'gui-auto-empty', value => value.state === 'closed')
+  await setAutoSettings('p4-allow-a', { answerClasses: ['A'] })
+  await openIsolatedSession(autoSession)
+  await selectorOpen()
+  const autoCopy = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  check('autoSelectorShowsRealAllowedAAndShadowCopy', /Auto/.test(autoCopy) && /A/.test(autoCopy) && /Shadow/.test(autoCopy) && !/白名单为空|whitelist is empty/i.test(autoCopy), autoCopy)
+  await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
+  await keyboardKey('Close Auto settings proof selector', 'Escape')
+
+  const beforeNativeAuthority = await records(autoSession)
+  for (const [marker, answer] of [['GUI_C_APPROVAL', 'Approve'], ['GUI_AUTO_HIGH_RISK', 'Approve high risk'], ['GUI_AUTO_EXECUTION', 'Grant execution']]) {
+    await submitMarker(instance, marker)
+    await waitFor(async () => (await nativeState()).pending, 30_000)
+    await shot(`p4-native-${marker.toLowerCase()}`)
+    await answerNative(answer)
+    await waitFor(async () => !(await nativeState()).pending, 30_000)
+  }
+  await submitMarker(instance, 'GUI_C_PLAN')
+  await answerPlanReview()
+  await waitFor(async () => !(await planReviewState()).pending, 30_000)
+  const afterNativeAuthority = await records(autoSession)
+  check('approvalPlanHighRiskExecutionStayNativeWithoutCases', afterNativeAuthority.records.length === beforeNativeAuthority.records.length, { before: beforeNativeAuthority.records.length, after: afterNativeAuthority.records.length })
+
+  await agentState(autoSession, primary.agentId, 'disabled')
+  await agentState(autoSession, secondary.agentId, 'disabled')
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_ZERO')
+  const zeroPending = await waitCase(autoSession, 'gui-auto-zero', value => value.state === 'awaiting_user')
+  const zeroWaiting = await record(autoSession, 'p4-zero-waiting', zeroPending.caseId)
+  check('zeroCandidatesNoRouteOrAttempt', zeroWaiting.case.agentId === null && zeroWaiting.case.awaitingReason === 'no_route' && zeroWaiting.attempts.length === 0 && zeroWaiting.routeDecisions[0]?.reason === 'none:no_candidates', { caseId: zeroPending.caseId })
+  await answerNative('Native zero')
+  p4Evidence.zero = await waitCase(autoSession, 'gui-auto-zero', value => value.state === 'closed')
+  await agentState(autoSession, primary.agentId, 'enabled')
+  await agentState(autoSession, secondary.agentId, 'enabled')
+
+  await agentState(autoSession, secondary.agentId, 'disabled')
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_ONE')
+  const oneSummary = await waitCase(autoSession, 'gui-auto-one', value => value.state === 'closed')
+  const one = await record(autoSession, 'p4-one', oneSummary.caseId)
+  check('oneCandidateDeterministicAllGates', one.case.agentId === primary.agentId && one.case.closing === 'answered' && one.routeDecisions[0]?.reason === 'deterministic:single_candidate' && one.attempts.length === 1 && ['g1','g2','g3','g4','g5','g6','g7'].every(gate => one.attempts[0].gates[gate] === true), { caseId: one.case.caseId, route: one.routeDecisions[0] })
+  p4Evidence.one = one
+  await agentState(autoSession, secondary.agentId, 'enabled')
+
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_SELECTED')
+  const selectedSummary = await waitCase(autoSession, 'gui-auto-selected', value => value.state === 'closed')
+  const selected = await record(autoSession, 'p4-selected', selectedSummary.caseId)
+  check('stockClasslessSelectedRouteHasDerivedAAndAllGates', selected.case.agentId === primary.agentId && selected.case.closing === 'answered' && selected.case.request.questions[0].authorizationClass === 'A' && selected.case.request.questions[0].authorizationClassSource === 'auto_classifier' && selected.routeDecisions[0]?.mode === 'auto' && selected.routeDecisions[0]?.chosen === primary.agentId && selected.attempts.length === 1 && ['g1','g2','g3','g4','g5','g6','g7'].every(gate => selected.attempts[0].gates[gate] === true), { caseId: selected.case.caseId, route: selected.routeDecisions[0] })
+  p4Evidence.selected = selected
+  await shot('p4-stock-classless-selected')
+  await openRecord(autoSession, selected.case.caseId)
+  await compareRecord(autoSession, 'p4-selected-record', selected.case.caseId, true)
+
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_NONE')
+  const nonePending = await waitCase(autoSession, 'gui-auto-none', value => value.state === 'awaiting_user')
+  p4Evidence.none = await answerUnownedInbox(autoSession, nonePending.caseId, 'p4-none', 'Native none')
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_AMBIGUOUS')
+  const ambiguousPending = await waitCase(autoSession, 'gui-auto-ambiguous', value => value.state === 'awaiting_user')
+  const ambiguousWaiting = await record(autoSession, 'p4-ambiguous-waiting', ambiguousPending.caseId)
+  check('ambiguityHasCandidatesConflictAndNoAttempt', ambiguousWaiting.case.agentId === null && ambiguousWaiting.case.awaitingReason === 'route_ambiguous' && ambiguousWaiting.attempts.length === 0 && ambiguousWaiting.routeDecisions[0]?.ambiguity?.candidates?.length === 2 && ambiguousWaiting.routeDecisions[0]?.ambiguity?.conflict?.length > 0, { caseId: ambiguousPending.caseId, route: ambiguousWaiting.routeDecisions[0] })
+  p4Evidence.ambiguous = await reassignUnownedInbox(autoSession, ambiguousPending.caseId, 'p4-ambiguous', secondary.agentId)
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_INVALID')
+  const invalidPending = await waitCase(autoSession, 'gui-auto-invalid', value => value.state === 'awaiting_user')
+  const invalidWaiting = await record(autoSession, 'p4-invalid-waiting', invalidPending.caseId)
+  check('invalidOutputFailureHasNoOwnerOrAttempt', invalidWaiting.case.agentId === null && invalidWaiting.case.awaitingReason === 'no_route' && invalidWaiting.attempts.length === 0 && invalidWaiting.routeDecisions[0]?.reason === 'failure:invalid_output', { caseId: invalidPending.caseId })
+  p4Evidence.invalid = await cancelUnownedInbox(autoSession, invalidPending.caseId, 'p4-invalid')
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_TIMEOUT')
+  const timeoutPending = await waitCase(autoSession, 'gui-auto-timeout', value => value.state === 'awaiting_user')
+  const timeoutWaiting = await record(autoSession, 'p4-timeout-waiting', timeoutPending.caseId)
+  check('timeoutFailureHasNoOwnerOrAttempt', timeoutWaiting.case.agentId === null && timeoutWaiting.case.awaitingReason === 'no_route' && timeoutWaiting.attempts.length === 0 && timeoutWaiting.routeDecisions[0]?.reason === 'failure:timeout', { caseId: timeoutPending.caseId })
+  p4Evidence.timeout = await cancelUnownedInbox(autoSession, timeoutPending.caseId, 'p4-timeout')
+
+  writeJson(join(out, 'auto-control.json'), { explicitAgentId: secondary.agentId })
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_AUTO_EXPLICIT')
+  const explicitSummary = await waitCase(autoSession, 'GUI_AUTO_EXPLICIT', value => value.state === 'closed')
+  const explicit = await record(autoSession, 'p4-explicit', explicitSummary.caseId)
+  const selectorAfterExplicit = await rpc(autoSession, 'p4-explicit-selector', 'overview')
+  check('explicitConsultPrioritizesSecondaryWithoutChangingAuto', explicit.case.agentId === secondary.agentId && explicit.case.closing === 'answered' && explicit.routeDecisions[0]?.mode === 'explicit' && explicit.routeDecisions[0]?.chosen === secondary.agentId && explicit.attempts.length === 1 && selectorMatches(selectorAfterExplicit.selector, 'auto'), { caseId: explicit.case.caseId, selector: selectorAfterExplicit.selector })
+  p4Evidence.explicit = explicit
+  await openIsolatedSession(autoSession)
+  await submitMarker(instance, 'GUI_C_RETURN')
+  const returnedSummary = await waitCase(autoSession, 'GUI_C_RETURN', value => value.state === 'closed')
+  const returned = await record(autoSession, 'p4-returned', returnedSummary.caseId)
+  check('returnedConsultReadyForRestartComparison', returned.case.closing === 'returned' && returned.case.decision?.code === 'MISSING_CONTEXT' && returned.routeDecisions[0]?.mode === 'auto' && returned.attempts.length === 1, { caseId: returned.case.caseId })
+  p4Evidence.returned = returned
+
+  const shadowControlConfig = await decisionConfig('p4-shadow-control-off')
+  check('shadowControlStartsWithRealSettingOff', shadowControlConfig.effective?.decisionAgentAutoShadow === false, shadowControlConfig.effective)
+  await openIsolatedSession(shadowControlSession)
+  await selectorChoose(shadowControlSession, 'agent', primary.agentId)
+  await submitMarker(instance, 'GUI_SHADOW_PARITY')
+  const controlSummary = await waitCase(shadowControlSession, 'gui-shadow-parity', value => value.state === 'closed')
+  const control = await record(shadowControlSession, 'p4-shadow-control', controlSummary.caseId)
+  sqliteSnapshot('p4-shadow-control')
+  await setAutoSettings('p4-shadow-observed-on', { shadow: true })
+  await openIsolatedSession(shadowObservedSession)
+  await selectorOpen()
+  const shadowOnCopy = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  check('selectorShowsRealShadowOnCopy', /Shadow/.test(shadowOnCopy) && /已开启|are on/i.test(shadowOnCopy), shadowOnCopy)
+  await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
+  await keyboardKey('Close Shadow-on selector proof', 'Escape')
+  await selectorChoose(shadowObservedSession, 'agent', primary.agentId)
+  await submitMarker(instance, 'GUI_SHADOW_PARITY')
+  const observedSummary = await waitCase(shadowObservedSession, 'gui-shadow-parity', value => value.state === 'closed')
+  const observed = await record(shadowObservedSession, 'p4-shadow-observed', observedSummary.caseId)
+  sqliteSnapshot('p4-shadow-observed')
+  const actual = detail => ({
+    agentId: detail.case.agentId, state: detail.case.state, closing: detail.case.closing,
+    request: detail.case.request, scope: detail.case.scope, decision: { kind: detail.case.decision?.kind, answers: detail.case.decision?.answers },
+    attempts: detail.attempts.map(attempt => ({ attemptNo: attempt.attemptNo, outcome: attempt.outcome, reasonCode: attempt.reasonCode ?? null, claims: attempt.claims, gates: attempt.gates, citedEvidenceIds: attempt.citedEvidenceIds, evidence: attempt.evidence?.map(ref => ({ source: ref.source, excerpt: ref.excerpt, scope: ref.scope })) })),
+    feedback: detail.feedback, corrections: detail.corrections,
+  })
+  const pinned = detail => detail.routeDecisions.filter(route => route.mode === 'pinned').map(route => ({ mode: route.mode, chosen: route.chosen, reason: route.reason, candidates: route.candidates }))
+  const shadow = observed.routeDecisions.filter(route => route.mode === 'auto_shadow')
+  check('shadowOnOffIdenticalActualOutcomeAndHistoryExceptAppendOnlyDiagnostic', JSON.stringify(actual(control)) === JSON.stringify(actual(observed)) && JSON.stringify(pinned(control)) === JSON.stringify(pinned(observed)) && control.routeDecisions.length === 1 && observed.routeDecisions.length === 2 && shadow.length === 1 && shadow[0].chosen === secondary.agentId && control.case.agentId === primary.agentId && observed.case.agentId === primary.agentId, { control: actual(control), observed: actual(observed), controlRoutes: control.routeDecisions, observedRoutes: observed.routeDecisions })
+  p4Evidence.shadow = { control, observed }
+  await setAutoSettings('p4-shadow-off-again', { shadow: false })
+
+  await openIsolatedSession(sessionId)
+  await selectorChoose(sessionId, 'auto')
+  const pageCases = []
+  for (let index = 1; index <= 21; index += 1) {
+    const suffix = String(index).padStart(2, '0')
+    await submitMarker(instance, `GUI_AUTO_PAGE_${suffix}`)
+    const page = await waitCase(sessionId, `gui-auto-page-${suffix}`, value => value.state === 'closed')
+    pageCases.push(page)
+  }
+  check('realTwentyOneAutoRoutesForPagination', pageCases.length === 21 && new Set(pageCases.map(value => value.caseId)).size === 21 && pageCases.every(value => value.closing === 'answered' && value.agentId === primary.agentId && value.attemptCount === 1), { count: pageCases.length, caseIds: pageCases.map(value => value.caseId) })
+  p4Evidence.pageCases = pageCases
+
+  await openIsolatedSession(pendingSession)
+  await submitMarker(instance, 'GUI_AUTO_PENDING')
+  const pendingSummary = await waitCase(pendingSession, 'gui-auto-pending', value => value.state === 'awaiting_user')
+  const pending = await record(pendingSession, 'p4-pending-before-restart', pendingSummary.caseId)
+  check('pendingStateReadyForRealRestart', pending.case.agentId === null && pending.case.awaitingReason === 'no_route' && pending.attempts.length === 0 && pending.routeDecisions.length === 1, { caseId: pending.case.caseId })
+  await shot('p4-pending-before-restart')
+  const pendingNative = await nativeState()
+  if (pendingNative.pending && !accessibility.nativeDecision) await captureAccessibility('nativeDecision', `[data-question-key=${JSON.stringify(pendingNative.key)}]`)
+  p4Evidence.pending = pending
+  await scanSession(autoSession, 'p4-auto-session-before-restart.json')
+
+  await openIsolatedSession(sessionId)
+  await selectorChoose(sessionId, 'agent', primary.agentId)
+  await submitMarker(instance, 'GUI_AUTO_INTERRUPT')
+  const interruptedSummary = await waitCase(sessionId, 'gui-auto-interrupt', value => value.state === 'received')
+  await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready')), 30_000)
+  const interrupted = await record(sessionId, 'p4-interrupted-before-crash', interruptedSummary.caseId)
+  check('interruptedIntakeIsReceivedWithoutRouteOrAttemptBeforeCrash', interrupted.case.agentId === null && interrupted.case.state === 'received' && interrupted.attempts.length === 0 && interrupted.routeDecisions.length === 0, { caseId: interrupted.case.caseId })
+  sqliteSnapshot('p4-interrupted-before-crash')
+  p4Evidence.interrupted = interrupted
+  const state = { sessionId, autoSession, explicitOffSession, shadowControlSession, shadowObservedSession, pendingSession, foreignSession, foreignWorkspace, foreign, freshOverviews, pageCases }
+  writeJson(join(out, 'p4-before-restart.json'), state)
+  return state
+}
+async function runP4AfterRestart(state, legacySession, primary, secondary) {
+  const autoOverview = await rpc(state.autoSession, 'p4-restart-auto-selector', 'overview')
+  const offOverview = await rpc(state.explicitOffSession, 'p4-restart-explicit-off', 'overview')
+  const legacyOverview = await rpc(legacySession, 'p4-restart-legacy', 'overview')
+  const selectorSnapshot = sqliteSnapshot('p4-restart-selectors')
+  check('restartPreservesAutoExplicitOffAndLegacyNoRowOff', selectorMatches(autoOverview.selector, 'auto') && selectorMatches(offOverview.selector, 'off') && selectorMatches(legacyOverview.selector, 'off') && selectorSnapshot.rows.selectors.some(row => row.root_session_id === state.autoSession && row.mode === 'auto') && selectorSnapshot.rows.selectors.some(row => row.root_session_id === state.explicitOffSession && row.mode === 'off') && !selectorSnapshot.rows.selectors.some(row => row.root_session_id === legacySession), { auto: autoOverview.selector, explicitOff: offOverview.selector, legacy: legacyOverview.selector, rows: selectorSnapshot.rows.selectors })
+
+  const pendingRestart = await record(state.pendingSession, 'p4-pending-after-restart', p4Evidence.pending.case.caseId)
+  const returnedRestart = await record(state.autoSession, 'p4-returned-after-restart', p4Evidence.returned.case.caseId)
+  const interruptedRestart = await record(state.sessionId, 'p4-interrupted-after-restart', p4Evidence.interrupted.case.caseId)
+  check('restartPreservesPendingAndReturnedExactly', pendingRestart.case.state === 'awaiting_user' && pendingRestart.case.revision === p4Evidence.pending.case.revision && pendingRestart.case.agentId === null && pendingRestart.attempts.length === 0 && pendingRestart.routeDecisions.length === 1 && JSON.stringify(returnedRestart) === JSON.stringify(p4Evidence.returned), { pending: pendingRestart.case, returned: returnedRestart.case })
+  check('interruptedReceivedIntakeRecoversWaitingWithoutRouteOrAttempt', interruptedRestart.case.state === 'awaiting_user' && interruptedRestart.case.awaitingReason === 'interrupted' && interruptedRestart.case.agentId === null && interruptedRestart.attempts.length === 0 && interruptedRestart.routeDecisions.length === 0, { before: p4Evidence.interrupted.case, after: interruptedRestart.case })
+  await openIsolatedSession(state.pendingSession, true)
+  await shot('p4-pending-after-restart')
+  p4Evidence.pendingAfterRestart = await answerUnownedInbox(state.pendingSession, pendingRestart.case.caseId, 'p4-restart-pending', 'Pending user answer')
+  await openIsolatedSession(state.sessionId, true)
+  p4Evidence.interruptedAfterRestart = await cancelUnownedInbox(state.sessionId, interruptedRestart.case.caseId, 'p4-restart-interrupted', false)
+  check('interruptedCancelAddsNoRetroactiveAutoRoute', p4Evidence.interruptedAfterRestart.routeDecisions.length === 0 && p4Evidence.interruptedAfterRestart.attempts.length === 0 && p4Evidence.interruptedAfterRestart.case.closing === 'cancelled', { caseId: interruptedRestart.case.caseId })
+
+  await openIsolatedSession(state.sessionId, true)
+  await openPage('metrics')
+  const first = await routingReview(state.sessionId, 'p4-routing-first', 'all')
+  check('routingReviewFirstPageHasExactlyTwentyRealItems', first.items.length === 20 && typeof first.nextCursor === 'string' && first.nextCursor.length > 0 && first.summary.manualReassign >= 1 && first.summary.autoFailure >= 2 && first.summary.autoAmbiguous >= 1 && first.summary.disagreement >= 1, { items: first.items.length, nextCursor: first.nextCursor, summary: first.summary })
+  await compareRoutingReview(state.sessionId, 'p4-routing-first', first)
+  await captureAccessibility('routingReview', 'section[data-routing-review]')
+  await captureAccessibility('routingStatus', '[data-routing-status]')
+  await shot('p4-routing-review-first-20')
+  await keyboardSelect('Change routing review window', 'select[data-routing-window]', '7d')
+  const sevenDays = await routingReview(state.sessionId, 'p4-routing-seven-days', '7d')
+  await compareRoutingReview(state.sessionId, 'p4-routing-seven-days', sevenDays)
+  await keyboardSelect('Restore routing review all window', 'select[data-routing-window]', 'all')
+  const allAgain = await routingReview(state.sessionId, 'p4-routing-all-again', 'all')
+  await compareRoutingReview(state.sessionId, 'p4-routing-all-again', allAgain)
+  const combined = await routingLoadMore(state.sessionId, allAgain)
+  const combinedIds = combined.items.map(item => item.caseId)
+  check('routingPaginationAppendsRealRecordsWithoutDuplicates', allAgain.items.length === 20 && combined.items.length > 20 && new Set(combinedIds).size === combinedIds.length && combinedIds.slice(0, 20).join(',') === allAgain.items.map(item => item.caseId).join(','), { first: allAgain.items.length, combined: combined.items.length })
+  const routingDom = await routingReviewDom()
+  const forbiddenRoutingActions = await instance.cdp.evaluate(`[...document.querySelectorAll('section[data-routing-review] button')].map(button=>button.textContent.trim()).filter(text=>/采纳|忽略|晋升|adopt|ignore|promot/i.test(text))`)
+  check('routingReviewHasNoAdoptIgnoreOrPromotion', forbiddenRoutingActions.length === 0 && /诊断|diagnostic/i.test(routingDom.text), { forbiddenRoutingActions })
+  const linked = await openRoutingRecord(state.sessionId, combined.items[0].caseId)
+  check('routingRecordLinkUsesAuthorizedAuthority', linked.case.caseId === combined.items[0].caseId && linked.case.rootSessionId === state.sessionId, { caseId: linked.case.caseId })
+  await compareRecord(state.sessionId, 'p4-routing-linked-record', linked.case.caseId, true)
+
+  await openPage('metrics')
+  await compareRoutingReview(state.sessionId, 'p4-routing-before-visuals', combined)
+  await instance.cdp.setPageZoom(1)
+  for (const theme of ['light', 'dark']) {
+    await instance.cdp.setColorScheme(theme)
+    for (const width of [360, 768, 1440]) {
+      await instance.cdp.setViewport(width)
+      await waitFor(async () => (await instance.cdp.evaluate('innerWidth')) === width, 10_000)
+      await layoutAudit(`routing-${theme}-${width}`, theme, 1)
+    }
+  }
+  await instance.cdp.setColorScheme('light')
+  for (const width of [360, 768, 1440]) {
+    await instance.cdp.setViewport(width, 900, true)
+    await instance.cdp.setPageZoom(2)
+    await layoutAudit(`routing-zoom200-${width}`, 'light', 2)
+  }
+  await instance.cdp.setPageZoom(1)
+  await instance.cdp.setViewport(1440)
+
+  const restoredConfig = await setAutoSettings('p4-restored', { shadow: false, answerClasses: [] })
+  const restoreAutoSessions = [state.sessionId, state.autoSession, state.explicitOffSession, state.shadowControlSession, state.shadowObservedSession, state.pendingSession, state.foreignSession]
+  const restoredSelectors = {}
+  for (const id of restoreAutoSessions) {
+    await openIsolatedSession(id, true)
+    restoredSelectors[id] = await selectorChoose(id, 'auto')
+  }
+  check('testOwnedSelectorsAndSettingsRestored', Object.values(restoredSelectors).every(selector => selectorMatches(selector, 'auto')) && restoredConfig.effective?.decisionAgentAutoShadow === false && JSON.stringify(restoredConfig.effective?.decisionAgentAutoAnswerClasses) === '[]' && restoredConfig.effective?.decisionAgentSelectorDefault === 'auto', { selectors: restoredSelectors, config: restoredConfig.effective })
+
+  const archivedPrimary = await agentState(state.sessionId, primary.agentId, 'archived')
+  const archivedSecondary = await agentState(state.sessionId, secondary.agentId, 'archived')
+  const archivedForeign = await agentState(state.foreignSession, state.foreign.agentId, 'archived')
+  check('everyTemporaryAgentArchivedThroughRealProfileSetState', [archivedPrimary, archivedSecondary, archivedForeign].every(agent => agent.state === 'archived'), { primary: archivedPrimary.state, secondary: archivedSecondary.state, foreign: archivedForeign.state })
+  await shot('p4-temporary-agents-archived')
+  const finalScan = await scanSession(state.sessionId, 'p4-final-session-scan.json')
+  check('p4FinalSessionHasNoForbiddenEvents', finalScan.commandEvents.length === 0 && finalScan.customDecisionEvents.length === 0, { eventCount: finalScan.eventCount })
+  const restoration = { restoredConfig, restoredSelectors, archived: [archivedPrimary.agentId, archivedSecondary.agentId, archivedForeign.agentId], legacySession }
+  writeJson(join(out, 'p4-restoration.json'), restoration)
+  sqliteSnapshot('p4-final-live')
+  return restoration
+}
+
+function auditP4RawEvidence(state, primary, secondary) {
+  const tracePath = join(out, 'mock-trace.jsonl')
+  const trace = readFileSync(tracePath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+  const stockPath = join(out, 'stock-tool-calls.jsonl')
+  const stock = readFileSync(stockPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
+  const session = JSON.parse(readFileSync(join(out, 'p4-auto-session-before-restart.json'), 'utf8'))
+  const wiresFor = (marker, kind) => trace.filter(entry => entry.autoRouter?.kind === kind && entry.autoRouter.pack?.questions?.some(question => String(question.question).includes(marker)))
+  const selectedClassification = wiresFor('GUI_AUTO_SELECTED', 'classification')
+  const selectedRoute = wiresFor('GUI_AUTO_SELECTED', 'route')
+  const selectedStock = stock.filter(entry => entry.phase === 'before-decision-hook' && entry.arguments?.questions?.some(question => question.id === 'gui-auto-selected'))
+  const sessionStock = session.stockAskCalls.filter(event => event.data?.arguments?.questions?.some(question => question.id === 'gui-auto-selected'))
+  const forbiddenWire = /generatedDescription|memorySnapshot|snapshotId|principles|feedback|attempts|history|FOREIGN WORKSPACE PRIVATE PROFILE/
+  const cleanWire = entry => entry.autoRouter.tools.length === 0 && entry.autoRouter.hasTemperature === false && entry.autoRouter.provider === 'mock' && entry.autoRouter.model === 'mock-1' && !forbiddenWire.test(JSON.stringify(entry.autoRouter.pack))
+  const classless = value => value?.questions?.every(question => !Object.hasOwn(question, 'authorizationClass') && !Object.hasOwn(question, 'authorizationClassSource') && !Object.hasOwn(question, 'authorization_class'))
+  const pass = selectedClassification.length === 1 && selectedRoute.length === 1 && classless(selectedClassification[0].autoRouter.pack) && selectedClassification[0].autoRouter.pack.candidates === undefined && selectedRoute[0].autoRouter.pack.candidates.map(candidate => candidate.agentId).sort().join(',') === [primary.agentId, secondary.agentId].sort().join(',') && !JSON.stringify(selectedRoute[0]).includes(state.foreign.agentId) && selectedStock.length === 1 && classless(selectedStock[0].arguments) && sessionStock.length === 1 && classless(sessionStock[0].data.arguments) && trace.filter(entry => entry.autoRouter).every(cleanWire) && wiresFor('GUI_AUTO_EMPTY', 'classification').length === 0 && wiresFor('GUI_AUTO_EMPTY', 'route').length === 0 && wiresFor('GUI_AUTO_ZERO', 'classification').length === 1 && wiresFor('GUI_AUTO_ZERO', 'route').length === 0 && wiresFor('GUI_AUTO_ONE', 'classification').length === 1 && wiresFor('GUI_AUTO_ONE', 'route').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'classification').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'route').length === 0 && wiresFor('GUI_AUTO_TIMEOUT', 'route')[0]?.emitted?.length === 0
+  const proof = { pass, selectedClassification, selectedRoute, selectedStock, sessionStock, emptyWires: wiresFor('GUI_AUTO_EMPTY', 'classification').length, zeroRouteWires: wiresFor('GUI_AUTO_ZERO', 'route').length, oneRouteWires: wiresFor('GUI_AUTO_ONE', 'route').length, explicitWires: wiresFor('GUI_AUTO_EXPLICIT', 'classification').length + wiresFor('GUI_AUTO_EXPLICIT', 'route').length, foreignAgentId: state.foreign.agentId, timeout: wiresFor('GUI_AUTO_TIMEOUT', 'route') }
+  writeJson(join(out, 'stock-classification-proof.json'), proof)
+  check('stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage', pass, { selectedClassification: selectedClassification.length, selectedRoute: selectedRoute.length, stock: selectedStock.length, sessionStock: sessionStock.length, foreignExcluded: !JSON.stringify(selectedRoute).includes(state.foreign.agentId) })
+
+  const final = sqliteSnapshot('p4-final-audit')
+  const named = { selected: p4Evidence.selected, one: p4Evidence.one, none: p4Evidence.none, ambiguous: p4Evidence.ambiguous, invalid: p4Evidence.invalid, timeout: p4Evidence.timeout, explicit: p4Evidence.explicit, returned: p4Evidence.returned }
+  const problems = []
+  for (const [name, detail] of Object.entries(named)) {
+    const row = final.rows.cases.find(item => item.case_id === detail.case.caseId)
+    if (!row || row.agent_id !== detail.case.agentId || row.state !== detail.case.state || row.closing !== detail.case.closing) problems.push(`${name}: Case differs`)
+    const actualRoutes = final.rows.route_decisions.filter(route => route.case_id === detail.case.caseId)
+    if (actualRoutes.length !== detail.routeDecisions.length) problems.push(`${name}: RouteDecision count differs`)
+    for (const route of detail.routeDecisions) {
+      const raw = actualRoutes.find(item => item.route_decision_id === route.routeDecisionId)
+      if (!raw || raw.mode !== route.mode || raw.chosen !== route.chosen || raw.reason !== route.reason || raw.root_session_id !== detail.case.rootSessionId) problems.push(`${name}: RouteDecision ${route.routeDecisionId} differs`)
+    }
+    const attempts = final.rows.attempts.filter(attempt => attempt.case_id === detail.case.caseId)
+    if (attempts.length !== detail.attempts.length) problems.push(`${name}: Attempt count differs`)
+  }
+  const comparison = { pass: problems.length === 0, problems, cases: Object.fromEntries(Object.entries(named).map(([name, detail]) => [name, detail.case.caseId])), finalPhase: final.phase }
+  writeJson(join(out, 'sqlite-read-model-comparison.json'), comparison)
+  check('sqliteReadModelAndRouteJoinAgreeWithoutExtraAttempts', comparison.pass, comparison)
+  return { proof, comparison }
+}
 
 function writeReport(verdict, error = null) {
   const exceptionCount = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown').length
@@ -927,19 +1447,27 @@ async function runStartupPreflight() {
 
 async function runProductMatrix() {
 try {
+  process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT = 'auto'
+  process.env.WEIR_DECISION_GUI_SHADOW = '0'
+  process.env.WEIR_DECISION_GUI_AUTO_CLASSES = '[]'
+  process.env.WEIR_DECISION_GUI_TIMEOUT_MS = '150'
   check('portInitiallyFree', await portFree() && !portListeners())
   writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running' })
   prepareProfile(root, PORT)
   instance = await startDesktop(true)
+  const initialPreflight = JSON.parse(readFileSync(join(out, 'process-1-preflight.json'), 'utf8'))
+  check('freshRunStartsWithoutDecisionStore', initialPreflight.databaseExists === false && initialPreflight.databasePath === databasePath, { databasePath, databaseExists: initialPreflight.databaseExists })
   const created = await createSession(instance)
   const sessionId = created.sessionId
   writeJson(join(out, 'session.json'), created)
+  knownSessionIds.add(sessionId)
   const slots = await instance.cdp.evaluate('window.__decisionQA.getState()')
   writeJson(join(out, 'slots.json'), slots)
   check('newSlotsActive', slots.sidebar.includes('weir-decisions') && slots.main.includes('weir-decisions') && slots.composer.includes('weir-decision-selector') && slots.toolviews.includes('ask_user_question') && slots.toolviews.includes('decision_consult'), slots)
   await selectorOpen()
-  const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label')})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]')),auto:/\\bAuto\\b|自动路由/.test(panel.innerText)} })()`)
-  check('dedicatedEmptySelectorOnlyOff', !initialSelector.legacy && !initialSelector.auto && initialSelector.radios.length === 1 && initialSelector.radios[0].value === 'off', initialSelector)
+  const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label'),checked:el.checked})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]')),auto:/\\bAuto\\b|自动路由/.test(panel.innerText)} })()`)
+  const initialAuthority = await rpc(sessionId, 'initial-fresh-auto', 'overview')
+  check('dedicatedFreshSelectorOffAutoAndPersistedDefaultAuto', !initialSelector.legacy && initialSelector.auto && initialSelector.radios.map(radio => radio.value).join(',') === 'off,auto' && initialSelector.radios.find(radio => radio.value === 'auto')?.checked === true && selectorMatches(initialAuthority.selector, 'auto') && /白名单为空|whitelist is empty/i.test(initialSelector.text) && /Shadow/.test(initialSelector.text), { initialSelector, authority: initialAuthority.selector })
   await shot('01-selector-empty')
   await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'] })
   const longName = '桌面验收助手 · Decision Product QA with an intentionally long English assistant name'
@@ -1101,6 +1629,7 @@ try {
   // coverage at 360px before creating the long native Case.
   await instance.cdp.setViewport(360)
   await keyboardSelector(sessionId, secondary.agentId)
+  await keyboardSelector(sessionId, 'auto')
   await keyboardSelector(sessionId, primary.agentId)
 
   const longCase = await askLongNative(sessionId)
@@ -1181,13 +1710,14 @@ try {
   requireEvidence(candidateV3.run.operations[0]?.sources?.[0] === learningCorrection.feedbackId && candidateV3.run.operations[0]?.text === 'Reviewed GUI successor principle: prefer the second source-backed answer.', 'v3 keeps the actual correction source and advances beyond restored v1')
   const rejectedV3 = await confirmLearning('snapshotReject', sessionId, candidateV3, candidateV1.snapshot.snapshotId)
   check('discardRetainsUnpublishedCandidateAndCurrentV1', rejectedV3.run.outcome === 'rejected' && rejectedV3.snapshot.state === 'draft' && rejectedV3.snapshot.revision === 1 && rejectedV3.agent.currentSnapshotId === candidateV1.snapshot.snapshotId)
+  const p4State = await runP4BeforeRestart(sessionId, primary, secondary)
   const beforeRestart = { agent: rejectedV3.agent, run: rejectedV3.run, snapshot: rejectedV3.snapshot, learned: learnedDetail, selector: await rpc(sessionId, 'before-restart', 'overview') }
   writeJson(join(out, 'before-restart.json'), beforeRestart)
   const scanBefore = await scanSession(sessionId, 'session-before-restart.json')
   check('noCommandOrCustomDecisionSessionEvents', scanBefore.commandEvents.length === 0 && scanBefore.customDecisionEvents.length === 0)
 
   const beforeGlobalOff = await records(sessionId)
-  await stopOwned('process-1')
+  await stopOwned('process-1', { crash: true })
   instance = await startDesktop(false)
   await openSession(instance, sessionId)
   await selectorOpen()
@@ -1201,8 +1731,12 @@ try {
   await answerNative('Native Off')
   const scanAfter = await scanSession(sessionId, 'session-after-restart.json')
   check('restartAddsNoForbiddenSessionEvents', scanAfter.commandEvents.length === 0 && scanAfter.customDecisionEvents.length === 0)
+  const legacySession = (await newIsolatedSession('p4-legacy')).sessionId
+  await selectorOpen()
+  const legacyOffText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  check('globalOffLegacyRootRemainsOffWithoutDefaultAuto', /全局关闭|off globally/i.test(legacyOffText), legacyOffText)
+  await keyboardKey('Close legacy global-off selector', 'Escape')
   await stopOwned('process-2')
-
   instance = await startDesktop(true)
   await openSession(instance, sessionId)
   const restartedRun = await rpc(sessionId, 'restart', 'learningRun', { learningRunId: rejectedV3.run.learningRunId })
@@ -1219,25 +1753,30 @@ try {
   check('globalOffCreatesNoNewCase', afterGlobalOff.records.length === beforeGlobalOff.records.length)
   const scanAfterEnabledRestart = await scanSession(sessionId, 'session-after-enabled-restart.json')
   check('enabledRestartAddsNoForbiddenSessionEvents', scanAfterEnabledRestart.commandEvents.length === 0 && scanAfterEnabledRestart.customDecisionEvents.length === 0)
+  await runP4AfterRestart(p4State, legacySession, primary, secondary)
   await stopOwned('process-3')
   sqliteSnapshot('final-stopped')
   copyFileSync(databasePath, join(out, 'decision.db'))
   const immutable = immutableChanges(sqlitePhases)
   writeJson(join(out, 'immutable-history.json'), { pass: immutable.length === 0, changes: immutable, phases: sqlitePhases.map(item => item.phase) })
-  check('noAttemptOrSnapshotContentHistoryRewrite', immutable.length === 0, immutable)
+  check('noAttemptSnapshotOrRouteHistoryRewrite', immutable.length === 0, immutable)
   const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')
   const consoleErrors = runtimeEvents.filter(item => item.event.method === 'Runtime.consoleAPICalled' && item.event.params?.type === 'error')
+  const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
+  const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
+  auditP4RawEvidence(p4State, primary, secondary)
   const desktopLogs = ['desktop-enabled.log', 'desktop-disabled.log'].map(path => readFileSync(join(out, path), 'utf8'))
   const importFailures = desktopLogs.flatMap(log => log.split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
-  writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, importFailures, scannedLogs: ['desktop-enabled.log', 'desktop-disabled.log'] })
-  check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, importFailures })
+  writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs: ['desktop-enabled.log', 'desktop-disabled.log'] })
+  check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && slotCrashes.length === 0 && logErrors.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, slotCrashes: slotCrashes.length, logErrors: logErrors.length, importFailures })
   await collectNetwork()
   check('completeLifecyclePngEvidence', screenshots.length >= 30 && screenshots.every(item => statSync(item.path).size > 8), { count: screenshots.length })
   validateAccessibility()
   const requiredKeyboardActions = ['Open assistant editor', 'Edit assistant', 'Request assistant disabled', 'Confirm assistant disabled', 'Request assistant enabled', 'Confirm assistant enabled', 'Choose native answer Native Off', 'Choose native answer Use Short', 'Choose native answer User backed GUI answer', 'Use inbox suggestions', 'Submit inbox decision', 'Apply feedback rating_up', 'Apply feedback undo_rating_up', 'Apply feedback rating_down', 'Apply feedback undo_rating_down', 'Enter independent note', 'Enter correction', 'Submit note', 'Submit correction', 'Start principle review', 'Request snapshotPublish', 'Confirm snapshotPublish', 'Request snapshotReject', 'Confirm snapshotReject', 'Request snapshotRollback', 'Confirm snapshotRollback']
   const keyboardProblems = requiredKeyboardActions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && (audit.activation || audit.input)))
   check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
-  result = { phase: 'GUI-product-UX-8.1-8.2', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
+  check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 3 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 3 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
+  result = { phase: 'GUI-product-P4-9.2-9.3', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, p4: { sessions: p4State, caseIds: { selected: p4Evidence.selected.case.caseId, one: p4Evidence.one.case.caseId, none: p4Evidence.none.case.caseId, ambiguous: p4Evidence.ambiguous.case.caseId, invalid: p4Evidence.invalid.case.caseId, timeout: p4Evidence.timeout.case.caseId, explicit: p4Evidence.explicit.case.caseId, returned: p4Evidence.returned.case.caseId, pending: p4Evidence.pending.case.caseId, interrupted: p4Evidence.interrupted.case.caseId }, processProvenance }, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), stockClassification: join(out, 'stock-classification-proof.json'), sqliteReadModel: join(out, 'sqlite-read-model-comparison.json'), p4Restoration: join(out, 'p4-restoration.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)
   writeReport('PASS')

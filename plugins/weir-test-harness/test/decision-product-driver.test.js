@@ -191,7 +191,7 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(state, 'cardState exists')
-  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===6']) assert.ok(state.includes(token), token)
+  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===7']) assert.ok(state.includes(token), token)
   const revealBody = driver.match(/async function revealCard\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(revealBody, 'revealCard exists')
   assert.match(revealBody, /Input\.dispatchMouseEvent/, 'a collapsed native process group opens through real CDP pointer input')
@@ -216,6 +216,8 @@ test('product driver keyboard helpers record native focus traversal and text ent
   assert.match(focus, /instance\.cdp\.key\('Tab',/, 'focus moves only through native Tab packets')
   const snapshot = driver.match(/async function keyboardSnapshot\(selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(snapshot, /accessibleName/, 'each trace records the accessible name')
+  assert.match(snapshot, /const namePattern=\$\{JSON\.stringify\(options\.namePattern \?\? null\)\}/, 'the browser receives the serialized name pattern instead of an undefined options reference')
+  assert.ok(!/!options\.namePattern/.test(snapshot), 'no browser-side expression dereferences the Node-only options object')
   assert.match(focus, /activeElement/, 'each trace records the actual active element')
   assert.match(driver, /writeJson\(join\(out, 'keyboard-interactions\.json'\), keyboardAudits\)/, 'focus evidence is durable after every step')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(focus), 'focus never bypasses keyboard reachability')
@@ -354,8 +356,8 @@ test('product visual audit waits for target computed colors and retains strict z
 
 test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
-  assert.ok(keyboard360, 'both existing keyboard flows run together at 360px')
+  const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, 'auto'\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
+  assert.ok(keyboard360, 'Agent, Auto, and Agent keyboard flows all run together at 360px')
   const longAsk = driver.indexOf('const longCase = await askLongNative(sessionId)')
   const themeAudit = driver.indexOf("for (const theme of ['light', 'dark'])", longAsk)
   const zoomAudit = driver.indexOf('await layoutAudit(`zoom200-${width}`', longAsk)
@@ -486,8 +488,9 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   assert.ok(disabledOrder.every((index, position) => index >= 0 && (position === 0 || index > disabledOrder[position - 1])), 'disabled open → selector evidence → Escape → native bypass → forbidden-event scan stays ordered')
 
   const beforeGlobalOff = driver.indexOf('const beforeGlobalOff = await records(sessionId)')
-  const firstStop = driver.indexOf("await stopOwned('process-1')")
+  const firstStop = driver.indexOf("await stopOwned('process-1', { crash: true })")
   assert.ok(beforeGlobalOff >= 0 && beforeGlobalOff < firstStop, 'the enabled authority captures the record count before process 1 stops')
+  assert.ok(firstStop >= 0, 'process 1 uses the explicit owned crash boundary for received-intake recovery')
 
   const enabledStart = driver.indexOf('instance = await startDesktop(true)', disabledStop)
   const enabledStop = driver.indexOf("await stopOwned('process-3')", enabledStart)
@@ -518,29 +521,54 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix, 'the original matrix is separate from preflight-only startup')
   assert.deepEqual([...matrix.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true'], 'the successful path owns enabled, disabled, then fresh enabled instances')
-  assert.deepEqual([...matrix.matchAll(/await stopOwned\('process-(\d)'\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
+  assert.deepEqual([...matrix.matchAll(/await stopOwned\('process-(\d)'(?:, \{ crash: true \})?\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
   assert.match(driver, /check\(`\$\{label\}ExactOwnedCleanup`, receipt\.pass/, 'each owned cleanup retains its named acceptance check')
   for (const log of ['desktop-enabled.log', 'desktop-disabled.log']) assert.ok(driver.includes(`'${log}'`), `${log} is included in the import scan`)
   assert.match(driver, /const importFailures = desktopLogs\.flatMap\(/, 'runtime import failures are scanned across both log modes')
 })
 
-test('product driver persists and validates all six AX evidence groups', () => {
+test('product driver preserves all legacy AX groups and derives the expanded P4 requirements', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const capture = driver.match(/async function captureAccessibility\(name, selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(capture, 'a single capture helper owns every AX collection')
   assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/)
   assert.match(capture, /writeJson\(join\(out, 'accessibility\.json'\), accessibility\)/, 'every capture is durable before later scenario steps')
   const requirements = driver.match(/const accessibilityRequirements = \{[\s\S]*?\n\}/)?.[0] ?? ''
-  for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog']) {
+  for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog', 'nativeDecision', 'unownedDecision', 'routingReview', 'routingStatus', 'cancelDecisionDialog']) {
     assert.ok(requirements.includes(`${name}:`), `${name} has an explicit AX requirement`)
   }
-  assert.match(driver, /check\('completeAccessibilityEvidence', accessibilityProblems\.length === 0 && Object\.keys\(accessibility\)\.length === 6/)
+  assert.match(driver, /const requiredGroups = Object\.keys\(accessibilityRequirements\)/)
+  assert.match(driver, /missingGroups\.length === 0 && unexpectedGroups\.length === 0/)
+  assert.ok(!/completeAccessibilityEvidence[^\n]*=== 6/.test(driver), 'the old hardcoded six-group acceptance count is gone')
   assert.match(driver, /Object\.keys\(accessibility\)\.length/, 'the report count comes from the persisted object rather than a hard-coded claim')
   const answered = driver.indexOf("await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')")
   const opened = driver.indexOf('await openRecord(sessionId, longCase.caseId)', answered)
   const captured = driver.indexOf("await captureAccessibility('longRecord'", answered)
   const finished = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)', captured)
   assert.ok(answered >= 0 && opened > answered && captured > opened && finished > captured, 'longRecord AX reads the still-rendered authoritative record after inbox closure')
+})
+test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, restoration, and cleanup', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  for (const token of [
+    'runP4BeforeRestart', 'runP4AfterRestart', 'auditP4RawEvidence',
+    'freshRootsDefaultToPersistedAuto', 'restartPreservesAutoExplicitOffAndLegacyNoRowOff',
+    'emptyWhitelistAuthorityWithoutClassificationOrAttempt', 'zeroCandidatesNoRouteOrAttempt',
+    'oneCandidateDeterministicAllGates', 'stockClasslessSelectedRouteHasDerivedAAndAllGates',
+    'ambiguityHasCandidatesConflictAndNoAttempt', 'invalidOutputFailureHasNoOwnerOrAttempt',
+    'timeoutFailureHasNoOwnerOrAttempt', 'explicitConsultPrioritizesSecondaryWithoutChangingAuto',
+    'shadowOnOffIdenticalActualOutcomeAndHistoryExceptAppendOnlyDiagnostic',
+    'routingReviewFirstPageHasExactlyTwentyRealItems', 'routingPaginationAppendsRealRecordsWithoutDuplicates',
+    'interruptedReceivedIntakeRecoversWaitingWithoutRouteOrAttempt',
+    'stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage',
+    'sqliteReadModelAndRouteJoinAgreeWithoutExtraAttempts', 'everyTemporaryAgentArchivedThroughRealProfileSetState',
+    'testOwnedSelectorsAndSettingsRestored', 'allOwnedProcessesAndPortFinallyReleased',
+  ]) assert.ok(driver.includes(token), token)
+  const hold = driver.indexOf("await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready'))")
+  const crash = driver.indexOf("await stopOwned('process-1', { crash: true })")
+  assert.ok(hold >= 0 && crash > hold, 'the real held Router stream precedes the owned SIGKILL')
+  assert.match(driver, /process\.kill\(mainPid, 'SIGKILL'\)/)
+  assert.match(driver, /process\.kill\(hostPid, 'SIGKILL'\)/)
+  assert.match(driver, /knownSessionIds\.has\(sessionId\)/, 'raw authority reads are limited to run-created sessions')
 })
 
 test('P4 Desktop settings default closed and forward only explicit isolated overrides', t => {
@@ -649,4 +677,7 @@ test('record route history compares authoritative count and immutable timestamps
   assert.deepEqual(lib.routeHistoryProblems(detail, dom), [])
   assert.match(lib.routeHistoryProblems(detail, { ...dom, routeHistory: dom.routeHistory.slice(1) }).join('\n'), /count/)
   assert.match(lib.routeHistoryProblems(detail, { ...dom, routeHistory: [dom.routeHistory[0], { ...dom.routeHistory[1], createdAt: '2026-01-03T00:00:00.000Z' }] }).join('\n'), /timestamp/)
+  const numeric = { case: { caseId: 'dc_numeric' }, routeDecisions: [{ createdAt: 1794282129137 }] }
+  assert.deepEqual(lib.routeHistoryProblems(numeric, { routeHistory: [{ text: 'Pinned', createdAt: '1794282129137' }] }), [], 'numeric RPC timestamps equal their DOM dateTime strings')
+  assert.match(lib.routeHistoryProblems(numeric, { routeHistory: [{ text: 'Pinned', createdAt: '1794282129138' }] }).join('\n'), /timestamp/)
 })
