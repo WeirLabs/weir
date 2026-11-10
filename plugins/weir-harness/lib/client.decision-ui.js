@@ -299,8 +299,8 @@ window.__ModuleLoader__.load({
     const decisionScrollLocks = new WeakMap();
     const DECISION_SCROLL_STYLES = ["overflow", "overflowX", "overflowY", "overscrollBehavior", "overscrollBehaviorX", "overscrollBehaviorY", "paddingRight", "paddingBottom"];
 
-    function acquireDecisionScrollLock(hostDocument, originElement) {
-      if (!hostDocument || typeof hostDocument !== "object") return () => {};
+    function acquireDecisionScrollLock(hostDocument, originElement, openModal) {
+      if (!hostDocument || typeof hostDocument !== "object") { openModal(); return () => {}; }
       const view = hostDocument.defaultView ?? null;
       const root = hostDocument.documentElement ?? null;
       const body = hostDocument.body ?? null;
@@ -315,6 +315,11 @@ window.__ModuleLoader__.load({
         if (["auto", "scroll", "overlay"].includes(overflowY)) add(current);
         current = current.parentElement ?? null;
       }
+      const preOpen = new Map(targets.map(target => [target, target === view
+        ? { window: true, scrollX: target.scrollX, scrollY: target.scrollY }
+        : { scrollTop: target.scrollTop, scrollLeft: target.scrollLeft }]));
+      // Native showModal() can clamp fractional offsets; only mutate after it succeeds.
+      openModal();
       let state = decisionScrollLocks.get(hostDocument);
       if (!state) {
         state = { count: 0, snapshots: new Map() };
@@ -323,13 +328,13 @@ window.__ModuleLoader__.load({
       for (const target of targets) {
         if (state.snapshots.has(target)) continue;
         if (target === view) {
-          state.snapshots.set(target, { target, window: true, scrollX: view.scrollX, scrollY: view.scrollY });
+          state.snapshots.set(target, { target, ...preOpen.get(target) });
           continue;
         }
         const style = target.style;
         if (!style) continue;
         const inline = Object.fromEntries(DECISION_SCROLL_STYLES.map(name => [name, style[name] ?? ""]));
-        state.snapshots.set(target, { target, inline, scrollTop: target.scrollTop, scrollLeft: target.scrollLeft });
+        state.snapshots.set(target, { target, inline, ...preOpen.get(target) });
         const computed = view?.getComputedStyle?.(target) ?? target.computed;
         const scrollbarWidth = target === root
           ? Math.max(0, (view?.innerWidth ?? 0) - (root.clientWidth ?? 0))
@@ -351,6 +356,16 @@ window.__ModuleLoader__.load({
         style.overscrollBehavior = "none";
         style.overscrollBehaviorX = "none";
         style.overscrollBehaviorY = "none";
+      }
+      for (const [target, position] of preOpen) {
+        if (position.window) {
+          if (target.scrollX === position.scrollX && target.scrollY === position.scrollY) continue;
+          if (typeof target.scrollTo === "function") target.scrollTo(position.scrollX, position.scrollY);
+          else { target.scrollX = position.scrollX; target.scrollY = position.scrollY; }
+        } else {
+          target.scrollTop = position.scrollTop;
+          target.scrollLeft = position.scrollLeft;
+        }
       }
       state.count += 1;
       let released = false;
@@ -453,8 +468,13 @@ window.__ModuleLoader__.load({
           props.onOpenError?.(error);
           return undefined;
         }
+        let releaseScrollLock;
         try {
-          dialog.showModal();
+          releaseScrollLock = acquireDecisionScrollLock(
+            hostDocument,
+            focusTarget(props.scrollOrigin) ?? previous,
+            () => dialog.showModal(),
+          );
         } catch (reason) {
           const error = reason instanceof Error ? reason : new Error(String(reason));
           setOpenError(error);
@@ -462,7 +482,6 @@ window.__ModuleLoader__.load({
           props.onOpenError?.(error);
           return undefined;
         }
-        const releaseScrollLock = acquireDecisionScrollLock(hostDocument, focusTarget(props.scrollOrigin) ?? previous);
         const releaseViewportContainment = containDecisionModalInVisualViewport(dialog, hostDocument?.defaultView);
         const initial = focusTarget(props.initialFocus) ?? dialog;
         initial?.focus?.();

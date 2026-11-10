@@ -342,6 +342,62 @@ test('native modal locks and restores root, Decision page, session, and composer
   }
 })
 
+test('native modal preserves fractional pre-open offsets when showModal itself clamps them', async () => {
+  const fixture = makeScrollFixture()
+  const before = fixture.targets.map((target, index) => {
+    target.scrollTop = (index + 1) * 11 + 0.5
+    target.scrollLeft = (index + 1) * 11 - 0.75
+    target.style.paddingBottom = '5px'
+    target.computed.paddingBottom = '5px'
+    return { target, scrollTop: target.scrollTop, scrollLeft: target.scrollLeft, inline: { ...target.style } }
+  })
+  fixture.view.scrollX = 3.5
+  fixture.view.scrollY = 4.5
+  const native = {
+    open: false, style: {}, showModalCalls: 0,
+    showModal() {
+      this.showModalCalls += 1
+      this.open = true
+      for (const target of fixture.targets) {
+        target.scrollTop = Math.floor(target.scrollTop)
+        target.scrollLeft = Math.floor(target.scrollLeft)
+      }
+      fixture.view.scrollX = Math.floor(fixture.view.scrollX)
+      fixture.view.scrollY = Math.floor(fixture.view.scrollY)
+    },
+    close() { this.open = false },
+  }
+  const assertPreOpenPositions = () => {
+    for (const { target, scrollTop, scrollLeft } of before) {
+      assert.equal(target.scrollTop, scrollTop, target.name)
+      assert.equal(target.scrollLeft, scrollLeft, target.name)
+    }
+    assert.equal(fixture.view.scrollX, 3.5)
+    assert.equal(fixture.view.scrollY, 4.5)
+  }
+  const runtime = makeModalReact(node => node.type === 'dialog' ? native : undefined)
+  const oldDocument = globalThis.document
+  globalThis.document = fixture.document
+  try {
+    const ui = await load(runtime.react)
+    assertPreOpenPositions()
+    runtime.render(ui.ConfirmDialog, {
+      id: 'scroll-lock-fractional-open', title: 'Confirm', body: 'Body', confirmLabel: 'Confirm', cancelLabel: 'Cancel',
+      returnFocus: fixture.origin, onConfirm() {}, onCancel() {},
+    })
+    assert.equal(native.showModalCalls, 1)
+    assertScrollLocked(fixture)
+    assertPreOpenPositions()
+    runtime.unmount()
+    assertPreOpenPositions()
+    for (const { target, inline } of before) assert.deepEqual(target.style, inline, target.name)
+  } finally {
+    runtime.unmount()
+    if (oldDocument === undefined) delete globalThis.document
+    else globalThis.document = oldDocument
+  }
+})
+
 test('native modal preserves both background offsets when scrollbar removal changes client size', async () => {
   const fixture = makeScrollFixture()
   const target = fixture.composer
