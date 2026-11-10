@@ -23,6 +23,8 @@ window.__ModuleLoader__.load({
           return created
         }
         async function openSession(sessionId) {
+          const currentSessionId = ctx.uiWorkspace.mainReference?.sessionId ?? ctx.uiWorkspace.selection?.getSnapshot?.().sessionId ?? null
+          if (currentSessionId && currentSessionId !== sessionId) await ctx.uiWorkspace.sessions.using(currentSessionId, { source: 'decisionQA' }, async () => {})
           ctx.uiWorkspace.openSession(sessionId)
           await ctx.uiWorkspace.sessions.using(sessionId, { source: 'decisionQA' }, async () => {})
           ctx.layout.selectPanel(null)

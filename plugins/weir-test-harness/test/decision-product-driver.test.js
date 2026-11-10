@@ -187,6 +187,8 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(shared.includes('getState().activeSessionId==='), 'session creation/opening waits for the requested active root')
   const fixtureOpen = fixtureClient.match(/async function openSession\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   const openCall = fixtureOpen.indexOf('ctx.uiWorkspace.openSession(sessionId)')
+  const existingReady = fixtureOpen.indexOf("await ctx.uiWorkspace.sessions.using(currentSessionId, { source: 'decisionQA' }, async () => {})")
+  assert.ok(existingReady >= 0 && openCall > existingReady, 'the existing restored root is ready before the driver displaces it')
   const readyCall = fixtureOpen.indexOf("await ctx.uiWorkspace.sessions.using(sessionId, { source: 'decisionQA' }, async () => {})")
   const panelSwitch = fixtureOpen.indexOf('ctx.layout.selectPanel(null)')
   assert.ok(openCall >= 0 && readyCall > openCall && panelSwitch > readyCall, 'uiWorkspace opening awaits ClientSessions.using reference.ready before panel switching; using owns finally release')
