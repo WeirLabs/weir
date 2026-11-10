@@ -1223,7 +1223,7 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   await scanSession(autoSession, 'p4-auto-session-before-restart.json')
 
   await openIsolatedSession(sessionId)
-  await selectorChoose(sessionId, 'agent', primary.agentId)
+  await selectorChoose(sessionId, 'auto')
   await submitMarker(instance, 'GUI_AUTO_INTERRUPT')
   const interruptedSummary = await waitCase(sessionId, 'gui-auto-interrupt', value => value.state === 'received')
   await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready')), 30_000)

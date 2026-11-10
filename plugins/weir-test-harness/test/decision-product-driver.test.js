@@ -582,6 +582,7 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   const hold = driver.indexOf("await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready'))")
   const crash = driver.indexOf("await stopOwned('process-1', { crash: true })")
   assert.ok(hold >= 0 && crash > hold, 'the real held Router stream precedes the owned SIGKILL')
+  assert.match(driver, /await selectorChoose\(sessionId, 'auto'\)\s*await submitMarker\(instance, 'GUI_AUTO_INTERRUPT'\)/, 'the held interruption enters through Auto rather than a pinned Agent')
   assert.match(driver, /process\.kill\(mainPid, 'SIGKILL'\)/)
   assert.match(driver, /process\.kill\(hostPid, 'SIGKILL'\)/)
   assert.match(driver, /knownSessionIds\.has\(sessionId\)/, 'raw authority reads are limited to run-created sessions')
