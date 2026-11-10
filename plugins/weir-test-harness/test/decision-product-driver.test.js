@@ -195,6 +195,7 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(fixtureClient.includes('await openSession(sessionId)'), 'session creation uses the same readiness handshake')
   assert.ok(!fixtureClient.includes('sessionBinding') && !shared.includes('sessionBindingReady'), 'the binding-presence workaround is fully removed')
   for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getPartialAXTree']) assert.ok(cdp.includes(method), method)
+  assert.ok(cdp.includes('fetchRelatives: options.fetchRelatives === true'), 'the CDP helper forwards the explicit relatives request')
   assert.ok(fixture.includes("exec.arguments?.request_id !== 'gui_b_decide'"))
   assert.ok(!driver.includes('127.0.0.1:52011'))
   assert.ok(cdp.includes('data-desktop-onboarding') && cdp.includes('dismissed: true'), 'startup completes and verifies the real host onboarding path')
@@ -576,7 +577,7 @@ test('product driver preserves all legacy AX groups and derives the expanded P4 
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const capture = driver.match(/async function captureAccessibility\(name, selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(capture, 'a single capture helper owns every AX collection')
-  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/)
+  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector, \{ fetchRelatives: name === 'selectorPanel' \|\| name === 'nativeDecision' \}\)/, 'descendant-dependent AX groups include relatives without changing their assertions')
   assert.match(capture, /writeJson\(join\(out, 'accessibility\.json'\), accessibility\)/, 'every capture is durable before later scenario steps')
   const requirements = driver.match(/const accessibilityRequirements = \{[\s\S]*?\n\}/)?.[0] ?? ''
   for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog', 'nativeDecision', 'unownedDecision', 'routingReview', 'routingStatus', 'cancelDecisionDialog']) {

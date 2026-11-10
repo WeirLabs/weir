@@ -99,7 +99,7 @@ async function shot(name) {
 }
 
 async function captureAccessibility(name, selector) {
-  accessibility[name] = await instance.cdp.accessibility(selector)
+  accessibility[name] = await instance.cdp.accessibility(selector, { fetchRelatives: name === 'selectorPanel' || name === 'nativeDecision' })
   writeJson(join(out, 'accessibility.json'), accessibility)
   return accessibility[name]
 }

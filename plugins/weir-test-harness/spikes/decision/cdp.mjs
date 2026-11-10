@@ -92,12 +92,12 @@ export async function connectCdp(port) {
       await request('Input.dispatchKeyEvent', { type, ...event, ...(selectAll ? { commands: ['SelectAll'] } : {}), ...(text ? { text, unmodifiedText: text } : {}) })
       await request('Input.dispatchKeyEvent', { type: 'keyUp', ...event })
     },
-    async accessibility(selector) {
+    async accessibility(selector, options = {}) {
       const { root } = await request('DOM.getDocument', { depth: 0 })
       const { nodeId } = await request('DOM.querySelector', { nodeId: root.nodeId, selector })
       if (!nodeId) throw new Error(`Accessibility target not found: ${selector}`)
       const { node } = await request('DOM.describeNode', { nodeId })
-      const result = await request('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: false })
+      const result = await request('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: options.fetchRelatives === true })
       return result.nodes.map(item => ({ role: item.role?.value ?? null, name: item.name?.value ?? null, ignored: item.ignored === true, properties: Object.fromEntries((item.properties ?? []).map(property => [property.name, property.value?.value])) }))
     },
     close() { ws.close() },
