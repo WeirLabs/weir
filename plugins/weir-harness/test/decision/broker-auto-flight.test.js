@@ -150,6 +150,58 @@ test('before-commit same-key Hook and consult deliveries join one Auto flight', 
   assert.equal(consultedFixture.broker.routingJobs.size, 0)
 })
 
+test('selector-change consult joins its existing Auto flight before pinned dispatch', async t => {
+  const f = await fixture(t)
+  const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
+  const gate = f.hold(CLASSIFICATION)
+  const args = { question: 'Join after selector change?', request_id: 'selector-change-consult' }
+  let publishes = 0
+  const publish = f.broker.publishConsult.bind(f.broker)
+  f.broker.publishConsult = current => { publishes++; publish(current) }
+  let firstSettled = false
+  let replaySettled = false
+  const first = f.broker.consult({ agent: f.agent, args }).then(value => { firstSettled = true; return value })
+  await gate.started
+  await f.broker.setSelector('root', 'agent', selected.agentId)
+  const replay = f.broker.consult({ agent: f.agent, args }).then(value => { replaySettled = true; return value })
+  await drainMicrotasks()
+  const before = { firstSettled, replaySettled, publishes, flights: f.broker.autoFlights.size }
+  gate.release()
+  const [consulted, replayed] = await Promise.all([first, replay])
+
+  assert.deepEqual(before, { firstSettled: false, replaySettled: false, publishes: 0, flights: 1 })
+  assert.deepEqual(replayed, consulted)
+  assert.equal(publishes, 1)
+  assert.deepEqual(counts(f, consulted.caseId), { cases: 1, routes: 1, attempts: 1 })
+  assert.equal(callsOf(f, CLASSIFICATION).length, 1)
+  assert.equal(f.broker.autoFlights.size, 0)
+})
+
+test('selector-change Hook joins its existing Auto flight before pinned dispatch', async t => {
+  const f = await fixture(t)
+  const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
+  f.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'q', authorizationClass: 'A' }] })
+  const gate = f.hold(CLASSIFICATION)
+  const request = hookRequest('selector-change-hook')
+  let firstSettled = false
+  let replaySettled = false
+  const first = f.broker.hook({ agent: f.agent, request }).then(value => { firstSettled = true; return value })
+  await gate.started
+  await f.broker.setSelector('root', 'agent', selected.agentId)
+  const replay = f.broker.hook({ agent: f.agent, request }).then(value => { replaySettled = true; return value })
+  await drainMicrotasks()
+  const before = { firstSettled, replaySettled, flights: f.broker.autoFlights.size }
+  gate.release()
+  const [hooked, replayed] = await Promise.all([first, replay])
+
+  assert.deepEqual(before, { firstSettled: false, replaySettled: false, flights: 1 })
+  assert.deepEqual(replayed, hooked)
+  assert.equal(hooked.why, 'awaiting_user')
+  assert.deepEqual(counts(f, hooked.caseId), { cases: 1, routes: 1, attempts: 1 })
+  assert.equal(callsOf(f, CLASSIFICATION).length, 1)
+  assert.equal(f.broker.autoFlights.size, 0)
+})
+
 test('post-flight classless Auto replay is idempotent while authorized caller changes are real revisions', async t => {
   const changes = [
     ['question', args => ({ ...args, question: 'Changed question?' })],

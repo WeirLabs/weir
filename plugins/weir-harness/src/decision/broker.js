@@ -215,17 +215,9 @@ export class DecisionBroker {
     if (!status.available) throw new DecisionContractError('DECISION_UNAVAILABLE', status.reason ?? 'Decision Broker is unavailable')
     const origin = await decisionOrigin(agent, this.ctx)
     const selector = this.selector(origin.rootSessionId)
-    if (selector.mode === 'off') throw new DecisionContractError('DECISION_OFF', 'The root session Decision selector is Off')
     const explicit = typeof args.agent_id === 'string' && args.agent_id.length > 0
     const automatic = !explicit && selector.mode === 'auto'
     const selected = explicit ? args.agent_id : selector.agentId
-    if (!automatic) this.assertAttemptCapacity()
-    if (!automatic) await this.ensureStore()
-    let profile
-    if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Explicit failure / persisted no_route below. */ }
-    if (explicit && (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey)) {
-      this.rejectBoundary({ agentId: selected, rootSessionId: origin.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
-    }
     const scope = parseScope(origin.workspaceKey, args.scope)
     const question = {
       id: 'question', question: args.question,
@@ -239,6 +231,16 @@ export class DecisionBroker {
     const idempotencyKey = args.request_id
       ? `consult:${origin.rootSessionId}:${args.request_id}`
       : decisionIdempotencyKey({ rootSessionId: origin.rootSessionId, agentId: selected, request: canonicalJson({ question, scope, context: args.context }) })
+    const existing = !explicit && this.autoFlights.get(`${origin.rootSessionId}\0${idempotencyKey}`)
+    if (existing) return existing
+    if (selector.mode === 'off') throw new DecisionContractError('DECISION_OFF', 'The root session Decision selector is Off')
+    if (!automatic) this.assertAttemptCapacity()
+    if (!automatic) await this.ensureStore()
+    let profile
+    if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Explicit failure / persisted no_route below. */ }
+    if (explicit && (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey)) {
+      this.rejectBoundary({ agentId: selected, rootSessionId: origin.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
+    }
     const openAndConsult = async flightSignal => {
       if (automatic) await this.ensureStore()
       const opened = await this.cases.createCase({ ...origin, entry: 'consult', agentId: selected, request, scope, idempotencyKey, maxAttempts: this.config().decisionAgentMaxAttemptsPerCase ?? 3 })
@@ -347,6 +349,12 @@ export class DecisionBroker {
   async hook({ agent, request, signal }) {
     if (!this.status().available) return { kind: 'pass', why: 'bypass' }
     const origin = await decisionOrigin(agent, this.ctx)
+    const idempotencyKey = decisionIdempotencyKey({
+      rootSessionId: origin.rootSessionId, callId: request.wait?.callId,
+      questions: (request.questions ?? []).map(question => ({ id: question.id, question: question.question })),
+    })
+    const existing = this.autoFlights.get(`${origin.rootSessionId}\0${idempotencyKey}`)
+    if (existing) return existing
     const selector = this.selector(origin.rootSessionId)
     if (selector.mode === 'off') return { kind: 'pass', why: 'bypass' }
     if (excludedRequest(request)) {
@@ -360,10 +368,6 @@ export class DecisionBroker {
     }
     if (!automatic) await this.ensureStore()
     const selected = selector.agentId
-    const idempotencyKey = decisionIdempotencyKey({
-      rootSessionId: origin.rootSessionId, callId: request.wait?.callId,
-      questions: (request.questions ?? []).map(question => ({ id: question.id, question: question.question })),
-    })
     let profile
     if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Persist no_route below. */ }
     const usable = profile?.state === 'enabled' && profile.workspaceKey === origin.workspaceKey

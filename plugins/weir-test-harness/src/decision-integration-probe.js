@@ -161,8 +161,68 @@ async function autoSingleflight(broker, agent, signal) {
       outcome: firstResult.outcome, state: current.state, agentId: current.agentId,
       publishes, flights: broker.autoFlights.size,
     }
-    return { completed: true, op: 'auto-singleflight', caseId, before, after }
+    rmSync(ready, { force: true })
+    rmSync(release, { force: true })
+    const selectorArgs = {
+      question: 'AUTO_SINGLEFLIGHT_SELECTOR_CONSULT: join after Auto becomes pinned',
+      options: [{ label: 'Selector joined B' }], request_id: 'auto-singleflight-selector-consult',
+    }
+    const selectorPublishBaseline = publishes
+    let selectorFirstSettled = false
+    let selectorReplaySettled = false
+    const selectorFirst = broker.consult({ agent, args: selectorArgs, signal }).then(value => { selectorFirstSettled = true; return value })
+    await waitForFile(ready, signal)
+    await broker.setSelector(agent.id, 'agent', current.agentId)
+    const selectorReplay = broker.consult({ agent, args: selectorArgs, signal }).then(value => { selectorReplaySettled = true; return value })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const selectorRow = broker.store.db.prepare("SELECT case_id,state FROM cases WHERE json_extract(request_json,'$.questions[0].question')=?").get(selectorArgs.question)
+    const selectorCaseId = selectorRow?.case_id
+    const selectorBefore = {
+      ...autoCaseCounts(broker, selectorCaseId), received: selectorRow?.state === 'received' ? 1 : 0,
+      firstSettled: selectorFirstSettled, replaySettled: selectorReplaySettled,
+      publishes: publishes - selectorPublishBaseline, flights: broker.autoFlights.size,
+    }
+    writeFileSync(release, JSON.stringify({ at: Date.now() }) + '\n')
+    const [selectorFirstResult, selectorReplayResult] = await Promise.all([selectorFirst, selectorReplay])
+    const selectorAfter = {
+      ...autoCaseCounts(broker, selectorCaseId), sameResult: JSON.stringify(selectorFirstResult) === JSON.stringify(selectorReplayResult),
+      publishes: publishes - selectorPublishBaseline, flights: broker.autoFlights.size,
+    }
+
+    await broker.setSelector(agent.id, 'auto')
+    rmSync(ready, { force: true })
+    rmSync(release, { force: true })
+    const selectorHookRequest = {
+      questions: [{ id: 'decision-auto-selector-hook', question: 'AUTO_SINGLEFLIGHT_HOOK: join after Auto becomes pinned', options: [{ label: 'Selector Hook B' }] }],
+      wait: { callId: 'auto-singleflight-selector-hook' },
+    }
+    let selectorHookFirstSettled = false
+    let selectorHookReplaySettled = false
+    const selectorHookFirst = broker.hook({ agent, request: selectorHookRequest, signal }).then(value => { selectorHookFirstSettled = true; return value })
+    await waitForFile(ready, signal)
+    await broker.setSelector(agent.id, 'agent', current.agentId)
+    const selectorHookReplay = broker.hook({ agent, request: selectorHookRequest, signal }).then(value => { selectorHookReplaySettled = true; return value })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const selectorHookRow = broker.store.db.prepare("SELECT case_id,state FROM cases WHERE json_extract(request_json,'$.questions[0].question')=?").get(selectorHookRequest.questions[0].question)
+    const selectorHookCaseId = selectorHookRow?.case_id
+    const selectorHookBefore = {
+      ...autoCaseCounts(broker, selectorHookCaseId), received: selectorHookRow?.state === 'received' ? 1 : 0,
+      firstSettled: selectorHookFirstSettled, replaySettled: selectorHookReplaySettled, flights: broker.autoFlights.size,
+    }
+    writeFileSync(release, JSON.stringify({ at: Date.now() }) + '\n')
+    const [selectorHookFirstResult, selectorHookReplayResult] = await Promise.all([selectorHookFirst, selectorHookReplay])
+    const selectorHookAfter = {
+      ...autoCaseCounts(broker, selectorHookCaseId), sameResult: JSON.stringify(selectorHookFirstResult) === JSON.stringify(selectorHookReplayResult),
+      flights: broker.autoFlights.size,
+    }
+    await broker.setSelector(agent.id, 'auto')
+    return {
+      completed: true, op: 'auto-singleflight', caseId, before, after,
+      selectorConsult: { caseId: selectorCaseId, before: selectorBefore, after: selectorAfter },
+      selectorHook: { caseId: selectorHookCaseId, before: selectorHookBefore, after: selectorHookAfter },
+    }
   } finally {
+    await broker.setSelector(agent.id, 'auto')
     broker.publishConsult = publish
     writeFileSync(release, JSON.stringify({ at: Date.now(), cleanup: true }) + '\n')
   }
