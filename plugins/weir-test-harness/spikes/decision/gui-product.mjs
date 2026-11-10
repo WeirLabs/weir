@@ -2591,10 +2591,17 @@ try {
     writeJson(join(out, 'failure-dom.json'), await instance.cdp.evaluate('({text:document.body.innerText,html:document.body.innerHTML})').catch(() => null))
     await collectNetwork().catch(() => {})
     collectRuntime(instance, 'failure')
+    const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')
+    const consoleErrors = runtimeEvents.filter(item => item.event.method === 'Runtime.consoleAPICalled' && item.event.params?.type === 'error')
+    const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
+    const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
+    const scannedLogs = ['desktop-enabled.log', 'desktop-disabled.log'].filter(path => existsSync(join(out, path)))
+    const importFailures = scannedLogs.flatMap(path => readFileSync(join(out, path), 'utf8').split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
     writeJson(join(out, 'runtime-scan.json'), {
-      exceptionCount: runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown').length,
-      consoleErrorCount: runtimeEvents.filter(item => item.event.method === 'Runtime.consoleAPICalled' && item.event.params?.type === 'error').length,
-      slotCrashCount: runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event))).length,
+      exceptionCount: exceptions.length, exceptions,
+      consoleErrorCount: consoleErrors.length, consoleErrors,
+      slotCrashCount: slotCrashes.length, slotCrashes,
+      logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs,
     })
   }
 } finally {

@@ -91,4 +91,6 @@ test('5.2 product matrix wires raw modal scroll and settled-focus audits into ev
     assert.ok(body.includes('confirmationFocusProblems'), `${helper} rejects premature focus restoration`)
   }
   for (const token of ['beginModalAudit', 'runSelectorFailureMatrix', 'runColdRevealMatrix', 'runAgentResumeMatrix', 'browserZoomProblems', 'uiux-acceptance.json']) assert.ok(matrix.includes(token), token)
+  const failure = driver.slice(driver.indexOf('} catch (error)', driver.indexOf('async function runProductMatrix()')))
+  for (const token of ['logErrorCount', 'importFailures', 'desktop-enabled.log', 'desktop-disabled.log']) assert.ok(failure.includes(token), `failure runtime scan retains ${token}`)
 })
