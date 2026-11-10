@@ -1283,7 +1283,7 @@ async function runP4AfterRestart(state, legacySession, primary, secondary) {
   await compareRoutingReview(state.shadowObservedSession, 'p4-shadow-routing-review', shadowReview)
   await openIsolatedSession(reviewSession, true)
   await openPage('metrics')
-  await compareRoutingReview(reviewSession, 'p4-routing-before-visuals', combined)
+  await compareRoutingReview(reviewSession, 'p4-routing-before-visuals', allAgain)
   await instance.cdp.setPageZoom(1)
   for (const theme of ['light', 'dark']) {
     await instance.cdp.setColorScheme(theme)
