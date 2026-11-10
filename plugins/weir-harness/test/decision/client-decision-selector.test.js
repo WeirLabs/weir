@@ -146,7 +146,7 @@ const enabledOverview = {
   ],
 }
 
-test('selector opens a non-modal radio panel with Off, truthful Auto, and enabled assistants', async t => {
+test('selector opens a native modal radio panel with localized options and enabled assistants', async t => {
   const h = await load(t, enabledOverview)
   let tree = h.render()
   let trigger = triggerOf(tree)
@@ -164,9 +164,12 @@ test('selector opens a non-modal radio panel with Off, truthful Auto, and enable
   tree = h.render()
   const panel = panelOf(tree)
   assert.ok(panel)
-  assert.equal(panel['aria-modal'], false)
+  assert.equal(panel['aria-modal'], true)
+  assert.equal(panel.type, h.props.ui.DecisionModalFrame)
+  assert.equal(panel.closeOnBackdrop, true)
+  assert.equal(panel.restoreFocus, false)
   assert.equal(panel['aria-labelledby'], 'weir-da-selector-title')
-  assert.equal(h.document.activeElement, panel.ref.current)
+  assert.equal(panel.initialFocus, panel.dialogRef)
   assert.deepEqual(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').map(node => node.value), ['off', 'auto', 'a', 'b'])
   assert.ok(findAll(panel, node => node.type === 'input' && node.inputType === 'radio').every(node => node.name === 'weir-da-selector-choice'))
   assert.ok(findAll(panel, node => node.type === 'label' && node.className?.includes('weir-da-selector-option')).length === 4)
@@ -272,6 +275,11 @@ test('selection saves exactly once and closes without confirmation', async t => 
   assert.equal(textOf(tree).includes('decisionSaving'), true)
   assert.equal(panelOf(tree)['aria-busy'], true)
   assert.ok(findAll(tree, node => node.type === 'input' && node.inputType === 'radio').every(node => node.disabled))
+  const pendingPanel = panelOf(tree)
+  assert.equal(pendingPanel.pending, true)
+  pendingPanel.onRequestClose('escape')
+  pendingPanel.onRequestClose('backdrop')
+  assert.ok(panelOf(h.render()))
   release({ mode: 'agent', agentId: 'a' })
   await h.flush()
   tree = h.render()
@@ -489,7 +497,7 @@ test('root and child session reads restore their own persisted Auto selection', 
   assert.equal(h.calls.filter(call => call.method === 'overview').at(-1).args.sessionId, 'child')
 })
 
-test('outside click and Escape close without saving and return focus to the trigger', async t => {
+test('native backdrop and Escape close without saving and return focus to the trigger', async t => {
   const h = await load(t, enabledOverview)
   h.render()
   await h.flush()
@@ -497,17 +505,13 @@ test('outside click and Escape close without saving and return focus to the trig
   triggerOf(tree).onClick()
   tree = h.render()
   const trigger = triggerOf(tree).ref.current
-  const root = findAll(tree, node => node['data-weir-decision-selector'] !== undefined)[0]
-  h.document.emit('pointerdown', { target: root.ref.current })
-  tree = h.render()
-  assert.ok(panelOf(tree))
-  h.document.emit('pointerdown', { target: {} })
+  panelOf(tree).onRequestClose('backdrop')
   tree = h.render()
   assert.equal(panelOf(tree), undefined)
   assert.equal(trigger.focused, 1)
   triggerOf(tree).onClick()
   tree = h.render()
-  h.document.emit('keydown', { key: 'Escape', preventDefault() {} })
+  panelOf(tree).onRequestClose('escape')
   tree = h.render()
   assert.equal(panelOf(tree), undefined)
   assert.equal(trigger.focused, 2)
@@ -529,5 +533,9 @@ test('selector keeps composition ids and uses bounded responsive styles without 
   assert.match(styles, /max-height:/)
   assert.match(styles, /overflow: auto/)
   assert.match(styles, /width: min\(360px, calc\(100vw - 32px\)\)/)
+  assert.match(styles, /\.weir-da-selector-panel::backdrop/)
+  const panelCss = styles.match(/\.weir-da-selector-panel \{([^}]*)\}/)?.[1] ?? ''
+  assert.doesNotMatch(panelCss, /position: absolute|bottom:|70vh|320px/)
+  assert.match(panelCss, /margin: auto/)
   assert.match(styles, /@media \(max-width: 600px\)/)
 })

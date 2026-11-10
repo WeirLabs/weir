@@ -277,6 +277,10 @@ test('reassign and retry stay secondary while cancel requires explicit confirmat
   assert.equal(calls.some(call => call[0] === 'cancel'), false)
   const dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
   assert.ok(dialog)
+  const navigation = findAll(harness.render(), node => node['data-decision-primary-nav'] === true)[0]
+  assert.ok(navigation)
+  assert.equal(navigation.tabIndex, -1)
+  assert.equal(dialog.returnFocusFallback, navigation.ref)
   await dialog.onConfirm()
   await harness.flush()
   assert.deepEqual(calls[2], ['cancel', 'dc-waiting'])

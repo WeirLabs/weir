@@ -275,6 +275,7 @@ window.__ModuleLoader__.load({
           confirm ? jsx.jsx(ui.ConfirmDialog, {
             id: `weir-da-card-cancel-${view.caseId}`, title: t("decisionCancelTitle"), body: t("decisionCancelConfirmation"),
             confirmLabel: t("decisionCancel"), cancelLabel: t("decisionKeepEditing"), danger: true, pending: isPending,
+            openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel"),
             onCancel: () => setConfirm(null),
             onConfirm: () => { const targetCaseId = confirm.caseId; setConfirm(null); return run("cancel", targetCaseId); },
           }, "confirm-cancel") : null,

@@ -18,7 +18,6 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = react.useState(false);
       const [readRevision, setReadRevision] = react.useState(0);
       const [failedTarget, setFailedTarget] = react.useState(null);
-      const rootRef = react.useRef(null);
       const triggerRef = react.useRef(null);
       const panelRef = react.useRef(null);
       const savingRef = react.useRef(false);
@@ -57,28 +56,6 @@ window.__ModuleLoader__.load({
         restoreFocusRef.current = true;
         setOpen(false);
       };
-      react.useEffect(() => {
-        const hostDocument = globalThis.document;
-        if (!open || !hostDocument) return undefined;
-        const onPointerDown = event => {
-          if (rootRef.current?.contains(event.target) === true) return;
-          close();
-        };
-        const onKeyDown = event => {
-          if (event.key !== "Escape") return;
-          event.preventDefault?.();
-          close();
-        };
-        hostDocument.addEventListener("pointerdown", onPointerDown);
-        hostDocument.addEventListener("keydown", onKeyDown);
-        return () => {
-          hostDocument.removeEventListener("pointerdown", onPointerDown);
-          hostDocument.removeEventListener("keydown", onKeyDown);
-        };
-      }, [open]);
-      react.useEffect(() => {
-        if (open) panelRef.current?.focus?.();
-      }, [open]);
       react.useEffect(() => {
         if (open || pending || !restoreFocusRef.current) return;
         restoreFocusRef.current = false;
@@ -158,11 +135,13 @@ window.__ModuleLoader__.load({
       };
       const errorText = snapshot.error ? t(view.errorKey ?? "decisionFailed") : "";
       const rawError = snapshot.error ? { code: snapshot.error.code, message: snapshot.error.message ?? String(snapshot.error) } : null;
-      const panel = open ? jsx.jsxs("section", {
-        ref: panelRef, id: PANEL_ID, className: "weir-da-overlay weir-da-selector-panel",
-        role: "dialog", "aria-modal": false, "aria-labelledby": TITLE_ID,
+      const panel = open ? jsx.jsxs(ui.DecisionModalFrame, {
+        dialogRef: panelRef, initialFocus: panelRef, id: PANEL_ID, className: "weir-da-overlay weir-da-selector-panel",
+        role: "dialog", "aria-modal": true, "aria-labelledby": TITLE_ID,
         "aria-describedby": "weir-da-selector-safety", tabIndex: -1,
-        "aria-busy": pending,
+        pending, "aria-busy": pending, closeOnBackdrop: true, onRequestClose: close,
+        restoreFocus: false, returnFocus: triggerRef, scrollOrigin: triggerRef,
+        openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel"), onDismissError: () => setOpen(false),
         children: [
           jsx.jsxs("div", { className: "weir-da-selector-header", "data-selector-part": "header", children: [
             jsx.jsx("h2", { id: TITLE_ID, className: "weir-da-selector-title", children: t("decisionSelectTitle") }, "title"),
@@ -198,7 +177,7 @@ window.__ModuleLoader__.load({
         ],
       }) : null;
       return jsx.jsxs("span", {
-        ref: rootRef, className: "weir-da-selector", "data-weir-decision-selector": SELECTOR_ID,
+        className: "weir-da-selector", "data-weir-decision-selector": SELECTOR_ID,
         children: [
           jsx.jsx(ui.DecisionStyles, {}, "styles"),
           jsx.jsxs("button", {

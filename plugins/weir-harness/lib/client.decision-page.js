@@ -492,6 +492,7 @@ window.__ModuleLoader__.load({
       const tabRef = react.useRef(tab);
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
+      const primaryNavRef = react.useRef(null);
       tabRef.current = tab;
       filterRef.current = appliedFilter;
       selectedCaseRef.current = selectedCaseId;
@@ -901,21 +902,22 @@ window.__ModuleLoader__.load({
           }) : null,
         ] }, "content"),
       ] });
-      const confirmation = confirm?.kind === "cancel" ? jsx.jsx(ui.ConfirmDialog, {
+      const confirmationFocus = { returnFocusFallback: primaryNavRef, openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel") };
+      const confirmation = confirm?.kind === "cancel" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-cancel-decision", title: t("decisionCancelTitle"), body: t("decisionCancelConfirmation"),
         confirmLabel: t("decisionCancel"), cancelLabel: t("decisionKeepEditing"), danger: true, pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const caseId = confirm.caseId; setConfirm(null); return run("cancel", caseId); },
-      }) : confirm?.kind === "discard-editor" ? jsx.jsx(ui.ConfirmDialog, {
+      }) : confirm?.kind === "discard-editor" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-discard-editor", title: t("decisionDiscardTitle"), body: t("decisionDiscardConfirmation"),
         confirmLabel: t("decisionDiscard"), cancelLabel: t("decisionKeepEditing"), danger: true,
         onCancel: () => setConfirm(null), onConfirm: () => { const after = confirm.after; setConfirm(null); setEditor(null); return after?.(); },
-      }) : confirm?.kind === "agent-state" ? jsx.jsx(ui.ConfirmDialog, {
+      }) : confirm?.kind === "agent-state" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-agent-state", title: t(confirm.state === "archived" ? "decisionArchiveTitle" : confirm.state === "disabled" ? "decisionDisableTitle" : "decisionEnableTitle"),
         body: t(confirm.state === "archived" ? "decisionArchiveConfirmation" : confirm.state === "disabled" ? "decisionDisableConfirmation" : "decisionEnableConfirmation"),
         confirmLabel: t(confirm.state === "archived" ? "decisionArchiveAgent" : confirm.state === "disabled" ? "decisionDisableAgent" : "decisionEnableAgent"),
         cancelLabel: t("decisionCancel"), danger: confirm.state === "archived", pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const { agentId, state } = confirm; setConfirm(null); return run("profileSetState", agentId, state); },
-      }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, {
+      }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: `weir-da-learning-${confirm.kind === "snapshotPublish" ? "publish" : confirm.kind === "snapshotReject" ? "reject" : "rollback"}`,
         title: t(confirm.kind === "snapshotPublish" ? "decisionApplyTitle" : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateTitle" : "decisionRollbackTitle"),
         body: jsx.jsxs("div", { children: [
@@ -943,7 +945,7 @@ window.__ModuleLoader__.load({
             jsx.jsxs("div", { children: [jsx.jsx("h1", { children: t("decisionSelector") }, "title"), jsx.jsx("p", { children: t("decisionPageDescription") }, "description")] }, "copy"),
             jsx.jsx(ui.Button, { variant: "ghost", "data-view": "metrics", onClick: () => navigate("metrics"), "aria-pressed": view.tab === "metrics", children: t("decisionAdvancedDiagnostics") }, "advanced"),
           ] }, "header"),
-          jsx.jsx("nav", { className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
+          jsx.jsx("nav", { ref: primaryNavRef, tabIndex: -1, className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
             "data-view": id, onClick: () => navigate(id), "aria-pressed": view.tab === id,
             children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, "aria-label": `${resources.inbox.value.length}` }, "count") : null] }),
           }, id)) }, "nav"),
