@@ -650,6 +650,11 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   assert.ok(fixture.includes('stock-tool-calls.jsonl'), 'raw pre-Hook stock tool arguments are durable')
   assert.ok(fixture.includes('event.data'), 'session scans retain raw stock tool-call evidence')
   assert.ok(!/fixture\('askNative'[\s\S]{0,300}GUI_AUTO_/.test(driver), 'stock Auto proof never uses fixture askNative')
+  const unowned = driver.match(/async function unownedInbox\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const disclosure = unowned.indexOf("await openDisclosure(`weir-da-inbox-routes-${caseId}`)")
+  const routeReady = unowned.indexOf('const routeReady = await waitFor(')
+  const domRead = unowned.indexOf('const dom = await instance.cdp.evaluate(')
+  assert.ok(disclosure >= 0 && routeReady > disclosure && domRead > routeReady, 'inbox RouteDecision history finishes loading before its DOM is asserted')
 })
 
 test('startup isolation contract rejects current App P0 roots ports and foreign Decision stores', async () => {
