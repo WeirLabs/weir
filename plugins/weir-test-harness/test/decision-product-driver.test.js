@@ -636,6 +636,20 @@ test('product driver preserves all legacy AX groups and derives the expanded P4 
   const finished = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)', captured)
   assert.ok(answered >= 0 && opened > answered && captured > opened && finished > captured, 'longRecord AX reads the still-rendered authoritative record after inbox closure')
 })
+test('native AX group evidence comes from the pending multi-select stock question', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const scenario = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/src/scenarios/decision-gui.js'), 'utf8')
+  assert.match(scenario, /product-long-choice[\s\S]*?multi_select: true/, 'the real stock long question is the source-verified native group surface')
+  assert.equal(driver.match(/await captureAccessibility\('nativeDecision'/g)?.length, 1, 'single-select pending cases cannot occupy the multi-select AX slot')
+  const finish = driver.match(/async function finishLongNativeWithSkip\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const capture = finish.indexOf("await captureAccessibility('nativeDecision'")
+  const skip = finish.indexOf('await skipLongNativeStep()')
+  assert.ok(finish.includes('长中文题面'), 'the capture waits for the actual long stock question rather than a generic pending card')
+  assert.ok(capture >= 0 && skip > capture, 'the pending native group is captured before any native Skip settles it')
+  const settle = driver.match(/async function settleNativeSkip\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(!settle.includes("captureAccessibility('nativeDecision'"), 'single-select native Skip does not overwrite group evidence')
+})
+
 test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, restoration, and cleanup', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   for (const token of [

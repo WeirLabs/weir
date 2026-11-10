@@ -948,7 +948,11 @@ async function finishLongNativeWithSkip(sessionId, caseId) {
   // exists inside the owning session, so returning to it precedes the Skip.
   await openSession(instance, sessionId)
   const steps = []
-  let native = await nativeState()
+  let native = await waitFor(async () => {
+    const state = await nativeState()
+    return state.pending && state.text.includes('长中文题面') ? state : null
+  }, 30_000)
+  if (!accessibility.nativeDecision) await captureAccessibility('nativeDecision', `[data-question-key=${JSON.stringify(native.key)}]`)
   while (native.pending) {
     requireEvidence(steps.length < 4, 'the visible native card exposes a bounded number of Skip steps')
     const previous = native.text
@@ -991,7 +995,6 @@ async function settleNativeSkip(sessionId, caseId, label) {
   await openIsolatedSession(sessionId, true)
   const steps = []
   let native = await nativeState()
-  if (native.pending && !accessibility.nativeDecision) await captureAccessibility('nativeDecision', `[data-question-key=${JSON.stringify(native.key)}]`)
   while (native.pending) {
     requireEvidence(steps.length < 4, `${label} native Skip stays bounded`)
     const previous = native.text
@@ -1245,8 +1248,6 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   const pending = await record(pendingSession, 'p4-pending-before-restart', pendingSummary.caseId)
   check('pendingStateReadyForRealRestart', pending.case.agentId === null && pending.case.awaitingReason === 'no_route' && pending.attempts.length === 0 && pending.routeDecisions.length === 1, { caseId: pending.case.caseId })
   await shot('p4-pending-before-restart')
-  const pendingNative = await nativeState()
-  if (pendingNative.pending && !accessibility.nativeDecision) await captureAccessibility('nativeDecision', `[data-question-key=${JSON.stringify(pendingNative.key)}]`)
   p4Evidence.pending = pending
   await scanSession(autoSession, 'p4-auto-session-before-restart.json')
 
