@@ -676,6 +676,7 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   assert.ok(fixture.includes("'decisionConfig'"), 'fixture reads effective Decision settings')
   assert.ok(fixture.includes('stock-tool-calls.jsonl'), 'raw pre-Hook stock tool arguments are durable')
   assert.ok(fixture.includes('event.data'), 'session scans retain raw stock tool-call evidence')
+  assert.ok(driver.includes("typeof event.data?.arguments === 'string' ? JSON.parse(event.data.arguments) : event.data?.arguments"), 'session stock evidence parses the persisted JSON argument string without discarding the raw event')
   assert.ok(!/fixture\('askNative'[\s\S]{0,300}GUI_AUTO_/.test(driver), 'stock Auto proof never uses fixture askNative')
   const unowned = driver.match(/async function unownedInbox\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   const disclosure = unowned.indexOf("await openDisclosure(`weir-da-inbox-routes-${caseId}`)")
