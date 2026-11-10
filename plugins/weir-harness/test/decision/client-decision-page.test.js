@@ -981,7 +981,7 @@ test('advanced metrics include ordinary-language routing diagnostics and authori
   harness.unmount()
 })
 
-test('routing review appends the next cursor once, dedupes Cases, and reports the stable shown count', async () => {
+test('routing review appends once, dedupes only repeated RouteDecisions, and retains same-Case history', async () => {
   const first = routingItem('dc-a', { questionSummary: 'Original A' })
   const second = routingItem('dc-b', { outcome: 'manual_reassign', mode: 'manual_reassign' })
   const firstPage = [first, ...Array.from({ length: 19 }, (_, index) => routingItem(`dc-page-${index}`))]
@@ -1005,16 +1005,17 @@ test('routing review appends the next cursor once, dedupes Cases, and reports th
   tree = harness.render()
   assert.equal(findAll(tree, node => node['data-routing-load-more'] === true)[0]['aria-busy'], true)
   assert.equal(calls.length, 2)
-  gate.resolve({ window: 'all', summary: routingSummary({ agreement: 20, manualReassign: 1 }), items: [{ ...first, questionSummary: 'Updated duplicate A' }, second], nextCursor: null })
+  gate.resolve({ window: 'all', summary: routingSummary({ agreement: 21, manualReassign: 1 }), items: [{ ...first, questionSummary: 'Updated duplicate A' }, { ...first, routeDecisionId: 'rd-a-shadow', questionSummary: 'Shadow A' }, second], nextCursor: null })
   await Promise.all([firstRead, duplicateRead])
   await harness.flush()
   tree = harness.render()
-  assert.deepEqual(routingCases(tree), [...firstPage.map(item => item.caseId), 'dc-b'])
+  assert.deepEqual(routingCases(tree), [...firstPage.map(item => item.caseId), 'dc-a', 'dc-b'])
   assert.equal(textOf(tree).includes('Original A'), true)
   assert.equal(textOf(tree).includes('Updated duplicate A'), false)
+  assert.equal(textOf(tree).includes('Shadow A'), true)
   assert.deepEqual(calls[1], { window: 'all', cursor: 'cursor-1' })
   assert.equal(findAll(tree, node => node['data-routing-load-more'] === true).length, 0)
-  assert.match(textOf(findAll(tree, node => node['data-routing-status'] === true)[0]), /21/)
+  assert.match(textOf(findAll(tree, node => node['data-routing-status'] === true)[0]), /22/)
   harness.unmount()
 })
 
