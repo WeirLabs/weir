@@ -114,10 +114,6 @@ export class DecisionQuery {
       where.push('cases.workspace_key=?')
       params.push(workspaceKey)
     }
-    if (since !== null) {
-      where.push('route_decisions.created_at>=?')
-      params.push(since)
-    }
     const rows = this.store.db.prepare(`SELECT route_decisions.rowid AS route_append_order,route_decisions.*,
       cases.case_id AS associated_case_id,cases.agent_id AS current_agent_id,
       cases.request_json AS associated_request_json,cases.schema_version AS associated_schema_version
@@ -142,7 +138,7 @@ export class DecisionQuery {
       }
       chain.routes.push({ ...routeOf(row), appendOrder: row.route_append_order })
     }
-    return projectRoutingChains([...chains.values()])
+    return projectRoutingChains([...chains.values()], since)
   }
 
   /** @param {{sessionId:string,workspaceKey?:string,window?:'24h'|'7d'|'30d'|'all'}} input */
@@ -393,7 +389,7 @@ export function emptyRoutingReview(input) {
 }
 
 /** Project immutable route facts without interpreting natural-language reasons. */
-export function projectRoutingChains(chains) {
+export function projectRoutingChains(chains, since = null) {
   const summary = {
     agreement: 0, disagreement: 0,
     shadowNone: 0, shadowAmbiguous: 0, shadowFailure: 0,
@@ -415,6 +411,8 @@ export function projectRoutingChains(chains) {
       const route = routes[index]
       const prior = routes.slice(0, index)
       const classified = classifyRoute(route, prior, hasShadow)
+      // Derive from complete immutable history, then window only this item.
+      if (!within(route.createdAt, since)) continue
       const summaryKey = ROUTING_SUMMARY_BY_OUTCOME[classified.outcome]
       if (summaryKey) summary[summaryKey]++
       items.push({
