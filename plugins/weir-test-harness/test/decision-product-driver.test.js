@@ -353,6 +353,34 @@ test('Host language matrix activates General settings through native keyboard be
   assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(body), 'Host Settings navigation remains native-keyboard only')
 })
 
+test('Host language trigger recognizes rendered Chinese and legacy variants inside Settings', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const call = body.match(/await keyboardActivate\('Open real Language preference', '([^']+)', (\{[^\n]+\})\)/)
+  assert.ok(call, 'the real Language trigger call exists')
+  assert.equal(call[1], '[role="dialog"] button[aria-haspopup="menu"]', 'trigger discovery remains scoped to the Settings dialog')
+  const options = Function(`return (${call[2]})`)()
+  const pattern = new RegExp(options.namePattern, 'i')
+  for (const label of ['中文', '简体中文', 'English', 'Chinese']) assert.ok(pattern.test(label), label)
+  for (const label of ['选择模型，当前 Mock One', 'Chinese preset', '标准']) assert.ok(!pattern.test(label), label)
+})
+
+test('Host language Chinese restore uses real menu labels inside the open Settings menu', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const expression = body.match(/const labels = ([^\n]+)/)?.[1]
+  assert.ok(expression, 'language selection exposes the complete rendered label candidates')
+  const labelsFor = new Function('language', `return (${expression})`)
+  assert.deepEqual(labelsFor('zh'), ['中文', '简体中文', 'Chinese'])
+  assert.deepEqual(labelsFor('en'), ['English'])
+  const call = body.match(/await keyboardActivate\(`Select \$\{labels\[0\]\} GUI language`, '([^']+)', (\{[^\n]+\})\)/)
+  assert.ok(call, 'language selection uses the rendered label candidates')
+  assert.equal(call[1], '[role="menuitemradio"],[role="menuitem"],button')
+  const options = new Function('labels', `return (${call[2]})`)(['sentinel'])
+  assert.equal(options.scope, '[role="menu"]', 'selection cannot match an unrelated model or preset menu')
+  assert.deepEqual(options.labels, ['sentinel'])
+})
+
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {

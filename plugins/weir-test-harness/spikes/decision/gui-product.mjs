@@ -2165,9 +2165,9 @@ async function setGuiLanguage(language) {
   await keyboardActivate('Open Settings for language', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
   await keyboardActivate('Open General settings for language', '[role="dialog"] button', { labels: ['通用设置', 'General', 'General settings'] })
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
-  await keyboardActivate('Open real Language preference', '[role="dialog"] button[aria-haspopup="menu"]', { namePattern: '简体中文|English|Chinese' })
-  const label = language === 'en' ? 'English' : '简体中文'
-  await keyboardActivate(`Select ${label} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { labels: [label] })
+  await keyboardActivate('Open real Language preference', '[role="dialog"] button[aria-haspopup="menu"]', { namePattern: '^(?:中文|简体中文|English|Chinese)$' })
+  const labels = language === 'en' ? ['English'] : ['中文', '简体中文', 'Chinese']
+  await keyboardActivate(`Select ${labels[0]} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { scope: '[role="menu"]', labels })
   await waitFor(() => instance.cdp.evaluate(`document.documentElement.lang.toLowerCase().startsWith(${JSON.stringify(language)})`), 30_000)
   const after = await instance.cdp.evaluate('document.documentElement.lang')
   await shot(`uiux-language-${language}-settings`, { kind: 'language-settings', before, after })
