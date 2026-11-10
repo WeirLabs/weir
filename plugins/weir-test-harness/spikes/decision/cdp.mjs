@@ -68,12 +68,25 @@ export async function connectCdp(port) {
       await request('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
       await request('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
     },
+    async measureViewport(rectSelectors = {}) {
+      return this.evaluate(`(() => {
+        const selectors=${JSON.stringify(rectSelectors)}
+        const toRect=el=>{if(!el)return null;const value=el.getBoundingClientRect();return {x:value.x,y:value.y,left:value.left,top:value.top,width:value.width,height:value.height,right:value.right,bottom:value.bottom}}
+        return {
+          innerWidth,innerHeight,devicePixelRatio,
+          visualViewport:visualViewport?{width:visualViewport.width,height:visualViewport.height,scale:visualViewport.scale,offsetLeft:visualViewport.offsetLeft,offsetTop:visualViewport.offsetTop}:{width:innerWidth,height:innerHeight,scale:1,offsetLeft:0,offsetTop:0},
+          rects:Object.fromEntries(Object.entries(selectors).map(([name,selector])=>[name,toRect(document.querySelector(selector))])),
+        }
+      })()`)
+    },
     async setViewport(width, height = 900, mobile = false) {
-      await request('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile })
+      const acknowledgment = await request('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile })
+      return { method: 'Emulation.setDeviceMetricsOverride', width, height, deviceScaleFactor: 1, mobile, acknowledgment }
     },
     async setPageZoom(scale = 1) {
-      await request('Emulation.setPageScaleFactor', { pageScaleFactor: scale })
+      const acknowledgment = await request('Emulation.setPageScaleFactor', { pageScaleFactor: scale })
       await waitFor(() => this.evaluate(`Math.abs((visualViewport?.scale ?? 1) - ${JSON.stringify(scale)}) < 0.01`), 10_000)
+      return { method: 'Emulation.setPageScaleFactor', pageScaleFactor: scale, acknowledgment }
     },
     async setColorScheme(scheme) {
       if (!['light', 'dark'].includes(scheme)) throw new Error(`unsupported color scheme: ${scheme}`)
@@ -81,12 +94,12 @@ export async function connectCdp(port) {
       await waitFor(() => this.evaluate(`matchMedia('(prefers-color-scheme: ${scheme})').matches`), 10_000)
     },
     async key(key, modifiers = 0) {
-      const codes = { Enter: 13, Escape: 27, Tab: 9, Space: 32, ArrowDown: 40, ArrowUp: 38 }
+      const codes = { Enter: 13, Escape: 27, Tab: 9, Space: 32, ArrowDown: 40, ArrowUp: 38, PageDown: 34, PageUp: 33, Home: 36, End: 35 }
       const letter = /^[a-z]$/i.test(key)
       const virtualKey = codes[key] ?? (letter ? key.toUpperCase().charCodeAt(0) : key.charCodeAt(0))
       const code = key === 'Space' ? 'Space' : letter ? `Key${key.toUpperCase()}` : key
       const selectAll = letter && key.toLowerCase() === 'a' && modifiers === 4
-      const type = selectAll || key === 'Tab' || key === 'Escape' || key.startsWith('Arrow') ? 'rawKeyDown' : 'keyDown'
+      const type = selectAll || key === 'Tab' || key === 'Escape' || key.startsWith('Arrow') || /^Page(?:Down|Up)$/.test(key) || key === 'Home' || key === 'End' ? 'rawKeyDown' : 'keyDown'
       const event = { key: key === 'Space' ? ' ' : key, code, windowsVirtualKeyCode: virtualKey, nativeVirtualKeyCode: virtualKey, modifiers }
       const text = { Enter: '\r', Space: ' ' }[key]
       await request('Input.dispatchKeyEvent', { type, ...event, ...(selectAll ? { commands: ['SelectAll'] } : {}), ...(text ? { text, unmodifiedText: text } : {}) })

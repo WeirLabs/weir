@@ -3,20 +3,23 @@
 // Only exact owned main/Host PIDs are signalled; the current App is never addressed.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   LANE, writeJson, prepareProfile, startInstance, stopInstance,
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorEnvelope, selectorMatches } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorEnvelope, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
 const BASE_HEAD = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: LANE, encoding: 'utf8' }).stdout.trim()
 const PORT = Number(process.env.WEIR_DECISION_PRODUCT_PORT ?? 9468)
 if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65535) throw new Error('WEIR_DECISION_PRODUCT_PORT must be a valid TCP port')
-const GUI = join(LANE, '.weir', 'decision-product-ux')
+const GUI = resolve(LANE, process.env.WEIR_DECISION_PRODUCT_EVIDENCE_ROOT ?? join(LANE, '.weir', 'decision-product-ux'))
+const SCRATCH = join(LANE, '.weir')
+if (!GUI.startsWith(`${SCRATCH}${sep}`)) throw new Error(`Decision Desktop evidence must stay below ${SCRATCH}: ${GUI}`)
 mkdirSync(GUI, { recursive: true })
 const root = mkdtempSync(join(GUI, 'desktop-'))
 const runId = basename(root).replace('desktop-', '')
@@ -89,12 +92,12 @@ async function portFree() {
   try { await fetch(`http://127.0.0.1:${PORT}/json/list`, { signal: AbortSignal.timeout(1500) }); return false } catch { return true }
 }
 
-async function shot(name) {
+async function shot(name, details = undefined) {
   const path = join(out, `${name}.png`)
   await instance.cdp.screenshot(path)
   const bytes = readFileSync(path)
   requireEvidence(bytes.length > 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), `${name} is a real non-empty PNG`)
-  screenshots.push({ name, path, bytes: bytes.length })
+  screenshots.push({ name, path, bytes: bytes.length, ...(details ?? {}) })
   writeJson(join(out, 'screenshots.json'), screenshots)
 }
 
@@ -1461,11 +1464,178 @@ function writeReport(verdict, error = null) {
   writeFileSync(join(GUI, 'evidence-zh.md'), `${lines.join('\n')}\n`)
 }
 
+async function measureNativeModal(selector, originSelector = '[data-weir-decision-trigger="weir-decision-selector"]') {
+  return instance.cdp.evaluate(`(() => {
+    const dialog=document.querySelector(${JSON.stringify(selector)})
+    if(!dialog)return null
+    const origin=document.querySelector(${JSON.stringify(originSelector)})
+    const value=dialog.getBoundingClientRect()
+    return {
+      implementation:'native-dialog',tagName:dialog.tagName,open:dialog.open,modal:dialog.matches(':modal'),ariaModal:dialog.getAttribute('aria-modal'),
+      showModalCalls:dialog.__uiuxShowModalCalls??0,showModalError:dialog.__uiuxShowModalError??null,
+      composerContainsDialog:Boolean(origin?.parentElement?.contains(dialog)),focusInside:dialog.contains(document.activeElement),
+      rect:{x:value.x,y:value.y,left:value.left,top:value.top,width:value.width,height:value.height,right:value.right,bottom:value.bottom},
+    }
+  })()`)
+}
+
+async function measureScrollContainers(selectors = {}, originSelector = null) {
+  return instance.cdp.evaluate(`(() => {
+    const definitions=${JSON.stringify(selectors)}
+    const origin=${JSON.stringify(originSelector)}
+    const seen=new Set()
+    const entries=[]
+    const add=(name,el)=>{if(!el||seen.has(el))return;seen.add(el);entries.push([name,el])}
+    for(const [name,selector] of Object.entries(definitions))add(name,name==='root'?document.documentElement:name==='body'?document.body:document.querySelector(selector))
+    let originElement=origin?document.querySelector(origin):null
+    for(let index=0;originElement;index+=1,originElement=originElement.parentElement){const overflow=getComputedStyle(originElement).overflowY;if(['auto','scroll','overlay'].includes(overflow))add('ancestor-'+index,originElement)}
+    return Object.fromEntries(entries.map(([name,el])=>{const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
+      scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,scrollWidth:el.scrollWidth,
+      inline:{overflow:el.style.overflow,overscrollBehavior:el.style.overscrollBehavior,paddingRight:el.style.paddingRight},
+      computed:{overflowY:computed.overflowY,overscrollBehavior:computed.overscrollBehavior},
+      rect:{x:rect.x,y:rect.y,left:rect.left,top:rect.top,width:rect.width,height:rect.height,right:rect.right,bottom:rect.bottom},
+    }]}))
+  })()`)
+}
+
+async function measureColdReveal(targetSelector, scrollerSelector, state = {}) {
+  return instance.cdp.evaluate(`(() => {
+    const options=${JSON.stringify(state)}
+    const target=document.querySelector(${JSON.stringify(targetSelector)})
+    const scroller=document.querySelector(${JSON.stringify(scrollerSelector)})
+    const draft=options.draftSelector?document.querySelector(options.draftSelector):null
+    const active=document.activeElement
+    return {
+      ...options,targetBottom:target?.getBoundingClientRect().bottom??null,scrollerBottom:scroller?.getBoundingClientRect().bottom??null,
+      scrollTop:scroller?.scrollTop??null,active:active?.id||active?.tagName?.toLowerCase()||null,draft:draft?.value??null,
+    }
+  })()`)
+}
+
+async function measureMasterDetail(selectors = {}) {
+  return instance.cdp.evaluate(`(() => {
+    const list=document.querySelector(${JSON.stringify(selectors.list ?? '[data-agent-summary]')})
+    const detail=document.querySelector(${JSON.stringify(selectors.detail ?? '[data-agent-detail],[data-agent-editor]')})
+    const visible=el=>Boolean(el&&el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden')
+    const rect=el=>{if(!el)return null;const value=el.getBoundingClientRect();return {x:value.x,y:value.y,left:value.left,top:value.top,width:value.width,height:value.height,right:value.right,bottom:value.bottom}}
+    return {
+      listVisible:visible(list),detailVisible:visible(detail),independentRegions:Boolean(list&&detail&&list!==detail&&!list.contains(detail)&&!detail.contains(list)),
+      horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1,listRect:rect(list),detailRect:rect(detail),
+    }
+  })()`)
+}
+
+async function runUiuxCapabilityPreflight() {
+  const evidence = { scope: 'Baseline browser capability preflight only; tasks 5.2–5.3 product acceptance not run', fixture: createUiuxFixture(), zoom: [] }
+  const save = () => writeJson(join(out, 'uiux-preflight.json'), evidence)
+  save()
+  const workspace = join(root, 'workspace')
+  mkdirSync(workspace, { recursive: true })
+  await newIsolatedSession('uiux-preflight', workspace)
+  await instance.cdp.setViewport(360, 900, false)
+  await waitFor(() => instance.cdp.evaluate('innerWidth===360&&innerHeight===900'), 10_000)
+  const fixtureJson = JSON.stringify(evidence.fixture)
+  evidence.setup = await instance.cdp.evaluate(`(() => {
+    const fixture=${fixtureJson}
+    const origin=document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')
+    if(!origin)throw new Error('UIUX preflight requires the real composer Decision trigger')
+    origin.focus()
+    const composer=origin.parentElement
+    const background=document.createElement('div')
+    background.id='weir-uiux-background-scroll';background.style.height='72px';background.style.width='180px';background.style.overflow='auto'
+    const nested=document.createElement('div')
+    nested.id='weir-uiux-nested-scroll';nested.style.height='48px';nested.style.overflow='auto';nested.textContent=fixture.coldContent.zh.join('\\n')
+    const filler=document.createElement('div');filler.style.height='240px';filler.textContent='背景与嵌套滚动容器 / background and nested scroll containers'
+    background.append(nested,filler);composer.appendChild(background)
+    const reference=document.createElement('div')
+    reference.id='weir-uiux-zoom-reference';reference.textContent='200%';reference.style.width='64px';reference.style.height='32px';reference.style.margin='0';reference.setAttribute('aria-hidden','true')
+    document.body.prepend(reference)
+    const dialog=document.createElement('dialog')
+    dialog.id='weir-uiux-native-preflight';dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-label','原生模态预检 / Native modal preflight')
+    dialog.style.width='min(320px, calc(100vw - 32px))';dialog.style.maxHeight='calc(100dvh - 32px)';dialog.style.overflow='hidden'
+    const header=document.createElement('header')
+    const title=document.createElement('h2');title.textContent=fixture.agents[0].name.zh+' / '+fixture.agents[0].name.en
+    const status=document.createElement('p');status.id='weir-uiux-long-status';status.textContent=fixture.agents[0].status.zh+' '+fixture.agents[0].status.en
+    const dynamic=document.createElement('div');dynamic.id='weir-uiux-dynamic-viewport';dynamic.style.height='20dvh';dynamic.style.visibility='hidden'
+    header.append(title,status,dynamic)
+    const input=document.createElement('input');input.id='weir-uiux-keyboard-input';input.autofocus=true;input.setAttribute('aria-label','键盘输入 / Keyboard input')
+    const scroller=document.createElement('div');scroller.id='weir-uiux-dialog-scroll';scroller.tabIndex=0;scroller.style.height='96px';scroller.style.overflow='auto';scroller.style.overscrollBehavior='contain'
+    for(const text of [...fixture.coldContent.zh,...fixture.coldContent.en]){const paragraph=document.createElement('p');paragraph.textContent=text;scroller.appendChild(paragraph)}
+    const footer=document.createElement('footer');const close=document.createElement('button');close.type='button';close.textContent='关闭 / Close';close.addEventListener('click',()=>dialog.close('button'));footer.appendChild(close)
+    dialog.append(header,input,scroller,footer);composer.appendChild(dialog)
+    dialog.__uiuxShowModalCalls=0;dialog.__uiuxShowModalError=null;dialog.__uiuxEvents=[]
+    for(const type of ['cancel','close','input','keydown'])dialog.addEventListener(type,event=>dialog.__uiuxEvents.push({type,key:event.key??null,inputType:event.inputType??null,isTrusted:event.isTrusted}))
+    try{dialog.__uiuxShowModalCalls+=1;dialog.showModal();dialog.__uiuxShowModalError=null}catch(error){dialog.__uiuxShowModalError=error?.message??String(error);throw error}
+    if(!dialog.matches(':modal'))throw new Error('Native showModal did not produce :modal top-layer state')
+    return {dialogId:dialog.id,modal:dialog.matches(':modal'),title:title.textContent,status:status.textContent,scrollHeight:scroller.scrollHeight,clientHeight:scroller.clientHeight}
+  })()`)
+  save()
+  check('uiuxBilingualLongStatusFixture', evidence.setup.status.includes(evidence.fixture.agents[0].status.zh) && evidence.setup.status.includes(evidence.fixture.agents[0].status.en) && evidence.setup.scrollHeight > evidence.setup.clientHeight, evidence.setup)
+  await waitFor(() => instance.cdp.evaluate("document.activeElement?.id==='weir-uiux-keyboard-input'"), 10_000)
+  evidence.native = await measureNativeModal('#weir-uiux-native-preflight')
+  const nativeProblems = nativeModalProblems(evidence.native)
+  check('nativeDialogShowModalTopLayerInComposer', nativeProblems.length === 0, { problems: nativeProblems, native: evidence.native })
+  save()
+  const typed = '键盘输入 / native keyboard input'
+  await instance.cdp.request('Input.insertText', { text: typed })
+  await waitFor(() => instance.cdp.evaluate(`document.querySelector('#weir-uiux-keyboard-input')?.value===${JSON.stringify(typed)}`), 10_000)
+  await instance.cdp.key('Tab')
+  await waitFor(() => instance.cdp.evaluate("document.activeElement?.id==='weir-uiux-dialog-scroll'"), 10_000)
+  const scrollSelectors = { root: 'html', body: 'body', composer: '#weir-uiux-background-scroll', session: '#weir-uiux-dialog-scroll', nested: '#weir-uiux-nested-scroll' }
+  const scrollBefore = await measureScrollContainers(scrollSelectors, '#weir-uiux-background-scroll')
+  await instance.cdp.key('PageDown')
+  await waitFor(() => instance.cdp.evaluate("document.querySelector('#weir-uiux-dialog-scroll')?.scrollTop>0"), 10_000)
+  const scrollAfter = await measureScrollContainers(scrollSelectors, '#weir-uiux-background-scroll')
+  evidence.scrollContainers = { before: scrollBefore, after: scrollAfter, note: 'Capability measurement only; baseline native dialog is not expected to implement the future product scroll lock' }
+  check('rootAndNestedScrollerPreflight', ['root','body','composer','session','nested'].every(name => scrollBefore[name] && scrollAfter[name]) && scrollAfter.session.scrollTop > scrollBefore.session.scrollTop, { before: Object.keys(scrollBefore), after: Object.keys(scrollAfter), sessionTop: [scrollBefore.session?.scrollTop,scrollAfter.session?.scrollTop] })
+  const dynamicBefore = await instance.cdp.measureViewport({ dialog: '#weir-uiux-native-preflight', dynamic: '#weir-uiux-dynamic-viewport' })
+  await instance.cdp.setViewport(360, 640, false)
+  await waitFor(() => instance.cdp.evaluate('innerWidth===360&&innerHeight===640'), 10_000)
+  const dynamicAfter = await instance.cdp.measureViewport({ dialog: '#weir-uiux-native-preflight', dynamic: '#weir-uiux-dynamic-viewport' })
+  const expectedDelta = (dynamicAfter.innerHeight - dynamicBefore.innerHeight) * 0.2
+  const actualDelta = dynamicAfter.rects.dynamic.height - dynamicBefore.rects.dynamic.height
+  const dynamicProblems = [...viewportMeasurementProblems(dynamicBefore, { innerWidth: 360, scale: 1 }), ...viewportMeasurementProblems(dynamicAfter, { innerWidth: 360, scale: 1 })]
+  evidence.dynamicViewport = { before: dynamicBefore, after: dynamicAfter, expectedDelta, actualDelta, problems: dynamicProblems }
+  save()
+  check('dynamicViewportUnitsTrackRealViewport', dynamicProblems.length === 0 && Math.abs(actualDelta - expectedDelta) <= 1.5 && (await measureNativeModal('#weir-uiux-native-preflight'))?.modal === true, evidence.dynamicViewport)
+  evidence.keyboard = await instance.cdp.evaluate(`(() => {const dialog=document.querySelector('#weir-uiux-native-preflight');return {events:dialog.__uiuxEvents,activeElement:document.activeElement?.id??null,inputValue:document.querySelector('#weir-uiux-keyboard-input').value}})()`)
+  save()
+  check('nativeKeyboardInputTabAndPageDown', evidence.keyboard.inputValue === typed && evidence.keyboard.events.some(event => event.type === 'input' && event.isTrusted) && evidence.keyboard.events.some(event => event.type === 'keydown' && event.key === 'Tab' && event.isTrusted) && evidence.keyboard.events.some(event => event.type === 'keydown' && event.key === 'PageDown' && event.isTrusted), evidence.keyboard)
+  await shot('uiux-native-dialog', { kind: 'native-dialog-preflight', native: evidence.native, viewport: dynamicAfter })
+  save()
+  await instance.cdp.key('Escape')
+  await waitFor(() => instance.cdp.evaluate(`(() => {const dialog=document.querySelector('#weir-uiux-native-preflight');return dialog&&!dialog.open&&document.activeElement===document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')&&dialog.__uiuxEvents.some(event=>event.type==='cancel'&&event.isTrusted)})()`), 10_000)
+  evidence.keyboard.close = await instance.cdp.evaluate(`(() => {const dialog=document.querySelector('#weir-uiux-native-preflight');return {open:dialog.open,activeElement:document.activeElement?.getAttribute('data-weir-decision-trigger')??null,events:dialog.__uiuxEvents}})()`)
+  check('nativeEscapeClosesAndReturnsFocus', evidence.keyboard.close.open === false && evidence.keyboard.close.activeElement === 'weir-decision-selector', evidence.keyboard.close)
+  save()
+  for (const width of evidence.fixture.viewports) {
+    await instance.cdp.setPageZoom(1)
+    const metricsOperation = await instance.cdp.setViewport(width, 900, true)
+    await waitFor(() => instance.cdp.evaluate(`innerWidth===${width}&&innerHeight===900`), 10_000)
+    const before = await instance.cdp.measureViewport({ reference: '#weir-uiux-zoom-reference', root: 'html' })
+    const operation = await instance.cdp.setPageZoom(2)
+    const after = await instance.cdp.measureViewport({ reference: '#weir-uiux-zoom-reference', root: 'html' })
+    const row = { width, metricsOperation, operation, before, after, devicePixelRatio: after.devicePixelRatio }
+    const problems = [...browserZoomProblems(row, 2), ...viewportMeasurementProblems(after, { innerWidth: width, scale: 2, withinVisualViewport: ['reference'] })]
+    row.problems = problems
+    evidence.zoom.push(row)
+    save()
+    check(`realBrowserZoom200At${width}`, problems.length === 0, { problems, innerWidth: after.innerWidth, devicePixelRatio: after.devicePixelRatio, visualViewport: after.visualViewport, referenceRect: after.rects.reference })
+    await shot(`uiux-zoom200-${width}`, { kind: 'real-browser-zoom', ...row })
+  }
+  await instance.cdp.setPageZoom(1)
+  await instance.cdp.setViewport(1440, 900, false)
+  evidence.domProbeRemoved = await instance.cdp.evaluate(`(() => {for(const id of ['weir-uiux-native-preflight','weir-uiux-background-scroll','weir-uiux-zoom-reference'])document.getElementById(id)?.remove();return !document.querySelector('#weir-uiux-native-preflight,#weir-uiux-background-scroll,#weir-uiux-zoom-reference')})()`)
+  check('uiuxPreflightFixtureRemoved', evidence.domProbeRemoved === true)
+  save()
+  return evidence
+}
+
 async function runStartupPreflight() {
-  const phase = 'GUI-product-P4-9.1-preflight'
+  const phase = 'GUI-decision-uiux-1.2-5.1-preflight'
   try {
     check('portInitiallyFree', await portFree() && !portListeners())
-    writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running', scope: '9.1-preflight' })
+    writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running', scope: '1.2-5.1-preflight' })
     prepareProfile(root, PORT)
     instance = await startDesktop(true)
     const preflight = JSON.parse(readFileSync(join(out, 'preflight.json'), 'utf8'))
@@ -1479,19 +1649,21 @@ async function runStartupPreflight() {
     writeJson(join(out, 'slots.json'), slots)
     check('newSlotsActive', slots.sidebar.includes('weir-decisions') && slots.main.includes('weir-decisions') && slots.composer.includes('weir-decision-selector') && slots.toolviews.includes('ask_user_question') && slots.toolviews.includes('decision_consult'), slots)
     await shot('preflight-isolated-desktop')
+    await runUiuxCapabilityPreflight()
     await stopOwned('preflight')
     const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')
     const consoleErrors = runtimeEvents.filter(item => item.event.method === 'Runtime.consoleAPICalled' && item.event.params?.type === 'error')
     const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
+    const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
     const desktopLog = readFileSync(join(out, 'desktop-enabled.log'), 'utf8')
     const importFailures = desktopLog.split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line))
-    writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, importFailures, scannedLogs: ['desktop-enabled.log'] })
-    check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && slotCrashes.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, slotCrashes: slotCrashes.length, importFailures })
+    writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs: ['desktop-enabled.log'] })
+    check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && slotCrashes.length === 0 && logErrors.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, slotCrashes: slotCrashes.length, logErrors: logErrors.length, importFailures })
     result = {
-      phase, verdict: 'PASS', pass: true, scope: 'Task 9.1 startup preflight only; tasks 9.2–9.3 were not run',
+      phase, verdict: 'PASS', pass: true, scope: 'Tasks 1.2 and driver-only 5.1 browser preflight; tasks 5.2–5.3 product acceptance were not run',
       runId, root, out, port: PORT, checks, checkDetails,
       cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)),
-      artifacts: { host: join(out, 'host.json'), instance: join(out, 'instance.json'), preflight: join(out, 'preflight.json'), config: join(out, 'decision-config-preflight.json'), slots: join(out, 'slots.json'), runtime: join(out, 'runtime-scan.json'), cleanup: join(out, 'preflight-exact-pid-cleanup.json'), screenshot: join(out, 'preflight-isolated-desktop.png') },
+      artifacts: { host: join(out, 'host.json'), instance: join(out, 'instance.json'), preflight: join(out, 'preflight.json'), config: join(out, 'decision-config-preflight.json'), slots: join(out, 'slots.json'), uiux: join(out, 'uiux-preflight.json'), screenshots: join(out, 'screenshots.json'), runtime: join(out, 'runtime-scan.json'), cleanup: join(out, 'preflight-exact-pid-cleanup.json'), screenshot: join(out, 'preflight-isolated-desktop.png') },
     }
     writeJson(join(out, 'result.json'), result)
     writeJson(join(GUI, 'result.json'), result)
@@ -1508,12 +1680,12 @@ async function runStartupPreflight() {
     }
     writeJson(join(out, 'runtime-events.json'), runtimeEvents)
     if (failure) {
-      result = { phase, verdict: 'BLOCKED', pass: false, scope: 'Task 9.1 startup preflight only; tasks 9.2–9.3 were not run', runId, root, out, port: PORT, checks, checkDetails, error: failure?.message ?? String(failure), cleanup: cleanups }
+      result = { phase, verdict: 'BLOCKED', pass: false, scope: 'Tasks 1.2 and driver-only 5.1 browser preflight; tasks 5.2–5.3 product acceptance were not run', runId, root, out, port: PORT, checks, checkDetails, error: failure?.message ?? String(failure), cleanup: cleanups }
       writeJson(join(out, 'result.json'), result)
       writeJson(join(GUI, 'result.json'), result)
       writeJson(join(out, 'driver-error.json'), { message: failure?.message ?? String(failure), stack: failure?.stack ?? null, checks, checkDetails, cleanups })
     }
-    writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: failure ? 'blocked' : 'passed', scope: '9.1-preflight', result: join(out, 'result.json') })
+    writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: failure ? 'blocked' : 'passed', scope: '1.2-5.1-preflight', result: join(out, 'result.json') })
   }
 }
 
