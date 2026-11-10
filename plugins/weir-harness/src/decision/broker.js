@@ -18,7 +18,7 @@ import {
   applyConsolidationOperations, buildConsolidationPack, parseConsolidationCandidate, replayOperations,
 } from './learning/consolidator.js'
 import { DecisionLearning } from './store/learning.js'
-import { decisionOrigin, excludedRequest, sessionModelRoute } from './route.js'
+import { decisionOrigin, excludedRequest, excludedStockHookRequest, sessionModelRoute } from './route.js'
 import { autoAdmission, classifyAutoRequest, routeAuto } from './router.js'
 import { userTextMessage } from '../shared/user-message.js'
 
@@ -357,7 +357,7 @@ export class DecisionBroker {
     if (existing) return existing
     const selector = this.selector(origin.rootSessionId)
     if (selector.mode === 'off') return { kind: 'pass', why: 'bypass' }
-    if (excludedRequest(request)) {
+    if (await excludedStockHookRequest(request, origin.originSessionId, this.ctx)) {
       this.audit('bypass', { rootSessionId: origin.rootSessionId, reason: 'excluded' })
       return { kind: 'pass', why: 'bypass' }
     }
