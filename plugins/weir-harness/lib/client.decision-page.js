@@ -12,6 +12,26 @@ window.__ModuleLoader__.load({
     const contextPackLabelStyle = { color: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
     const contextPackListStyle = { margin: "4px 0 0", paddingLeft: "22px", overflowWrap: "anywhere" };
 
+    function decisionPageVisualViewport(view) {
+      const viewport = view?.visualViewport;
+      const scale = Number(viewport?.scale ?? 1);
+      if (!viewport || !Number.isFinite(scale) || scale <= 1) return null;
+      const width = Number(viewport.width);
+      const height = Number(viewport.height);
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+      const offsetLeft = Number(viewport.offsetLeft ?? 0);
+      const offsetTop = Number(viewport.offsetTop ?? 0);
+      const left = Number.isFinite(offsetLeft) ? offsetLeft : 0;
+      const top = Number.isFinite(offsetTop) ? offsetTop : 0;
+      return {
+        compact: width <= 760,
+        style: {
+          position: "fixed", left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`,
+          margin: "0px", maxWidth: "none", maxHeight: "none", zIndex: 1,
+        },
+      };
+    }
+
     function answerText(answer) {
       if (!answer) return "";
       return [...(Array.isArray(answer.selected) ? answer.selected : []), ...(typeof answer.custom === "string" && answer.custom ? [answer.custom] : [])].join(", ");
@@ -472,6 +492,7 @@ window.__ModuleLoader__.load({
       const [selectedCaseId, setSelectedCaseId] = react.useState(null);
       const [drillIn, setDrillIn] = react.useState(false);
       const [agentDrillIn, setAgentDrillIn] = react.useState(false);
+      const [visualPage, setVisualPage] = react.useState(() => decisionPageVisualViewport(globalThis.window));
       const [pending, setPending] = react.useState(null);
       const [actionError, setActionError] = react.useState(null);
       const [learningDetail, setLearningDetail] = react.useState(null);
@@ -491,6 +512,18 @@ window.__ModuleLoader__.load({
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
       const primaryNavRef = react.useRef(null);
+      react.useEffect(() => {
+        const viewport = globalThis.window?.visualViewport;
+        if (!viewport?.addEventListener) return undefined;
+        const update = () => setVisualPage(decisionPageVisualViewport(globalThis.window));
+        viewport.addEventListener("resize", update);
+        viewport.addEventListener("scroll", update);
+        update();
+        return () => {
+          viewport.removeEventListener("resize", update);
+          viewport.removeEventListener("scroll", update);
+        };
+      }, []);
       tabRef.current = tab;
       filterRef.current = appliedFilter;
       selectedCaseRef.current = selectedCaseId;
@@ -949,7 +982,7 @@ window.__ModuleLoader__.load({
           routingReview: resources.routingReview, readFailure,
           onWindow: value => loadRoutingReview(value), onRetry: () => loadRoutingReview(), onMore: loadMoreRouting, onOpenRecord: openLearningRecord,
         });
-      return jsx.jsxs("main", { className: "weir-da-page", children: [
+      return jsx.jsxs("main", { className: "weir-da-page", style: visualPage?.style, "data-visual-viewport": visualPage ? (visualPage.compact ? "compact" : "wide") : undefined, children: [
         jsx.jsx(ui.DecisionStyles, {}, "styles"),
         jsx.jsxs("div", { className: "weir-da-page-inner", children: [
           jsx.jsxs("header", { className: "weir-da-page-header", children: [
