@@ -126,6 +126,16 @@ test('cold reveal guard accepts one ready or error end reveal and rejects loadin
   }
 })
 
+test('cold reveal refresh uses its explicit post-edit baseline and rejects unmounting', () => {
+  const loading = { status: 'loading', revealCount: 0, targetBottom: 100, scrollerBottom: 500, scrollTop: 0, active: 'button', draft: 'original' }
+  const ready = { ...loading, status: 'ready', revealCount: 1, targetBottom: 498, scrollerBottom: 500, scrollTop: 400, behavior: 'instant', block: 'end' }
+  const refreshBaseline = { ...ready, active: 'textarea', draft: 'restored', scrollTop: 420 }
+  const refreshed = { ...refreshBaseline, revealCount: 1 }
+  assert.deepEqual(coldRevealProblems({ loading, ready, refreshBaseline, refreshed }), [])
+  assert.match(coldRevealProblems({ loading, ready, refreshBaseline, refreshed: { ...refreshed, targetBottom: null } }).join('\n'), /unmounted/)
+  assert.match(coldRevealProblems({ loading, ready, refreshBaseline, refreshed: { ...refreshed, active: 'body' } }).join('\n'), /refresh changed focus/)
+})
+
 test('master-detail guard preserves narrow drill-in context and same-target restoration', () => {
   const context = { selectedAgentId: 'agent-long', draft: { name: '未保存 bilingual draft' }, learning: { run: 'lr-1', snapshot: 'ms-1' }, readCount: 4 }
   const desktop = { listVisible: true, detailVisible: true, independentRegions: true, horizontalOverflow: false, listRect: rect(0, 0, 280, 600), detailRect: rect(300, 0, 600, 600) }

@@ -293,7 +293,7 @@ export function scrollLockProblems({ before, during, after, attempts = [] }, req
   return problems
 }
 
-export function coldRevealProblems({ loading, ready, refreshed }, tolerance = 2) {
+export function coldRevealProblems({ loading, ready, refreshed, refreshBaseline }, tolerance = 2) {
   const problems = []
   if (loading?.status !== 'loading' || loading?.revealCount !== 0) problems.push('loading must not trigger a reveal')
   if (!['ready', 'error'].includes(ready?.status)) problems.push('first ready or error content is required')
@@ -301,8 +301,10 @@ export function coldRevealProblems({ loading, ready, refreshed }, tolerance = 2)
   if (ready?.behavior !== 'instant' || ready?.block !== 'end') problems.push('reveal must use instant/end positioning')
   if (!Number.isFinite(ready?.targetBottom) || !Number.isFinite(ready?.scrollerBottom) || Math.abs(ready.targetBottom - ready.scrollerBottom) > tolerance) problems.push('revealed content bottom is not aligned with its actual scroller')
   if (loading?.active !== ready?.active || loading?.draft !== ready?.draft) problems.push('reveal stole focus or changed the input draft')
-  if (refreshed?.revealCount !== 1 || refreshed?.scrollTop !== ready?.scrollTop) problems.push('refresh caused a repeated reveal or scroll jump')
-  if (ready?.active !== refreshed?.active || ready?.draft !== refreshed?.draft) problems.push('refresh changed focus or draft')
+  const baseline = refreshBaseline ?? ready
+  if (!Number.isFinite(refreshed?.targetBottom)) problems.push('refresh unmounted the revealed target')
+  if (refreshed?.revealCount !== 1 || refreshed?.scrollTop !== baseline?.scrollTop) problems.push('refresh caused a repeated reveal or scroll jump')
+  if (baseline?.active !== refreshed?.active || baseline?.draft !== refreshed?.draft) problems.push('refresh changed focus or draft')
   return problems
 }
 

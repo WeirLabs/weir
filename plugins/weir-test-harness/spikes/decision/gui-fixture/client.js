@@ -39,8 +39,12 @@ window.__ModuleLoader__.load({
             }
             const pending = originalRpcCall.apply(this, callArgs)
             pending.catch(() => {})
-            if (control.action==='hold') await new Promise(resolve => { control.release = resolve })
+            if (control.action==='hold'||control.action==='hold-fail') await new Promise(resolve => { control.release = resolve })
             try {
+              if (control.action==='hold-fail') {
+                control.settled = true
+                return { ok: false, error: { code: 'WEIR_UIUX_INJECTED_FAILURE', message: `Isolated UIUX ${method} failure` } }
+              }
               const result = await pending
               if (control.action==='unknown-auto') {
                 const clone = structuredClone(result)
@@ -64,13 +68,13 @@ window.__ModuleLoader__.load({
         }
         function controlDecision(spec) {
           ensureDecisionControls()
-          if (!spec || typeof spec.method !== 'string' || !['fail', 'hold', 'unknown-auto'].includes(spec.action)) throw new Error('Invalid isolated Decision RPC control')
+          if (!spec || typeof spec.method !== 'string' || !['fail', 'hold', 'hold-fail', 'unknown-auto'].includes(spec.action)) throw new Error('Invalid isolated Decision RPC control')
           const control = { id: `uiux-rpc-${++controlSequence}`, method: spec.method, args: spec.args, action: spec.action, used: false, started: false, released: false, settled: false, release: null }
           decisionControls.push(control)
           return control.id
         }
         function releaseDecisionControl(id) {
-          const control = decisionControls.find(item => item.id === id && item.action === 'hold')
+          const control = decisionControls.find(item => item.id === id && (item.action === 'hold' || item.action === 'hold-fail'))
           if (!control) throw new Error(`Unknown Decision hold: ${id}`)
           if (!control.released) { control.released = true; control.release?.() }
           return decisionControlState()
@@ -106,7 +110,7 @@ window.__ModuleLoader__.load({
         }
         window.__decisionQA = { fixture, decision, createSession, openSession, selectDecisions, getState, controlDecision, releaseDecisionControl, decisionControlState }
         ctx.on('dispose', () => {
-          for (const control of decisionControls) if (control.action === 'hold' && !control.released) { control.released = true; control.release?.() }
+          for (const control of decisionControls) if ((control.action === 'hold' || control.action === 'hold-fail') && !control.released) { control.released = true; control.release?.() }
           if (controlledConnection && originalRpcCall) controlledConnection.rpc.call=originalRpcCall
           delete window.__decisionQA
         })

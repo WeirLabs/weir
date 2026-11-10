@@ -68,6 +68,52 @@ test('inbox answer wait composes the selector before JSON encoding', () => {
   assert.ok(!driver.includes('JSON.stringify(article)} form.weir-da-answers'))
 })
 
+test('cold reveal waits execute one fully quoted descendant selector', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const matrix = driver.match(/async function runColdRevealMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(matrix, 'runColdRevealMatrix exists')
+  const cases = [
+    { target: 'routeTarget', root: '#weir-da-inbox-routes-dc_cold-content', descendant: '[role="alert"]' },
+    { target: 'evidenceTarget', root: '#weir-da-evidence-dc_cold-content', descendant: '.weir-da-evidence-list' },
+  ]
+  const failures = []
+  for (const item of cases) {
+    try {
+      const line = matrix.split('\n').find(row => row.includes(`JSON.stringify(${item.target}`) && row.includes('document.querySelector'))
+      assert.ok(line, `${item.target} wait exists`)
+      const template = line.match(/instance\.cdp\.evaluate\((`.*`)\)/)?.[1]
+      assert.ok(template, `${item.target} browser expression template is available`)
+      const expression = new Function(item.target, `return (${template})`)(item.root)
+      assert.doesNotThrow(() => new Function('document', 'role', `return (${expression})`), expression)
+      const queried = []
+      const expected = `${item.root} ${item.descendant}`
+      const document = {
+        querySelector(selector) {
+          queried.push(selector)
+          return selector === expected ? {} : null
+        },
+      }
+      const found = new Function('document', 'role', `return (${expression})`)(document)
+      assert.equal(found, true, expression)
+      assert.deepEqual(queried, [expected], expression)
+    } catch (error) {
+      failures.push(`${item.target}: ${error.message}`)
+    }
+  }
+  assert.deepEqual(failures, [])
+})
+
+test('cold reveal refresh restores the exact draft and compares the post-edit baseline', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const matrix = driver.match(/async function runColdRevealMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(matrix, 'runColdRevealMatrix exists')
+  for (const token of ['routeRefreshBaseline', 'evidenceRefreshBaseline', "keyboardFill('Exercise cold refresh draft'", "keyboardFill('Restore cold refresh draft'", 'cold-refresh-draft.json', 'refreshBaseline', "holdDecision('record', { sessionId, caseId }, 'hold-fail')", 'await releaseDecision(routeControl)']) assert.ok(matrix.includes(token), token)
+  assert.ok(!matrix.includes("openPage('records')"), 'Records → Inbox unmounts the open disclosures and is not a refresh')
+  assert.ok(!matrix.includes('refreshDecisions'), 'panel toggling is not substituted for a same-mount parent render')
+  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  assert.ok(!fixture.includes('refreshDecisions'), 'no layout-toggle fixture remains once the real draft render is used')
+})
+
 const evaluatorOptions = questions => ({
   system: 'Decision evaluator contract v3\nstrict',
   messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify({ L4: { request: { questions } } }) }] }],
@@ -221,7 +267,7 @@ test('delayed host welcome onboarding is resolved around native keyboard targeti
   assert.ok(dismiss, 'the delayed host onboarding guard exists')
   assert.ok(dismiss.includes('[data-desktop-onboarding="welcome"]'), 'only the exact visible host welcome page is classified as delayed onboarding')
   assert.ok(dismiss.includes("#weir-da-selector-panel,dialog.weir-da-dialog"), 'an active native Decision modal is never bypassed as host onboarding')
-  assert.ok(dismiss.includes('chooseDefaultWorkspace()'), 'the existing real host UI flow resolves the welcome page')
+  assert.ok(dismiss.includes('chooseDefaultWorkspace('), 'the existing real host UI flow resolves the welcome page')
   assert.match(dismiss, /resolution\?\.dismissed === true/, 'host dismissal must be observed')
   assert.ok(dismiss.includes('resolution.selection'), 'default workspace selection must be observed')
   assert.ok(dismiss.includes("host-onboarding.json"), 'every delayed dismissal is persisted with its triggering product action')
@@ -229,6 +275,16 @@ test('delayed host welcome onboarding is resolved around native keyboard targeti
 
   const focus = driver.match(/async function keyboardFocus\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok((focus.match(/await settleHost\(\)/g) ?? []).length >= 2, 'host state is checked both before target readiness and during native Tab traversal')
+  assert.ok(dismiss.includes('[data-desktop-onboarding="credit"]'), 'delayed credit is classified by its exact host marker, not product text')
+  assert.ok(dismiss.includes('dismissCreditOnboarding(instance)'), 'delayed credit reuses the proven native Skip and confirmation flow')
+  const credit = driver.match(/async function dismissCreditOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.equal(credit.match(/skipDelayedHostOnboarding: true/g)?.length, 2, 'Skip and confirmation suppress only their own recursive delayed-host detection')
+  assert.ok(focus.includes('options.skipDelayedHostOnboarding'), 'keyboardFocus honors the narrow reentry guard')
+  assert.ok(dismiss.includes('chooseDefaultWorkspace(() => dismissCreditOnboarding(instance))'), 'credit appearing during the welcome flow is dismissed without waiting for an unreachable workspace button')
+  assert.ok(dismiss.includes('resolution.creditDismissed'), 'the welcome → credit transition has explicit completion evidence')
+  const cdp = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
+  const choose = cdp.match(/async chooseDefaultWorkspace\([^)]*\) \{[\s\S]*?\n    \}/)?.[0] ?? ''
+  assert.ok(choose.includes('onCredit') && choose.includes('creditDismissed'), 'the real CDP welcome flow observes and settles a mid-flow credit transition')
   assert.ok(focus.includes('step < 500'), 'the existing focus traversal bound is not expanded to conceal a trap')
   assert.ok(!/\.click\(|\.focus\(/.test(focus), 'product targeting remains native-keyboard only')
   assert.ok((driver.match(/result\.artifacts\.hostOnboarding = join\(out, 'host-onboarding\.json'\)/g) ?? []).length === 2, 'final and blocked result indexes include the dismissal evidence')
