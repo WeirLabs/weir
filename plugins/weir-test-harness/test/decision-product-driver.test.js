@@ -42,6 +42,17 @@ test('Desktop app environment isolates HOME and preserves required runtime varia
   assert.equal(env.DSH_AGENTS_HOME, join(paths.home, 'agents-home'))
 })
 
+test('Desktop selector-default ternary stays one quoted YAML JS scalar', () => {
+  const patch = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/cordis.patch.yml'), 'utf8')
+  const line = patch.split('\n').find(row => row.trim().startsWith('decisionAgentSelectorDefault:'))
+  const expression = line?.match(/!!js "([^"]+)"/)?.[1]
+  assert.ok(expression, 'the ternary must be quoted so YAML cannot parse it as a mapping')
+  const evaluate = value => Function('process', `return (${expression})`)({ env: { WEIR_DECISION_GUI_SELECTOR_DEFAULT: value } })
+  assert.equal(evaluate('auto'), 'auto')
+  assert.equal(evaluate('off'), 'off')
+  assert.equal(evaluate(undefined), 'off')
+})
+
 test('inbox answer wait composes the selector before JSON encoding', () => {
   const expression = answerFormExpression('dc_1')
   assert.doesNotThrow(() => new Function(`return (${expression})`))

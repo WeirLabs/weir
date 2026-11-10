@@ -2,7 +2,7 @@
 - id: weir-settings
   config:
     decisionAgentsEnabled: !!js process.env.WEIR_DECISION_GUI_ENABLED !== '0'
-    decisionAgentSelectorDefault: !!js process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off'
+    decisionAgentSelectorDefault: !!js "process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off'"
     decisionAgentAutoShadow: !!js process.env.WEIR_DECISION_GUI_SHADOW === '1'
     decisionAgentAutoAnswerClasses: !!js process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]'
 - id: agent-default-model
