@@ -14,6 +14,7 @@
 - **九项 Decision Agent 设置**：总开关、Attempt 超时/次数/并发、上下文与输出预算、Agent 模型链、保留天数和私有存储目录。`generatedDescription` 在 P1 恒空只读。
 - **Decision Agent P2 受限检索与中性记忆**：每次 Attempt 独立按 Agent、workspace、scope 和当前资格检索；未评分的已答历史可作为 L3 非权威上下文，但不能充当证据或权限。L2 保持空适配器，无 Snapshot/语义整合/自动画像学习。新增 L3 优先预算裁剪、实际来源与省略清单、上下文指纹，以及记录详情中的只读 Context Pack。
 - **Decision Agent P3 手动语义整合与 Snapshot 生命周期**：用户可在 Agent 档案中手动冻结同命名空间记录并启动 Learning Run，审阅严格的候选操作、原则 diff、来源和结构重放，再显式发布、拒绝或回滚。已发布 Snapshot 以非权威 L2 进入后续 Attempt，全部来源仍须展开为合格 L5，不能独立回答或授权。新增 L3→L2→L5 裁剪、实际 pins/manifest/hash、六个授权 RPC、跨根 Case/correction 只读来源审阅及当前版本长历史可回滚；复用 SQLite schema v1，无自动整合/发布、自动画像学习、Auto、跨工作区共享或导出。
+- **Decision Agent P4 Auto Router 与路由复盘**：根会话选择器新增持久 `Auto`，保留 `Off` 与指定 Agent；仅在用户配置的授权类白名单内，经有界、无工具且不读取领域记忆的 Router 选择当前工作区助手，随后仍完整执行 G1–G7 与原生权限路径。新增默认关闭的 Shadow 非权威观察、原子路由/改派、并发重放合并、无归属用户裁决、高级只读复盘及三个保守设置；无匹配、歧义和失败均失败关闭。自动晋升/学习、跨工作区共享与导出仍未启用。
 
 ### Changed
 
