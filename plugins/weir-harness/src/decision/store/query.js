@@ -118,7 +118,7 @@ export class DecisionQuery {
       where.push('route_decisions.created_at>=?')
       params.push(since)
     }
-    const rows = this.store.db.prepare(`SELECT route_decisions.*,
+    const rows = this.store.db.prepare(`SELECT route_decisions.rowid AS route_append_order,route_decisions.*,
       cases.case_id AS associated_case_id,cases.agent_id AS current_agent_id,
       cases.request_json AS associated_request_json,cases.schema_version AS associated_schema_version
       FROM route_decisions JOIN cases ON cases.case_id=route_decisions.case_id
@@ -140,7 +140,7 @@ export class DecisionQuery {
         }
         chains.set(row.associated_case_id, chain)
       }
-      chain.routes.push(routeOf(row))
+      chain.routes.push({ ...routeOf(row), appendOrder: row.route_append_order })
     }
     return projectRoutingChains([...chains.values()])
   }
@@ -402,7 +402,14 @@ export function projectRoutingChains(chains) {
   }
   const items = []
   for (const chain of chains) {
-    const routes = [...chain.routes].sort((left, right) => left.createdAt - right.createdAt || left.routeDecisionId.localeCompare(right.routeDecisionId))
+    // SQLite rows carry private appendOrder=rowid. Rowid-less pure fixtures keep
+    // createdAt ordering and use caller order for ties; UUIDs never imply history.
+    const routes = chain.routes.map((route, index) => ({ route, index })).sort((left, right) => {
+      if (Number.isSafeInteger(left.route.appendOrder) && Number.isSafeInteger(right.route.appendOrder)) {
+        return left.route.appendOrder - right.route.appendOrder
+      }
+      return left.route.createdAt - right.route.createdAt || left.index - right.index
+    }).map(({ route }) => route)
     const hasShadow = routes.some(route => route.mode === 'auto_shadow')
     for (let index = 0; index < routes.length; index++) {
       const route = routes[index]
