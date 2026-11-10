@@ -677,6 +677,9 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   const domRead = unowned.indexOf('const dom = await instance.cdp.evaluate(')
   assert.ok(disclosure >= 0 && routeReady > disclosure && domRead > routeReady, 'inbox RouteDecision history finishes loading before its DOM is asserted')
   for (const surface of ['card', 'inbox']) assert.ok(unowned.includes(`if (routeRequired) await openDisclosure(\`weir-da-${surface}-routes-\${caseId}\`)`), `${surface} does not require keyboard expansion of a contractually empty route history`)
+  assert.ok(!unowned.includes('weir-da-card-recovery-'), 'the redundant conversation recovery expansion is gone')
+  const recovery = unowned.indexOf('await openDisclosure(`weir-da-recovery-${caseId}`)')
+  assert.ok(recovery > routeReady && domRead > recovery, 'the actual inbox recovery controls render before no-retry is asserted')
   const selectorOpenBody = driver.match(/async function selectorOpen\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(selectorOpenBody, /正在加载判断记录|Loading decision/i, 'selector opening waits for the real overview loading state to clear')
 })
