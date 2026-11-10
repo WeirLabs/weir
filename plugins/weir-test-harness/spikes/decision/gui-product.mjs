@@ -1643,6 +1643,17 @@ async function measureScrollContainers(selectors = {}, originSelector = null) {
   })()`)
 }
 
+async function measureStableScrollContainers(selectors = {}, originSelector = null) {
+  let previous = null
+  return waitFor(async () => {
+    const current = await measureScrollContainers(selectors, originSelector)
+    const signature = JSON.stringify(current)
+    const settled = signature === previous
+    previous = signature
+    return settled ? current : null
+  }, 10_000)
+}
+
 async function measureColdReveal(targetSelector, scrollerSelector, state = {}) {
   return instance.cdp.evaluate(`(() => {
     const options=${JSON.stringify(state)}
@@ -2248,7 +2259,7 @@ async function runEnglishVisualMatrix(sessionId) {
   await openIsolatedSession(sessionId, true)
   await instance.cdp.setViewport(360, 900, false)
   const trigger = '[data-weir-decision-trigger="weir-decision-selector"]'
-  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, trigger)
+  const scrollBefore = await measureStableScrollContainers({ root: 'html', body: 'body' }, trigger)
   await selectorOpen()
   const text = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
   const copyProblems = selectorCopyProblems(text, { language: 'en', emptyScope: true, shadow: false })

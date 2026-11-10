@@ -439,6 +439,29 @@ test('English visual matrix returns to the Decision inbox before layout audits',
   assert.ok(change >= 0 && inbox > change && audit > inbox, 'Settings → native language change → Decision inbox → visual measurements is the required order')
 })
 
+test('English selector baseline waits for stable composer geometry and scroll', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const english = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(english.includes("const scrollBefore = await measureStableScrollContainers({ root: 'html', body: 'body' }, trigger)"), 'the English selector uses a settled pre-open baseline')
+  const source = driver.match(/async function measureStableScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'measureStableScrollContainers exists')
+  const sample = (x, width, scrollTop, scrollHeight) => ({ composer: { rect: { x, width }, scrollTop, scrollLeft: 0, clientHeight: 728, scrollHeight, clientWidth: width, scrollWidth: 615 } })
+  const samples = [sample(280.5, 77.5, 3905, 9818), sample(0, 358, 1587.5, 5911), sample(0, 358, 1587.5, 5911)]
+  let calls = 0
+  const measureScrollContainers = async () => samples[calls++]
+  const waitFor = async check => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const value = await check()
+      if (value) return value
+    }
+    throw new Error('measurement did not settle')
+  }
+  const measure = new Function('measureScrollContainers', 'waitFor', `${source};return measureStableScrollContainers`)(measureScrollContainers, waitFor)
+  const result = await measure({ root: 'html', body: 'body' }, 'trigger')
+  assert.equal(calls, 3, 'the changing transition sample cannot become the baseline')
+  assert.deepEqual(result, samples[2])
+})
+
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {
