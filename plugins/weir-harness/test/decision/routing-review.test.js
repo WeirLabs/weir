@@ -135,6 +135,27 @@ test('comparison requires a preceding chosen pinned baseline and never infers la
   assert.equal(projected.summary.uncomparable, 3)
 })
 
+test('pure equal-time chains use fixture order rather than UUIDs for history', () => {
+  const at = 100
+  const input = [chain('pure-equal-time', [
+    route('pure-equal-time', 'rd-z-pinned-pure', 'pinned', at, { chosen: 'agent-a' }),
+    route('pure-equal-time', 'rd-a-shadow-pure', 'auto_shadow', at, { chosen: 'agent-a' }),
+    route('pure-equal-time', 'rd-0-manual-pure', 'manual_reassign', at, { chosen: 'agent-b' }),
+  ], 'agent-b')]
+  const before = JSON.stringify(input)
+
+  const projected = decisionQuery.projectRoutingChains(input)
+
+  const byId = new Map(projected.items.map(item => [item.routeDecisionId, item]))
+  assert.equal(byId.get('rd-a-shadow-pure').outcome, 'agreement')
+  assert.equal(byId.get('rd-a-shadow-pure').baselineAgentId, 'agent-a')
+  assert.deepEqual(byId.get('rd-0-manual-pure').reassignment, { from: 'agent-a', to: 'agent-b' })
+  assert.deepEqual(projected.items.map(item => item.routeDecisionId), [
+    'rd-z-pinned-pure', 'rd-a-shadow-pure', 'rd-0-manual-pure',
+  ])
+  assert.equal(JSON.stringify(input), before)
+})
+
 function reviewFixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'weir-routing-review-'))
   const at = 1_000_000_000
@@ -154,13 +175,17 @@ function reviewFixture(t) {
     })).case
   }
   async function addRoute(current, options = {}) {
-    const id = await cases.recordRoute({
+    let id = await cases.recordRoute({
       caseId: current.caseId, rootSessionId: options.rootSessionId ?? current.rootSessionId,
       mode: options.mode ?? 'auto', candidates: options.candidates ?? [],
       ...(options.chosen === undefined ? {} : { chosen: options.chosen }),
       reason: options.reason ?? 'none:no_candidates',
       ...(options.ambiguity === undefined ? {} : { ambiguity: options.ambiguity }),
     })
+    if (options.routeDecisionId !== undefined) {
+      store.db.prepare('UPDATE route_decisions SET route_decision_id=? WHERE route_decision_id=?').run(options.routeDecisionId, id)
+      id = options.routeDecisionId
+    }
     if (options.createdAt !== undefined) {
       store.db.prepare('UPDATE route_decisions SET created_at=?,updated_at=? WHERE route_decision_id=?').run(options.createdAt, options.createdAt, id)
     }
@@ -208,6 +233,52 @@ test('routingReview limits associations to the authorized root and workspace and
   }
   assert.deepEqual(f.query.routingReview({ sessionId: 'other', workspaceKey: '/repo', window: 'all' }).items.map(row => row.caseId), [foreignRoot.caseId])
   assert.equal(f.query.metrics({ sessionId: 'root', workspaceKey: '/repo', window: 'all' }).casesOpened, 2)
+})
+
+test('routingReview derives equal-time chains by SQLite rowid without changing pagination or history', async t => {
+  const f = reviewFixture(t)
+  const at = f.at
+  const agreement = await f.addCase('equal-agreement')
+  await f.addRoute(agreement, {
+    mode: 'pinned', chosen: 'agent-a', createdAt: at, routeDecisionId: 'rd-z-pinned-agreement',
+  })
+  await f.addRoute(agreement, {
+    mode: 'auto_shadow', chosen: 'agent-a', createdAt: at, routeDecisionId: 'rd-a-shadow-agreement',
+  })
+  const disagreement = await f.addCase('equal-disagreement')
+  await f.addRoute(disagreement, {
+    mode: 'pinned', chosen: 'agent-a', createdAt: at, routeDecisionId: 'rd-z-pinned-disagreement',
+  })
+  await f.addRoute(disagreement, {
+    mode: 'auto_shadow', chosen: 'agent-b', createdAt: at, routeDecisionId: 'rd-a-shadow-disagreement',
+  })
+  const reassigned = await f.addCase('equal-reassigned')
+  await f.addRoute(reassigned, {
+    mode: 'auto', chosen: 'agent-a', createdAt: at, routeDecisionId: 'rd-z-auto-manual',
+  })
+  await f.addRoute(reassigned, {
+    mode: 'manual_reassign', chosen: 'agent-b', createdAt: at, routeDecisionId: 'rd-a-manual',
+  })
+  const history = () => f.store.db.prepare('SELECT rowid,* FROM route_decisions ORDER BY rowid').all()
+  const before = history()
+
+  const review = f.query.routingReview({ sessionId: 'root', window: 'all' })
+
+  const byId = new Map(review.items.map(item => [item.routeDecisionId, item]))
+  assert.equal(byId.get('rd-a-shadow-agreement').outcome, 'agreement')
+  assert.equal(byId.get('rd-a-shadow-agreement').baselineAgentId, 'agent-a')
+  assert.equal(byId.get('rd-a-shadow-disagreement').outcome, 'disagreement')
+  assert.equal(byId.get('rd-a-shadow-disagreement').baselineAgentId, 'agent-a')
+  assert.deepEqual(byId.get('rd-a-manual').reassignment, { from: 'agent-a', to: 'agent-b' })
+  assert.deepEqual(review.items.map(item => item.routeDecisionId), [
+    'rd-z-pinned-disagreement',
+    'rd-z-pinned-agreement',
+    'rd-z-auto-manual',
+    'rd-a-shadow-disagreement',
+    'rd-a-shadow-agreement',
+    'rd-a-manual',
+  ])
+  assert.deepEqual(history(), before)
 })
 
 test('routingReview pages exactly 20 stable items with duplicate-resistant, root-and-window-bound cursors', async t => {

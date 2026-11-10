@@ -174,16 +174,12 @@ function sidecarFailure(streamed) {
 
 function parseJson(text) {
   if (typeof text !== 'string') return null
-  const original = text
-  let cleaned = text.trim()
-  if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```(?:json)?\s*/i, '')
-  if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3).trim()
-  const start = cleaned.indexOf('{')
-  const end = cleaned.lastIndexOf('}')
-  if (start < 0) return null
-  cleaned = cleaned.slice(start, end < start ? cleaned.length : end + 1)
+  const cleaned = text.trim()
+  if (!cleaned.startsWith('{')) return null
   try { return JSON.parse(cleaned) } catch (error) {
-    if (!original.includes('}') || !cleaned.endsWith('}') || /unexpected end|unterminated|end of (?:json )?(?:input|data)/i.test(/** @type {any} */ (error)?.message ?? '')) return TRUNCATED
+    const message = /** @type {any} */ (error)?.message ?? ''
+    if (/after json/i.test(message)) return null
+    if (!cleaned.endsWith('}') || /unexpected end|unterminated|end of (?:json )?(?:input|data)/i.test(message)) return TRUNCATED
     return null
   }
 }
