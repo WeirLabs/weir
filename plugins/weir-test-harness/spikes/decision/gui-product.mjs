@@ -7,7 +7,7 @@ import { basename, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   LANE, writeJson, prepareProfile, startInstance, stopInstance,
-  createSession, openSession, submitMarker,
+  createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
 import { answerFormExpression, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, selectorEnvelope, selectorMatches } from './gui-product-lib.mjs'
@@ -367,6 +367,21 @@ async function keyboardSelect(action, selector, value, options = {}) {
   saveKeyboardAudits()
   await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value===${JSON.stringify(value)}`), 10_000)
   return audit
+}
+async function dismissCreditOnboarding(instance) {
+  const scope = '[data-desktop-onboarding="credit"]'
+  const present = await instance.cdp.evaluate(`Boolean(document.querySelector(${JSON.stringify(scope)}))`)
+  if (!present) return false
+  await keyboardActivate('Skip host credit onboarding', 'button', { scope, labels: ['跳过', 'Skip'] })
+  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("暂时跳过充值？") || document.body.innerText.includes("Skip adding credits?")'), 30_000)
+  await keyboardActivate('Confirm host credit onboarding skip', 'button', { labels: ['我知道了', 'Got it'] })
+  await waitFor(() => instance.cdp.evaluate('!document.querySelector("[data-desktop-onboarding]")'), 30_000)
+  return true
+}
+
+async function submitMarker(instance, marker) {
+  await dismissCreditOnboarding(instance)
+  await submitMarkerRaw(instance, marker)
 }
 
 async function newIsolatedSession(label, cwd = LANE) {

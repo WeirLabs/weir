@@ -195,6 +195,20 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(cdp.includes('data-desktop-onboarding') && cdp.includes('dismissed: true'), 'startup completes and verifies the real host onboarding path')
 })
 
+test('product driver settles host credit onboarding with scoped native keyboard steps', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes('submitMarker as submitMarkerRaw'), 'the shared marker submit is wrapped without changing other callers')
+  const dismiss = driver.match(/async function dismissCreditOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(dismiss.includes('[data-desktop-onboarding="credit"]'), 'only the exact host credit page is handled')
+  assert.ok(dismiss.includes("labels: ['跳过', 'Skip']") && dismiss.includes("labels: ['我知道了', 'Got it']"), 'both real Skip and confirmation steps are covered')
+  assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(dismiss), 'host onboarding remains native-keyboard only')
+  const submit = driver.match(/async function submitMarker\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const dismissFirst = submit.indexOf('await dismissCreditOnboarding(instance)')
+  const rawSubmit = submit.indexOf('await submitMarkerRaw(instance, marker)')
+  assert.ok(dismissFirst >= 0 && rawSubmit > dismissFirst, 'the host surface is settled before marker submission')
+  assert.ok(driver.includes('consoleErrors.length === 0'), 'the zero-console-error runtime gate remains unchanged')
+})
+
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
