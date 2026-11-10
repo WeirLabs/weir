@@ -25,7 +25,7 @@ Weir 设置面（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把
 
 ## 配置
 
-Decision Agent 现有 12 个配置键，默认全部沿产品声明；本轮在既有 Decision 卡片新增 `decisionAgentSelectorDefault`、`decisionAgentAutoShadow`、`decisionAgentAutoAnswerClasses` 三行，均为 `decisionAgentsEnabled` 的子项。默认值分别为 `'off'`、`false`、`'[]'`；选择器默认只接受 `off|auto`，Shadow 仅接受布尔值，白名单保存时必须是仅含 A/B/C 的 JSON 数组并会去重。空白名单与非法存储值都不会扩大权限；这些配置镜像不宣称 Active Auto 或 Shadow 执行路径已经交付。`decisionAgentsEnabled=false`，`decisionAgentStorePath` 为唯一 Decision 重启生效键，其余在调用时读取。重启生效键共 15 个（`FIELDS` 中以 `restart: true` 标记）：
+Decision Agent 现有 12 个配置键，默认全部沿产品声明；本轮在既有 Decision 卡片新增 `decisionAgentSelectorDefault`、`decisionAgentAutoShadow`、`decisionAgentAutoAnswerClasses` 三行，均为 `decisionAgentsEnabled` 的子项。默认值分别为 `'off'`、`false`、`'[]'`；选择器默认只接受 `off|auto`，Shadow 仅接受布尔值，白名单保存时必须是仅含 A/B/C 的 JSON 数组并会去重。空白名单与非法存储值都不会扩大权限；三个键已接入真实 fresh-root 选择器、Active Auto 准入、非权威 Shadow 观察与 Client 三态说明，具体验收层级和实测索引见 [Decision Agent](decision-agent.md)。`decisionAgentsEnabled=false`，`decisionAgentStorePath` 为唯一 Decision 重启生效键，其余在调用时读取。重启生效键共 15 个（`FIELDS` 中以 `restart: true` 标记）：
 
 | 分组 | 键 |
 |---|---|
