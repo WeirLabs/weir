@@ -1,6 +1,6 @@
 // Opt-in real-Desktop Decision QA brain. It only emits product tool calls.
 import { textChunks, toolCallChunks } from '../mock-kit.js'
-import { observeDecision } from '../decision-test-kit.js'
+import { decisionPack, observeDecision } from '../decision-test-kit.js'
 
 const id = 'decision-gui'
 const prompt = 'decision-gui-probe'
@@ -23,6 +23,11 @@ const QUESTIONS = {
   GUI_LEARNING_AFTER_V2: { id: 'gui-learning-after-v2', question: 'Use the successor GUI Snapshot', options: [{ label: 'Learned GUI answer' }, { label: 'Other GUI answer' }] },
   GUI_LEARNING_AFTER_ROLLBACK: { id: 'gui-learning-after-rollback', question: 'Use the predecessor GUI Snapshot after rollback', options: [{ label: 'Learned GUI answer' }, { label: 'Other GUI answer' }] },
   GUI_LEARNING_AFTER_EMPTY: { id: 'gui-learning-after-empty', question: 'Answer after all GUI Snapshots roll back', options: [{ label: 'Learned GUI answer' }, { label: 'Other GUI answer' }] },
+  GUI_AUTO_SELECTED: { id: 'gui-auto-selected', question: 'GUI_AUTO_SELECTED: choose an eligible assistant', options: [{ label: 'Auto answer' }, { label: 'Other' }] },
+  GUI_AUTO_NONE: { id: 'gui-auto-none', question: 'GUI_AUTO_NONE: no candidate matches', options: [{ label: 'Native none' }, { label: 'Other' }] },
+  GUI_AUTO_AMBIGUOUS: { id: 'gui-auto-ambiguous', question: 'GUI_AUTO_AMBIGUOUS: candidates overlap', options: [{ label: 'Native ambiguity' }, { label: 'Other' }] },
+  GUI_AUTO_INVALID: { id: 'gui-auto-invalid', question: 'GUI_AUTO_INVALID: reject invalid Router output', options: [{ label: 'Native invalid' }, { label: 'Other' }] },
+  GUI_AUTO_TIMEOUT: { id: 'gui-auto-timeout', question: 'GUI_AUTO_TIMEOUT: hold the Router stream', options: [{ label: 'Native timeout' }, { label: 'Other' }] },
 }
 const GUI_LEARNING_QUESTION_IDS = Object.values(QUESTIONS).map(question => question.id).filter(id => id.startsWith('gui-learning-'))
 
@@ -107,6 +112,32 @@ function decideDecision(options, obs) {
   return textChunks(JSON.stringify({ outcome: 'escalate', missing: [`${question.question} requires a new user judgment`] }))
 }
 
+function decideRouterClassification(options, obs) {
+  const pack = decisionPack(obs)
+  if (!pack || !Array.isArray(pack.questions)) throw new Error('decision-gui: malformed classification pack')
+  return textChunks(JSON.stringify({
+    contract: 'router-classification-contract/1',
+    classes: pack.questions.map(question => ({ id: question.id, authorizationClass: 'A' })),
+  }))
+}
+
+function decideRouterRoute(options, obs) {
+  const pack = decisionPack(obs)
+  const question = pack?.questions?.[0]?.question ?? ''
+  if (question.startsWith('GUI_AUTO_TIMEOUT')) return []
+  if (question.startsWith('GUI_AUTO_NONE')) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No eligible GUI candidate matches this request' }))
+  if (question.startsWith('GUI_AUTO_AMBIGUOUS')) {
+    return textChunks(JSON.stringify({
+      contract: 'router-contract/1', outcome: 'ambiguous', reason: 'Eligible GUI candidates have overlapping authority',
+      ambiguity: { candidates: pack?.candidates?.map(candidate => candidate.agentId) ?? [], conflict: 'Both GUI candidates claim the same isolated fixture' },
+    }))
+  }
+  if (question.startsWith('GUI_AUTO_INVALID')) return textChunks('{"contract":"router-contract/1","outcome":"selected","agentId":"ag_not_eligible","reason":"Unknown candidate must be rejected"}')
+  const selected = pack?.candidates?.[0]
+  if (!selected) throw new Error('decision-gui: selected fixture requires an eligible candidate')
+  return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'The first eligible GUI candidate owns this fixture' }))
+}
+
 function assert(run) {
   run.check('GUI scenario is opt-in and only produces product tool calls', true, 'Real Desktop assertions live in .weir/decision-qa/gui-*')
 }
@@ -114,6 +145,20 @@ function assert(run) {
 function observe(obs) {
   const observation = observeDecision(obs)
   const contract = obs.system.split('\n', 1)[0]
+  if (contract === 'Auto request classification contract: router-classification-contract/1' || contract === 'Auto candidate router contract: router-contract/1') {
+    const kind = contract.startsWith('Auto request') ? 'classification' : 'route'
+    const pack = decisionPack(obs)
+    const question = pack?.questions?.[0]?.question ?? ''
+    return {
+      ...observation,
+      autoRouter: {
+        kind, pack, system: obs.system, sessionId: obs.sessionId ?? null,
+        tools: obs.toolNames, hasTemperature: obs.hasTemperature,
+        provider: obs.provider, model: obs.model, maxTokens: obs.maxTokens,
+      },
+      ...(kind === 'route' && question.startsWith('GUI_AUTO_TIMEOUT') ? { autoRouterHold: 'timeout' } : {}),
+    }
+  }
   const learning = contract === 'Decision consolidation contract v1' || observation.decisionQuestionIds.some(id => GUI_LEARNING_QUESTION_IDS.includes(id))
   if (learning) {
     let pack
@@ -131,4 +176,4 @@ function observe(obs) {
   return { ...observation, decisionGuiMemorySystem: obs.system, decisionGuiMemoryPack: pack }
 }
 
-export default { id, prompt, decide, decideConsolidation, decideDecision, observe, assert }
+export default { id, prompt, decide, decideConsolidation, decideDecision, decideRouterClassification, decideRouterRoute, observe, assert }
