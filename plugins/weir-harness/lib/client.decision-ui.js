@@ -386,6 +386,47 @@ window.__ModuleLoader__.load({
       destination?.focus?.();
     }
 
+    const DECISION_MODAL_VIEWPORT_STYLES = ["left", "top", "right", "bottom", "margin", "maxWidth", "maxHeight"];
+
+    function containDecisionModalInVisualViewport(dialog, view) {
+      const viewport = view?.visualViewport;
+      if (!viewport || !dialog?.style) return () => {};
+      const inline = Object.fromEntries(DECISION_MODAL_VIEWPORT_STYLES.map(name => [name, dialog.style[name] ?? ""]));
+      const restore = () => {
+        for (const name of DECISION_MODAL_VIEWPORT_STYLES) dialog.style[name] = inline[name];
+      };
+      const contain = () => {
+        const scale = Number(viewport.scale ?? 1);
+        const offsetLeft = Number(viewport.offsetLeft ?? 0);
+        const offsetTop = Number(viewport.offsetTop ?? 0);
+        const width = Number(viewport.width);
+        const height = Number(viewport.height);
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0 || (scale === 1 && offsetLeft === 0 && offsetTop === 0)) {
+          restore();
+          return;
+        }
+        const availableWidth = Math.max(0, width - 16);
+        const availableHeight = Math.max(0, Math.min(560, height - 16));
+        dialog.style.maxWidth = `${availableWidth}px`;
+        dialog.style.maxHeight = `${availableHeight}px`;
+        const bounds = dialog.getBoundingClientRect?.();
+        if (!bounds || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)) return;
+        dialog.style.margin = "0px";
+        dialog.style.right = "auto";
+        dialog.style.bottom = "auto";
+        dialog.style.left = `${offsetLeft + Math.max(8, (width - bounds.width) / 2)}px`;
+        dialog.style.top = `${offsetTop + Math.max(8, (height - bounds.height) / 2)}px`;
+      };
+      viewport.addEventListener?.("resize", contain);
+      viewport.addEventListener?.("scroll", contain);
+      contain();
+      return () => {
+        viewport.removeEventListener?.("resize", contain);
+        viewport.removeEventListener?.("scroll", contain);
+        restore();
+      };
+    }
+
     function DecisionModalFrame(props) {
       const internalDialogRef = react.useRef(null);
       const dialogRef = props.dialogRef ?? internalDialogRef;
@@ -414,10 +455,12 @@ window.__ModuleLoader__.load({
           return undefined;
         }
         const releaseScrollLock = acquireDecisionScrollLock(hostDocument, focusTarget(props.scrollOrigin) ?? previous);
+        const releaseViewportContainment = containDecisionModalInVisualViewport(dialog, hostDocument?.defaultView);
         const initial = focusTarget(props.initialFocus) ?? dialog;
         initial?.focus?.();
         return () => {
           dialog.close?.();
+          releaseViewportContainment();
           releaseScrollLock();
           const restore = props.shouldRestoreFocus ? props.shouldRestoreFocus() : props.restoreFocus !== false;
           if (restore) restoreDecisionFocus(previous, props.returnFocusFallback);
