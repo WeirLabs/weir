@@ -353,6 +353,115 @@ test('Host language matrix activates General settings through native keyboard be
   assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(body), 'Host Settings navigation remains native-keyboard only')
 })
 
+test('Host language trigger recognizes rendered Chinese and legacy variants inside Settings', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const call = body.match(/await keyboardActivate\('Open real Language preference', '([^']+)', (\{[^\n]+\})\)/)
+  assert.ok(call, 'the real Language trigger call exists')
+  assert.equal(call[1], '[role="dialog"] button[aria-haspopup="menu"]', 'trigger discovery remains scoped to the Settings dialog')
+  const options = Function(`return (${call[2]})`)()
+  const pattern = new RegExp(options.namePattern, 'i')
+  for (const label of ['中文', '简体中文', 'English', 'Chinese']) assert.ok(pattern.test(label), label)
+  for (const label of ['选择模型，当前 Mock One', 'Chinese preset', '标准']) assert.ok(!pattern.test(label), label)
+})
+
+test('Host language Chinese restore uses real menu labels inside the open Settings menu', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const expression = body.match(/const labels = ([^\n]+)/)?.[1]
+  assert.ok(expression, 'language selection exposes the complete rendered label candidates')
+  const labelsFor = new Function('language', `return (${expression})`)
+  assert.deepEqual(labelsFor('zh'), ['中文', '简体中文', 'Chinese'])
+  assert.deepEqual(labelsFor('en'), ['English'])
+  const call = body.match(/await keyboard(?:Menu)?Activate\(`Select \$\{labels\[0\]\} GUI language`, '([^']+)', (\{[^\n]+\})\)/)
+  assert.ok(call, 'language selection uses the rendered label candidates')
+  assert.equal(call[1], '[role="menuitemradio"],[role="menuitem"],button')
+  const options = new Function('labels', `return (${call[2]})`)(['sentinel'])
+  assert.equal(options.scope, '[role="menu"]', 'selection cannot match an unrelated model or preset menu')
+  assert.deepEqual(options.labels, ['sentinel'])
+})
+
+test('Host language menu uses native directional selection in both directions', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const language = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(language.includes('await keyboardMenuActivate(`Select ${labels[0]} GUI language`'), 'setGuiLanguage uses the native menu navigation seam')
+  const source = driver.match(/async function keyboardMenuActivate\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'keyboardMenuActivate exists')
+  assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(`${source}\n${language}`), 'menu navigation never bypasses native keyboard input')
+
+  const item = name => ({ tagName: 'BUTTON', id: '', role: 'menuitem', offsetParent: {}, disabled: false, innerText: name, textContent: name, labels: [], value: '', getAttribute: name => name === 'aria-label' ? null : name === 'role' ? 'menuitem' : null })
+  const chinese = item('中文')
+  const english = item('English')
+  const trigger = item('Language')
+  const items = [chinese, english]
+  const root = { querySelectorAll: () => items }
+  const document = { activeElement: trigger, querySelector: selector => selector === '[role="menu"]' ? root : null, getElementById: () => null }
+  const keys = []
+  let current = chinese
+  const instance = { cdp: {
+    evaluate: async expression => new Function('document', `return (${expression})`)(document),
+    async key(key) {
+      keys.push(key)
+      if (key === 'Tab') document.activeElement = current
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        const offset = key === 'ArrowDown' ? 1 : -1
+        document.activeElement = items[items.indexOf(document.activeElement) + offset]
+      }
+    },
+  } }
+  const audits = []
+  const waitFor = async check => {
+    const value = await check()
+    assert.ok(value, 'the menu target is immediately ready in this fixture')
+    return value
+  }
+  const requireEvidence = (condition, message) => assert.ok(condition, message)
+  const activate = new Function('instance', 'keyboardAudits', 'saveKeyboardAudits', 'waitFor', 'requireEvidence', `${source};return keyboardMenuActivate`)(instance, audits, () => {}, waitFor, requireEvidence)
+  for (const [target, arrow] of [['English', 'ArrowDown'], ['中文', 'ArrowUp']]) {
+    keys.length = 0
+    current = target === 'English' ? chinese : english
+    document.activeElement = trigger
+    const audit = await activate(`Select ${target} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { scope: '[role="menu"]', labels: [target] })
+    assert.deepEqual(keys, ['Tab', arrow, 'Enter'], target)
+    assert.equal(audit.reached, true)
+    assert.equal(audit.activation.key, 'Enter')
+  }
+  assert.equal(audits.length, 2)
+})
+
+test('English visual matrix returns to the Decision inbox before layout audits', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body, 'runEnglishVisualMatrix exists')
+  const change = body.indexOf("const change = await setGuiLanguage('en')")
+  const inbox = body.indexOf("await openPage('inbox')", change)
+  const audit = body.indexOf('await layoutAudit(`en-${theme}-${width}`', change)
+  assert.ok(change >= 0 && inbox > change && audit > inbox, 'Settings → native language change → Decision inbox → visual measurements is the required order')
+})
+
+test('English selector baseline waits for stable composer geometry and scroll', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const english = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(english.includes("const scrollBefore = await measureStableScrollContainers({ root: 'html', body: 'body' }, trigger)"), 'the English selector uses a settled pre-open baseline')
+  const source = driver.match(/async function measureStableScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'measureStableScrollContainers exists')
+  const sample = (x, width, scrollTop, scrollHeight) => ({ composer: { rect: { x, width }, scrollTop, scrollLeft: 0, clientHeight: 728, scrollHeight, clientWidth: width, scrollWidth: 615 } })
+  const samples = [sample(280.5, 77.5, 3905, 9818), sample(0, 358, 1587.5, 5911), sample(0, 358, 1587.5, 5911)]
+  let calls = 0
+  const measureScrollContainers = async () => samples[calls++]
+  const waitFor = async check => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const value = await check()
+      if (value) return value
+    }
+    throw new Error('measurement did not settle')
+  }
+  const measure = new Function('measureScrollContainers', 'waitFor', `${source};return measureStableScrollContainers`)(measureScrollContainers, waitFor)
+  const result = await measure({ root: 'html', body: 'body' }, 'trigger')
+  assert.equal(calls, 3, 'the changing transition sample cannot become the baseline')
+  assert.deepEqual(result, samples[2])
+})
+
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {
