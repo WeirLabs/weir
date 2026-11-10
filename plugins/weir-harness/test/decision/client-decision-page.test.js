@@ -619,6 +619,35 @@ function agentField(harness, name) {
   return findAll(harness.render(), node => node['data-agent-field'] === name)[0]
 }
 
+function currentAgentLayout(harness) {
+  return findAll(harness.render(), node => node.className === 'weir-da-agents-layout')[0]
+}
+
+async function openAssistant(harness, agentId) {
+  const summary = findAll(harness.render(), node => node['data-agent-summary'] === agentId)[0]
+  assert.ok(summary, `assistant summary ${agentId}`)
+  await findAll(summary, node => node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+}
+
+function currentLearningInspection(harness) {
+  const detail = findAll(harness.render(), node => node['data-agent-detail'] === 'ag_a')[0]
+  const learning = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
+  return {
+    run: learning?.detail?.inspection?.run?.learningRunId,
+    snapshot: learning?.detail?.inspection?.snapshot?.snapshotId ?? null,
+  }
+}
+
+function learningDiagnosticControl(harness, attribute, value) {
+  const detail = findAll(harness.render(), node => node['data-agent-detail'] === 'ag_a')[0]
+  const learning = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
+  const advanced = findAll(harness.learning.AgentLearning(learning), node => node.type === harness.ui.Disclosure)[0]
+  const control = findAll(advanced.children(), node => node[attribute] === value)[0]
+  assert.ok(control, `${attribute} ${value}`)
+  return control
+}
+
 const assistantDetail = {
   agentId: 'ag_a', name: 'Tone', state: 'enabled', workspaceKey: '/repo',
   userDescription: { revision: 2, text: 'Prefer concise copy' }, generatedDescription: { revision: 0, text: '' },
@@ -629,7 +658,7 @@ const assistantDetail = {
   snapshots: [{ snapshotId: 'ms-current', version: 3, state: 'published', revision: 4, learningRunId: 'lr-current' }],
 }
 
-test('assistant list renders Broker learning summary fields without opening detail', async () => {
+test('assistant summaries stay compact and retain pending review without opening detail', async () => {
   const summary = {
     agentId: 'ag_summary', name: 'Summary assistant', state: 'enabled',
     userDescription: { revision: 1, text: 'Use reviewed guidance' },
@@ -643,11 +672,206 @@ test('assistant list renders Broker learning summary fields without opening deta
   const tree = await openAgents(harness)
   const card = findAll(tree, node => node['data-agent-summary'] === 'ag_summary')[0]
   const text = textOf(card)
-  assert.ok(text.includes('decisionCurrentSnapshot: v3'))
+  assert.equal(text.includes('decisionCurrentSnapshot'), false)
+  assert.equal(text.includes('v3'), false)
   assert.ok(text.includes('decisionPendingReview'))
   assert.equal(text.includes('decisionVersionUnavailable'), false)
+  assert.equal(text.includes('decisionNoCurrentSnapshot'), false)
   assert.equal(text.includes('decisionPrincipleDetailsOnOpen'), false)
+  assert.equal(findAll(card, node => node.className === 'weir-da-agent-summary-preference').length, 1)
   assert.equal(findAll(tree, node => node['data-agent-detail']).length, 0)
+  harness.unmount()
+})
+
+test('assistant desktop master-detail keeps the compact list beside detail and editor regions', async () => {
+  const second = { agentId: 'ag_b', name: 'Second assistant', state: 'disabled', userDescription: { revision: 1, text: 'Review risky changes' } }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail, second], inbox: async () => [],
+    agent: async id => id === 'ag_a' ? { ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null } : second,
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  let layout = findAll(tree, node => node.className === 'weir-da-agents-layout')[0]
+  assert.ok(layout, 'assistant list and detail have a master-detail layout')
+  assert.equal(layout['data-agent-drill-in'], false)
+  let list = findAll(layout, node => node.className === 'weir-da-agent-list')[0]
+  let detailPane = findAll(layout, node => node.className === 'weir-da-agent-detail-pane')[0]
+  assert.ok(list)
+  assert.ok(detailPane)
+  assert.equal(findAll(list, node => node['data-agent-summary']).length, 2)
+  assert.equal(textOf(detailPane).includes('decisionChooseAssistant'), true)
+  assert.equal(findAll(tree, node => node['data-action'] === 'create-agent').length, 1)
+
+  const firstSummary = findAll(list, node => node['data-agent-summary'] === 'ag_a')[0]
+  await findAll(firstSummary, node => node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  layout = findAll(tree, node => node.className === 'weir-da-agents-layout')[0]
+  list = findAll(layout, node => node.className === 'weir-da-agent-list')[0]
+  detailPane = findAll(layout, node => node.className === 'weir-da-agent-detail-pane')[0]
+  assert.equal(findAll(list, node => node['data-agent-summary']).length, 2, 'opening detail does not replace the list')
+  assert.equal(findAll(list, node => node['data-agent-summary'] === 'ag_a')[0]['data-selected'], true)
+  assert.equal(findAll(list, node => node['data-agent-summary'] === 'ag_b')[0]['data-selected'], false)
+  assert.equal(findAll(list, node => node['data-agent-detail']).length, 0)
+  assert.equal(findAll(detailPane, node => node['data-agent-detail'] === 'ag_a').length, 1)
+  assert.equal(findAll(detailPane, node => node['data-agent-summary']).length, 0)
+
+  findAll(detailPane, node => node['data-action'] === 'edit-agent')[0].onClick()
+  tree = harness.render()
+  layout = findAll(tree, node => node.className === 'weir-da-agents-layout')[0]
+  list = findAll(layout, node => node.className === 'weir-da-agent-list')[0]
+  detailPane = findAll(layout, node => node.className === 'weir-da-agent-detail-pane')[0]
+  assert.equal(findAll(list, node => node['data-agent-summary']).length, 2, 'editing does not replace the list')
+  assert.equal(findAll(detailPane, node => node['data-agent-editor'] === 'edit').length, 1)
+  assert.equal(findAll(list, node => node['data-agent-editor']).length, 0)
+  harness.unmount()
+})
+
+test('narrow create Back resumes the exact same draft view-only without rereads', async () => {
+  let agentReads = 0
+  let listReads = 0
+  const harness = await createPageHarness({ actions: {
+    agents: async () => { listReads += 1; return [assistantDetail] }, inbox: async () => [],
+    agent: async () => { agentReads += 1; return assistantDetail },
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  const create = () => findAll(harness.render(), node => node['data-action'] === 'create-agent')[0]
+  const layout = () => findAll(harness.render(), node => node.className === 'weir-da-agents-layout')[0]
+  create().onClick()
+  assert.equal(layout()['data-agent-drill-in'], true)
+  agentField(harness, 'name').onChange({ target: { value: 'Unsaved bilingual 草稿' } })
+  agentField(harness, 'preference').onChange({ target: { value: 'Keep every exact character: 空格  and punctuation…' } })
+  const expectedDraft = { name: 'Unsaved bilingual 草稿', preference: 'Keep every exact character: 空格  and punctuation…' }
+  assert.deepEqual({ name: agentField(harness, 'name').value, preference: agentField(harness, 'preference').value }, expectedDraft)
+  const readsBefore = { agentReads, listReads }
+
+  const back = findAll(harness.render(), node => node.className === 'weir-da-agent-back')[0]
+  assert.ok(back, 'narrow detail has a dedicated Back action')
+  back.onClick()
+  assert.equal(layout()['data-agent-drill-in'], false)
+  assert.deepEqual({ name: agentField(harness, 'name').value, preference: agentField(harness, 'preference').value }, expectedDraft)
+  assert.equal(findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog).length, 0)
+
+  create().onClick()
+  assert.equal(layout()['data-agent-drill-in'], true)
+  assert.deepEqual({ name: agentField(harness, 'name').value, preference: agentField(harness, 'preference').value }, expectedDraft)
+  assert.equal(findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog).length, 0)
+  assert.deepEqual({ agentReads, listReads }, readsBefore, 'same-create resume performs no authority reread')
+  harness.unmount()
+})
+
+test('narrow same-assistant Back restores the exact dirty editor without confirmation or reread', async () => {
+  const reads = []
+  const detail = { ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [],
+    agent: async id => { reads.push(id); return detail },
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  await openAssistant(harness, 'ag_a')
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  findAll(harness.render(), node => node['data-action'] === 'edit-agent')[0].onClick()
+  agentField(harness, 'name').onChange({ target: { value: 'Tone 未保存 draft' } })
+  agentField(harness, 'preference').onChange({ target: { value: 'Exact spacing  and … punctuation' } })
+  const expectedDraft = { name: 'Tone 未保存 draft', preference: 'Exact spacing  and … punctuation' }
+  const readsBefore = [...reads]
+
+  findAll(harness.render(), node => node.className === 'weir-da-agent-back')[0].onClick()
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], false)
+  assert.deepEqual({ name: agentField(harness, 'name').value, preference: agentField(harness, 'preference').value }, expectedDraft)
+  await openAssistant(harness, 'ag_a')
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.deepEqual({ name: agentField(harness, 'name').value, preference: agentField(harness, 'preference').value }, expectedDraft)
+  assert.equal(findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog).length, 0)
+  assert.deepEqual(reads, readsBefore, 'same-assistant resume does not reread the profile')
+  harness.unmount()
+})
+
+test('narrow same-assistant Back preserves the selected learning run and snapshot with zero rereads', async () => {
+  const runs = [
+    { learningRunId: 'lr-candidate', agentId: 'ag_a', outcome: 'candidate', revision: 5, operations: [], inputFrozen: { parentSnapshotId: 'ms-current' } },
+    { learningRunId: 'lr-history', agentId: 'ag_a', outcome: 'published', revision: 3, operations: [], inputFrozen: {} },
+    { learningRunId: 'lr-current', agentId: 'ag_a', outcome: 'published', revision: 1, operations: [], inputFrozen: {} },
+  ]
+  const snapshots = [
+    { snapshotId: 'ms-candidate', agentId: 'ag_a', learningRunId: 'lr-candidate', parentSnapshotId: 'ms-current', version: 4, state: 'draft', revision: 6, principles: [] },
+    { snapshotId: 'ms-history', agentId: 'ag_a', learningRunId: 'lr-history', version: 2, state: 'published', revision: 4, principles: [] },
+    { snapshotId: 'ms-current', agentId: 'ag_a', learningRunId: 'lr-current', version: 3, state: 'published', revision: 4, principles: [] },
+  ]
+  const detail = { ...assistantDetail, learningRuns: runs, snapshots, currentSnapshotId: 'ms-current' }
+  let agentReads = 0
+  const runReads = []
+  const snapshotReads = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [],
+    agent: async () => { agentReads += 1; return detail },
+    learningRun: async id => { runReads.push(id); return runs.find(run => run.learningRunId === id) },
+    memorySnapshot: async id => { snapshotReads.push(id); return snapshots.find(snapshot => snapshot.snapshotId === id) },
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  await openAssistant(harness, 'ag_a')
+  await learningDiagnosticControl(harness, 'data-learning-run-id', 'lr-history').onClick()
+  await harness.flush()
+  assert.deepEqual(currentLearningInspection(harness), { run: 'lr-history', snapshot: 'ms-history' })
+
+  let readsBefore = { agentReads, runReads: [...runReads], snapshotReads: [...snapshotReads] }
+  findAll(harness.render(), node => node.className === 'weir-da-agent-back')[0].onClick()
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], false)
+  assert.deepEqual(currentLearningInspection(harness), { run: 'lr-history', snapshot: 'ms-history' })
+  await openAssistant(harness, 'ag_a')
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.deepEqual(currentLearningInspection(harness), { run: 'lr-history', snapshot: 'ms-history' })
+  assert.deepEqual({ agentReads, runReads, snapshotReads }, readsBefore)
+
+  await learningDiagnosticControl(harness, 'data-snapshot-id', 'ms-current').onClick()
+  await harness.flush()
+  assert.deepEqual(currentLearningInspection(harness), { run: 'lr-current', snapshot: 'ms-current' })
+  readsBefore = { agentReads, runReads: [...runReads], snapshotReads: [...snapshotReads] }
+  findAll(harness.render(), node => node.className === 'weir-da-agent-back')[0].onClick()
+  await openAssistant(harness, 'ag_a')
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.deepEqual(currentLearningInspection(harness), { run: 'lr-current', snapshot: 'ms-current' })
+  assert.deepEqual({ agentReads, runReads, snapshotReads }, readsBefore)
+  harness.unmount()
+})
+
+test('narrow different-assistant selection retains dirty confirmation and authoritative reread', async () => {
+  const second = { agentId: 'ag_b', name: 'Second assistant', state: 'enabled', userDescription: { revision: 1, text: 'Second preference' }, learningRuns: [], snapshots: [], currentSnapshotId: null }
+  const first = { ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }
+  const reads = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [first, second], inbox: async () => [],
+    agent: async id => { reads.push(id); return id === 'ag_a' ? first : second },
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  await openAssistant(harness, 'ag_a')
+  findAll(harness.render(), node => node['data-action'] === 'edit-agent')[0].onClick()
+  agentField(harness, 'name').onChange({ target: { value: 'Dirty first assistant' } })
+  findAll(harness.render(), node => node.className === 'weir-da-agent-back')[0].onClick()
+
+  await openAssistant(harness, 'ag_b')
+  let dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  assert.ok(dialog, 'a real target change confirms the dirty draft')
+  assert.equal(dialog.id, 'weir-da-discard-editor')
+  assert.deepEqual(reads, ['ag_a'], 'the new target is not read before confirmation')
+  assert.equal(agentField(harness, 'name').value, 'Dirty first assistant')
+  dialog.onCancel()
+  assert.equal(findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog).length, 0)
+  assert.equal(agentField(harness, 'name').value, 'Dirty first assistant')
+  assert.deepEqual(reads, ['ag_a'])
+
+  await openAssistant(harness, 'ag_b')
+  dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.deepEqual(reads, ['ag_a', 'ag_b'])
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.equal(currentAgentEditor(harness), undefined)
+  assert.equal(findAll(harness.render(), node => node['data-agent-detail'] === 'ag_b').length, 1)
   harness.unmount()
 })
 

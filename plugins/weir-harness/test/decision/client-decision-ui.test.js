@@ -197,6 +197,17 @@ test('shared atoms use theme tokens, explicit action hierarchy, and readable sta
   assert.equal(source.includes('@deepseek-ai/'), false)
 })
 
+test('assistant master-detail styles keep compact summaries, independent regions, and narrow drill-in', async () => {
+  const css = (await load()).DecisionStyles().children
+  assert.match(css, /\.weir-da-agents-layout \{[^}]*display: grid;[^}]*grid-template-columns:/)
+  assert.match(css, /\.weir-da-agent-list, \.weir-da-agent-detail-pane \{[^}]*min-width: 0;/)
+  assert.match(css, /\.weir-da-agent-summary-preference \{[^}]*-webkit-line-clamp: 2;[^}]*overflow: hidden;/)
+  assert.match(css, /\.weir-da-agent-summary\[data-selected="true"\]/)
+  assert.match(css, /\.weir-da-agent-back \{ display: none; \}/)
+  assert.match(css, /\.weir-da-agents-layout\[data-agent-drill-in="true"\] \.weir-da-agent-list \{ display: none; \}/)
+  assert.match(css, /\.weir-da-agents-layout\[data-agent-drill-in="false"\] \.weir-da-agent-detail-pane \{ display: none; \}/)
+})
+
 test('Disclosure closes with Escape and restores focus', async () => {
   const runtime = makeReact()
   const ui = await load(runtime.react)

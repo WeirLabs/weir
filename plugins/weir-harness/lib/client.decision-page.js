@@ -242,19 +242,13 @@ window.__ModuleLoader__.load({
 
     function AgentSummary(props) {
       const agent = props.detail?.agentId === props.agent.agentId ? props.detail : props.agent;
-      const current = learningRows(agent.snapshots).find(snapshot => snapshot.snapshotId === agent.currentSnapshotId);
-      const currentVersion = Number.isInteger(agent.currentSnapshotVersion) ? agent.currentSnapshotVersion : current?.version;
       const pendingReview = typeof agent.pendingReview === "boolean" ? agent.pendingReview : learningRows(agent.learningRuns).some(run => run.outcome === "candidate");
-      const hasLearningSummary = typeof agent.pendingReview === "boolean" || agent.currentSnapshotVersion !== undefined || Array.isArray(agent.learningRuns) || Array.isArray(agent.snapshots);
-      return jsx.jsxs("article", { key: props.agent.agentId, className: "weir-da-card weir-da-agent-summary", "data-agent-summary": props.agent.agentId, children: [
+      return jsx.jsxs("article", { key: props.agent.agentId, className: "weir-da-card weir-da-agent-summary", "data-agent-summary": props.agent.agentId, "data-selected": props.selected === true, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsx("h2", { children: agent.name }, "name"),
           jsx.jsx(props.ui.Badge, { variant: agent.state === "enabled" ? "success" : agent.state === "disabled" ? "warn" : "idle", children: props.t(agentStateKey(agent.state)) }, "state"),
         ] }, "header"),
-        jsx.jsx("p", { children: agent.userDescription?.text || props.t("decisionNoPreference") }, "preference"),
-        jsx.jsx("p", { className: "weir-da-caption", children: agent.currentSnapshotId
-          ? `${props.t("decisionCurrentSnapshot")}: ${currentVersion !== undefined ? `v${currentVersion ?? "—"}` : props.t("decisionVersionUnavailable")}`
-          : hasLearningSummary ? props.t("decisionNoCurrentSnapshot") : props.t("decisionPrincipleDetailsOnOpen") }, "principles"),
+        jsx.jsx("p", { className: "weir-da-agent-summary-preference", children: agent.userDescription?.text || props.t("decisionNoPreference") }, "preference"),
         pendingReview ? jsx.jsx(props.ui.Badge, { variant: "warn", children: props.t("decisionPendingReview") }, "pending") : null,
         jsx.jsx(props.ui.Button, { "data-action": "open-agent", onClick: () => props.onOpen(props.agent.agentId), children: props.t("decisionViewAssistant") }, "open"),
       ] });
@@ -477,6 +471,7 @@ window.__ModuleLoader__.load({
       const [appliedFilter, setAppliedFilter] = react.useState({});
       const [selectedCaseId, setSelectedCaseId] = react.useState(null);
       const [drillIn, setDrillIn] = react.useState(false);
+      const [agentDrillIn, setAgentDrillIn] = react.useState(false);
       const [pending, setPending] = react.useState(null);
       const [actionError, setActionError] = react.useState(null);
       const [learningDetail, setLearningDetail] = react.useState(null);
@@ -767,8 +762,14 @@ window.__ModuleLoader__.load({
         if (editorDirty()) { setConfirm({ kind: "discard-editor", after }); return; }
         setEditor(null); after?.();
       };
-      const openCreate = () => closeEditor(() => { setSelectedAgentId(null); patchResource("agent", emptyResource()); setEditor(newAgentEditor()); });
-      const openAgent = agentId => closeEditor(() => selectAgent(agentId));
+      const openCreate = () => {
+        if (!agentDrillIn && editor?.mode === "create") { setAgentDrillIn(true); return; }
+        closeEditor(() => { setAgentDrillIn(true); setSelectedAgentId(null); patchResource("agent", emptyResource()); setEditor(newAgentEditor()); });
+      };
+      const openAgent = agentId => {
+        if (!agentDrillIn && selectedAgentId === agentId) { setAgentDrillIn(true); return; }
+        closeEditor(() => { setAgentDrillIn(true); return selectAgent(agentId); });
+      };
       const saveEditor = async () => {
         if (!editor || pendingRef.current) return;
         let payload;
@@ -807,6 +808,7 @@ window.__ModuleLoader__.load({
         learningIntentRef.current = null;
         setPending(null); setActionError(null); setResources(emptyResources());
         setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
+        setAgentDrillIn(agentDestination === "create" && !openCaseId);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
         if (sessionId) {
@@ -872,38 +874,44 @@ window.__ModuleLoader__.load({
         ] }, "layout"),
       ] });
       const selectedAgent = resources.agent.status === "ready" ? resources.agent.value : null;
+      const agentList = resources.agents.status === "error" ? retryState(resources.agents, () => loadAgents())
+        : resources.agents.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
+        : resources.agents.value.length ? resources.agents.value.map(agent => AgentSummary({
+          agent, detail: selectedAgent, selected: selectedAgentId === agent.agentId, ui, t, onOpen: openAgent,
+        })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoAgents") });
+      const agentPane = editor ? AgentEditor({
+        editor, ui, t, pending: pending !== null, onSave: saveEditor, onCancel: () => closeEditor(),
+        onField: (field, value) => setEditor(current => ({ ...current, [field]: value })),
+      }) : resources.agent.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
+        : resources.agent.status === "error" ? retryState(resources.agent, () => selectAgent(selectedAgentId))
+        : selectedAgent ? AgentDetail({
+          agent: selectedAgent, ui, t, onEdit: () => setEditor(newAgentEditor(selectedAgent)),
+          requestState: state => setConfirm({ kind: "agent-state", agentId: selectedAgent.agentId, state }),
+          learningProps: {
+            detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
+            loading: learningLoading,
+            onStart: () => startLearning(selectedAgent.agentId),
+            confirmAction: action => setConfirm(action), error: learningError, onRetry: () => readLearning(selectedAgent),
+            selectRun: learningRunId => readLearning(selectedAgent, learningRunId),
+            selectSnapshot: snapshotId => {
+              const snapshot = learningRows(selectedAgent.snapshots).find(item => item.snapshotId === snapshotId);
+              return snapshot?.learningRunId ? readLearning(selectedAgent, snapshot.learningRunId) : Promise.resolve();
+            },
+            openRecord: openLearningRecord,
+          },
+        }) : jsx.jsx(ui.EmptyState, { children: t("decisionChooseAssistant") });
       const agentsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-agents-view", children: [
         jsx.jsxs("div", { className: "weir-da-section-header", children: [
           jsx.jsx("h2", { children: t("decisionAgents") }, "title"),
           jsx.jsx(ui.Button, { variant: "primary", "data-action": "create-agent", onClick: openCreate, disabled: pending !== null, children: t("decisionCreateAgent") }, "create"),
         ] }, "header"),
-        editor ? AgentEditor({
-          editor, ui, t, pending: pending !== null, onSave: saveEditor, onCancel: () => closeEditor(),
-          onField: (field, value) => setEditor(current => ({ ...current, [field]: value })),
-        }) : jsx.jsxs("div", { className: "weir-da-card-list", children: [
-          resources.agents.status === "error" ? retryState(resources.agents, () => loadAgents())
-            : resources.agents.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
-            : resources.agents.value.length ? resources.agents.value.map(agent => AgentSummary({ agent, detail: selectedAgent, ui, t, onOpen: openAgent }))
-            : jsx.jsx(ui.EmptyState, { children: t("decisionNoAgents") }),
-          resources.agent.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") }, "agent-loading") : null,
-          resources.agent.status === "error" ? retryState(resources.agent, () => selectAgent(selectedAgentId)) : null,
-          selectedAgent ? AgentDetail({
-            agent: selectedAgent, ui, t, onEdit: () => setEditor(newAgentEditor(selectedAgent)),
-            requestState: state => setConfirm({ kind: "agent-state", agentId: selectedAgent.agentId, state }),
-            learningProps: {
-              detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
-              loading: learningLoading,
-              onStart: () => startLearning(selectedAgent.agentId),
-              confirmAction: action => setConfirm(action), error: learningError, onRetry: () => readLearning(selectedAgent),
-              selectRun: learningRunId => readLearning(selectedAgent, learningRunId),
-              selectSnapshot: snapshotId => {
-                const snapshot = learningRows(selectedAgent.snapshots).find(item => item.snapshotId === snapshotId);
-                return snapshot?.learningRunId ? readLearning(selectedAgent, snapshot.learningRunId) : Promise.resolve();
-              },
-              openRecord: openLearningRecord,
-            },
-          }) : null,
-        ] }, "content"),
+        jsx.jsxs("div", { className: "weir-da-agents-layout", "data-agent-drill-in": agentDrillIn, children: [
+          jsx.jsx("div", { className: "weir-da-agent-list", "aria-label": t("decisionAgents"), children: agentList }, "list"),
+          jsx.jsxs("div", { className: "weir-da-agent-detail-pane", children: [
+            jsx.jsx(ui.Button, { variant: "ghost", className: "weir-da-agent-back", onClick: () => setAgentDrillIn(false), children: `← ${t("decisionAgents")}` }, "back"),
+            agentPane,
+          ] }, "detail"),
+        ] }, "layout"),
       ] });
       const confirmationFocus = { returnFocusFallback: primaryNavRef, openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel") };
       const confirmation = confirm?.kind === "cancel" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
