@@ -429,6 +429,16 @@ test('Host language menu uses native directional selection in both directions', 
   assert.equal(audits.length, 2)
 })
 
+test('English visual matrix returns to the Decision inbox before layout audits', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body, 'runEnglishVisualMatrix exists')
+  const change = body.indexOf("const change = await setGuiLanguage('en')")
+  const inbox = body.indexOf("await openPage('inbox')", change)
+  const audit = body.indexOf('await layoutAudit(`en-${theme}-${width}`', change)
+  assert.ok(change >= 0 && inbox > change && audit > inbox, 'Settings → native language change → Decision inbox → visual measurements is the required order')
+})
+
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {

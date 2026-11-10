@@ -2231,6 +2231,7 @@ async function setGuiLanguage(language) {
 async function runEnglishVisualMatrix(sessionId) {
   const original = await instance.cdp.evaluate('document.documentElement.lang||"zh"')
   const change = await setGuiLanguage('en')
+  await openPage('inbox')
   for (const theme of ['light', 'dark']) {
     await instance.cdp.setColorScheme(theme)
     for (const width of [360, 768, 1440]) {
