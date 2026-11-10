@@ -276,14 +276,15 @@ test('routing review projects every diagnostic outcome without inventing a quali
   assert.equal(model.routingReviewView({ items: [{ ...items[0], record: { caseId: 'other' } }] }).items[0].recordCaseId, null)
 })
 
-test('routing review pages append stably and dedupe by Case without replacing earlier text', async () => {
+test('routing review pages dedupe only repeated RouteDecisions and retain distinct facts for one Case', async () => {
   const model = await load()
   const first = { caseId: 'dc-a', routeDecisionId: 'rd-a', questionSummary: 'Original A' }
+  const shadow = { caseId: 'dc-a', routeDecisionId: 'rd-shadow', questionSummary: 'Shadow A' }
   const page = { window: 'all', summary: { agreement: 1 }, items: [
-    { ...first, questionSummary: 'Updated duplicate A' },
+    { ...first, questionSummary: 'Updated duplicate A' }, shadow,
     { caseId: 'dc-b', routeDecisionId: 'rd-b', questionSummary: 'B' },
   ], nextCursor: null }
-  assert.deepEqual(model.appendRoutingPage([first], page), { items: [first, page.items[1]], nextCursor: null })
+  assert.deepEqual(model.appendRoutingPage([first], page), { items: [first, shadow, page.items[2]], nextCursor: null })
   assert.deepEqual(model.narrowRoutingReview({ ok: false }), { window: 'all', summary: {}, items: [], nextCursor: null })
   assert.deepEqual(model.narrowRoutingReview({ window: 'invalid', items: null, nextCursor: 4 }), { window: 'all', summary: {}, items: [], nextCursor: null })
 })

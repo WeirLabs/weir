@@ -103,9 +103,10 @@ window.__ModuleLoader__.load({
             : { sessionId, mode: "agent", agentId: option.value };
           const result = await props.decisionRpc(props.connection, "setSelector", args);
           if (sessionRef.current !== sessionId) return;
-          const selector = result?.mode === "off" || result?.mode === "auto" || result?.mode === "agent"
-            ? result
-            : option.mode === "off" || option.mode === "auto" ? { mode: option.mode } : { mode: "agent", agentId: option.value };
+          const selector = option.mode === "agent"
+            ? result?.mode === "agent" && result.agentId === option.value ? result : null
+            : result?.mode === option.mode && (result.agentId === null || result.agentId === undefined) ? result : null;
+          if (!selector) throw new Error("Decision selector save returned no matching authoritative selection");
           setSnapshot(current => ({ ...current, phase: "ready", selector, error: null }));
           savingRef.current = false;
           setPending(false);

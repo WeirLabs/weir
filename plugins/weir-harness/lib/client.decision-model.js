@@ -366,12 +366,12 @@ window.__ModuleLoader__.load({
     function appendRoutingPage(existing, page) {
       const next = narrowRoutingReview(page);
       const items = [...array(existing)];
-      const seen = new Set(items.map(item => item?.caseId).filter(caseId => typeof caseId === "string"));
+      const seen = new Set(items.map(item => item?.routeDecisionId).filter(routeDecisionId => typeof routeDecisionId === "string" && routeDecisionId));
       for (const item of next.items) {
-        const caseId = item?.caseId;
-        if (typeof caseId === "string") {
-          if (seen.has(caseId)) continue;
-          seen.add(caseId);
+        const routeDecisionId = item?.routeDecisionId;
+        if (typeof routeDecisionId === "string" && routeDecisionId) {
+          if (seen.has(routeDecisionId)) continue;
+          seen.add(routeDecisionId);
         }
         items.push(item);
       }

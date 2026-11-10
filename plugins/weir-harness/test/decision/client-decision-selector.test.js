@@ -385,6 +385,36 @@ test('Auto save failure preserves the prior valid mode and retries Auto without 
   ])
 })
 
+test('selector never fabricates success from an empty or mismatched save response', async t => {
+  let response = {}
+  const h = await load(t, enabledOverview, { setSelector: () => response })
+  h.render()
+  await h.flush()
+  let tree = h.render()
+  triggerOf(tree).onClick()
+  tree = h.render()
+  radioOf(tree, 'auto').onChange()
+  await h.flush()
+  tree = h.render()
+  assert.ok(panelOf(tree))
+  assert.equal(radioOf(tree, 'off').checked, true)
+  assert.equal(radioOf(tree, 'auto').checked, false)
+  assert.equal(textOf(panelOf(tree)).includes('decisionFailed'), true)
+
+  response = { mode: 'agent', agentId: 'a' }
+  buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
+  await h.flush()
+  tree = h.render()
+  assert.ok(panelOf(tree))
+  assert.equal(radioOf(tree, 'off').checked, true)
+  assert.equal(radioOf(tree, 'auto').checked, false)
+
+  response = { mode: 'auto', agentId: null }
+  buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
+  await h.flush()
+  assert.equal(panelOf(h.render()), undefined)
+})
+
 test('root and child session reads restore their own persisted Auto selection', async t => {
   const h = await load(t, enabledOverview)
   h.render()
