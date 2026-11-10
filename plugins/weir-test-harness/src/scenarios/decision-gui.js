@@ -6,6 +6,13 @@ import { decisionPack, observeDecision } from '../decision-test-kit.js'
 
 const id = 'decision-gui'
 const prompt = 'decision-gui-probe'
+const LONG_QUESTIONS = [
+  { id: 'product-long-choice', question: '长中文题面：请在保留既有证据、权限与人工审批边界的前提下选择后续判断方式；English continuation with an intentionally long question that must wrap naturally without pushing the primary action outside the reachable viewport.', multi_select: true, options: [
+    { label: '采用这个同时包含中文与 English and deliberately extended wording 的长选项，以验证换行、复选状态与读屏名称。', description: '长选项说明 / Long option description remains readable at every viewport.' },
+    { label: '另一个长选项 / Another intentionally long option' },
+  ] },
+  { id: 'product-long-text', question: '请补充一段中英文混合的自由文本判断理由 / Provide a multilingual free-text rationale that must remain editable before submission.' },
+]
 const QUESTIONS = {
   GUI_A_ANSWER: { id: 'gui-a-answer', question: 'Choose the evidenced GUI title', options: [{ label: 'Native fallback' }, { label: 'Concise' }] },
   GUI_A_OFF: { id: 'gui-a-off', question: 'Choose while the selector is Off', options: [{ label: 'Native Off' }, { label: 'Automatic' }] },
@@ -56,6 +63,7 @@ function decide(options, obs) {
   const history = JSON.stringify(messages.slice(lastTool + 1))
   const markers = Object.keys(QUESTIONS)
   const marker = markers.find(key => history.includes(key))
+  if (history.includes('GUI_LONG_NATIVE')) return toolCallChunks('ask_user_question', { questions: LONG_QUESTIONS })
   if (marker) return toolCallChunks('ask_user_question', { questions: [QUESTIONS[marker]] })
   const action = ['GUI_B_DECIDE', 'GUI_B_REASSIGN', 'GUI_B_CANCEL', 'GUI_B_RETRY', 'GUI_C_RETURN', 'GUI_AUTO_EXPLICIT'].find(key => history.includes(key))
   if (action) {

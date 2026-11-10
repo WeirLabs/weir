@@ -870,14 +870,8 @@ async function keyboardSelector(sessionId, modeOrAgent, agentId = null) {
 }
 
 async function askLongNative(sessionId) {
-  const questions = [
-    { id: 'product-long-choice', question: '长中文题面：请在保留既有证据、权限与人工审批边界的前提下选择后续判断方式；English continuation with an intentionally long question that must wrap naturally without pushing the primary action outside the reachable viewport.', multiSelect: true, options: [
-      { label: '采用这个同时包含中文与 English and deliberately extended wording 的长选项，以验证换行、复选状态与读屏名称。', description: '长选项说明 / Long option description remains readable at every viewport.' },
-      { label: '另一个长选项 / Another intentionally long option' },
-    ] },
-    { id: 'product-long-text', question: '请补充一段中英文混合的自由文本判断理由 / Provide a multilingual free-text rationale that must remain editable before submission.' },
-  ]
-  await instance.cdp.evaluate(`(() => { const state={settled:false,value:null,error:null}; window.__decisionProductLong=state; window.__decisionQA.fixture('askNative',{sessionId:${JSON.stringify(sessionId)},questions:${JSON.stringify(questions)}}).then(value=>{state.value=value;state.settled=true},error=>{state.error=error?.message??String(error);state.settled=true}); return true })()`)
+  // A real unresolved stock call supplies the current no-wait authority binding.
+  await submitMarker(instance, 'GUI_LONG_NATIVE')
   return waitCase(sessionId, 'product-long-choice', current => current.state === 'awaiting_user')
 }
 

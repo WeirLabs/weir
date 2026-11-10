@@ -876,6 +876,14 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     assert.equal(first.name, 'ask_user_question')
     assert.equal(JSON.parse(first.arguments).questions[0].id, 'gui-a-answer')
   })
+  it('emits the long native case through one real stock tool call', () => {
+    const [call] = blockEnds(run('decision-gui', userOptions('GUI_LONG_NATIVE')))
+    assert.equal(call.name, 'ask_user_question')
+    const questions = JSON.parse(call.arguments).questions
+    assert.deepEqual(questions.map(question => question.id), ['product-long-choice', 'product-long-text'])
+    assert.equal(questions[0].multi_select, true)
+    assert.equal(questions[0].options[0].description, '长选项说明 / Long option description remains readable at every viewport.')
+  })
   it('makes after-down and later turns evidence-driven instead of id-driven', () => {
     const scenario = byId('decision-gui')
     const evaluate = evidence => {
