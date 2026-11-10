@@ -7,13 +7,14 @@ import { textChunks, toolCallChunks } from '../mock-kit.js'
 const id = 'decision-auto-route'
 const prompt = 'decision-auto-route-probe'
 const STOCK_AUTHORITY = process.env.WEIR_IT_DECISION_STOCK_AUTHORITY === '1'
+const STOCK_LEGACY = !STOCK_AUTHORITY && process.env.WEIR_IT_DECISION_STOCK_LEGACY === '1'
 const STOCK_PLAN_REVIEW = { id: 'decision-auto-stock-plan-review', question: 'STOCK_PLAN_REVIEW: choose whether the native plan is ready', detail: 'Review the proposed native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept plan' }, options: [{ label: 'Accept plan' }, { label: 'Revise plan' }] }
 const STOCK_PLAN_BLOCKING = { id: 'decision-auto-stock-blocking-plan-review', question: 'STOCK_BLOCKING_PLAN_REVIEW: choose whether the blocking native plan is ready', detail: 'Review the blocking native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept blocking plan' }, options: [{ label: 'Accept blocking plan' }, { label: 'Revise blocking plan' }] }
 const STOCK_PLAN_LEGACY = { id: 'decision-auto-stock-legacy-plan-review', question: 'STOCK_LEGACY_PLAN_REVIEW: choose whether the legacy native plan is ready', detail: 'Review the legacy native plan before accepting it.', intent: { kind: 'plan-review', approve: 'Accept legacy plan' }, options: [{ label: 'Accept legacy plan' }, { label: 'Revise legacy plan' }] }
-const STOCK_REQUESTS = STOCK_AUTHORITY ? [STOCK_PLAN_REVIEW, STOCK_PLAN_BLOCKING] : [STOCK_PLAN_LEGACY]
+const STOCK_REQUESTS = STOCK_AUTHORITY ? [STOCK_PLAN_REVIEW, STOCK_PLAN_BLOCKING] : STOCK_LEGACY ? [STOCK_PLAN_LEGACY] : []
 const HOOKS = {
   selected: { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }, { label: 'Other' }] },
-  ...(STOCK_AUTHORITY ? { stockPlanReview: STOCK_PLAN_REVIEW, stockPlanBlocking: STOCK_PLAN_BLOCKING } : { stockPlanLegacy: STOCK_PLAN_LEGACY }),
+  ...(STOCK_AUTHORITY ? { stockPlanReview: STOCK_PLAN_REVIEW, stockPlanBlocking: STOCK_PLAN_BLOCKING } : STOCK_LEGACY ? { stockPlanLegacy: STOCK_PLAN_LEGACY } : {}),
   zero: { id: 'decision-auto-zero', question: 'AUTO_ZERO: no Agent authorizes class C', options: [{ label: 'Native zero' }, { label: 'Fallback' }] },
   one: { id: 'decision-auto-one', question: 'AUTO_ONE: only B authorizes class B', options: [{ label: 'Selected B' }, { label: 'Other' }] },
   none: { id: 'decision-auto-none', question: 'AUTO_NONE: no candidate matches', options: [{ label: 'Native none' }, { label: 'Fallback' }] },

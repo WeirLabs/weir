@@ -68,7 +68,7 @@ function observe(obs) {
   const pack = packOf(obs)
   const stockAuthorityWire = base.decisionQuestionIds.includes(QUESTIONS.stockPlan.id)
     || (pack?.questions?.some(question => question.id === QUESTIONS.stockPlan.id) ?? false)
-  return { ...base, stockAuthorityWire }
+  return stockAuthorityWire ? { ...base, stockAuthorityWire: true } : base
 }
 
 function readEvents() {

@@ -1,5 +1,6 @@
 // P1 routing and conservative pre-semantic exclusion. No Auto route exists.
 import { realpathSync } from 'node:fs'
+import { isDeepStrictEqual } from 'node:util'
 import { resolveRootSession } from './store/profiles.js'
 import { DecisionContractError } from './contracts.js'
 
@@ -16,6 +17,40 @@ export function excludedRequest(request) {
 }
 
 /**
+ * Read authority evidence from one persisted stock call. Legacy recovery also
+ * compares every field projected into the normalized Host request.
+ * @param {any} event @param {any} live @param {boolean} exactProjection
+ */
+function rawStockQuestions(event, live, exactProjection = false) {
+  if (event?.data?.name !== 'ask_user_question' || typeof event.data.arguments !== 'string') return undefined
+  let raw
+  try { raw = JSON.parse(event.data.arguments)?.questions } catch { return undefined }
+  if (!Array.isArray(raw) || !Array.isArray(live) || raw.length !== live.length) return undefined
+  const ids = new Set()
+  for (let index = 0; index < raw.length; index++) {
+    const question = raw[index]
+    const current = live[index]
+    if (typeof question?.id !== 'string' || !question.id || ids.has(question.id)
+      || question.id !== current?.id || question.question !== current?.question) return undefined
+    if (exactProjection && (!isDeepStrictEqual(question.options, current?.options)
+      || question.header !== current?.header || question.multi_select !== current?.multiSelect)) return undefined
+    ids.add(question.id)
+  }
+  return raw
+}
+
+/** @param {any[]} events @param {number} callIndex */
+function settledStockCall(events, callIndex) {
+  const call = events[callIndex]
+  return events.slice(callIndex + 1).some(event => {
+    if (event?.type !== 'tool/result') return false
+    const message = event.data?.message
+    return (typeof call.seq === 'number' && event.sourceEventSeqs?.includes(call.seq))
+      || message?.toolCallId === call.data.callId || message?.source?.callId === call.data.callId
+  })
+}
+
+/**
  * Recheck native authority from the exact persisted stock tool call. Raw
  * arguments are evidence only: never return them into routing or persistence.
  * Host stock calls with unusable current evidence fail closed; direct Broker
@@ -25,30 +60,35 @@ export function excludedRequest(request) {
 export async function excludedStockHookRequest(request, originSessionId, ctx) {
   if (excludedRequest(request)) return true
   const callId = request.wait?.callId
-  if (callId === undefined || request.agent === undefined) return false
+  if (request.agent === undefined) return false
   if (request.agent?.id !== originSessionId) return true
   const sessionQuery = ctx?.sessionQuery ?? ctx?.get?.('sessionQuery')
   if (!sessionQuery) return true
-  if (typeof callId !== 'string' || !callId || typeof sessionQuery.readSession !== 'function') return true
+  if ((callId !== undefined && (typeof callId !== 'string' || !callId)) || typeof sessionQuery.readSession !== 'function') return true
 
   let snapshot
   try { snapshot = await sessionQuery.readSession(originSessionId) } catch { return true }
   if (snapshot?.session?.id !== originSessionId || !Array.isArray(snapshot.events)) return true
-  const matches = snapshot.events.filter(event => event?.type === 'tool/call' && event.data?.callId === callId)
-  if (matches.length !== 1 || matches[0].data?.name !== 'ask_user_question' || typeof matches[0].data.arguments !== 'string') return true
-
-  let raw
-  try { raw = JSON.parse(matches[0].data.arguments)?.questions } catch { return true }
-  const live = request.questions
-  if (!Array.isArray(raw) || !Array.isArray(live) || raw.length !== live.length) return true
-  const ids = new Set()
-  for (let index = 0; index < raw.length; index++) {
-    const question = raw[index]
-    if (typeof question?.id !== 'string' || !question.id || ids.has(question.id)
-      || question.id !== live[index]?.id || question.question !== live[index]?.question) return true
-    ids.add(question.id)
+  if (callId !== undefined) {
+    const matches = snapshot.events.filter(event => event?.type === 'tool/call' && event.data?.callId === callId)
+    if (matches.length !== 1) return true
+    const raw = rawStockQuestions(matches[0], request.questions)
+    return raw ? excludedRequest({ questions: raw }) : true
   }
-  return excludedRequest({ questions: raw })
+
+  const live = request.questions
+  if (!Array.isArray(live) || live.length === 0) return true
+  const calls = snapshot.events.map((event, index) => ({ event, index })).filter(call => call.event?.type === 'tool/call')
+  const current = calls.at(-1)
+  if (!current || current.event.data?.name !== 'ask_user_question'
+    || typeof current.event.data?.callId !== 'string' || !current.event.data.callId) return true
+  const candidates = []
+  for (const call of calls) {
+    const raw = rawStockQuestions(call.event, live, true)
+    if (raw && !settledStockCall(snapshot.events, call.index)) candidates.push({ call, raw })
+  }
+  if (candidates.length !== 1 || candidates[0].call !== current) return true
+  return excludedRequest({ questions: candidates[0].raw })
 }
 
 /** @param {any} agent @param {any} ctx */
