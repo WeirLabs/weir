@@ -311,6 +311,7 @@ async function keyboardFocus(action, selector, options = {}) {
   saveKeyboardAudits()
   const deadline = Date.now() + 30_000
   await waitFor(async () => (await keyboardSnapshot(selector, options)).ready, 30_000)
+  const direction = (await keyboardSnapshot(selector, options)).direction
   for (let step = 0; step < 500 && Date.now() < deadline; step += 1) {
     const before = await keyboardSnapshot(selector, options)
     if (before.reached) {
@@ -320,9 +321,9 @@ async function keyboardFocus(action, selector, options = {}) {
       saveKeyboardAudits()
       return audit
     }
-    await instance.cdp.key('Tab', before.direction === 'Shift+Tab' ? 8 : 0)
+    await instance.cdp.key('Tab', direction === 'Shift+Tab' ? 8 : 0)
     const after = await keyboardSnapshot(selector, options)
-    audit.steps.push({ step, key: before.direction, from: before.active, activeElement: after.active, target: before.target })
+    audit.steps.push({ step, key: direction, from: before.active, activeElement: after.active, target: before.target })
     saveKeyboardAudits()
   }
   throw new Error(`Keyboard target unreachable: ${action} ${selector} ${JSON.stringify(audit.steps.at(-1))}`)
