@@ -22,6 +22,7 @@ const root = mkdtempSync(join(GUI, 'desktop-'))
 const runId = basename(root).replace('desktop-', '')
 const out = join(GUI, `run-${runId}`)
 mkdirSync(out)
+mkdirSync(join(out, 'it-root'), { recursive: true })
 const databasePath = join(root, 'home', 'weir', 'profiles', 'desktop', 'decisions', 'decision.db')
 const checks = {}
 const checkDetails = {}

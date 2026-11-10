@@ -583,6 +583,8 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   const crash = driver.indexOf("await stopOwned('process-1', { crash: true })")
   const intake = driver.indexOf("const interruptedSummary = await waitCase(sessionId, 'gui-auto-interrupt'")
   assert.ok(hold >= 0 && intake > hold && crash > intake, 'the held Router ready marker precedes the received read and owned SIGKILL')
+  const holdRoot = driver.indexOf("mkdirSync(join(out, 'it-root'), { recursive: true })")
+  assert.ok(holdRoot >= 0 && holdRoot < hold, 'the Desktop run creates the hold-marker root before any Router hold')
   assert.match(driver, /await selectorChoose\(sessionId, 'auto'\)\s*await submitMarker\(instance, 'GUI_AUTO_INTERRUPT'\)/, 'the held interruption enters through Auto rather than a pinned Agent')
   assert.match(driver, /process\.kill\(mainPid, 'SIGKILL'\)/)
   assert.match(driver, /process\.kill\(hostPid, 'SIGKILL'\)/)
