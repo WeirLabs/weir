@@ -215,11 +215,8 @@ async function expectMutation(method, args) {
 async function stopOwned(label, { crash = false } = {}) {
   const value = instance
   if (!value) return null
-  await collectNetwork(value).catch(() => {})
-  collectRuntime(value, label)
   const mainPid = value.app.pid
-  const host = await value.cdp?.evaluate('window.__decisionQA?.fixture("hostState", {})').catch(() => null)
-    ?? (existsSync(join(out, 'host.json')) ? JSON.parse(readFileSync(join(out, 'host.json'), 'utf8')) : null)
+  const host = JSON.parse(readFileSync(join(out, `process-${value.instanceNumber}.json`), 'utf8')).host
   const hostPid = host?.pid
   const before = { main: processInfo(mainPid), host: processInfo(hostPid) }
   let base
@@ -235,11 +232,14 @@ async function stopOwned(label, { crash = false } = {}) {
         hostSignal = 'SIGKILL'
       }
     }
+    collectRuntime(value, label)
     value.cdp?.close()
     value.log.end()
     base = { spawnedPid: mainPid, hostPid, hostParentPid: host?.parentPid, expectedHome: join(root, 'home'), hostHome: host?.profile?.home, hostProfile: host?.profile?.name, port: PORT, signalCode: 'SIGKILL', stopped: true, crash: true }
     writeJson(join(out, `${label}-cleanup-base.json`), base)
   } else {
+    await collectNetwork(value).catch(() => {})
+    collectRuntime(value, label)
     base = await stopInstance(value, join(out, `${label}-cleanup-base.json`))
     if (hostPid && hostPid !== mainPid && processInfo(hostPid)?.alive) {
       const current = processInfo(hostPid)
