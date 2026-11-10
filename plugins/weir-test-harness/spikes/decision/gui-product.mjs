@@ -391,7 +391,7 @@ async function keyboardKey(action, key, details = {}) {
 
 async function selectorOpen() {
   await keyboardActivate('Open decision assistant selector', '[data-weir-decision-trigger="weir-decision-selector"]')
-  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-selector-panel"))'), 30_000)
+  await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&!/正在加载判断记录|Loading decision/i.test(panel.innerText)) })()`), 30_000)
 }
 
 async function selectorChoose(sessionId, mode, agentId = null) {

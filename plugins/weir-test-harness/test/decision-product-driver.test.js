@@ -656,6 +656,8 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   const routeReady = unowned.indexOf('const routeReady = await waitFor(')
   const domRead = unowned.indexOf('const dom = await instance.cdp.evaluate(')
   assert.ok(disclosure >= 0 && routeReady > disclosure && domRead > routeReady, 'inbox RouteDecision history finishes loading before its DOM is asserted')
+  const selectorOpenBody = driver.match(/async function selectorOpen\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(selectorOpenBody, /正在加载判断记录|Loading decision/i, 'selector opening waits for the real overview loading state to clear')
 })
 
 test('startup isolation contract rejects current App P0 roots ports and foreign Decision stores', async () => {
