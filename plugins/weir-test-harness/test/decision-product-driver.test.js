@@ -183,7 +183,7 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(!driver.includes('selectDecisionTab'))
   assert.ok(!/import[\s\S]*?\bsetSelector\b[\s\S]*?from '\.\/gui-qa\.mjs'/.test(driver.split("from './gui-qa.mjs'")[0]))
   assert.ok(shared.includes('data-weir-decision-trigger'))
-  assert.ok(fixtureClient.includes('activeSessionId') && fixtureClient.includes('SessionProbe'), 'the fixture observes the actual composer session identity')
+  assert.ok(fixtureClient.includes('activeSessionId') && fixtureClient.includes('retainedBy?.mainView'), 'the fixture reads the authoritative mainView session identity')
   assert.ok(shared.includes('getState().activeSessionId==='), 'session creation/opening waits for the requested active root')
   for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getPartialAXTree']) assert.ok(cdp.includes(method), method)
   assert.ok(fixture.includes("exec.arguments?.request_id !== 'gui_b_decide'"))

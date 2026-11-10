@@ -4,12 +4,6 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'layout', 'uiWorkspace'],
       apply(ctx) {
-        let activeSessionId = null
-        function SessionProbe() { return null }
-        ctx.slots.inject('conversation.input.right', () => ctx.slots.register({
-          name: 'conversation.input.right', id: 'weir-decision-gui-session-probe', order: 1000,
-          inject: sessionId => { activeSessionId = sessionId ?? null; return {} },
-        }, SessionProbe))
         async function fixture(method, args = {}) {
           const connection = ctx.get('connection')
           if (!connection?.rpc?.call) throw new Error('QA raw RPC connection unavailable')
@@ -32,8 +26,9 @@ window.__ModuleLoader__.load({
         function openSession(sessionId) { ctx.uiWorkspace.openSession(sessionId); ctx.layout.selectPanel(null) }
         function selectDecisions() { ctx.layout.selectPanel('weir-decisions') }
         function getState() {
+          const sessions = ctx.uiWorkspace.sessions?.list?.getSnapshot?.()
           return {
-            activeSessionId,
+            activeSessionId: Object.values(sessions?.byId ?? {}).find(session => (session.retainedBy?.mainView ?? 0) > 0)?.id ?? null,
             activePanelId: ctx.layout.panelInfo.getSnapshot().activePanelId ?? null,
             sidebar: ctx.slots.entries('sidebar.panellist').map(entry => entry.options.id),
             main: ctx.slots.entries('main').map(entry => entry.options.key),
