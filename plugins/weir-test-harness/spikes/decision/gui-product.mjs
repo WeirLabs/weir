@@ -1223,15 +1223,6 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   p4Evidence.pending = pending
   await scanSession(autoSession, 'p4-auto-session-before-restart.json')
 
-  await openIsolatedSession(sessionId)
-  await selectorChoose(sessionId, 'auto')
-  await submitMarker(instance, 'GUI_AUTO_INTERRUPT')
-  await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready')), 30_000)
-  const interruptedSummary = await waitCase(sessionId, 'gui-auto-interrupt', value => value.state === 'received')
-  const interrupted = await record(sessionId, 'p4-interrupted-before-crash', interruptedSummary.caseId)
-  check('interruptedIntakeIsReceivedWithoutRouteOrAttemptBeforeCrash', interrupted.case.agentId === null && interrupted.case.state === 'received' && interrupted.attempts.length === 0 && interrupted.routeDecisions.length === 0, { caseId: interrupted.case.caseId })
-  sqliteSnapshot('p4-interrupted-before-crash')
-  p4Evidence.interrupted = interrupted
   const state = { sessionId, autoSession, explicitOffSession, shadowControlSession, shadowObservedSession, pendingSession, foreignSession, foreignWorkspace, foreign, freshOverviews, pageCases }
   writeJson(join(out, 'p4-before-restart.json'), state)
   return state
@@ -1245,14 +1236,14 @@ async function runP4AfterRestart(state, legacySession, primary, secondary) {
 
   const pendingRestart = await record(state.pendingSession, 'p4-pending-after-restart', p4Evidence.pending.case.caseId)
   const returnedRestart = await record(state.autoSession, 'p4-returned-after-restart', p4Evidence.returned.case.caseId)
-  const interruptedRestart = await record(state.sessionId, 'p4-interrupted-after-restart', p4Evidence.interrupted.case.caseId)
+  const interruptedRestart = await record(state.autoSession, 'p4-interrupted-after-restart', p4Evidence.interrupted.case.caseId)
   check('restartPreservesPendingAndReturnedExactly', pendingRestart.case.state === 'awaiting_user' && pendingRestart.case.revision === p4Evidence.pending.case.revision && pendingRestart.case.agentId === null && pendingRestart.attempts.length === 0 && pendingRestart.routeDecisions.length === 1 && JSON.stringify(returnedRestart) === JSON.stringify(p4Evidence.returned), { pending: pendingRestart.case, returned: returnedRestart.case })
   check('interruptedReceivedIntakeRecoversWaitingWithoutRouteOrAttempt', interruptedRestart.case.state === 'awaiting_user' && interruptedRestart.case.awaitingReason === 'interrupted' && interruptedRestart.case.agentId === null && interruptedRestart.attempts.length === 0 && interruptedRestart.routeDecisions.length === 0, { before: p4Evidence.interrupted.case, after: interruptedRestart.case })
   await openIsolatedSession(state.pendingSession, true)
   await shot('p4-pending-after-restart')
   p4Evidence.pendingAfterRestart = await answerUnownedInbox(state.pendingSession, pendingRestart.case.caseId, 'p4-restart-pending', 'Pending user answer')
-  await openIsolatedSession(state.sessionId, true)
-  p4Evidence.interruptedAfterRestart = await cancelUnownedInbox(state.sessionId, interruptedRestart.case.caseId, 'p4-restart-interrupted', false)
+  await openIsolatedSession(state.autoSession, true)
+  p4Evidence.interruptedAfterRestart = await cancelUnownedInbox(state.autoSession, interruptedRestart.case.caseId, 'p4-restart-interrupted', false)
   check('interruptedCancelAddsNoRetroactiveAutoRoute', p4Evidence.interruptedAfterRestart.routeDecisions.length === 0 && p4Evidence.interruptedAfterRestart.attempts.length === 0 && p4Evidence.interruptedAfterRestart.case.closing === 'cancelled', { caseId: interruptedRestart.case.caseId })
 
   const reviewSession = state.autoSession
@@ -1770,7 +1761,18 @@ try {
   check('noCommandOrCustomDecisionSessionEvents', scanBefore.commandEvents.length === 0 && scanBefore.customDecisionEvents.length === 0)
 
   const beforeGlobalOff = await records(sessionId)
+  await openIsolatedSession(p4State.autoSession)
+  await submitMarker(instance, 'GUI_AUTO_INTERRUPT')
+  await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready')), 30_000)
   await stopOwned('process-1', { crash: true })
+  const interruptedSnapshot = sqliteSnapshot('p4-interrupted-before-crash')
+  const interruptedRows = interruptedSnapshot.rows.cases.filter(row => row.root_session_id === p4State.autoSession && JSON.parse(row.request_json).questions?.some(question => question.id === 'gui-auto-interrupt'))
+  requireEvidence(interruptedRows.length === 1, 'exactly one persisted interrupted Auto intake exists')
+  const interruptedRow = interruptedRows[0]
+  const interruptedAttempts = interruptedSnapshot.rows.attempts.filter(row => row.case_id === interruptedRow.case_id)
+  const interruptedRoutes = interruptedSnapshot.rows.route_decisions.filter(row => row.case_id === interruptedRow.case_id)
+  check('interruptedIntakeIsReceivedWithoutRouteOrAttemptBeforeCrash', interruptedRow.agent_id === null && interruptedRow.state === 'received' && interruptedAttempts.length === 0 && interruptedRoutes.length === 0, { caseId: interruptedRow.case_id, state: interruptedRow.state, attempts: interruptedAttempts.length, routes: interruptedRoutes.length })
+  p4Evidence.interrupted = { case: { caseId: interruptedRow.case_id, agentId: interruptedRow.agent_id, state: interruptedRow.state }, attempts: interruptedAttempts, routeDecisions: interruptedRoutes }
   instance = await startDesktop(false)
   await openSession(instance, sessionId)
   await selectorOpen()
