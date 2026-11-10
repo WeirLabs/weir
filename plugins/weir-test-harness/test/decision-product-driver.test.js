@@ -234,6 +234,12 @@ test('product driver keyboard helpers record native focus traversal and text ent
   assert.match(fill, /instance\.cdp\.key\('a', 4\)/, 'editing selects old text with native Meta+A')
   assert.match(fill, /Input\.insertText/, 'text is inserted through the native CDP input channel')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLInputElement|HTMLTextAreaElement/.test(`${activate}\n${fill}`))
+  const select = driver.match(/async function keyboardSelect\(action, selector, value, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const open = select.indexOf("await instance.cdp.key('Space')")
+  const arrow = select.indexOf('await instance.cdp.key(key)')
+  const commit = select.indexOf("await instance.cdp.key('Enter')")
+  assert.ok(open >= 0 && arrow > open && commit > arrow, 'native select uses Space to open, Arrow to navigate, and Enter to commit')
+  assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLSelectElement/.test(select), 'select remains keyboard-only without DOM value mutation')
 })
 
 test('all product write paths use native keyboard helpers instead of DOM actions', () => {
