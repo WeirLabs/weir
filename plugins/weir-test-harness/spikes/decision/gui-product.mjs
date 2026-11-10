@@ -376,6 +376,58 @@ async function keyboardActivate(action, selector, options = {}) {
   return audit
 }
 
+async function keyboardMenuActivate(action, selector, options = {}) {
+  const audit = { action: `Focus: ${action}`, selector, options, steps: [], reached: false }
+  keyboardAudits.push(audit)
+  saveKeyboardAudits()
+  const read = () => instance.cdp.evaluate(`(() => {
+    const scope=${JSON.stringify(options.scope ?? '[role="menu"]')}
+    const selector=${JSON.stringify(selector)}
+    const labels=${JSON.stringify(options.labels ?? null)}
+    const namePattern=${JSON.stringify(options.namePattern ?? null)}
+    const describe=el=>{
+      if(!el)return null
+      const labelled=(el.getAttribute?.('aria-labelledby')??'').split(/\s+/).filter(Boolean).map(id=>document.getElementById(id)?.textContent??'').join(' ')
+      const labelText=[...(el.labels??[])].map(label=>label.textContent).join(' ')
+      return {tag:el.tagName?.toLowerCase()??null,id:el.id||null,role:el.getAttribute?.('role')??null,accessibleName:String(el.getAttribute?.('aria-label')||labelled||labelText||el.innerText||el.textContent||el.value||'').trim().slice(0,500),value:typeof el.value==='string'?el.value:null}
+    }
+    const root=document.querySelector(scope)
+    const items=root?[...root.querySelectorAll(selector)].filter(el=>el.offsetParent!==null&&!el.disabled):[]
+    const target=items.find(el=>{
+      const named=describe(el)?.accessibleName??''
+      return (!labels||labels.includes(el.textContent.trim())||labels.includes(named))&&(!namePattern||new RegExp(namePattern,'i').test(named))
+    })??null
+    const active=document.activeElement
+    return {ready:Boolean(target),reached:target===active,activeIndex:items.indexOf(active),targetIndex:items.indexOf(target),items:items.map(describe),active:describe(active),target:describe(target)}
+  })()`)
+  let current = await waitFor(async () => { const state = await read(); return state.ready ? state : null }, 30_000)
+  const move = async key => {
+    const before = current
+    await instance.cdp.key(key)
+    current = await read()
+    audit.steps.push({ step: audit.steps.length, key, from: before.active, activeElement: current.active, target: current.target })
+    saveKeyboardAudits()
+  }
+  if (!current.reached && current.activeIndex < 0) await move('Tab')
+  requireEvidence(current.reached || current.activeIndex >= 0, `${action} enters the open menu through one native Tab`)
+  for (let step = 0; !current.reached && step < current.items.length; step += 1) {
+    const direction = current.targetIndex > current.activeIndex ? 'ArrowDown' : 'ArrowUp'
+    const expectedIndex = current.activeIndex + (direction === 'ArrowDown' ? 1 : -1)
+    requireEvidence(expectedIndex >= 0 && expectedIndex < current.items.length, `${action} reaches the exact item without cycling away`)
+    await move(direction)
+    requireEvidence(current.activeIndex === expectedIndex, `${action} native ${direction} moves to the predicted menu item`)
+  }
+  requireEvidence(current.reached, `${action} reaches the exact rendered menu item`)
+  audit.reached = true
+  audit.activeElement = current.active
+  audit.target = current.target
+  saveKeyboardAudits()
+  await instance.cdp.key('Enter')
+  audit.activation = { key: 'Enter', activeElement: (await read()).active }
+  saveKeyboardAudits()
+  return audit
+}
+
 async function keyboardFill(action, selector, value) {
   const audit = await keyboardFocus(action, selector)
   await instance.cdp.key('a', 4)
@@ -2167,7 +2219,7 @@ async function setGuiLanguage(language) {
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
   await keyboardActivate('Open real Language preference', '[role="dialog"] button[aria-haspopup="menu"]', { namePattern: '^(?:中文|简体中文|English|Chinese)$' })
   const labels = language === 'en' ? ['English'] : ['中文', '简体中文', 'Chinese']
-  await keyboardActivate(`Select ${labels[0]} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { scope: '[role="menu"]', labels })
+  await keyboardMenuActivate(`Select ${labels[0]} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { scope: '[role="menu"]', labels })
   await waitFor(() => instance.cdp.evaluate(`document.documentElement.lang.toLowerCase().startsWith(${JSON.stringify(language)})`), 30_000)
   const after = await instance.cdp.evaluate('document.documentElement.lang')
   await shot(`uiux-language-${language}-settings`, { kind: 'language-settings', before, after })

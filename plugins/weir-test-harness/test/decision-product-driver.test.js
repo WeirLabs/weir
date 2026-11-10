@@ -373,12 +373,60 @@ test('Host language Chinese restore uses real menu labels inside the open Settin
   const labelsFor = new Function('language', `return (${expression})`)
   assert.deepEqual(labelsFor('zh'), ['中文', '简体中文', 'Chinese'])
   assert.deepEqual(labelsFor('en'), ['English'])
-  const call = body.match(/await keyboardActivate\(`Select \$\{labels\[0\]\} GUI language`, '([^']+)', (\{[^\n]+\})\)/)
+  const call = body.match(/await keyboard(?:Menu)?Activate\(`Select \$\{labels\[0\]\} GUI language`, '([^']+)', (\{[^\n]+\})\)/)
   assert.ok(call, 'language selection uses the rendered label candidates')
   assert.equal(call[1], '[role="menuitemradio"],[role="menuitem"],button')
   const options = new Function('labels', `return (${call[2]})`)(['sentinel'])
   assert.equal(options.scope, '[role="menu"]', 'selection cannot match an unrelated model or preset menu')
   assert.deepEqual(options.labels, ['sentinel'])
+})
+
+test('Host language menu uses native directional selection in both directions', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const language = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(language.includes('await keyboardMenuActivate(`Select ${labels[0]} GUI language`'), 'setGuiLanguage uses the native menu navigation seam')
+  const source = driver.match(/async function keyboardMenuActivate\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'keyboardMenuActivate exists')
+  assert.ok(!/\.click\(|\.focus\(|dispatchMouseEvent/.test(`${source}\n${language}`), 'menu navigation never bypasses native keyboard input')
+
+  const item = name => ({ tagName: 'BUTTON', id: '', role: 'menuitem', offsetParent: {}, disabled: false, innerText: name, textContent: name, labels: [], value: '', getAttribute: name => name === 'aria-label' ? null : name === 'role' ? 'menuitem' : null })
+  const chinese = item('中文')
+  const english = item('English')
+  const trigger = item('Language')
+  const items = [chinese, english]
+  const root = { querySelectorAll: () => items }
+  const document = { activeElement: trigger, querySelector: selector => selector === '[role="menu"]' ? root : null, getElementById: () => null }
+  const keys = []
+  let current = chinese
+  const instance = { cdp: {
+    evaluate: async expression => new Function('document', `return (${expression})`)(document),
+    async key(key) {
+      keys.push(key)
+      if (key === 'Tab') document.activeElement = current
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        const offset = key === 'ArrowDown' ? 1 : -1
+        document.activeElement = items[items.indexOf(document.activeElement) + offset]
+      }
+    },
+  } }
+  const audits = []
+  const waitFor = async check => {
+    const value = await check()
+    assert.ok(value, 'the menu target is immediately ready in this fixture')
+    return value
+  }
+  const requireEvidence = (condition, message) => assert.ok(condition, message)
+  const activate = new Function('instance', 'keyboardAudits', 'saveKeyboardAudits', 'waitFor', 'requireEvidence', `${source};return keyboardMenuActivate`)(instance, audits, () => {}, waitFor, requireEvidence)
+  for (const [target, arrow] of [['English', 'ArrowDown'], ['中文', 'ArrowUp']]) {
+    keys.length = 0
+    current = target === 'English' ? chinese : english
+    document.activeElement = trigger
+    const audit = await activate(`Select ${target} GUI language`, '[role="menuitemradio"],[role="menuitem"],button', { scope: '[role="menu"]', labels: [target] })
+    assert.deepEqual(keys, ['Tab', arrow, 'Enter'], target)
+    assert.equal(audit.reached, true)
+    assert.equal(audit.activation.key, 'Enter')
+  }
+  assert.equal(audits.length, 2)
 })
 
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
