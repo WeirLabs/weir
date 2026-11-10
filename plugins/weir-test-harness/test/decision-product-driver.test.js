@@ -194,8 +194,8 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   assert.ok(openCall >= 0 && readyCall > openCall && panelSwitch > readyCall, 'uiWorkspace opening awaits ClientSessions.using reference.ready before panel switching; using owns finally release')
   assert.ok(fixtureClient.includes('await openSession(sessionId)'), 'session creation uses the same readiness handshake')
   assert.ok(!fixtureClient.includes('sessionBinding') && !shared.includes('sessionBindingReady'), 'the binding-presence workaround is fully removed')
-  for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getPartialAXTree']) assert.ok(cdp.includes(method), method)
-  assert.ok(cdp.includes('fetchRelatives: options.fetchRelatives === true'), 'the CDP helper forwards the explicit relatives request')
+  for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getFullAXTree']) assert.ok(cdp.includes(method), method)
+  assert.ok(!cdp.includes('Accessibility.getPartialAXTree'), 'partial relatives are not a substitute for the target full subtree')
   assert.ok(fixture.includes("exec.arguments?.request_id !== 'gui_b_decide'"))
   assert.ok(!driver.includes('127.0.0.1:52011'))
   assert.ok(cdp.includes('data-desktop-onboarding') && cdp.includes('dismissed: true'), 'startup completes and verifies the real host onboarding path')
@@ -287,6 +287,7 @@ test('all product write paths use native keyboard helpers instead of DOM actions
 function fakeTransitionCdp(t) {
   const state = { scale: 1, scheme: 'light', pendingScale: null, pendingScheme: null }
   const requests = []
+  const fixture = { state, requests, axNodes: [] }
   const originalFetch = globalThis.fetch
   const originalWebSocket = globalThis.WebSocket
   t.after(() => { globalThis.fetch = originalFetch; globalThis.WebSocket = originalWebSocket })
@@ -309,14 +310,55 @@ function fakeTransitionCdp(t) {
       queueMicrotask(() => {
         if (request.method === 'Emulation.setPageScaleFactor') state.pendingScale = { value: request.params.pageScaleFactor, polls: 2 }
         if (request.method === 'Emulation.setEmulatedMedia') state.pendingScheme = { value: request.params.features[0].value, polls: 2 }
-        const result = request.method === 'Runtime.evaluate' ? { result: { value: evaluate(request.params.expression) } } : {}
+        const result = request.method === 'Runtime.evaluate' ? { result: { value: evaluate(request.params.expression) } }
+          : request.method === 'DOM.getDocument' ? { root: { nodeId: 1 } }
+            : request.method === 'DOM.querySelector' ? { nodeId: request.params.selector }
+              : request.method === 'DOM.describeNode' ? { node: { backendNodeId: request.params.nodeId === '#native' ? 43 : 42 } }
+                : request.method === 'Accessibility.getPartialAXTree' ? { nodes: fixture.axNodes.filter(node => node.backendDOMNodeId === request.params.backendNodeId) }
+                  : request.method === 'Accessibility.getFullAXTree' ? { nodes: fixture.axNodes }
+                    : {}
         this.emit('message', { data: JSON.stringify({ id: request.id, result }) })
       })
     }
     close() {}
   }
-  return { state, requests }
+  return fixture
 }
+
+test('CDP accessibility acquires each target full subtree with deep semantics only', async t => {
+  const fake = fakeTransitionCdp(t)
+  const ax = (nodeId, backendDOMNodeId, role, name, childIds = [], extra = {}) => ({ nodeId, backendDOMNodeId, role: { value: role }, name: { value: name }, childIds, ...extra })
+  fake.axNodes = [
+    ax('root', 1, 'RootWebArea', 'Desktop', ['selector', 'native', 'foreign']),
+    ax('selector', 42, 'dialog', 'Choose assistant', ['radiogroup']),
+    ax('radiogroup', 420, 'radiogroup', 'Choose assistant', ['label']),
+    ax('label', 4200, 'generic', '', ['auto']),
+    ax('auto', 42000, 'radio', 'Auto', [], { properties: [{ name: 'checked', value: { value: 'checked' } }] }),
+    ax('native', 43, 'none', null, ['native-body'], { ignored: true }),
+    ax('native-body', 430, 'generic', '', ['options']),
+    ax('options', 4300, 'group', ''),
+    ax('foreign', 44, 'button', 'Foreign control'),
+  ]
+  const cdp = await connectCdp(9495)
+  const selector = await cdp.accessibility('#selector')
+  assert.deepEqual(selector.map(node => [node.role, node.name, node.ignored]), [
+    ['dialog', 'Choose assistant', false],
+    ['radiogroup', 'Choose assistant', false],
+    ['generic', '', false],
+    ['radio', 'Auto', false],
+  ])
+  assert.equal(selector.at(-1).properties.checked, 'checked', 'the nested checked Auto radio survives projection')
+  const native = await cdp.accessibility('#native')
+  assert.deepEqual(native.map(node => [node.role, node.name, node.ignored]), [
+    ['none', null, true],
+    ['generic', '', false],
+    ['group', '', false],
+  ], 'the real pending-question option group is acquired below its ignored frame')
+  assert.ok(![...selector, ...native].some(node => node.name === 'Foreign control' || node.role === 'RootWebArea'), 'full-document acquisition remains target scoped')
+  assert.equal(fake.requests.filter(request => request.method === 'Accessibility.getFullAXTree').length, 2)
+  assert.equal(fake.requests.filter(request => request.method === 'Accessibility.getPartialAXTree').length, 0)
+  cdp.close()
+})
 
 test('CDP key emits native Enter and Space activation packets without changing navigation keys', async t => {
   const fake = fakeTransitionCdp(t)
@@ -577,9 +619,10 @@ test('product driver preserves all legacy AX groups and derives the expanded P4 
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const capture = driver.match(/async function captureAccessibility\(name, selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(capture, 'a single capture helper owns every AX collection')
-  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector, \{ fetchRelatives: name === 'selectorPanel' \|\| name === 'nativeDecision' \}\)/, 'descendant-dependent AX groups include relatives without changing their assertions')
+  assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/, 'every capture owns its complete target subtree')
   assert.match(capture, /writeJson\(join\(out, 'accessibility\.json'\), accessibility\)/, 'every capture is durable before later scenario steps')
   const requirements = driver.match(/const accessibilityRequirements = \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(requirements.includes("nativeDecision: { role: 'group', name: '' }"), 'the source-verified pending native option-group semantics stay unchanged')
   for (const name of ['selectorTrigger', 'selectorPanel', 'longRecord', 'snapshotPublishDialog', 'snapshotRejectDialog', 'snapshotRollbackDialog', 'nativeDecision', 'unownedDecision', 'routingReview', 'routingStatus', 'cancelDecisionDialog']) {
     assert.ok(requirements.includes(`${name}:`), `${name} has an explicit AX requirement`)
   }

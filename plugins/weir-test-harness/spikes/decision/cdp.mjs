@@ -92,13 +92,24 @@ export async function connectCdp(port) {
       await request('Input.dispatchKeyEvent', { type, ...event, ...(selectAll ? { commands: ['SelectAll'] } : {}), ...(text ? { text, unmodifiedText: text } : {}) })
       await request('Input.dispatchKeyEvent', { type: 'keyUp', ...event })
     },
-    async accessibility(selector, options = {}) {
+    async accessibility(selector) {
       const { root } = await request('DOM.getDocument', { depth: 0 })
       const { nodeId } = await request('DOM.querySelector', { nodeId: root.nodeId, selector })
       if (!nodeId) throw new Error(`Accessibility target not found: ${selector}`)
       const { node } = await request('DOM.describeNode', { nodeId })
-      const result = await request('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: options.fetchRelatives === true })
-      return result.nodes.map(item => ({ role: item.role?.value ?? null, name: item.name?.value ?? null, ignored: item.ignored === true, properties: Object.fromEntries((item.properties ?? []).map(property => [property.name, property.value?.value])) }))
+      const { nodes } = await request('Accessibility.getFullAXTree')
+      const byId = new Map(nodes.map(item => [item.nodeId, item]))
+      const target = nodes.find(item => item.backendDOMNodeId === node.backendNodeId)
+      if (!target) throw new Error(`Accessibility target has no full-tree node: ${selector} backendDOMNodeId=${node.backendNodeId}`)
+      const subtree = []
+      const visit = id => {
+        const item = byId.get(id)
+        if (!item) throw new Error(`Accessibility subtree child is missing: ${selector} nodeId=${id}`)
+        subtree.push(item)
+        for (const childId of item.childIds ?? []) visit(childId)
+      }
+      visit(target.nodeId)
+      return subtree.map(item => ({ nodeId: item.nodeId, backendDOMNodeId: item.backendDOMNodeId ?? null, role: item.role?.value ?? null, name: item.name?.value ?? null, ignored: item.ignored === true, properties: Object.fromEntries((item.properties ?? []).map(property => [property.name, property.value?.value])) }))
     },
     close() { ws.close() },
   }
