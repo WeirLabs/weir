@@ -177,14 +177,18 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
   const cdp = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
   const shared = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-qa.mjs'), 'utf8')
   const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  const fixtureClient = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   assert.ok(driver.includes('data-weir-decision-trigger'))
   assert.ok(driver.includes('data-decision-primary-nav'))
   assert.ok(!driver.includes('selectDecisionTab'))
   assert.ok(!/import[\s\S]*?\bsetSelector\b[\s\S]*?from '\.\/gui-qa\.mjs'/.test(driver.split("from './gui-qa.mjs'")[0]))
   assert.ok(shared.includes('data-weir-decision-trigger'))
+  assert.ok(fixtureClient.includes('activeSessionId') && fixtureClient.includes('SessionProbe'), 'the fixture observes the actual composer session identity')
+  assert.ok(shared.includes('getState().activeSessionId==='), 'session creation/opening waits for the requested active root')
   for (const method of ['Emulation.setDeviceMetricsOverride', 'Emulation.setPageScaleFactor', 'Emulation.setEmulatedMedia', 'Input.dispatchKeyEvent', 'Accessibility.getPartialAXTree']) assert.ok(cdp.includes(method), method)
   assert.ok(fixture.includes("exec.arguments?.request_id !== 'gui_b_decide'"))
   assert.ok(!driver.includes('127.0.0.1:52011'))
+  assert.ok(cdp.includes('data-desktop-onboarding') && cdp.includes('dismissed: true'), 'startup completes and verifies the real host onboarding path')
 })
 
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
@@ -299,6 +303,7 @@ test('CDP key emits native Enter and Space activation packets without changing n
     { type: 'rawKeyDown', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38, modifiers: 0 },
     { type: 'keyUp', key: 'ArrowUp', code: 'ArrowUp', windowsVirtualKeyCode: 38, nativeVirtualKeyCode: 38, modifiers: 0 },
   ])
+  assert.deepEqual(cdp.inputPackets.map(packet => packet.params), events, 'the live driver retains every native input packet verbatim')
   cdp.close()
 })
 
@@ -561,7 +566,7 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
     'interruptedReceivedIntakeRecoversWaitingWithoutRouteOrAttempt',
     'stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage',
     'sqliteReadModelAndRouteJoinAgreeWithoutExtraAttempts', 'everyTemporaryAgentArchivedThroughRealProfileSetState',
-    'testOwnedSelectorsAndSettingsRestored', 'allOwnedProcessesAndPortFinallyReleased',
+    'testOwnedSelectorsAndSettingsRestored', 'allOwnedProcessesAndPortFinallyReleased', 'nativeKeyPacketsPersisted',
   ]) assert.ok(driver.includes(token), token)
   const hold = driver.indexOf("await waitFor(() => existsSync(join(out, 'it-root', 'decision-auto-interruption.ready'))")
   const crash = driver.indexOf("await stopOwned('process-1', { crash: true })")
@@ -569,6 +574,7 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   assert.match(driver, /process\.kill\(mainPid, 'SIGKILL'\)/)
   assert.match(driver, /process\.kill\(hostPid, 'SIGKILL'\)/)
   assert.match(driver, /knownSessionIds\.has\(sessionId\)/, 'raw authority reads are limited to run-created sessions')
+  assert.ok(driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'settings text entry targets the actual host-namespaced input')
 })
 
 test('P4 Desktop settings default closed and forward only explicit isolated overrides', t => {

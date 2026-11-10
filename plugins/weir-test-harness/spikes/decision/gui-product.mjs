@@ -1,4 +1,4 @@
-// Real isolated Desktop acceptance for decision-agent-product-ux tasks 8.1–8.2.
+// Real isolated Desktop acceptance for decision-agent-auto-router tasks 9.2–9.3.
 // All product mutations are performed on the rendered NEW UI. Direct RPC is read-only.
 // Only exact owned main/Host PIDs are signalled; the current App is never addressed.
 import { spawnSync } from 'node:child_process'
@@ -52,6 +52,7 @@ const mutationCounts = new Map()
 const knownSessionIds = new Set()
 const processProvenance = []
 const p4Evidence = {}
+const nativeKeyPackets = []
 let instance = null
 let instanceNumber = 0
 let failure = null
@@ -108,6 +109,7 @@ function validateAccessibility() {
     if (!Array.isArray(nodes) || nodes.length === 0) return [`${name}: missing or empty AX tree`]
     const root = nodes.find(node => !node.ignored && node.role === expected.role)
     if (!root) return [`${name}: expected role ${expected.role}`]
+    const nameMatches = expected.name instanceof RegExp ? expected.name.test(root.name ?? '') : root.name === expected.name
     const problems = nameMatches ? [] : [`${name}: unexpected accessible name ${JSON.stringify(root.name)}`]
     for (const [key, value] of Object.entries(expected.properties ?? {})) {
       if (root.properties?.[key] !== value) problems.push(`${name}: expected ${key}=${value}`)
@@ -125,6 +127,8 @@ function validateAccessibility() {
 function collectRuntime(value, phase) {
   if (!value?.cdp) return
   for (const event of value.cdp.events) runtimeEvents.push({ phase, mainPid: value.app.pid, event })
+  for (const packet of value.cdp.inputPackets ?? []) nativeKeyPackets.push({ phase, instance: value.instanceNumber, mainPid: value.app.pid, ...packet })
+  writeJson(join(out, 'native-key-packets.json'), nativeKeyPackets)
   writeJson(join(out, 'runtime-events.json'), runtimeEvents)
 }
 
@@ -368,7 +372,7 @@ async function openIsolatedSession(sessionId, allowNative = false) {
   requireEvidence(knownSessionIds.has(sessionId), 'only a session created by this run can be opened')
   if (!allowNative) return openSession(instance, sessionId)
   await instance.cdp.evaluate(`window.__decisionQA.openSession(${JSON.stringify(sessionId)})`)
-  return waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]'))`), 60_000)
+  return waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]')) && window.__decisionQA.getState().activeSessionId===${JSON.stringify(sessionId)}`), 60_000)
 }
 
 async function keyboardKey(action, key, details = {}) {
@@ -501,7 +505,7 @@ async function setAutoSettings(phase, { shadow, answerClasses }) {
   }
   if (answerClasses !== undefined) {
     const value = JSON.stringify(answerClasses)
-    await keyboardFill('Edit Auto answer-class whitelist', 'input[aria-label="Auto 可回答类别（JSON）"],textarea[aria-label="Auto 可回答类别（JSON）"],input[aria-label="Auto answer classes (JSON)"],textarea[aria-label="Auto answer classes (JSON)"]', value)
+    await keyboardFill('Edit Auto answer-class whitelist', 'input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses', value)
   }
   await keyboardActivate('Save Decision Auto settings', '[data-save-bar] button', { namePattern: '^(保存|Save)' })
   const expected = value => (shadow === undefined || value.effective?.decisionAgentAutoShadow === shadow) && (answerClasses === undefined || JSON.stringify(value.effective?.decisionAgentAutoAnswerClasses) === JSON.stringify(answerClasses))
@@ -509,6 +513,9 @@ async function setAutoSettings(phase, { shadow, answerClasses }) {
   await shot(`settings-${phase}`)
   await keyboardKey('Close settings after authority reread', 'Escape', { phase })
   await waitFor(() => instance.cdp.evaluate('!document.body.innerText.includes("Auto Shadow 诊断") && !document.body.innerText.includes("Auto Shadow diagnostics")'), 30_000)
+  // Settings are external volatile input to an already mounted selector. Leave the
+  // conversation once so the next real session open remounts and rereads overview.auto.
+  await openPage('inbox')
   return config
 }
 
@@ -539,8 +546,9 @@ async function compareRoutingReview(sessionId, phase, authority) {
   authority.items.forEach((item, index) => {
     const rendered = dom.items[index]
     if (rendered?.caseId !== item.caseId) problems.push(`routing case ${index} differs`)
-    if (item.title && !rendered?.text.includes(item.title)) problems.push(`routing title ${item.caseId} is missing`)
-    if ((rendered?.recordCaseId ?? null) !== (item.recordCaseId ?? null)) problems.push(`record link ${item.caseId} differs`)
+    if (item.questionSummary && !rendered?.text.includes(item.questionSummary)) problems.push(`routing title ${item.caseId} is missing`)
+    const expectedRecord = item.record?.caseId === item.caseId ? item.caseId : null
+    if ((rendered?.recordCaseId ?? null) !== expectedRecord) problems.push(`record link ${item.caseId} differs`)
   })
   comparisons.push({ phase, kind: 'routing', authority, dom, problems })
   writeJson(join(out, 'rpc-ui-comparisons.json'), comparisons)
@@ -933,8 +941,15 @@ async function planReviewState() {
 }
 
 async function answerPlanReview() {
-  const state = await waitFor(async () => { const value=await planReviewState(); return value.pending?value:null }, 30_000)
-  await keyboardActivate('Accept native plan review', 'button', { scope: `[data-plan-review-key=${JSON.stringify(state.key)}]`, labels: ['同意执行', 'Accept', 'Approve'] })
+  const state = await waitFor(async () => {
+    const plan=await planReviewState()
+    if(plan.pending)return {kind:'plan',value:plan}
+    const native=await nativeState()
+    return native.pending?{kind:'native',value:native}:null
+  }, 30_000)
+  await shot('p4-native-gui_c_plan')
+  if (state.kind === 'plan') await keyboardActivate('Accept native plan review', 'button', { scope: `[data-plan-review-key=${JSON.stringify(state.value.key)}]`, labels: ['同意执行', 'Accept', 'Approve'] })
+  else await answerNative('Accept')
 }
 
 async function settleNativeSkip(sessionId, caseId, label) {
@@ -1073,7 +1088,7 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   }
   await submitMarker(instance, 'GUI_C_PLAN')
   await answerPlanReview()
-  await waitFor(async () => !(await planReviewState()).pending, 30_000)
+  await waitFor(async () => !(await planReviewState()).pending && !(await nativeState()).pending, 30_000)
   const afterNativeAuthority = await records(autoSession)
   check('approvalPlanHighRiskExecutionStayNativeWithoutCases', afterNativeAuthority.records.length === beforeNativeAuthority.records.length, { before: beforeNativeAuthority.records.length, after: afterNativeAuthority.records.length })
 
@@ -1178,13 +1193,13 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   p4Evidence.shadow = { control, observed }
   await setAutoSettings('p4-shadow-off-again', { shadow: false })
 
-  await openIsolatedSession(sessionId)
-  await selectorChoose(sessionId, 'auto')
+  await openIsolatedSession(autoSession)
+  await selectorChoose(autoSession, 'auto')
   const pageCases = []
   for (let index = 1; index <= 21; index += 1) {
     const suffix = String(index).padStart(2, '0')
     await submitMarker(instance, `GUI_AUTO_PAGE_${suffix}`)
-    const page = await waitCase(sessionId, `gui-auto-page-${suffix}`, value => value.state === 'closed')
+    const page = await waitCase(autoSession, `gui-auto-page-${suffix}`, value => value.state === 'closed')
     pageCases.push(page)
   }
   check('realTwentyOneAutoRoutesForPagination', pageCases.length === 21 && new Set(pageCases.map(value => value.caseId)).size === 21 && pageCases.every(value => value.closing === 'answered' && value.agentId === primary.agentId && value.attemptCount === 1), { count: pageCases.length, caseIds: pageCases.map(value => value.caseId) })
@@ -1233,32 +1248,40 @@ async function runP4AfterRestart(state, legacySession, primary, secondary) {
   p4Evidence.interruptedAfterRestart = await cancelUnownedInbox(state.sessionId, interruptedRestart.case.caseId, 'p4-restart-interrupted', false)
   check('interruptedCancelAddsNoRetroactiveAutoRoute', p4Evidence.interruptedAfterRestart.routeDecisions.length === 0 && p4Evidence.interruptedAfterRestart.attempts.length === 0 && p4Evidence.interruptedAfterRestart.case.closing === 'cancelled', { caseId: interruptedRestart.case.caseId })
 
-  await openIsolatedSession(state.sessionId, true)
+  const reviewSession = state.autoSession
+  await openIsolatedSession(reviewSession, true)
   await openPage('metrics')
-  const first = await routingReview(state.sessionId, 'p4-routing-first', 'all')
-  check('routingReviewFirstPageHasExactlyTwentyRealItems', first.items.length === 20 && typeof first.nextCursor === 'string' && first.nextCursor.length > 0 && first.summary.manualReassign >= 1 && first.summary.autoFailure >= 2 && first.summary.autoAmbiguous >= 1 && first.summary.disagreement >= 1, { items: first.items.length, nextCursor: first.nextCursor, summary: first.summary })
-  await compareRoutingReview(state.sessionId, 'p4-routing-first', first)
+  const first = await routingReview(reviewSession, 'p4-routing-first', 'all')
+  check('routingReviewFirstPageHasExactlyTwentyRealItems', first.items.length === 20 && typeof first.nextCursor === 'string' && first.nextCursor.length > 0 && first.summary.manualReassign >= 1 && first.summary.autoFailure >= 2 && first.summary.autoAmbiguous >= 1, { items: first.items.length, nextCursor: first.nextCursor, summary: first.summary })
+  await compareRoutingReview(reviewSession, 'p4-routing-first', first)
   await captureAccessibility('routingReview', 'section[data-routing-review]')
   await captureAccessibility('routingStatus', '[data-routing-status]')
   await shot('p4-routing-review-first-20')
   await keyboardSelect('Change routing review window', 'select[data-routing-window]', '7d')
-  const sevenDays = await routingReview(state.sessionId, 'p4-routing-seven-days', '7d')
-  await compareRoutingReview(state.sessionId, 'p4-routing-seven-days', sevenDays)
+  const sevenDays = await routingReview(reviewSession, 'p4-routing-seven-days', '7d')
+  await compareRoutingReview(reviewSession, 'p4-routing-seven-days', sevenDays)
   await keyboardSelect('Restore routing review all window', 'select[data-routing-window]', 'all')
-  const allAgain = await routingReview(state.sessionId, 'p4-routing-all-again', 'all')
-  await compareRoutingReview(state.sessionId, 'p4-routing-all-again', allAgain)
-  const combined = await routingLoadMore(state.sessionId, allAgain)
-  const combinedIds = combined.items.map(item => item.caseId)
-  check('routingPaginationAppendsRealRecordsWithoutDuplicates', allAgain.items.length === 20 && combined.items.length > 20 && new Set(combinedIds).size === combinedIds.length && combinedIds.slice(0, 20).join(',') === allAgain.items.map(item => item.caseId).join(','), { first: allAgain.items.length, combined: combined.items.length })
+  const allAgain = await routingReview(reviewSession, 'p4-routing-all-again', 'all')
+  await compareRoutingReview(reviewSession, 'p4-routing-all-again', allAgain)
+  const combined = await routingLoadMore(reviewSession, allAgain)
+  const combinedRouteIds = combined.items.map(item => item.routeDecisionId)
+  const combinedCaseIds = combined.items.map(item => item.caseId)
+  check('routingPaginationAppendsRealRecordsWithoutDuplicates', allAgain.items.length === 20 && combined.items.length > 20 && new Set(combinedRouteIds).size === combinedRouteIds.length && combinedRouteIds.slice(0, 20).join(',') === allAgain.items.map(item => item.routeDecisionId).join(',') && new Set(combinedCaseIds).size < combinedCaseIds.length, { first: allAgain.items.length, combined: combined.items.length, distinctSameCaseFacts: combinedCaseIds.length - new Set(combinedCaseIds).size })
   const routingDom = await routingReviewDom()
   const forbiddenRoutingActions = await instance.cdp.evaluate(`[...document.querySelectorAll('section[data-routing-review] button')].map(button=>button.textContent.trim()).filter(text=>/采纳|忽略|晋升|adopt|ignore|promot/i.test(text))`)
   check('routingReviewHasNoAdoptIgnoreOrPromotion', forbiddenRoutingActions.length === 0 && /诊断|diagnostic/i.test(routingDom.text), { forbiddenRoutingActions })
-  const linked = await openRoutingRecord(state.sessionId, combined.items[0].caseId)
-  check('routingRecordLinkUsesAuthorizedAuthority', linked.case.caseId === combined.items[0].caseId && linked.case.rootSessionId === state.sessionId, { caseId: linked.case.caseId })
-  await compareRecord(state.sessionId, 'p4-routing-linked-record', linked.case.caseId, true)
+  const linked = await openRoutingRecord(reviewSession, combined.items[0].caseId)
+  check('routingRecordLinkUsesAuthorizedAuthority', linked.case.caseId === combined.items[0].caseId && linked.case.rootSessionId === reviewSession, { caseId: linked.case.caseId })
+  await compareRecord(reviewSession, 'p4-routing-linked-record', linked.case.caseId, true)
 
+  await openIsolatedSession(state.shadowObservedSession, true)
   await openPage('metrics')
-  await compareRoutingReview(state.sessionId, 'p4-routing-before-visuals', combined)
+  const shadowReview = await routingReview(state.shadowObservedSession, 'p4-shadow-routing-review', 'all')
+  check('shadowReviewShowsDisagreementOnlyOnOwningRoot', shadowReview.summary.disagreement === 1 && shadowReview.items.some(item => item.caseId === p4Evidence.shadow.observed.case.caseId && item.outcome === 'disagreement'), { summary: shadowReview.summary, caseId: p4Evidence.shadow.observed.case.caseId })
+  await compareRoutingReview(state.shadowObservedSession, 'p4-shadow-routing-review', shadowReview)
+  await openIsolatedSession(reviewSession, true)
+  await openPage('metrics')
+  await compareRoutingReview(reviewSession, 'p4-routing-before-visuals', combined)
   await instance.cdp.setPageZoom(1)
   for (const theme of ['light', 'dark']) {
     await instance.cdp.setColorScheme(theme)
@@ -1313,8 +1336,9 @@ function auditP4RawEvidence(state, primary, secondary) {
   const forbiddenWire = /generatedDescription|memorySnapshot|snapshotId|principles|feedback|attempts|history|FOREIGN WORKSPACE PRIVATE PROFILE/
   const cleanWire = entry => entry.autoRouter.tools.length === 0 && entry.autoRouter.hasTemperature === false && entry.autoRouter.provider === 'mock' && entry.autoRouter.model === 'mock-1' && !forbiddenWire.test(JSON.stringify(entry.autoRouter.pack))
   const classless = value => value?.questions?.every(question => !Object.hasOwn(question, 'authorizationClass') && !Object.hasOwn(question, 'authorizationClassSource') && !Object.hasOwn(question, 'authorization_class'))
-  const pass = selectedClassification.length === 1 && selectedRoute.length === 1 && classless(selectedClassification[0].autoRouter.pack) && selectedClassification[0].autoRouter.pack.candidates === undefined && selectedRoute[0].autoRouter.pack.candidates.map(candidate => candidate.agentId).sort().join(',') === [primary.agentId, secondary.agentId].sort().join(',') && !JSON.stringify(selectedRoute[0]).includes(state.foreign.agentId) && selectedStock.length === 1 && classless(selectedStock[0].arguments) && sessionStock.length === 1 && classless(sessionStock[0].data.arguments) && trace.filter(entry => entry.autoRouter).every(cleanWire) && wiresFor('GUI_AUTO_EMPTY', 'classification').length === 0 && wiresFor('GUI_AUTO_EMPTY', 'route').length === 0 && wiresFor('GUI_AUTO_ZERO', 'classification').length === 1 && wiresFor('GUI_AUTO_ZERO', 'route').length === 0 && wiresFor('GUI_AUTO_ONE', 'classification').length === 1 && wiresFor('GUI_AUTO_ONE', 'route').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'classification').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'route').length === 0 && wiresFor('GUI_AUTO_TIMEOUT', 'route')[0]?.emitted?.length === 0
-  const proof = { pass, selectedClassification, selectedRoute, selectedStock, sessionStock, emptyWires: wiresFor('GUI_AUTO_EMPTY', 'classification').length, zeroRouteWires: wiresFor('GUI_AUTO_ZERO', 'route').length, oneRouteWires: wiresFor('GUI_AUTO_ONE', 'route').length, explicitWires: wiresFor('GUI_AUTO_EXPLICIT', 'classification').length + wiresFor('GUI_AUTO_EXPLICIT', 'route').length, foreignAgentId: state.foreign.agentId, timeout: wiresFor('GUI_AUTO_TIMEOUT', 'route') }
+  const nativeWireCount = ['GUI_C_APPROVAL', 'GUI_C_PLAN', 'GUI_AUTO_HIGH_RISK', 'GUI_AUTO_EXECUTION'].reduce((sum, marker) => sum + wiresFor(marker, 'classification').length + wiresFor(marker, 'route').length, 0)
+  const pass = nativeWireCount === 0 && selectedClassification.length === 1 && selectedRoute.length === 1 && classless(selectedClassification[0].autoRouter.pack) && selectedClassification[0].autoRouter.pack.candidates === undefined && selectedRoute[0].autoRouter.pack.candidates.map(candidate => candidate.agentId).sort().join(',') === [primary.agentId, secondary.agentId].sort().join(',') && !JSON.stringify(selectedRoute[0]).includes(state.foreign.agentId) && selectedStock.length === 1 && classless(selectedStock[0].arguments) && sessionStock.length === 1 && classless(sessionStock[0].data.arguments) && trace.filter(entry => entry.autoRouter).every(cleanWire) && wiresFor('GUI_AUTO_EMPTY', 'classification').length === 0 && wiresFor('GUI_AUTO_EMPTY', 'route').length === 0 && wiresFor('GUI_AUTO_ZERO', 'classification').length === 1 && wiresFor('GUI_AUTO_ZERO', 'route').length === 0 && wiresFor('GUI_AUTO_ONE', 'classification').length === 1 && wiresFor('GUI_AUTO_ONE', 'route').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'classification').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'route').length === 0 && wiresFor('GUI_AUTO_TIMEOUT', 'route')[0]?.emitted?.length === 0
+  const proof = { pass, nativeWireCount, selectedClassification, selectedRoute, selectedStock, sessionStock, emptyWires: wiresFor('GUI_AUTO_EMPTY', 'classification').length, zeroRouteWires: wiresFor('GUI_AUTO_ZERO', 'route').length, oneRouteWires: wiresFor('GUI_AUTO_ONE', 'route').length, explicitWires: wiresFor('GUI_AUTO_EXPLICIT', 'classification').length + wiresFor('GUI_AUTO_EXPLICIT', 'route').length, foreignAgentId: state.foreign.agentId, timeout: wiresFor('GUI_AUTO_TIMEOUT', 'route') }
   writeJson(join(out, 'stock-classification-proof.json'), proof)
   check('stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage', pass, { selectedClassification: selectedClassification.length, selectedRoute: selectedRoute.length, stock: selectedStock.length, sessionStock: sessionStock.length, foreignExcluded: !JSON.stringify(selectedRoute).includes(state.foreign.agentId) })
 
@@ -1328,12 +1352,34 @@ function auditP4RawEvidence(state, primary, secondary) {
     if (actualRoutes.length !== detail.routeDecisions.length) problems.push(`${name}: RouteDecision count differs`)
     for (const route of detail.routeDecisions) {
       const raw = actualRoutes.find(item => item.route_decision_id === route.routeDecisionId)
-      if (!raw || raw.mode !== route.mode || raw.chosen !== route.chosen || raw.reason !== route.reason || raw.root_session_id !== detail.case.rootSessionId) problems.push(`${name}: RouteDecision ${route.routeDecisionId} differs`)
+      if (!raw || raw.mode !== route.mode || (raw.chosen ?? null) !== (route.chosen ?? null) || raw.reason !== route.reason || raw.root_session_id !== detail.case.rootSessionId) problems.push(`${name}: RouteDecision ${route.routeDecisionId} differs`)
     }
     const attempts = final.rows.attempts.filter(attempt => attempt.case_id === detail.case.caseId)
     if (attempts.length !== detail.attempts.length) problems.push(`${name}: Attempt count differs`)
   }
-  const comparison = { pass: problems.length === 0, problems, cases: Object.fromEntries(Object.entries(named).map(([name, detail]) => [name, detail.case.caseId])), finalPhase: final.phase }
+  const unownedCaseIds = new Set([p4Evidence.none, p4Evidence.invalid, p4Evidence.timeout, p4Evidence.pendingAfterRestart, p4Evidence.interruptedAfterRestart].filter(Boolean).map(detail => detail.case.caseId))
+  for (const evidence of final.rows.evidence) {
+    const locator = evidence.locator_json ? JSON.parse(evidence.locator_json) : null
+    if (unownedCaseIds.has(locator?.caseId)) problems.push(`unowned Case ${locator.caseId} created Evidence ${evidence.evidence_id}`)
+  }
+  const expectedAgentIds = [primary.agentId, secondary.agentId, state.foreign.agentId].sort()
+  if (final.rows.agent_profiles.map(profile => profile.agent_id).sort().join(',') !== expectedAgentIds.join(',')) problems.push('generic or unexpected fallback Agent exists')
+  const finalCases = new Map(final.rows.cases.map(item => [item.case_id, item]))
+  for (const attempt of final.rows.attempts) {
+    if (finalCases.get(attempt.case_id)?.agent_id !== attempt.agent_id) problems.push(`Attempt ${attempt.attempt_id} crosses Case Agent ownership`)
+  }
+  const rawRequirements = [
+    { method: 'decide', args: { sessionId: state.autoSession, caseId: p4Evidence.none.case.caseId, answers: p4Evidence.none.case.decision.answers } },
+    { method: 'reassign', args: { sessionId: state.autoSession, caseId: p4Evidence.ambiguous.case.caseId, agentId: secondary.agentId } },
+    { method: 'cancel', args: { sessionId: state.autoSession, caseId: p4Evidence.invalid.case.caseId } },
+    { method: 'cancel', args: { sessionId: state.autoSession, caseId: p4Evidence.timeout.case.caseId } },
+    { method: 'setSelector', args: { sessionId: state.explicitOffSession, mode: 'off' } },
+  ]
+  const rawRpc = rawRequirements.map(requirement => ({ requirement, entry: networkRpc.find(entry => entry.method === requirement.method && exactArgs(entry.args, requirement.args)) ?? null }))
+  for (const item of rawRpc) if (!item.entry?.rpcId || !item.entry.response) problems.push(`missing raw ${item.requirement.method} RPC/response`)
+  const archivedRaw = networkRpc.filter(entry => entry.method === 'profileSetState' && entry.args?.state === 'archived' && expectedAgentIds.includes(entry.args?.agentId) && entry.rpcId && entry.response)
+  if (archivedRaw.length !== 3) problems.push(`expected three raw archival RPCs, got ${archivedRaw.length}`)
+  const comparison = { pass: problems.length === 0, problems, cases: Object.fromEntries(Object.entries(named).map(([name, detail]) => [name, detail.case.caseId])), unownedCaseIds: [...unownedCaseIds], expectedAgentIds, rawRpc, archivedRaw, finalPhase: final.phase }
   writeJson(join(out, 'sqlite-read-model-comparison.json'), comparison)
   check('sqliteReadModelAndRouteJoinAgreeWithoutExtraAttempts', comparison.pass, comparison)
   return { proof, comparison }
@@ -1345,7 +1391,7 @@ function writeReport(verdict, error = null) {
   const consultDefectPath = join(out, 'product-defect-consult-before-result.json')
   const consultDefect = existsSync(consultDefectPath) ? JSON.parse(readFileSync(consultDefectPath, 'utf8')) : null
   const lines = [
-    '# Decision Agent 产品 UX：真实隔离 Desktop 验收报告', '',
+    '# Decision Agent Auto Router：真实隔离 Desktop 验收报告', '',
     `**结论：${verdict}**`, '',
     `- 基线：\`${BASE_HEAD}\`（current main 车道基线）；运行 ID：\`${runId}\``,
     `- 真实 Electron/CDP：是；未使用组件测试或 mock DOM 代替 Desktop。`,
@@ -1363,8 +1409,8 @@ function writeReport(verdict, error = null) {
     '- `network-rpc.json` 保存 CDP Network 原始请求/响应、rpcId、method、完整 args。',
     '- `authoritative-rpc.json` 保存只读权威 RPC；驱动拒绝直接调用任何写方法。',
     '- `rpc-ui-comparisons.json` 对照记录 ID/revision/state/answers、Snapshot expectedRevision 与 UI。',
-    '- `immutable-history.json` 检查 Attempt 与 Snapshot 原则内容未改写。',
-    '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 的原生 CDP 键盘事件触发；无 Auto、自动整理或自动发布。', '',
+    '- `immutable-history.json` 检查 Attempt、Snapshot 原则内容与 RouteDecision 未改写或消失。',
+    '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 的原生 CDP 键盘事件触发；Auto 只使用测试显式配置的 A 白名单，Shadow 仅追加诊断，不做自动整理或发布。', '',
     '## 视觉、主题、缩放、键盘与可访问性', '',
     `- 已执行 ${visualAudits.length} 项视觉审计；目标为 360/768/1440 CSS px、light/dark、200% page scale，记录横向溢出、主操作裁切、控件名称与主题计算色。`,
     `- 已保存 ${Object.keys(accessibility).length} 组 CDP Accessibility 证据；keyboard-interactions.json 逐步记录 ${keyboardAudits.length} 组原生 Tab/Shift+Tab/Arrow/Enter/Space/Input.insertText 轨迹、activeElement、accessible name 与结果。`,
@@ -1373,7 +1419,7 @@ function writeReport(verdict, error = null) {
     ...screenshots.map(item => `- [${item.name}](${basename(item.path)}) — ${item.bytes} bytes`), '',
     '## 精确进程与端口清理', '',
     ...cleanups.map(item => `- ${item.label}: main PID ${item.mainPid} / Host PID ${item.hostPid}，mainStopped=${item.mainStopped}，hostStopped=${item.hostStopped}，hostSignal=${item.hostSignal}，portReleased=${item.portReleased}`), '',
-    `当前 App、当前 profile/store、生产代码、docs/OpenSpec 复选框均未修改；未 merge、deploy 或 release。隔离 scratch 为证据保留，不属于用户真实数据。`, '',
+    `当前 App、当前 profile/store、产品源码和 OpenSpec 复选框未被本驱动修改；除 lane 内合并固定 main 外，未 deploy 或 release。隔离 scratch 为证据保留，不属于用户真实数据。`, '',
   ]
   if (error) lines.push('## BLOCKED 原因', '', '```text', error.stack ?? error.message ?? String(error), '```', '')
   if (consultDefect) {
@@ -1775,8 +1821,10 @@ try {
   const requiredKeyboardActions = ['Open assistant editor', 'Edit assistant', 'Request assistant disabled', 'Confirm assistant disabled', 'Request assistant enabled', 'Confirm assistant enabled', 'Choose native answer Native Off', 'Choose native answer Use Short', 'Choose native answer User backed GUI answer', 'Use inbox suggestions', 'Submit inbox decision', 'Apply feedback rating_up', 'Apply feedback undo_rating_up', 'Apply feedback rating_down', 'Apply feedback undo_rating_down', 'Enter independent note', 'Enter correction', 'Submit note', 'Submit correction', 'Start principle review', 'Request snapshotPublish', 'Confirm snapshotPublish', 'Request snapshotReject', 'Confirm snapshotReject', 'Request snapshotRollback', 'Confirm snapshotRollback']
   const keyboardProblems = requiredKeyboardActions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && (audit.activation || audit.input)))
   check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
+  check('nativeKeyPacketsPersisted', nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === '\r') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === ' ') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.key === 'Tab') && nativeKeyPackets.some(packet => packet.method === 'Input.insertText'), { packets: nativeKeyPackets.length })
   check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 3 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 3 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
   result = { phase: 'GUI-product-P4-9.2-9.3', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, p4: { sessions: p4State, caseIds: { selected: p4Evidence.selected.case.caseId, one: p4Evidence.one.case.caseId, none: p4Evidence.none.case.caseId, ambiguous: p4Evidence.ambiguous.case.caseId, invalid: p4Evidence.invalid.case.caseId, timeout: p4Evidence.timeout.case.caseId, explicit: p4Evidence.explicit.case.caseId, returned: p4Evidence.returned.case.caseId, pending: p4Evidence.pending.case.caseId, interrupted: p4Evidence.interrupted.case.caseId }, processProvenance }, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), stockClassification: join(out, 'stock-classification-proof.json'), sqliteReadModel: join(out, 'sqlite-read-model-comparison.json'), p4Restoration: join(out, 'p4-restoration.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
+  result.artifacts.nativeKeyPackets = join(out, 'native-key-packets.json')
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)
   writeReport('PASS')

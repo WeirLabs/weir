@@ -965,7 +965,7 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
   })
   it('drives classless stock Auto markers through bounded classification and controllable Router outcomes', () => {
     const scenario = byId('decision-gui')
-    for (const marker of ['GUI_AUTO_SELECTED', 'GUI_AUTO_NONE', 'GUI_AUTO_AMBIGUOUS', 'GUI_AUTO_INVALID', 'GUI_AUTO_TIMEOUT']) {
+    for (const marker of ['GUI_AUTO_SELECTED', 'GUI_AUTO_NONE', 'GUI_AUTO_AMBIGUOUS', 'GUI_AUTO_INVALID', 'GUI_AUTO_TIMEOUT', 'GUI_AUTO_EMPTY', 'GUI_AUTO_ZERO', 'GUI_AUTO_ONE', 'GUI_AUTO_PENDING', 'GUI_AUTO_INTERRUPT', 'GUI_AUTO_HIGH_RISK', 'GUI_AUTO_EXECUTION', 'GUI_SHADOW_PARITY', 'GUI_AUTO_PAGE_21']) {
       const [call] = blockEnds(run('decision-gui', userOptions(marker)))
       assert.equal(call.name, 'ask_user_question')
       const args = JSON.parse(call.arguments)

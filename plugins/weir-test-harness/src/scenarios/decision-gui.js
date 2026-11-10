@@ -36,7 +36,7 @@ const QUESTIONS = {
   GUI_AUTO_PENDING: { id: 'gui-auto-pending', question: 'GUI_AUTO_PENDING: pending survives restart', options: [{ label: 'Pending user answer' }, { label: 'Other' }] },
   GUI_AUTO_INTERRUPT: { id: 'gui-auto-interrupt', question: 'GUI_AUTO_INTERRUPT: interrupt before routing commits', options: [{ label: 'Interrupted user answer' }, { label: 'Other' }] },
   GUI_AUTO_HIGH_RISK: { id: 'gui-auto-high-risk', question: 'Execute this irreversible high-risk isolated operation?', options: [{ label: 'Approve high risk' }, { label: 'Reject' }] },
-  GUI_AUTO_EXECUTION: { id: 'gui-auto-execution', question: 'Grant execution permission for this isolated command?', options: [{ label: 'Grant execution' }, { label: 'Reject' }] },
+  GUI_AUTO_EXECUTION: { id: 'gui-auto-execution', question: 'GUI_AUTO_EXECUTION: execute this command and grant permission for the isolated operation?', options: [{ label: 'Grant execution' }, { label: 'Reject' }] },
   GUI_SHADOW_PARITY: { id: 'gui-shadow-parity', question: 'GUI_SHADOW_PARITY: identical pinned control and observed outcome', options: [{ label: 'Pinned parity answer' }, { label: 'Other' }] },
 }
 for (let index = 1; index <= 21; index += 1) {

@@ -13,6 +13,7 @@ export async function connectCdp(port) {
   let nextId = 1
   const pending = new Map()
   const events = []
+  const inputPackets = []
   ws.addEventListener('message', event => {
     const message = JSON.parse(String(event.data))
     if (message.id) {
@@ -27,13 +28,14 @@ export async function connectCdp(port) {
   })
   const request = (method, params = {}) => new Promise((resolve, reject) => {
     const id = nextId++
+    if (method.startsWith('Input.')) inputPackets.push({ id, at: Date.now(), method, params })
     pending.set(id, { resolve, reject })
     ws.send(JSON.stringify({ id, method, params }))
   })
   await request('Runtime.enable')
   await request('Page.enable')
   return {
-    target, events, request,
+    target, events, inputPackets, request,
     async evaluate(expression) {
       const result = await request('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true })
       if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
@@ -44,7 +46,20 @@ export async function connectCdp(port) {
       writeFileSync(path, Buffer.from(result.data, 'base64'))
     },
     async chooseDefaultWorkspace() {
-      return this.evaluate(`(() => { const labels=['默认工作区','default-workspace']; const items=[...document.querySelectorAll('button,[role="button"],[role="menuitem"]')].filter(e=>e.offsetParent!==null&&labels.includes(e.textContent.trim())); const el=items.at(-1); if(!el)return null; el.click(); return {tag:el.tagName,text:el.textContent.trim()} })()`)
+      const activate = async labels => {
+        const target = await this.evaluate(`(() => { const labels=${JSON.stringify(labels)}; const items=[...document.querySelectorAll('button,[role="button"],[role="menuitem"]')].filter(e=>e.offsetParent!==null&&labels.includes(e.textContent.trim())); const el=items.at(-1); if(!el)return null; const rect=el.getBoundingClientRect(); return {tag:el.tagName,text:el.textContent.trim(),x:rect.left+rect.width/2,y:rect.top+rect.height/2} })()`)
+        if (!target) return null
+        await request('Input.dispatchMouseEvent', { type: 'mouseMoved', x: target.x, y: target.y })
+        await request('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', buttons: 1, clickCount: 1 })
+        await request('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', buttons: 0, clickCount: 1 })
+        return target
+      }
+      const onboarding = await this.evaluate(`Boolean(document.querySelector('[data-desktop-onboarding]'))`)
+      if (!onboarding) return { onboarding: false, selection: await activate(['默认工作区', 'default-workspace']) }
+      const start = await activate(['开始设置', 'Start setup', 'Get started'])
+      const selection = await waitFor(() => activate(['默认工作区', 'default-workspace']), 30_000)
+      await waitFor(() => this.evaluate(`!document.querySelector('[data-desktop-onboarding]')`), 30_000)
+      return { onboarding: true, start, selection, dismissed: true }
     },
     async submit(text) {
       const focused = await this.evaluate(`(() => { const items=[...document.querySelectorAll('textarea,[contenteditable="true"]')].filter(e=>e.offsetParent!==null); const el=items.at(-1); if(!el)return false; el.focus(); return true })()`)
