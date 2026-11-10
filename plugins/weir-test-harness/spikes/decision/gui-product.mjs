@@ -354,11 +354,15 @@ async function keyboardSelect(action, selector, value, options = {}) {
     const to = current.values.indexOf(value)
     const key = to > from ? 'ArrowDown' : 'ArrowUp'
     await instance.cdp.key('Space')
+    const expanded = await waitFor(async () => {
+      const nodes = await instance.cdp.accessibility(selector)
+      return nodes.some(node => node.properties?.expanded === true || node.properties?.expanded === 'true') ? true : null
+    }, 10_000)
     await instance.cdp.key(key)
     await instance.cdp.key('Enter')
-    await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value!==${JSON.stringify(current.value)}`), 10_000)
-    audit.selection.steps.push({ from: current.value, open: 'Space', key, commit: 'Enter' })
+    audit.selection.steps.push({ from: current.value, open: 'Space', expanded, key, commit: 'Enter' })
     saveKeyboardAudits()
+    await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.value!==${JSON.stringify(current.value)}`), 10_000)
   }
   throw new Error(`Keyboard select did not reach ${value}: ${action}`)
 }

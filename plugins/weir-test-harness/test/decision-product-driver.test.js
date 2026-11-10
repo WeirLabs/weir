@@ -238,7 +238,8 @@ test('product driver keyboard helpers record native focus traversal and text ent
   const open = select.indexOf("await instance.cdp.key('Space')")
   const arrow = select.indexOf('await instance.cdp.key(key)')
   const commit = select.indexOf("await instance.cdp.key('Enter')")
-  assert.ok(open >= 0 && arrow > open && commit > arrow, 'native select uses Space to open, Arrow to navigate, and Enter to commit')
+  const expanded = select.indexOf('instance.cdp.accessibility(selector)')
+  assert.ok(open >= 0 && expanded > open && arrow > expanded && commit > arrow, 'native select waits for AX expansion between Space, Arrow, and Enter')
   assert.ok(!/\.focus\(|\.click\(|value\)\.set|HTMLSelectElement/.test(select), 'select remains keyboard-only without DOM value mutation')
 })
 
