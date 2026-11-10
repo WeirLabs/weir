@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
         compact: width <= 760,
         style: {
           position: "fixed", left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`,
-          margin: "0px", maxWidth: "none", maxHeight: "none", zIndex: 1,
+          margin: "0px", maxWidth: "none", maxHeight: "none", zIndex: 1000,
         },
       };
     }
