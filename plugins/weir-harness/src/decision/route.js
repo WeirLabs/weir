@@ -18,14 +18,15 @@ export function excludedRequest(request) {
 /**
  * Recheck native authority from the exact persisted stock tool call. Raw
  * arguments are evidence only: never return them into routing or persistence.
- * A stock timed call with unusable current evidence fails closed; non-stock
- * direct Broker callers retain their legacy contract.
+ * Host stock calls with unusable current evidence fail closed; direct Broker
+ * callers without the Host-owned request.agent retain their legacy contract.
  * @param {any} request @param {string} originSessionId @param {any} ctx
  */
 export async function excludedStockHookRequest(request, originSessionId, ctx) {
   if (excludedRequest(request)) return true
   const callId = request.wait?.callId
-  if (callId === undefined || request.wait?.timed !== true) return false
+  if (callId === undefined || request.agent === undefined) return false
+  if (request.agent?.id !== originSessionId) return true
   const sessionQuery = ctx?.sessionQuery ?? ctx?.get?.('sessionQuery')
   if (!sessionQuery) return true
   if (typeof callId !== 'string' || !callId || typeof sessionQuery.readSession !== 'function') return true
