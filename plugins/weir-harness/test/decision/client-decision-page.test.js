@@ -629,7 +629,7 @@ const assistantDetail = {
   snapshots: [{ snapshotId: 'ms-current', version: 3, state: 'published', revision: 4, learningRunId: 'lr-current' }],
 }
 
-test('assistant list renders Broker learning summary fields without opening detail', async () => {
+test('assistant summaries stay compact and retain pending review without opening detail', async () => {
   const summary = {
     agentId: 'ag_summary', name: 'Summary assistant', state: 'enabled',
     userDescription: { revision: 1, text: 'Use reviewed guidance' },
@@ -643,11 +643,58 @@ test('assistant list renders Broker learning summary fields without opening deta
   const tree = await openAgents(harness)
   const card = findAll(tree, node => node['data-agent-summary'] === 'ag_summary')[0]
   const text = textOf(card)
-  assert.ok(text.includes('decisionCurrentSnapshot: v3'))
+  assert.equal(text.includes('decisionCurrentSnapshot'), false)
+  assert.equal(text.includes('v3'), false)
   assert.ok(text.includes('decisionPendingReview'))
   assert.equal(text.includes('decisionVersionUnavailable'), false)
+  assert.equal(text.includes('decisionNoCurrentSnapshot'), false)
   assert.equal(text.includes('decisionPrincipleDetailsOnOpen'), false)
+  assert.equal(findAll(card, node => node.className === 'weir-da-agent-summary-preference').length, 1)
   assert.equal(findAll(tree, node => node['data-agent-detail']).length, 0)
+  harness.unmount()
+})
+
+test('assistant desktop master-detail keeps the compact list beside detail and editor regions', async () => {
+  const second = { agentId: 'ag_b', name: 'Second assistant', state: 'disabled', userDescription: { revision: 1, text: 'Review risky changes' } }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail, second], inbox: async () => [],
+    agent: async id => id === 'ag_a' ? { ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null } : second,
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  let layout = findAll(tree, node => node.className === 'weir-da-agents-layout')[0]
+  assert.ok(layout, 'assistant list and detail have a master-detail layout')
+  assert.equal(layout['data-agent-drill-in'], false)
+  let list = findAll(layout, node => node.className === 'weir-da-agent-list')[0]
+  let detailPane = findAll(layout, node => node.className === 'weir-da-agent-detail-pane')[0]
+  assert.ok(list)
+  assert.ok(detailPane)
+  assert.equal(findAll(list, node => node['data-agent-summary']).length, 2)
+  assert.equal(textOf(detailPane).includes('decisionChooseAssistant'), true)
+  assert.equal(findAll(tree, node => node['data-action'] === 'create-agent').length, 1)
+
+  const firstSummary = findAll(list, node => node['data-agent-summary'] === 'ag_a')[0]
+  await findAll(firstSummary, node => node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  layout = findAll(tree, node => node.className === 'weir-da-agents-layout')[0]
+  list = findAll(layout, node => node.className === 'weir-da-agent-list')[0]
+  detailPane = findAll(layout, node => node.className === 'weir-da-agent-detail-pane')[0]
+  assert.equal(findAll(list, node => node['data-agent-summary']).length, 2, 'opening detail does not replace the list')
+  assert.equal(findAll(list, node => node['data-agent-summary'] === 'ag_a')[0]['data-selected'], true)
+  assert.equal(findAll(list, node => node['data-agent-summary'] === 'ag_b')[0]['data-selected'], false)
+  assert.equal(findAll(list, node => node['data-agent-detail']).length, 0)
+  assert.equal(findAll(detailPane, node => node['data-agent-detail'] === 'ag_a').length, 1)
+  assert.equal(findAll(detailPane, node => node['data-agent-summary']).length, 0)
+
+  findAll(detailPane, node => node['data-action'] === 'edit-agent')[0].onClick()
+  tree = harness.render()
+  layout = findAll(tree, node => node.className === 'weir-da-agents-layout')[0]
+  list = findAll(layout, node => node.className === 'weir-da-agent-list')[0]
+  detailPane = findAll(layout, node => node.className === 'weir-da-agent-detail-pane')[0]
+  assert.equal(findAll(list, node => node['data-agent-summary']).length, 2, 'editing does not replace the list')
+  assert.equal(findAll(detailPane, node => node['data-agent-editor'] === 'edit').length, 1)
+  assert.equal(findAll(list, node => node['data-agent-editor']).length, 0)
   harness.unmount()
 })
 
