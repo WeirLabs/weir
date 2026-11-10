@@ -1,4 +1,6 @@
 // Opt-in real-Desktop Decision QA brain. It only emits product tool calls.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { textChunks, toolCallChunks } from '../mock-kit.js'
 import { decisionPack, observeDecision } from '../decision-test-kit.js'
 
@@ -28,6 +30,18 @@ const QUESTIONS = {
   GUI_AUTO_AMBIGUOUS: { id: 'gui-auto-ambiguous', question: 'GUI_AUTO_AMBIGUOUS: candidates overlap', options: [{ label: 'Native ambiguity' }, { label: 'Other' }] },
   GUI_AUTO_INVALID: { id: 'gui-auto-invalid', question: 'GUI_AUTO_INVALID: reject invalid Router output', options: [{ label: 'Native invalid' }, { label: 'Other' }] },
   GUI_AUTO_TIMEOUT: { id: 'gui-auto-timeout', question: 'GUI_AUTO_TIMEOUT: hold the Router stream', options: [{ label: 'Native timeout' }, { label: 'Other' }] },
+  GUI_AUTO_EMPTY: { id: 'gui-auto-empty', question: 'GUI_AUTO_EMPTY: empty whitelist retains authority', options: [{ label: 'Native empty' }, { label: 'Other' }] },
+  GUI_AUTO_ZERO: { id: 'gui-auto-zero', question: 'GUI_AUTO_ZERO: zero eligible candidates', options: [{ label: 'Native zero' }, { label: 'Other' }] },
+  GUI_AUTO_ONE: { id: 'gui-auto-one', question: 'GUI_AUTO_ONE: one eligible candidate', options: [{ label: 'Auto one' }, { label: 'Other' }] },
+  GUI_AUTO_PENDING: { id: 'gui-auto-pending', question: 'GUI_AUTO_PENDING: pending survives restart', options: [{ label: 'Pending user answer' }, { label: 'Other' }] },
+  GUI_AUTO_INTERRUPT: { id: 'gui-auto-interrupt', question: 'GUI_AUTO_INTERRUPT: interrupt before routing commits', options: [{ label: 'Interrupted user answer' }, { label: 'Other' }] },
+  GUI_AUTO_HIGH_RISK: { id: 'gui-auto-high-risk', question: 'Execute this irreversible high-risk isolated operation?', options: [{ label: 'Approve high risk' }, { label: 'Reject' }] },
+  GUI_AUTO_EXECUTION: { id: 'gui-auto-execution', question: 'Grant execution permission for this isolated command?', options: [{ label: 'Grant execution' }, { label: 'Reject' }] },
+  GUI_SHADOW_PARITY: { id: 'gui-shadow-parity', question: 'GUI_SHADOW_PARITY: identical pinned control and observed outcome', options: [{ label: 'Pinned parity answer' }, { label: 'Other' }] },
+}
+for (let index = 1; index <= 21; index += 1) {
+  const suffix = String(index).padStart(2, '0')
+  QUESTIONS[`GUI_AUTO_PAGE_${suffix}`] = { id: `gui-auto-page-${suffix}`, question: `GUI_AUTO_PAGE_${suffix}: real routing pagination item`, options: [{ label: `Page answer ${suffix}` }, { label: 'Other' }] }
 }
 const GUI_LEARNING_QUESTION_IDS = Object.values(QUESTIONS).map(question => question.id).filter(id => id.startsWith('gui-learning-'))
 
@@ -43,8 +57,16 @@ function decide(options, obs) {
   const markers = Object.keys(QUESTIONS)
   const marker = markers.find(key => history.includes(key))
   if (marker) return toolCallChunks('ask_user_question', { questions: [QUESTIONS[marker]] })
-  const action = ['GUI_B_DECIDE', 'GUI_B_REASSIGN', 'GUI_B_CANCEL', 'GUI_B_RETRY', 'GUI_C_RETURN'].find(key => history.includes(key))
-  if (action) return toolCallChunks('decision_consult', consultArgs(action))
+  const action = ['GUI_B_DECIDE', 'GUI_B_REASSIGN', 'GUI_B_CANCEL', 'GUI_B_RETRY', 'GUI_C_RETURN', 'GUI_AUTO_EXPLICIT'].find(key => history.includes(key))
+  if (action) {
+    const args = consultArgs(action)
+    if (action === 'GUI_AUTO_EXPLICIT') {
+      const control = JSON.parse(readFileSync(join(process.env.WEIR_DECISION_GUI_OUT, 'auto-control.json'), 'utf8'))
+      args.agent_id = control.explicitAgentId
+      args.authorization_class = 'A'
+    }
+    return toolCallChunks('decision_consult', args)
+  }
   return textChunks('unhandled Decision GUI turn')
 }
 
@@ -109,6 +131,11 @@ function decideDecision(options, obs) {
   if (question.question?.includes('GUI_C_RETURN')) {
     return textChunks(JSON.stringify({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Add the missing GUI scope and retry the consultation.' }))
   }
+  const autoAnswer = /^(?:GUI_AUTO_(?:SELECTED|ONE|AMBIGUOUS|EXPLICIT|PAGE_\d+)|GUI_SHADOW_PARITY)/.test(question.question ?? '')
+  if (autoAnswer) {
+    const ref = pack.L5.find(evidence => evidence.source === 'user_profile')
+    if (ref) return textChunks(JSON.stringify({ outcome: 'answer', claims: [{ text: 'The actual routed Agent profile supports this isolated answer.', evidenceIds: [ref.evidenceId] }], answers: [{ id: question.id, selected: [question.options[0].label] }] }))
+  }
   return textChunks(JSON.stringify({ outcome: 'escalate', missing: [`${question.question} requires a new user judgment`] }))
 }
 
@@ -126,6 +153,7 @@ function decideRouterRoute(options, obs) {
   const question = pack?.questions?.[0]?.question ?? ''
   if (question.startsWith('GUI_AUTO_TIMEOUT')) return []
   if (question.startsWith('GUI_AUTO_NONE')) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No eligible GUI candidate matches this request' }))
+  if (question.startsWith('GUI_AUTO_PENDING')) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'Pending restart fixture deliberately has no owner' }))
   if (question.startsWith('GUI_AUTO_AMBIGUOUS')) {
     return textChunks(JSON.stringify({
       contract: 'router-contract/1', outcome: 'ambiguous', reason: 'Eligible GUI candidates have overlapping authority',
@@ -133,7 +161,7 @@ function decideRouterRoute(options, obs) {
     }))
   }
   if (question.startsWith('GUI_AUTO_INVALID')) return textChunks('{"contract":"router-contract/1","outcome":"selected","agentId":"ag_not_eligible","reason":"Unknown candidate must be rejected"}')
-  const selected = pack?.candidates?.[0]
+  const selected = question.startsWith('GUI_SHADOW_PARITY') ? pack?.candidates?.at(-1) : pack?.candidates?.[0]
   if (!selected) throw new Error('decision-gui: selected fixture requires an eligible candidate')
   return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'The first eligible GUI candidate owns this fixture' }))
 }
@@ -157,6 +185,7 @@ function observe(obs) {
         provider: obs.provider, model: obs.model, maxTokens: obs.maxTokens,
       },
       ...(kind === 'route' && question.startsWith('GUI_AUTO_TIMEOUT') ? { autoRouterHold: 'timeout' } : {}),
+      ...(kind === 'classification' && question.startsWith('GUI_AUTO_INTERRUPT') ? { autoRouterHold: 'interruption' } : {}),
     }
   }
   const learning = contract === 'Decision consolidation contract v1' || observation.decisionQuestionIds.some(id => GUI_LEARNING_QUESTION_IDS.includes(id))

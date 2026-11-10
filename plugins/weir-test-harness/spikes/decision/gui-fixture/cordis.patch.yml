@@ -5,6 +5,7 @@
     decisionAgentSelectorDefault: !!js "process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off'"
     decisionAgentAutoShadow: !!js process.env.WEIR_DECISION_GUI_SHADOW === '1'
     decisionAgentAutoAnswerClasses: !!js process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]'
+    decisionAgentAnswerTimeoutMs: !!js Number(process.env.WEIR_DECISION_GUI_TIMEOUT_MS ?? '60000')
 - id: agent-default-model
   config:
     provider: mock

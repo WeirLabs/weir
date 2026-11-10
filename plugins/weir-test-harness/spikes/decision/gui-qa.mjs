@@ -133,6 +133,7 @@ function appEnvironment(paths, out, enabled) {
     WEIR_DECISION_GUI_SELECTOR_DEFAULT: process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off',
     WEIR_DECISION_GUI_SHADOW: process.env.WEIR_DECISION_GUI_SHADOW === '1' ? '1' : '0',
     WEIR_DECISION_GUI_AUTO_CLASSES: process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]',
+    WEIR_DECISION_GUI_TIMEOUT_MS: process.env.WEIR_DECISION_GUI_TIMEOUT_MS ?? '60000',
     WEIR_DECISION_PRODUCT_UX: process.env.WEIR_DECISION_PRODUCT_UX,
   }
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key]
