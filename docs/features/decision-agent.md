@@ -125,7 +125,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。本轮新增版本化 Router 枚举、不可变 `auto`/`auto_shadow` RouteDecision、Broker 保守配置解析与 `router.test.js` 的受限路由契约；`selector-default.test.js` 和 `legacy-v1.test.js` 覆盖三态、fresh-root/legacy 恢复与 v1 不变。`broker-auto.test.js`/`broker-auto-flight.test.js` 覆盖 Active Auto 准入、严格路由、原子提交、single-flight、修订指纹、并发许可和取消/flush；`broker-shadow.test.js` 覆盖 pinned Hook/consult、Shadow-off 对照、none/ambiguous/failure、全部排除入口、幂等/恢复和领域副作用计数；`cases.test.js`、`broker-actions.test.js`、`broker-consult.test.js` 与 `broker-lifecycle.test.js` 覆盖无 Evidence 的无归属回答/重读/检索、取消/拒绝 retry、原子改派回滚与不可变链，以及 received-null 中断恢复。`routing-review.test.js` 与 `remote.test.js` 覆盖纯链分类、历史不回写、完整链窗口化、20 条稳定游标分页、root/workspace 隔离、同源 metrics、Broker 授权和 bare-args remote/endpointsLive。P4 Client 公共契约另覆盖 Auto 白名单/Shadow 说明、保存/失败/焦点与 root/child 恢复、复盘 summary/普通语言 outcome、20 条追加与 RouteDecision 去重、迟到会话/窗口响应、授权记录导航，以及无归属卡/收件箱/记录的反馈和 retry 边界。最终聚焦 Client **109/109**、完整 Decision **503/503**、测试装置 **453/453**、Client/settings **100/100**、preset/composition **97/97** 与 checkJs 全部通过，33 个 Client chunks 已重建 digest；Weir 全包最终 **3614 PASS / 0 FAIL / 1 既有平台跳过**（共 3615 项）。新增真实 headless 与 Desktop 证据见下。
 - headless 集成：本轮最终从仓库根运行完整 integration 矩阵 **958/958 PASS**，共 77 个场景，日志为 `.weir/decision-auto-router-final-integration.log`；其中 `decision-auto-route` **31/31**，并包含既有 `decision-hook`、`decision-consult`、`decision-batch`、`decision-route`、`decision-recovery`、`decision-feedback`、`decision-isolation`、`decision-ui-remote`、`decision-memory` 与 `decision-learning`，无回归。learning 场景的真实进程阶段（含一次 exact-PID SIGKILL）继续检查生命周期、DB/wire、对抗输入、恢复、预算、历史不可变和 P1/P2/schema-v1 兼容。
 - 真实隔离 Desktop GUI：保留既有 A/B/C 与 P2 memory 验收；P3 主生命周期 run `8wkaN8` **18/18**，整改 run `Tc4Mks` **10/10**，覆盖手动整合、候选 diff/来源/结构重放、发布、只读 Attempt L2、回滚/拒绝、重启、>20 历史、correction/cross-root 来源及 exact-PID/端口清理。测试只启动独立临时 profile/进程，不操作用户当前 App 或其存储。
-- 产品化 UIUX 整改的真实隔离 Desktop 验收 run `TtHwww` **230/230 PASS**：147 张真实截图、2195 条原始网络 RPC、26 项视觉审计、29 组模态量测、20 个确认动作、15 个可见焦点转场、9 组 session 滚动量测、2 个冷加载展开与 3 组主从/钻取证据。覆盖中英文长状态/错误、light/dark、360/768/1440 CSS px、真实 `Emulation.setPageScaleFactor(2)`、键盘-only、AX/状态播报、全部确认类型、学习现场恢复、重启、设置/选择器/语言恢复与临时 Agent 归档。普通窄屏另以主区几何和命中测试验证宿主返回入口可用；运行时异常、console/Slot/Log/import 错误均为零，关闭期 socket stderr 单独保留分类。三次 owned main/Host 启动均精确停止并释放端口 9468。详见下节；早期 `SpbYkp` 与其他失败 run 仅作历史/非最终诊断。
+- 产品化 UIUX 整改的真实隔离 Desktop 验收 run `ykeSTg` **230/230 PASS**：147 张真实截图、2195 条原始网络 RPC、26 项视觉审计、29 组模态量测、20 个确认动作、17 类可见焦点转场、9 组 session 滚动量测、2 个冷加载展开与 3 组主从/钻取证据。覆盖中英文长状态/错误、light/dark、360/768/1440 CSS px、真实 `Emulation.setPageScaleFactor(2)`、键盘-only、AX/状态播报、全部确认类型、学习现场恢复、重启、设置/选择器/语言恢复与临时 Agent 归档。普通窄屏另以主区几何和命中测试验证宿主返回入口可用；运行时异常、console/Slot/Log/import 错误均为零，关闭期 socket stderr 单独保留分类。三次 owned main/Host 启动均精确停止并释放端口 9468。详见下节；早期 `TtHwww`、`SpbYkp` 与其他失败 run 仅作历史/非最终诊断。
 - 既有五项关键安全逻辑均有真实 mutation-red、字节恢复和 GREEN 证据。产品化 UX 的独立审查另行发现并修复了重复可写咨询卡、已有当前版本时的无变化误报、筛选/分页状态混用、文案降级和冲突重读问题；代码/组合独立审查已通过，真实 Desktop 证据与当前 App 部署验收分别记录，不以组件测试或 Slot 接线状态替代。
 
 ### P4 headless 与 mutation 实测（8.3–8.4）
@@ -179,14 +179,14 @@ WEIR_DECISION_PRODUCT_PORT=9468 /Users/young/.dsh/dsh-runtimes/dsh-primary-runti
 
 ```sh
 WEIR_DECISION_PRODUCT_PORT=9468 \
-WEIR_DECISION_PRODUCT_EVIDENCE_ROOT="$PWD/.weir/decision-uiux-review-blockers" \
+WEIR_DECISION_PRODUCT_EVIDENCE_ROOT="$PWD/.weir/decision-uiux-save-focus" \
 /Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node \
   plugins/weir-test-harness/spikes/decision/gui-product.mjs
 ```
 
-- 审查修复后 HEAD `55103d0c41e7e7b68f185875ca52018bd18a68d7` 的 run `TtHwww` 为完整 **230/230 PASS**，不是预检、组件测试或多次部分运行的拼接。原始结果/截图/AX/键盘/运行时记录位于 `.weir/decision-uiux-review-blockers/run-TtHwww/`，独立清理凭证为同目录上级的 `56-independent-cleanup.json`。
+- 最终焦点修复 HEAD `ec937ec91fe63a67fd947bc196c4525470011176` 的 run `ykeSTg` 为完整 **230/230 PASS**，不是预检、组件测试或多次部分运行的拼接。原始结果/截图/AX/键盘/运行时记录位于 `.weir/decision-uiux-save-focus/run-ykeSTg/`，逐项焦点索引为 `14-final-evidence-index.json`，独立清理凭证为 `15-independent-cleanup.json`。
 - 选择器覆盖少量/多个助手、长名称、空白与允许两类、未知状态、读取/保存失败及 pending；中英文长错误内容在真实产品中自然换行，固定头尾、重试和管理操作保持可达，并有 AX/键盘证据。取消、放弃编辑、助手停用/启用/归档和 Snapshot 发布/拒绝/回滚均逐一验证 `:modal`、全视口 backdrop、背景 inert、wheel/touch/PageDown 滚动尝试及结算后焦点。
 - 普通关闭保持精确滚动位置。Snapshot 发布用实际打开前 `372`、锁定期间 `372` 证明无背景位移；权威发布删除候选后页面缩至 900px，恢复到合法边界 `0` 并聚焦主导航，不保留伪造空白。该边界契约已经用户明确确认。
-- 冷错误和冷成功都在首个 settled 内容布局后各定位一次到实际末尾，保留输入焦点和草稿，后续刷新不重复。桌面主从、窄屏返回及同目标学习 Run/Snapshot 恢复均无额外权威重读；15 个创建/编辑/学习转场均落在 connected、可见且逻辑明确的目标，不再丢到 body。
+- 冷错误和冷成功都在首个 settled 内容布局后各定位一次到实际末尾，保留输入焦点和草稿，后续刷新不重复。桌面主从、窄屏返回及同目标学习 Run/Snapshot 恢复均无额外权威重读；17 类创建/编辑/学习/保存/非脏关闭转场均落在 connected、可见且逻辑明确的目标，不再丢到 body。
 - 中英文与明暗主题覆盖 360/768/1440；真实 200% 时 visual width 分别为 180/384/720 CSS px。普通 360 的主区/标题/导航/卡片/操作有几何与命中测试，宿主返回入口保持可用。9 组 session 证据明确记录与 composer 同一真实滚动元素的 alias、锁定/恢复及 wheel/touch/PageDown 尝试，不再静默省略；截图经人工复核。
-- 本轮审查修复候选的公共门禁为完整 Decision **534/534**、Desktop driver **75/75**、Client digest contract **28/28** 与 checkJs PASS；Client 保持 **33** 个 chunks。早期失败/探索 run 均保留为非最终证据，未用来拼凑完成结论；最终全包与最终候选复跑由后续交付门禁另行记录。
+- 本轮焦点修复候选的公共门禁为完整 Decision **536/536**、Desktop driver **77/77**、Client digest contract **28/28** 与 checkJs PASS；Client 保持 **33** 个 chunks。lane 内全 Weir 为 **3647 PASS / 0 FAIL / 1 既有平台跳过**，测试装置 **489/489**。早期失败/探索 run 均保留为非最终证据，未用来拼凑完成结论；最终 main 门禁与候选复跑由后续交付门禁另行记录。
