@@ -240,7 +240,7 @@ test('initial read failure is not Off and an explicit retry loads the real selec
   tree = h.render()
   triggerOf(tree).onClick()
   tree = h.render()
-  assert.equal(textOf(panelOf(tree)).includes('decisionSelectorFailed'), true)
+  assert.equal(textOf(panelOf(tree)).includes('decisionFailed'), true)
   assert.equal(textOf(panelOf(tree)).includes('read offline'), false)
   const readDiagnostics = findAll(panelOf(tree), node => node.type === h.props.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
   assert.ok(readDiagnostics)
@@ -260,8 +260,8 @@ test('initial read failure is not Off and an explicit retry loads the real selec
 
 test('selector read failures show honest long bilingual copy while raw errors stay in advanced diagnostics', async t => {
   const expected = {
-    zh: '暂时无法读取或保存决策助手选择。已有页面内容不会被清除。请保留当前页面并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。',
-    en: 'The decision assistant selection could not be read or saved. Keep this page open and retry when ready; this failure does not confirm a new selection, enable automatic answers, or change approval and permission boundaries. The Advanced diagnostics section retains the original error for troubleshooting.',
+    zh: '暂时无法读取决策信息或完成请求的操作。已有页面内容不会被清除。请核对当前状态并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。',
+    en: 'The decision information could not be read, or the requested action could not be completed. Existing page content is preserved. Review the current status and retry when ready; this failure does not confirm a new selection, enable automatic answers, or change approval and permission boundaries. The Advanced diagnostics section retains the original error for troubleshooting.',
   }
   for (const language of ['zh', 'en']) {
     const h = await load(t, enabledOverview, { overview: () => { throw Object.assign(new Error(`raw ${language} transport detail`), { code: 'NETWORK' }) } })
@@ -359,7 +359,7 @@ test('failed save preserves the prior selection and retries the requested target
   assert.ok(panelOf(tree))
   assert.equal(radioOf(tree, 'a').checked, true)
   assert.equal(radioOf(tree, 'off').checked, false)
-  assert.equal(textOf(panelOf(tree)).includes('decisionSelectorFailed'), true)
+  assert.equal(textOf(panelOf(tree)).includes('decisionFailed'), true)
   assert.equal(textOf(panelOf(tree)).includes('remote offline'), false)
   const saveDiagnostics = findAll(panelOf(tree), node => node.type === h.props.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
   assert.ok(saveDiagnostics)
@@ -484,7 +484,7 @@ test('selector never fabricates success from an empty or mismatched save respons
   assert.ok(panelOf(tree))
   assert.equal(radioOf(tree, 'off').checked, true)
   assert.equal(radioOf(tree, 'auto').checked, false)
-  assert.equal(textOf(panelOf(tree)).includes('decisionSelectorFailed'), true)
+  assert.equal(textOf(panelOf(tree)).includes('decisionFailed'), true)
 
   response = { mode: 'agent', agentId: 'a' }
   buttonOf(panelOf(tree), h.props.ui, 'decisionRetry').onClick()
