@@ -717,8 +717,11 @@ test('narrow visual audit natively closes the host drawer and requires independe
   assert.match(normalize, /收起侧边栏/)
   assert.match(normalize, /Close sidebar/)
   assert.ok(!normalize.includes('.click('), 'host chrome is changed only through native input')
+  assert.match(normalize, /keyboardFocus\('Focus Decision navigation for visual audit'/)
+  assert.match(normalize, /keyboardKey\('Restore Decision page top for visual audit', 'Home'\)/)
   const audit = driver.match(/async function layoutAudit\(name, theme = 'light', zoom = 1\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   for (const evidence of ['mainRegionProblems(candidate)', 'mainRegionProblems(audit)', 'elementsFromPoint', 'hitTestSamples', 'hostNavigation', 'navigationActions', 'primaryActions', 'weir-da-page-header']) assert.ok(audit.includes(evidence), evidence)
+  assert.ok(audit.includes('if(right<left||bottom<top)return'), 'wholly offscreen regions produce zero samples instead of out-of-viewport hit-tests')
 })
 
 test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
