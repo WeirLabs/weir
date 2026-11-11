@@ -905,19 +905,23 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
 }
 
 async function normalizeDecisionHostChrome(zoom) {
-  if (zoom !== 1 || await instance.cdp.evaluate('innerWidth') > 400) return { action: 'not-needed' }
-  await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
-  const labels = ['收起侧边栏', '折叠侧边栏', 'Close sidebar', 'Collapse sidebar']
-  const close = await instance.cdp.evaluate(`(() => {
-    const labels=${JSON.stringify(labels)}
-    return [...document.querySelectorAll('button[aria-label]')].some(button=>{
-      const rect=button.getBoundingClientRect()
-      return button.offsetParent!==null&&labels.includes(button.getAttribute('aria-label'))&&rect.right>0&&rect.left<innerWidth&&rect.bottom>0&&rect.top<innerHeight
-    })
-  })()`)
-  if (!close) return { action: 'already-closed-or-settling' }
-  await keyboardActivate('Close host sidebar for Decision visual audit', 'button[aria-label]', { labels })
-  return { action: 'native-close' }
+  let action = 'not-needed'
+  if (zoom === 1 && await instance.cdp.evaluate('innerWidth') <= 400) {
+    await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+    const labels = ['收起侧边栏', '折叠侧边栏', 'Close sidebar', 'Collapse sidebar']
+    const close = await instance.cdp.evaluate(`(() => {
+      const labels=${JSON.stringify(labels)}
+      return [...document.querySelectorAll('button[aria-label]')].some(button=>{
+        const rect=button.getBoundingClientRect()
+        return button.offsetParent!==null&&labels.includes(button.getAttribute('aria-label'))&&rect.right>0&&rect.left<innerWidth&&rect.bottom>0&&rect.top<innerHeight
+      })
+    })()`)
+    if (close) await keyboardActivate('Close host sidebar for Decision visual audit', 'button[aria-label]', { labels })
+    action = close ? 'native-close' : 'already-closed-or-settling'
+  }
+  await keyboardFocus('Focus Decision navigation for visual audit', 'main.weir-da-page [data-decision-primary-nav] [data-view]')
+  await keyboardKey('Restore Decision page top for visual audit', 'Home')
+  return { action: `${action}+native-home` }
 }
 
 async function layoutAudit(name, theme = 'light', zoom = 1) {
@@ -948,6 +952,7 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
       const value=rect(el);const points=[]
       const left=Math.max(value.left+2,(visual.offsetLeft??0)+1);const right=Math.min(value.right-2,(visual.offsetLeft??0)+visual.width-1)
       const top=Math.max(value.top+2,(visual.offsetTop??0)+1);const bottom=Math.min(value.bottom-2,(visual.offsetTop??0)+visual.height-1)
+      if(right<left||bottom<top)return {rect:value,hitTestSamples:0,occlusions:[]}
       const middleX=(left+right)/2;const middleY=(top+bottom)/2
       for(let x=left;x<=right;x+=8)points.push([x,middleY])
       for(let y=top;y<=bottom;y+=32)points.push([middleX,y])
