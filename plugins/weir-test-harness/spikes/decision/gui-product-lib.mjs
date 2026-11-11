@@ -304,6 +304,20 @@ export function selectorLayoutProblems(measurement, expected = {}) {
   for (const [name, before, after] of [['header', measurement?.headerBefore, measurement?.headerAfter], ['footer', measurement?.footerBefore, measurement?.footerAfter]]) {
     if (!before || !after || Math.abs(before.top - after.top) > 0.5 || Math.abs(before.bottom - after.bottom) > 0.5) problems.push(`${name} moved while only the selector body scrolled`)
   }
+  if (expected.longStatus) {
+    const status = measurement?.longStatus
+    const text = expected.longStatus.text
+    if (!status || status.expected !== text || status.actual !== text) problems.push('selector lacks the exact long bilingual product status text')
+    if (status?.role !== 'alert') problems.push('long product status is not a visible alert')
+    if (status?.whiteSpace !== 'normal' || !['anywhere', 'break-word'].includes(status?.overflowWrap)) problems.push('long product status does not use natural wrapping')
+    if (!Number.isFinite(status?.clientWidth) || !Number.isFinite(status?.scrollWidth) || status.scrollWidth > status.clientWidth + 1) problems.push('long product status introduces horizontal wrapping overflow')
+    if (!Number.isFinite(status?.rectHeight) || !Number.isFinite(status?.lineHeight) || status.rectHeight <= status.lineHeight * 1.5) problems.push('long product status did not wrap to multiple rendered lines')
+    const actionName = expected.longStatus.language === 'en' ? /Retry/i : /重试/
+    if (!status?.primaryAction?.visible || !status?.primaryAction?.hitTest || !actionName.test(status?.primaryAction?.accessibleName ?? '')) problems.push('long product status primary action is not reachable')
+    if (status?.primaryAction?.keyboard?.reached !== true) problems.push('long product status primary action lacks native keyboard reachability evidence')
+    const ax = Array.isArray(status?.ax) ? status.ax : []
+    if (!ax.some(node => !node.ignored && node.role === 'alert') || !ax.some(node => !node.ignored && String(node.name ?? '').includes(text))) problems.push('long product status lacks accessible alert and exact long-text evidence')
+  }
   return problems
 }
 
@@ -344,14 +358,17 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
     if (!initial || !locked || !restored) { problems.push(`${name}: missing root/nested scroller measurement`); continue }
     if (locked.inline?.overflow !== 'hidden') problems.push(`${name}: overflow was not locked`)
     if (locked.inline?.overscrollBehavior !== 'none') problems.push(`${name}: overscroll was not contained`)
+    if (locked.inline?.overflowAnchor !== 'none') problems.push(`${name}: browser scroll anchoring was not disabled`)
     if (locked.scrollTop !== initial.scrollTop || locked.scrollLeft !== initial.scrollLeft) problems.push(`${name}: background scroll moved while locked`)
     if (!same(restored.inline, initial.inline)) problems.push(`${name}: inline styles were not restored exactly`)
 
     const verticalReduction = reducedScrollRange(initial, restored, 'scrollHeight', 'clientHeight')
     const horizontalReduction = reducedScrollRange(initial, restored, 'scrollWidth', 'clientWidth')
-    if ((verticalReduction !== null || horizontalReduction !== null) && !mutationValid) problems.push(`${name}: reduced scroll range lacks settled authoritative mutation evidence`)
-    const verticalMaximum = mutationValid && locked.scrollHeight === initial.scrollHeight && locked.clientHeight === initial.clientHeight ? verticalReduction : null
-    const horizontalMaximum = mutationValid && locked.scrollWidth === initial.scrollWidth && locked.clientWidth === initial.clientWidth ? horizontalReduction : null
+    const verticalClampRequired = verticalReduction !== null && initial.scrollTop > verticalReduction
+    const horizontalClampRequired = horizontalReduction !== null && initial.scrollLeft > horizontalReduction
+    if ((verticalClampRequired || horizontalClampRequired) && !mutationValid) problems.push(`${name}: reduced scroll range lacks settled authoritative mutation evidence`)
+    const verticalMaximum = verticalClampRequired && mutationValid && locked.scrollHeight === initial.scrollHeight && locked.clientHeight === initial.clientHeight ? verticalReduction : null
+    const horizontalMaximum = horizontalClampRequired && mutationValid && locked.scrollWidth === initial.scrollWidth && locked.clientWidth === initial.clientWidth ? horizontalReduction : null
     const expectedTop = verticalMaximum === null ? initial.scrollTop : Math.min(Math.max(initial.scrollTop, 0), verticalMaximum)
     const expectedLeft = horizontalMaximum === null ? initial.scrollLeft : Math.min(Math.max(initial.scrollLeft, 0), horizontalMaximum)
     if (restored.scrollTop !== expectedTop) {
@@ -364,6 +381,38 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
     }
   }
   for (const type of requiredAttempts) if (!attempts.some(attempt => attempt?.type === type && attempt?.observed === true)) problems.push(`missing observed ${type} background-scroll attempt`)
+  return problems
+}
+
+export function shutdownSocketClosureEntries(logs = {}) {
+  return Object.entries(logs).flatMap(([path, contents]) => String(contents ?? '').split('\n').flatMap((text, index) => /\[TypeError: fetch failed\]|SocketError: other side closed/i.test(text) ? [{
+    scope: 'desktop-shutdown-socket-closure-stderr', path, line: index + 1, text,
+    countsAsRuntimeError: false, countsAsImportFailure: false,
+  }] : []))
+}
+
+export function sessionScrollerProblems(audit) {
+  const problems = []
+  const proof = audit?.sessionIdentity
+  if (!proof) return ['missing session scroller identity or absence justification']
+  if (proof.originConnected !== true) problems.push('session scroller origin is not connected')
+  if (proof.required === false) {
+    if (proof.relation !== 'not-present' || !Array.isArray(proof.ancestorChain) || proof.ancestorChain.length !== 0) problems.push('session absence lacks a not-present proof with an empty real overflow-ancestor chain')
+    for (const phase of ['before', 'during', 'after']) if (audit?.[phase]?.session) problems.push(`${phase}: session evidence contradicts the not-present justification`)
+    return problems
+  }
+  if (proof.required !== true) problems.push('session scroller requirement is not explicit')
+  const shared = proof.relation === 'same-element'
+  const distinct = proof.relation === 'distinct-element'
+  if (!shared && !distinct) problems.push('session scroller relation must be same-element or distinct-element')
+  if (shared && (proof.sameElement !== true || proof.aliasOf !== 'composer' || proof.onlyOneOverflowAncestor !== true || !same(proof.composer, proof.session))) problems.push('shared session evidence lacks explicit same-element composer alias proof')
+  if (distinct && (proof.sameElement !== false || proof.aliasOf !== null || proof.onlyOneOverflowAncestor !== false || same(proof.composer, proof.session))) problems.push('distinct session evidence lacks a separate real identity')
+  for (const phase of ['before', 'during', 'after']) {
+    const session = audit?.[phase]?.session
+    if (!session) { problems.push(`${phase}: missing named session scroller measurement`); continue }
+    if (shared && (session.sameElement !== true || session.aliasOf !== 'composer' || !same(session.identity, audit?.[phase]?.composer?.identity))) problems.push(`${phase}: session alias differs from the real composer element`)
+    if (distinct && (session.sameElement !== false || session.aliasOf !== null || !same(session.identity, proof.session))) problems.push(`${phase}: distinct session identity differs from the measured ancestor`)
+  }
   return problems
 }
 
@@ -390,7 +439,16 @@ export function masterDetailProblems({ desktop, narrowList, drillIn, returned, r
   if (drillIn?.listVisible || !drillIn?.detailVisible) problems.push('narrow drill-in must show only detail')
   if (!returned?.listVisible || returned?.detailVisible) problems.push('Back must restore the narrow list view')
   if (restored?.listVisible || !restored?.detailVisible) problems.push('same-target restoration must reopen only detail')
-  for (const [name, value] of Object.entries({ desktop, narrowList, drillIn, returned, restored })) if (value?.horizontalOverflow !== false) problems.push(`${name}: horizontal overflow evidence is missing or failing`)
+  for (const [name, value] of Object.entries({ desktop, narrowList, drillIn, returned, restored })) {
+    if (value?.horizontalOverflow !== false) problems.push(`${name}: horizontal overflow evidence is missing or failing`)
+    const focus = value?.focus
+    if (!focus?.selector) problems.push(`${name}: missing intended activeElement focus evidence`)
+    else {
+      if (focus.connected !== true) problems.push(`${name}: focus target is not connected`)
+      if (focus.visible !== true) problems.push(`${name}: focus target is not visible`)
+      if (focus.active !== true || ['body', 'html'].includes(focus.activeTag)) problems.push(`${name}: intended activeElement was not reached`)
+    }
+  }
   for (const [name, stage] of [['returned', returned], ['restored', restored]]) {
     if (stage?.selectedAgentId !== drillIn?.selectedAgentId) problems.push(`${name}: selected assistant changed`)
     if (!same(stage?.draft, drillIn?.draft)) problems.push(`${name}: exact draft changed`)

@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -38,6 +38,7 @@ const sqlitePhases = []
 const comparisons = []
 const visualAudits = []
 const uiuxEvidence = { modalAudits: [], selectorLayouts: [], selectorStates: [], confirmations: [], coldReveals: [], masterDetail: [], zoom: [], languages: [] }
+const uiuxFixture = createUiuxFixture()
 const accessibility = {}
 const accessibilityRequirements = {
   selectorTrigger: { role: 'button', name: /决策助手|Decision/i },
@@ -311,6 +312,17 @@ async function keyboardSnapshot(selector, options = {}) {
   })()`)
 }
 
+async function measureFocus(selector) {
+  return instance.cdp.evaluate(`(() => {
+    const selector=${JSON.stringify(selector)}
+    const candidates=[...document.querySelectorAll(selector)]
+    const visible=el=>Boolean(el&&el.isConnected&&el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none')
+    const active=document.activeElement
+    const target=candidates.find(el=>el===active)??candidates.find(visible)??null
+    return {selector,connected:target?.isConnected===true,visible:visible(target),active:Boolean(target&&target===active&&visible(target)),activeTag:active?.tagName?.toLowerCase()??null,activeId:active?.id||null,activeAction:active?.getAttribute?.('data-action')??null,activeAgentId:active?.getAttribute?.('data-agent-id')??null,targetTag:target?.tagName?.toLowerCase()??null,targetId:target?.id||null}
+  })()`)
+}
+
 async function settleDelayedHostOnboarding(action) {
   const detected = await instance.cdp.evaluate(`(() => {
     const host=document.querySelector('[data-desktop-onboarding="welcome"],[data-desktop-onboarding="credit"]')
@@ -377,7 +389,12 @@ async function keyboardActivate(action, selector, options = {}) {
     saveKeyboardAudits()
   }
   await instance.cdp.key(options.key ?? 'Enter')
-  audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active }
+  if (options.expectFocus) {
+    audit.focus = await waitFor(async () => { const focus = await measureFocus(options.expectFocus); return focus.active && focus.connected && focus.visible ? focus : null }, 10_000).catch(() => measureFocus(options.expectFocus))
+    saveKeyboardAudits()
+    requireEvidence(audit.focus.active && audit.focus.connected && audit.focus.visible && !['body', 'html'].includes(audit.focus.activeTag), `${action} hands off to its intended visible connected activeElement ${options.expectFocus}`)
+  }
+  audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active, expectedFocus: audit.focus ?? null }
   saveKeyboardAudits()
   return audit
 }
@@ -555,7 +572,7 @@ async function fillAgent(name, preference) {
 
 async function createAgent(sessionId, name, preference) {
   await openPage('agents')
-  await keyboardActivate('Open assistant editor', '[data-action="create-agent"]')
+  await keyboardActivate('Open assistant editor', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
   await fillAgent(name, preference)
   const agents = await waitFor(async () => { const value = await rpc(sessionId, 'agent-create', 'agents'); return value.some(agent => agent.name === name) ? value : null }, 30_000)
   const agent = agents.find(item => item.name === name)
@@ -566,7 +583,7 @@ async function createAgent(sessionId, name, preference) {
 async function openAgent(sessionId, agentId) {
   await openPage('agents')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-summary=${JSON.stringify(agentId)}] [data-action="open-agent"]'))`), 30_000)
-  await keyboardActivate('Open assistant details', `[data-agent-summary="${agentId}"] [data-action="open-agent"]`)
+  await keyboardActivate('Open assistant details', `[data-agent-summary="${agentId}"] [data-action="open-agent"]`, { expectFocus: `.weir-da-agent-back,[data-agent-detail="${agentId}"]` })
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail=${JSON.stringify(agentId)}]'))`), 30_000)
   return rpc(sessionId, 'agent-open', 'agent', { agentId })
 }
@@ -1689,17 +1706,39 @@ async function measureScrollContainers(selectors = {}, originSelector = null) {
     for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))add(el.getAttribute('data-weir-uiux-scroll'),el)
     add('decisionPage',document.querySelector('main.weir-da-page'))
     const originElement=origin?document.querySelector(origin):null
+    const markedComposer=document.querySelector('[data-weir-uiux-scroll="composer"]')
+    const markedSession=document.querySelector('[data-weir-uiux-scroll="session"]')
     const chain=[]
-    for(let current=originElement;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(['auto','scroll','overlay'].includes(overflow))chain.push(current)}
-    if(originElement?.matches?.('[data-weir-decision-trigger="weir-decision-selector"]')){add('composer',chain[0]);add('session',chain[1])}
+    for(let current=originElement;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(current===markedComposer||current===markedSession||['auto','scroll','overlay'].includes(overflow))chain.push(current)}
+    const decisionOrigin=Boolean(originElement&&(originElement.matches('[data-weir-decision-trigger="weir-decision-selector"]')||document.querySelector('main.weir-da-page')?.contains(originElement)))
+    if(decisionOrigin){add('composer',chain[0]);add('session',chain[1])}
     for(let index=0;index<chain.length;index+=1)add('ancestor-'+index,chain[index])
-    return Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
+    const result=Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
       identity:{tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):''},
       scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,scrollWidth:el.scrollWidth,
-      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight'].map(key=>[key,el.style[key]??''])),
+      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight','paddingBottom','overflowAnchor'].map(key=>[key,el.style[key]??''])),
       computed:{overflowY:computed.overflowY,overscrollBehavior:computed.overscrollBehavior},
       rect:{x:rect.x,y:rect.y,left:rect.left,top:rect.top,width:rect.width,height:rect.height,right:rect.right,bottom:rect.bottom},
     }]}))
+    if(result.composer&&!result.session&&(markedComposer||(decisionOrigin&&chain[0]&&!chain[1])))result.session={...result.composer,identity:{...result.composer.identity},aliasOf:'composer',sameElement:true}
+    if(result.session&&(markedSession||(decisionOrigin&&chain[1]))){result.session.aliasOf=null;result.session.sameElement=false}
+    return result
+  })()`)
+}
+
+async function measureSessionScrollerIdentity(originSelector) {
+  return instance.cdp.evaluate(`(() => {
+    const origin=document.querySelector(${JSON.stringify(originSelector)})
+    const identity=el=>{if(!el)return null;const rect=el.getBoundingClientRect();return {tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):'',overflowY:getComputedStyle(el).overflowY,rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}}}
+    const chain=[]
+    const markedComposer=document.querySelector('[data-weir-uiux-scroll="composer"]')
+    const markedSession=document.querySelector('[data-weir-uiux-scroll="session"]')
+    for(let current=origin;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(current===markedComposer||current===markedSession||['auto','scroll','overlay'].includes(overflow))chain.push(current)}
+    const composer=chain[0]??null
+    const distinctSession=chain[1]??null
+    const required=Boolean(composer)
+    const relation=!required?'not-present':distinctSession?'distinct-element':'same-element'
+    return {originSelector:${JSON.stringify(originSelector)},originConnected:origin?.isConnected===true,originContained:Boolean(composer&&composer.contains(origin)),required,relation,sameElement:!required?null:distinctSession?false:true,aliasOf:required&&!distinctSession?'composer':null,onlyOneOverflowAncestor:required&&chain.length===1,composer:identity(composer),session:identity(distinctSession??composer),ancestorChain:chain.map(identity),proof:'computed overflow ancestors of the connected real product origin'}
   })()`)
 }
 
@@ -1802,7 +1841,7 @@ async function measureConfirmationFocus(originSelector, controlId = null) {
   })()`).then(async focus => ({ ...focus, control: controlId ? await decisionControl(controlId) : null }))
 }
 
-async function auditSelectorLayout(name, { scale = 1, scrollable = false } = {}) {
+async function auditSelectorLayout(name, { scale = 1, scrollable = false, longStatus = null } = {}) {
   const panel = '#weir-da-selector-panel'
   const body = '.weir-da-selector-body'
   const native = await measureNativeModal(panel)
@@ -1819,12 +1858,32 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false } = {})
   if (scrollable) await waitFor(() => instance.cdp.evaluate(`document.querySelector('.weir-da-selector-body').scrollTop>${before.bodyScrollTop}`), 10_000).catch(() => {})
   else await new Promise(resolve => setTimeout(resolve, 120))
   const after = await read()
-  const evidence = { name, native, viewport, panelOverflow: before.panelOverflow, bodyOverflow: before.bodyOverflow, bodyOverscroll: before.bodyOverscroll, bodyScrollHeight: before.bodyScrollHeight, bodyClientHeight: before.bodyClientHeight, bodyScrollTopBefore: before.bodyScrollTop, bodyScrollTopAfter: after.bodyScrollTop, headerBefore: before.header, headerAfter: after.header, footerBefore: before.footer, footerAfter: after.footer, horizontalOverflow: after.horizontalOverflow }
-  evidence.problems = selectorLayoutProblems(evidence, { scale, scrollable })
+  let longStatusEvidence = null
+  if (longStatus) {
+    const primaryActionFocus = await keyboardFocus(`Reach ${name} primary action with keyboard`, '#weir-da-selector-panel [role="alert"] button')
+    longStatusEvidence = await instance.cdp.evaluate(`(() => {
+      const status=document.querySelector('#weir-da-selector-panel [role="alert"]')
+      const action=status?.querySelector('button')??null
+      const style=status?getComputedStyle(status):null
+      const rect=status?.getBoundingClientRect()
+      const actionRect=action?.getBoundingClientRect()
+      const bodyRect=document.querySelector('.weir-da-selector-body')?.getBoundingClientRect()
+      const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0}
+      const x=actionRect?actionRect.left+actionRect.width/2:null
+      const y=actionRect?actionRect.top+actionRect.height/2:null
+      const hitTest=Boolean(action&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight&&document.elementsFromPoint(x,y).includes(action))
+      const visible=Boolean(action&&action.getClientRects().length&&actionRect.left>=visual.offsetLeft-1&&actionRect.right<=visual.offsetLeft+visual.width+1&&actionRect.top>=Math.max(visual.offsetTop,bodyRect?.top??0)-1&&actionRect.bottom<=Math.min(visual.offsetTop+visual.height,bodyRect?.bottom??visual.height)+1)
+      return {expected:${JSON.stringify(longStatus.text)},actual:status?.querySelector('span')?.textContent??null,role:status?.getAttribute('role')??null,whiteSpace:style?.whiteSpace??null,overflowWrap:style?.overflowWrap??null,clientWidth:status?.clientWidth??null,scrollWidth:status?.scrollWidth??null,rectHeight:rect?.height??null,lineHeight:Number.parseFloat(style?.lineHeight??''),primaryAction:{accessibleName:action?.getAttribute('aria-label')||action?.innerText||null,visible,hitTest,rect:actionRect?{left:actionRect.left,top:actionRect.top,right:actionRect.right,bottom:actionRect.bottom}:null}}
+    })()`)
+    longStatusEvidence.primaryAction.keyboard = { reached: primaryActionFocus.reached, action: primaryActionFocus.action, activeElement: primaryActionFocus.activeElement }
+    longStatusEvidence.ax = await instance.cdp.accessibility('#weir-da-selector-panel [role="alert"]')
+  }
+  const evidence = { name, native, viewport, panelOverflow: before.panelOverflow, bodyOverflow: before.bodyOverflow, bodyOverscroll: before.bodyOverscroll, bodyScrollHeight: before.bodyScrollHeight, bodyClientHeight: before.bodyClientHeight, bodyScrollTopBefore: before.bodyScrollTop, bodyScrollTopAfter: after.bodyScrollTop, headerBefore: before.header, headerAfter: after.header, footerBefore: before.footer, footerAfter: after.footer, horizontalOverflow: after.horizontalOverflow, longStatus: longStatusEvidence }
+  evidence.problems = selectorLayoutProblems(evidence, { scale, scrollable, longStatus })
   uiuxEvidence.selectorLayouts.push(evidence)
   saveUiuxEvidence()
-  await shot(`uiux-${name}`, { kind: 'selector-layout', scale, scrollable, viewport, native, problems: evidence.problems })
-  check(`selectorLayout:${name}`, evidence.problems.length === 0, { problems: evidence.problems, viewport, body: { before: before.bodyScrollTop, after: after.bodyScrollTop, scrollHeight: before.bodyScrollHeight, clientHeight: before.bodyClientHeight } })
+  await shot(`uiux-${name}`, { kind: longStatus ? 'selector-long-status' : 'selector-layout', scale, scrollable, viewport, native, longStatus: longStatusEvidence, problems: evidence.problems })
+  check(`selectorLayout:${name}`, evidence.problems.length === 0, { problems: evidence.problems, viewport, longStatus: longStatusEvidence, body: { before: before.bodyScrollTop, after: after.bodyScrollTop, scrollHeight: before.bodyScrollHeight, clientHeight: before.bodyClientHeight } })
   return evidence
 }
 
@@ -1834,6 +1893,7 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   let selectorLayout = null
   if (options.selector) selectorLayout = await auditSelectorLayout(kind, options.selector)
   const native = await measureNativeModal(selector, originSelector)
+  const sessionIdentity = await measureSessionScrollerIdentity(originSelector)
   requireEvidence(native, `${kind} native dialog exists`)
   const point = await instance.cdp.evaluate(`(() => {const origin=document.querySelector(${JSON.stringify(originSelector)});const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};const rect=origin?.getBoundingClientRect();return {x:Math.max(visual.offsetLeft+4,Math.min(visual.offsetLeft+visual.width-4,rect?rect.left+rect.width/2:visual.offsetLeft+visual.width/2)),y:Math.max(visual.offsetTop+4,Math.min(visual.offsetTop+visual.height-4,rect?rect.top+rect.height/2:visual.offsetTop+visual.height/2))}})()`)
   const attempts = []
@@ -1846,7 +1906,7 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   await instance.cdp.key('PageDown')
   attempts.push({ type: 'PageDown', observed: true })
   const during = await measureScrollContainers({}, originSelector)
-  const audit = { kind, selector, originSelector, before, during, after: null, native, selectorLayout, attempts, problems: [] }
+  const audit = { kind, selector, originSelector, before, during, after: null, native, sessionIdentity, selectorLayout, attempts, problems: [] }
   uiuxEvidence.modalAudits.push(audit)
   saveUiuxEvidence()
   await shot(`uiux-${kind}-modal`, { kind: 'native-product-modal', native, scroll: { before, during }, attempts })
@@ -1857,11 +1917,11 @@ async function finishModalAudit(audit, { focus = null, focusProblems = [], conte
   audit.contentMutation = contentMutation
   audit.after = await measureScrollContainers({}, audit.originSelector)
   const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
-  audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...focusProblems]
+  audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...sessionScrollerProblems(audit), ...focusProblems]
   if (focus) audit.focus = focus
   saveUiuxEvidence()
   await instance.cdp.evaluate(`(() => {for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))el.removeAttribute('data-weir-uiux-scroll');return true})()`)
-  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), focus: focus ?? null })
+  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), sessionIdentity: audit.sessionIdentity, focus: focus ?? null })
   return audit
 }
 
@@ -2048,16 +2108,23 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   const otherSession = (await newIsolatedSession('uiux-selector-load-other')).sessionId
   const loadControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'fail' })})`)
   await openIsolatedSession(sessionId, true)
-  await selectorOpen()
+  await instance.cdp.setViewport(360, 320, false)
+  await waitFor(() => instance.cdp.evaluate('innerWidth===360&&innerHeight===320'), 10_000)
+  const loadBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="alert"]'))`), 30_000)
   const loadText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
   const loadState = { kind: 'load-failure', control: await decisionControl(loadControl), text: loadText, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
   uiuxEvidence.selectorStates.push(loadState)
   saveUiuxEvidence()
   await shot('uiux-selector-load-failure', { kind: 'selector-load-failure', controlId: loadControl })
-  check('selectorLoadFailureIsVisibleAndRetryable', loadState.control.used && /决策操作失败|Decision action failed/i.test(loadText) && /重试|Retry/i.test(loadText), { control: loadState.control, text: loadText })
+  const loadModal = await beginModalAudit('selector-load-failure-long', '#weir-da-selector-panel', trigger, { before: loadBefore, selector: { scale: 1, scrollable: true, longStatus: { text: uiuxFixture.agents[0].status.zh, language: 'zh' } } })
+  check('selectorLoadFailureIsVisibleAndRetryable', loadState.control.used && loadText.includes(uiuxFixture.agents[0].status.zh) && /重试|Retry/i.test(loadText), { control: loadState.control, text: loadText, exactLongStatus: uiuxFixture.agents[0].status.zh })
+  await keyboardKey('Close long selector load failure', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(loadModal)
 
   const unknownControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'unknown-auto' })})`)
+  await selectorOpen()
   await keyboardActivate('Retry selector read with unknown status', 'button', { scope: '#weir-da-selector-panel', labels: ['重试', 'Retry'] })
   await waitFor(() => instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel')?.innerText.includes('自动回答状态未知')`), 30_000)
   const unknownText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
@@ -2071,7 +2138,7 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   await openIsolatedSession(otherSession, true)
   await openIsolatedSession(sessionId, true)
 
-  await selectorOpen()
+  const saveBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   const saveControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'setSelector', args: { sessionId, mode: 'agent', agentId: primary.agentId }, action: 'fail' })})`)
   await keyboardFocus('Current automatic selection before failed save', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
   await keyboardKey('Attempt assistant selection with injected save failure', 'ArrowDown', { target: primary.agentId })
@@ -2082,8 +2149,11 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   uiuxEvidence.selectorStates.push(saveState)
   saveUiuxEvidence()
   await shot('uiux-selector-save-failure', { kind: 'selector-save-failure', controlId: saveControl })
-  check('selectorSaveFailurePreservesAuthorityAndAllowsRetry', saveState.control.used && selectorMatches(failedAuthority.selector, 'auto') && /决策操作失败|Decision action failed/i.test(saveText) && /重试|Retry/i.test(saveText), { control: saveState.control, authority: failedAuthority.selector, text: saveText })
+  const saveModal = await beginModalAudit('selector-save-failure-long', '#weir-da-selector-panel', trigger, { before: saveBefore, selector: { scale: 1, scrollable: true, longStatus: { text: uiuxFixture.agents[0].status.zh, language: 'zh' } } })
+  check('selectorSaveFailurePreservesAuthorityAndAllowsRetry', saveState.control.used && selectorMatches(failedAuthority.selector, 'auto') && saveText.includes(uiuxFixture.agents[0].status.zh) && /重试|Retry/i.test(saveText), { control: saveState.control, authority: failedAuthority.selector, text: saveText, exactLongStatus: uiuxFixture.agents[0].status.zh })
   await keyboardKey('Close failed selector save before real retry', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(saveModal)
   const retryControl = await holdDecision('setSelector', { sessionId, mode: 'agent', agentId: primary.agentId })
   await selectorOpen()
   await keyboardFocus('Current automatic selection before held retry', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
@@ -2110,7 +2180,9 @@ async function authorityReadCount() {
   return networkRpc.filter(entry => ['agent', 'agents', 'learningRun', 'memorySnapshot'].includes(entry.method)).length
 }
 
-async function measureAgentStage(selectedAgentId = null, learning = {}) {
+async function measureAgentStage(selectedAgentId = null, learning = {}, focusSelector) {
+  requireEvidence(typeof focusSelector === 'string' && focusSelector, 'every assistant stage names its intended activeElement')
+  const focus = await waitFor(async () => { const value = await measureFocus(focusSelector); return value.active && value.connected && value.visible ? value : null }, 10_000).catch(() => measureFocus(focusSelector))
   const measurement = await measureMasterDetail({ list: '.weir-da-agent-list', detail: '[data-agent-detail],form[data-agent-editor]' })
   const dom = await instance.cdp.evaluate(`(() => {
     const form=document.querySelector('form[data-agent-editor]')
@@ -2121,7 +2193,7 @@ async function measureAgentStage(selectedAgentId = null, learning = {}) {
     const diagnostics=runDetail?.textContent??''
     return {draft:form?Object.fromEntries([...form.querySelectorAll('[data-agent-field]')].map(el=>[el.getAttribute('data-agent-field'),el.value])):{},detailAgentId:detail?.getAttribute('data-agent-detail')??null,formMode:form?.getAttribute('data-agent-editor')??null,learning:{run:runDetail?.getAttribute('data-learning-run-detail')??null,snapshot:run&&snapshot&&diagnostics.includes(snapshot)?snapshot:null}}
   })()`)
-  return { ...measurement, selectedAgentId: dom.detailAgentId ?? (dom.formMode === 'create' ? null : selectedAgentId), draft: dom.draft, learning: learning.run ? dom.learning : {}, readCount: await authorityReadCount() }
+  return { ...measurement, selectedAgentId: dom.detailAgentId ?? (dom.formMode === 'create' ? null : selectedAgentId), draft: dom.draft, learning: learning.run ? dom.learning : {}, focus, readCount: await authorityReadCount() }
 }
 
 async function confirmDiscardEditor(sessionId, targetAgentId, originSelector, scrollBefore) {
@@ -2143,51 +2215,51 @@ async function confirmDiscardEditor(sessionId, targetAgentId, originSelector, sc
 async function runAgentResumeMatrix(sessionId, primary, secondary) {
   await openAgent(sessionId, primary.agentId)
   await instance.cdp.setViewport(1440, 900, false)
-  const desktop = await measureAgentStage(primary.agentId)
+  const desktop = await measureAgentStage(primary.agentId, {}, `[data-agent-detail="${primary.agentId}"]`)
   await shot('uiux-assistant-desktop-master-detail', { kind: 'master-detail', measurement: desktop })
   await instance.cdp.setViewport(360, 900, false)
-  await keyboardActivate('Back to narrow assistant list', '.weir-da-agent-back')
-  const narrowList = await measureAgentStage(primary.agentId)
+  await keyboardActivate('Back to narrow assistant list', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
+  const narrowList = await measureAgentStage(primary.agentId, {}, `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`)
 
-  await keyboardActivate('Open narrow create draft', '[data-action="create-agent"]')
+  await keyboardActivate('Open narrow create draft', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
   const createDraft = { name: '未保存创建草稿 · Exact create draft with a long bilingual name', preference: '保留这个创建草稿的每一个字符； Back → same create must not reread or confirm.' }
   await keyboardFill('Enter exact create draft name', '[data-agent-field="name"]', createDraft.name)
   await keyboardFill('Enter exact create draft preference', '[data-agent-field="preference"]', createDraft.preference)
-  const createDrill = await measureAgentStage(null)
+  const createDrill = await measureAgentStage(null, {}, '[data-agent-field="preference"]')
   await shot('uiux-create-draft-drill-in', { kind: 'master-detail', measurement: createDrill })
-  await keyboardActivate('Back with preserved create draft', '.weir-da-agent-back')
-  const createReturned = await measureAgentStage(null)
-  await keyboardActivate('Resume same create draft', '[data-action="create-agent"]')
-  const createRestored = await measureAgentStage(null)
+  await keyboardActivate('Back with preserved create draft', '.weir-da-agent-back', { expectFocus: '[data-action="create-agent"]' })
+  const createReturned = await measureAgentStage(null, {}, '[data-action="create-agent"]')
+  await keyboardActivate('Resume same create draft', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
+  const createRestored = await measureAgentStage(null, {}, '[data-agent-field="name"]')
   const createEvidence = { kind: 'create', desktop, narrowList, drillIn: createDrill, returned: createReturned, restored: createRestored }
   createEvidence.problems = masterDetailProblems(createEvidence)
   uiuxEvidence.masterDetail.push(createEvidence)
   saveUiuxEvidence()
   await shot('uiux-create-draft-restored', { kind: 'master-detail', measurement: createRestored, problems: createEvidence.problems })
   check('narrowCreateBackSameTargetPreservesExactDraftWithoutReread', createEvidence.problems.length === 0, { problems: createEvidence.problems, readCount: [createDrill.readCount, createReturned.readCount, createRestored.readCount] })
-  await keyboardActivate('Back before real create target change', '.weir-da-agent-back')
+  await keyboardActivate('Back before real create target change', '.weir-da-agent-back', { expectFocus: '[data-action="create-agent"]' })
   const createTargetOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
   const createTargetScrollBefore = (await keyboardActivate('Change from dirty create to assistant', createTargetOrigin, { scrollBaseline: 'immediate' })).scrollBefore
   await confirmDiscardEditor(sessionId, primary.agentId, createTargetOrigin, createTargetScrollBefore)
 
-  await keyboardActivate('Open narrow edit draft', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
+  await keyboardActivate('Open narrow edit draft', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
   const editDraft = { name: `${primary.name} · 未保存编辑 / exact unsaved edit`, preference: 'Exact edit draft survives Back and same-assistant re-entry without confirmation or authority rereads.' }
   await keyboardFill('Enter exact edit draft name', '[data-agent-field="name"]', editDraft.name)
   await keyboardFill('Enter exact edit draft preference', '[data-agent-field="preference"]', editDraft.preference)
-  const editDrill = await measureAgentStage(primary.agentId)
+  const editDrill = await measureAgentStage(primary.agentId, {}, '[data-agent-field="preference"]')
   await shot('uiux-edit-draft-drill-in', { kind: 'master-detail', measurement: editDrill })
-  await keyboardActivate('Back with preserved edit draft', '.weir-da-agent-back')
-  const editReturned = await measureAgentStage(primary.agentId)
+  await keyboardActivate('Back with preserved edit draft', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
+  const editReturned = await measureAgentStage(primary.agentId, {}, `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`)
   const editSameOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
-  await keyboardActivate('Resume same assistant edit draft', editSameOrigin)
-  const editRestored = await measureAgentStage(primary.agentId)
+  await keyboardActivate('Resume same assistant edit draft', editSameOrigin, { expectFocus: '[data-agent-field="name"]' })
+  const editRestored = await measureAgentStage(primary.agentId, {}, '[data-agent-field="name"]')
   const editEvidence = { kind: 'edit', desktop, narrowList, drillIn: editDrill, returned: editReturned, restored: editRestored }
   editEvidence.problems = masterDetailProblems(editEvidence)
   uiuxEvidence.masterDetail.push(editEvidence)
   saveUiuxEvidence()
   await shot('uiux-edit-draft-restored', { kind: 'master-detail', measurement: editRestored, problems: editEvidence.problems })
   check('narrowEditBackSameTargetPreservesExactDraftWithoutReread', editEvidence.problems.length === 0, { problems: editEvidence.problems, readCount: [editDrill.readCount, editReturned.readCount, editRestored.readCount] })
-  await keyboardActivate('Back before real edit target change', '.weir-da-agent-back')
+  await keyboardActivate('Back before real edit target change', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
   const editTargetOrigin = `[data-agent-summary="${secondary.agentId}"] [data-action="open-agent"]`
   const editTargetScrollBefore = (await keyboardActivate('Change from dirty edit to another assistant', editTargetOrigin, { scrollBaseline: 'immediate' })).scrollBefore
   await confirmDiscardEditor(sessionId, secondary.agentId, editTargetOrigin, editTargetScrollBefore)
@@ -2202,15 +2274,15 @@ async function runLearningResumeMatrix(sessionId, primary, candidate) {
   await keyboardActivate('Select exact learning snapshot for narrow resume', `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
   await waitFor(() => instance.cdp.evaluate(`document.querySelector('[data-learning-run-detail=${JSON.stringify(candidate.run.learningRunId)}]')?.textContent.includes(${JSON.stringify(candidate.snapshot.snapshotId)})`), 30_000)
   const learning = { run: candidate.run.learningRunId, snapshot: candidate.snapshot.snapshotId }
-  const desktop = await measureAgentStage(primary.agentId, learning)
+  const desktop = await measureAgentStage(primary.agentId, learning, `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
   await instance.cdp.setViewport(360, 900, false)
-  const drillIn = await measureAgentStage(primary.agentId, learning)
+  const drillIn = await measureAgentStage(primary.agentId, learning, `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
   await shot('uiux-learning-context-drill-in', { kind: 'learning-resume', measurement: drillIn })
-  await keyboardActivate('Back with selected learning context', '.weir-da-agent-back')
-  const returned = await measureAgentStage(primary.agentId, learning)
+  await keyboardActivate('Back with selected learning context', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
+  const returned = await measureAgentStage(primary.agentId, learning, `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`)
   const sameOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
-  await keyboardActivate('Resume same assistant learning context', sameOrigin)
-  const restored = await measureAgentStage(primary.agentId, learning)
+  await keyboardActivate('Resume same assistant learning context', sameOrigin, { expectFocus: '.weir-da-agent-back' })
+  const restored = await measureAgentStage(primary.agentId, learning, '.weir-da-agent-back')
   const evidence = { kind: 'learning', desktop, narrowList: returned, drillIn, returned, restored }
   evidence.problems = masterDetailProblems(evidence)
   uiuxEvidence.masterDetail.push(evidence)
@@ -2329,6 +2401,27 @@ async function runEnglishVisualMatrix(sessionId) {
   await keyboardKey('Close English selector', 'Escape')
   await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
   await finishModalAudit(audit)
+  await newIsolatedSession('uiux-selector-long-en-other')
+  const englishControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'fail' })})`)
+  await openIsolatedSession(sessionId, true)
+  await instance.cdp.setViewport(360, 320, false)
+  const englishBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role=alert]'))`), 30_000)
+  const englishText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const englishState = { kind: 'load-failure-en', language: 'en', control: await decisionControl(englishControl), text: englishText, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
+  uiuxEvidence.selectorStates.push(englishState)
+  saveUiuxEvidence()
+  await shot('uiux-selector-english-long-failure-before', { kind: 'selector-long-status', controlId: englishControl, text: englishText })
+  const englishFailure = await beginModalAudit('selector-english-long-failure', '#weir-da-selector-panel', trigger, { before: englishBefore, selector: { scale: 1, scrollable: true, longStatus: { text: uiuxFixture.agents[0].status.en, language: 'en' } } })
+  check('englishLongFailureIsVisibleWrappedAndRetryable', englishState.control.used && englishText.includes(uiuxFixture.agents[0].status.en) && /Retry/i.test(englishText), { text: englishText, exactLongStatus: uiuxFixture.agents[0].status.en })
+  await keyboardKey('Close English long failure after measurement', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(englishFailure)
+  await selectorOpen()
+  await keyboardActivate('Retry English long selector read', 'button', { scope: '#weir-da-selector-panel', labels: ['Retry'] })
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="radiogroup"]'))`), 30_000)
+  await keyboardKey('Close recovered English selector', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')`), 30_000)
   const restore = await setGuiLanguage(original.toLowerCase().startsWith('zh') ? 'zh' : 'en')
   const restored = await instance.cdp.evaluate('document.documentElement.lang')
   uiuxEvidence.languages.push({ language: 'restored', restore, restored })
@@ -2393,7 +2486,7 @@ try {
   await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel") && document.activeElement===document.querySelector(\'[data-weir-decision-trigger="weir-decision-selector"]\')'), 30_000)
   await finishModalAudit(initialModal)
   await selectorOpen()
-  await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'] })
+  await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'], expectFocus: '[data-agent-field="name"]' })
   const longName = '桌面验收助手 · Decision Product QA with an intentionally long English assistant name'
   const preference = '只依据可核验证据；高风险操作仍由用户决定。Prefer source-backed concise answers and preserve the existing approval boundary. 这是用于长文本与编辑验收的用户原创判断偏好。'
   await fillAgent(longName, preference)
@@ -2405,7 +2498,7 @@ try {
   await runSelectorFailureMatrix(sessionId, primary, secondary)
   await runAgentResumeMatrix(sessionId, primary, secondary)
   await openAgent(sessionId, primary.agentId)
-  await keyboardActivate('Edit assistant', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
+  await keyboardActivate('Edit assistant', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
   const editedName = `${longName} · 已编辑 / edited`
   const editedPreference = `${preference} 编辑后仍保持相同 scope 与模型继承。`
   await fillAgent(editedName, editedPreference)
@@ -2719,16 +2812,22 @@ try {
   const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
   const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
   auditP4RawEvidence(p4State, primary, secondary)
-  const desktopLogs = ['desktop-enabled.log', 'desktop-disabled.log'].map(path => readFileSync(join(out, path), 'utf8'))
+  const desktopLogPaths = ['desktop-enabled.log', 'desktop-disabled.log']
+  const desktopLogs = desktopLogPaths.map(path => readFileSync(join(out, path), 'utf8'))
   const importFailures = desktopLogs.flatMap(log => log.split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
-  writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs: ['desktop-enabled.log', 'desktop-disabled.log'] })
+  const socketClosures = shutdownSocketClosureEntries(Object.fromEntries(desktopLogPaths.map((path, index) => [path, desktopLogs[index]])))
+  writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, logErrorCount: logErrors.length, logErrors, importFailures, shutdownSocketClosureStderrCount: socketClosures.length, shutdownSocketClosureStderr: socketClosures, scannedLogs: desktopLogPaths })
   check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && slotCrashes.length === 0 && logErrors.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, slotCrashes: slotCrashes.length, logErrors: logErrors.length, importFailures })
+  check('shutdownSocketClosureStderrScopedSeparately', socketClosures.every(entry => entry.scope === 'desktop-shutdown-socket-closure-stderr' && entry.countsAsRuntimeError === false && entry.countsAsImportFailure === false), { count: socketClosures.length, scope: 'desktop-shutdown-socket-closure-stderr', excludedFrom: ['Runtime.exceptionThrown', 'Runtime.consoleAPICalled', 'Log.entryAdded', 'importFailures'] })
   await collectNetwork()
   check('completeLifecyclePngEvidence', screenshots.length >= 30 && screenshots.every(item => statSync(item.path).size > 8), { count: screenshots.length })
   validateAccessibility()
   const requiredKeyboardActions = ['Open assistant editor', 'Edit assistant', 'Request assistant disabled', 'Confirm assistant disabled', 'Request assistant enabled', 'Confirm assistant enabled', 'Choose native answer Native Off', 'Choose native answer Use Short', 'Choose native answer User backed GUI answer', 'Use inbox suggestions', 'Submit inbox decision', 'Apply feedback rating_up', 'Apply feedback undo_rating_up', 'Apply feedback rating_down', 'Apply feedback undo_rating_down', 'Enter independent note', 'Enter correction', 'Submit note', 'Submit correction', 'Start principle review', 'Request snapshotPublish', 'Confirm snapshotPublish', 'Request snapshotReject', 'Confirm snapshotReject', 'Request snapshotRollback', 'Confirm snapshotRollback']
   const keyboardProblems = requiredKeyboardActions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && (audit.activation || audit.input)))
   check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
+  const requiredFocusTransitions = ['Create assistant from selector', 'Open assistant editor', 'Open assistant details', 'Edit assistant', 'Back to narrow assistant list', 'Open narrow create draft', 'Back with preserved create draft', 'Resume same create draft', 'Back before real create target change', 'Open narrow edit draft', 'Back with preserved edit draft', 'Resume same assistant edit draft', 'Back before real edit target change', 'Back with selected learning context', 'Resume same assistant learning context']
+  const focusProblems = requiredFocusTransitions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && audit.activation && audit.options?.expectFocus === audit.focus?.selector && audit.focus?.connected === true && audit.focus?.visible === true && audit.focus?.active === true && !['body', 'html'].includes(audit.focus?.activeTag)))
+  check('completeAssistantTransitionFocusEvidence', focusProblems.length === 0, { missing: focusProblems, required: requiredFocusTransitions })
   check('nativeKeyPacketsPersisted', nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === '\r') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === ' ') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.key === 'Tab') && nativeKeyPackets.some(packet => packet.method === 'Input.insertText'), { packets: nativeKeyPackets.length })
   check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 3 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 3 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
   const confirmationKinds = new Set(uiuxEvidence.confirmations.map(item => item.kind))
@@ -2736,10 +2835,28 @@ try {
   const selectorStateKinds = new Set(uiuxEvidence.selectorStates.map(item => item.kind))
   const masterDetailKinds = new Set(uiuxEvidence.masterDetail.map(item => item.kind))
   const zoomComplete = [360, 768, 1440].every(width => ['selector', 'inbox'].every(surface => uiuxEvidence.zoom.some(item => item.width === width && item.surface === surface && item.operation?.method === 'Emulation.setPageScaleFactor' && item.operation?.pageScaleFactor === 2 && item.after?.visualViewport?.scale === 2)))
+  const requiredLongStatuses = [
+    { name: 'selector-load-failure-long', stateKind: 'load-failure', language: 'zh', text: uiuxFixture.agents[0].status.zh },
+    { name: 'selector-save-failure-long', stateKind: 'save-failure', language: 'zh', text: uiuxFixture.agents[0].status.zh },
+    { name: 'selector-english-long-failure', stateKind: 'load-failure-en', language: 'en', text: uiuxFixture.agents[0].status.en },
+  ]
+  const longStatusProblems = requiredLongStatuses.filter(expected => {
+    const layout = uiuxEvidence.selectorLayouts.find(item => item.name === expected.name && item.problems.length === 0 && item.longStatus?.expected === expected.text && item.longStatus?.actual === expected.text && item.longStatus?.role === 'alert' && item.longStatus?.ax?.some(node => !node.ignored && String(node.name ?? '').includes(expected.text)))
+    const state = uiuxEvidence.selectorStates.find(item => item.kind === expected.stateKind && item.control?.used === true && item.text?.includes(expected.text))
+    return !layout || !state
+  })
+  check('completeLongBilingualProductStatusEvidence', longStatusProblems.length === 0, { missing: longStatusProblems, required: requiredLongStatuses })
+  const sessionProblems = uiuxEvidence.modalAudits.flatMap(audit => sessionScrollerProblems(audit).map(problem => ({ kind: audit.kind, problem })))
+  const sessionAuditCount = uiuxEvidence.modalAudits.filter(audit => audit.sessionIdentity?.required === true && audit.before?.session && audit.during?.session && audit.after?.session).length
+  check('completeSessionScrollerEvidence', sessionProblems.length === 0 && sessionAuditCount > 0, { problems: sessionProblems, sessionAuditCount, modalAudits: uiuxEvidence.modalAudits.length })
   const uiuxCoverage = {
     confirmations: requiredConfirmations.filter(kind => !confirmationKinds.has(kind)),
     selectorStates: ['load-failure', 'unknown', 'save-failure', 'save-pending'].filter(kind => !selectorStateKinds.has(kind)),
     masterDetail: ['create', 'edit', 'learning'].filter(kind => !masterDetailKinds.has(kind)),
+    focusTransitions: focusProblems,
+    longStatus: longStatusProblems,
+    session: sessionProblems,
+    sessionAudits: sessionAuditCount,
     coldReveals: ['success', 'error'].filter(kind => !uiuxEvidence.coldReveals.some(item => item.kind === kind && item.problems.length === 0)),
     zoomComplete,
     english: uiuxEvidence.languages.some(item => item.language === 'en' && item.copyProblems?.length === 0),
@@ -2767,11 +2884,13 @@ try {
     const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
     const scannedLogs = ['desktop-enabled.log', 'desktop-disabled.log'].filter(path => existsSync(join(out, path)))
     const importFailures = scannedLogs.flatMap(path => readFileSync(join(out, path), 'utf8').split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
+    const socketClosures = shutdownSocketClosureEntries(Object.fromEntries(scannedLogs.map(path => [path, readFileSync(join(out, path), 'utf8')])))
     writeJson(join(out, 'runtime-scan.json'), {
       exceptionCount: exceptions.length, exceptions,
       consoleErrorCount: consoleErrors.length, consoleErrors,
       slotCrashCount: slotCrashes.length, slotCrashes,
       logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs,
+      shutdownSocketClosureStderrCount: socketClosures.length, shutdownSocketClosureStderr: socketClosures,
     })
   }
 } finally {

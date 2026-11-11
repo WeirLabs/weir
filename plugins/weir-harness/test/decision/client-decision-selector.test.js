@@ -258,6 +258,30 @@ test('initial read failure is not Off and an explicit retry loads the real selec
   assert.equal(h.calls.filter(call => call.method === 'overview').length, 2)
 })
 
+test('selector read failures show honest long bilingual copy while raw errors stay in advanced diagnostics', async t => {
+  const expected = {
+    zh: '暂时无法读取决策信息或完成请求的操作。已有页面内容不会被清除。请核对当前状态并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。',
+    en: 'The decision information could not be read, or the requested action could not be completed. Existing page content is preserved. Review the current status and retry when ready; this failure does not confirm a new selection, enable automatic answers, or change approval and permission boundaries. The Advanced diagnostics section retains the original error for troubleshooting.',
+  }
+  for (const language of ['zh', 'en']) {
+    const h = await load(t, enabledOverview, { overview: () => { throw Object.assign(new Error(`raw ${language} transport detail`), { code: 'NETWORK' }) } })
+    h.props.t = key => h.model.dictionaries[language][key] ?? key
+    h.render()
+    await h.flush()
+    triggerOf(h.render()).onClick()
+    const panel = panelOf(h.render())
+    const error = findAll(panel, node => node.type === h.props.ui.ErrorState)[0]
+    assert.ok(error, `${language} exposes a real error region`)
+    assert.equal(error.children[0].children, expected[language])
+    assert.equal(error.children[0].children.length > (language === 'zh' ? 80 : 200), true)
+    assert.equal(textOf(error).includes(`raw ${language} transport detail`), false)
+    const diagnostics = findAll(panel, node => node.type === h.props.ui.Disclosure && node.label === h.model.dictionaries[language].decisionAdvancedDiagnostics)[0]
+    assert.ok(diagnostics)
+    assert.equal(textOf(diagnostics.children()).includes(`raw ${language} transport detail`), true)
+    assert.equal(textOf(diagnostics.children()).includes('NETWORK'), true)
+  }
+})
+
 test('selection saves exactly once and closes without confirmation', async t => {
   let release
   const h = await load(t, enabledOverview, { setSelector: () => new Promise(resolve => { release = resolve }) })

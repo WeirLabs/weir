@@ -38,7 +38,7 @@ export async function connectCdp(port) {
     target, events, inputPackets, request,
     async evaluate(expression) {
       const result = await request('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, userGesture: true })
-      if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
+      if (result.exceptionDetails) throw new Error(JSON.stringify({ expression, exceptionDetails: result.exceptionDetails }))
       return result.result?.value
     },
     async screenshot(path) {

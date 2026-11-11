@@ -165,10 +165,10 @@ test('scroll lock guard covers root body and nested scrollers with exact restora
   const names = ['root', 'body', 'decisionPage', 'composer', 'session']
   const before = Object.fromEntries(names.map((name, index) => [name, {
     scrollTop: index * 11, scrollLeft: index,
-    inline: { overflow: index % 2 ? 'auto' : '', overscrollBehavior: 'contain', paddingRight: '' },
+    inline: { overflow: index % 2 ? 'auto' : '', overscrollBehavior: 'contain', paddingRight: '', overflowAnchor: 'auto' },
   }]))
   const during = Object.fromEntries(names.map(name => [name, {
-    ...before[name], inline: { overflow: 'hidden', overscrollBehavior: 'none', paddingRight: '12px' },
+    ...before[name], inline: { overflow: 'hidden', overscrollBehavior: 'none', paddingRight: '12px', overflowAnchor: 'none' },
   }]))
   const after = Object.fromEntries(names.map(name => [name, structuredClone(before[name])]))
   assert.deepEqual(scrollLockProblems({ before, during, after }, names), [])
@@ -181,7 +181,7 @@ test('only confirmed content shrink restores an obsolete offset to the reduced l
   const names = ['root', 'decisionPage']
   const container = (scrollTop, scrollHeight, overflow = '') => ({
     scrollTop, scrollLeft: 0, scrollHeight, clientHeight: 900, scrollWidth: 900, clientWidth: 900,
-    inline: { overflow, overflowX: '', overflowY: '', overscrollBehavior: overflow ? 'none' : 'contain', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '' },
+    inline: { overflow, overflowX: '', overflowY: '', overscrollBehavior: overflow ? 'none' : 'contain', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '', overflowAnchor: overflow ? 'none' : 'auto' },
   })
   const before = { root: container(20, 900), decisionPage: container(372, 3580) }
   const during = { root: container(20, 900, 'hidden'), decisionPage: container(372, 3580, 'hidden') }
@@ -203,6 +203,10 @@ test('only confirmed content shrink restores an obsolete offset to the reduced l
   const partial = { ...after, decisionPage: container(200, 1100) }
   assert.deepEqual(scrollLockProblems({ before, during, after: partial, contentMutation }, names), [], '372 clamps to the new nonzero maximum 1100 - 900 = 200')
   assert.match(scrollLockProblems({ before, during, after: { ...partial, decisionPage: container(0, 1100) }, contentMutation }, names).join('\n'), /clamp/)
+  const legalBefore = { root: { ...container(20, 900), scrollWidth: 521, clientWidth: 353, scrollLeft: 0 } }
+  const legalDuring = { root: { ...container(20, 900, 'hidden'), scrollWidth: 521, clientWidth: 353, scrollLeft: 0 } }
+  const legalAfter = { root: { ...container(20, 900), scrollWidth: 469, clientWidth: 353, scrollLeft: 0 } }
+  assert.deepEqual(scrollLockProblems({ before: legalBefore, during: legalDuring, after: legalAfter }, ['root']), [], 'an ordinary legal zero offset restores exactly even if unrelated Host content reduces horizontal range')
 })
 
 test('cold reveal guard accepts one ready or error end reveal and rejects loading focus theft or repeats', () => {
@@ -229,18 +233,23 @@ test('cold reveal refresh uses its explicit post-edit baseline and rejects unmou
   assert.match(coldRevealProblems({ loading, ready, refreshBaseline, refreshed: { ...refreshed, active: 'body' } }).join('\n'), /refresh changed focus/)
 })
 
-test('master-detail guard preserves narrow drill-in context and same-target restoration', () => {
+test('master-detail guard preserves narrow drill-in context and same-target restoration with explicit focus', () => {
+  const focus = selector => ({ selector, connected: true, visible: true, active: true, activeTag: 'input' })
   const context = { selectedAgentId: 'agent-long', draft: { name: '未保存 bilingual draft' }, learning: { run: 'lr-1', snapshot: 'ms-1' }, readCount: 4 }
-  const desktop = { listVisible: true, detailVisible: true, independentRegions: true, horizontalOverflow: false, listRect: rect(0, 0, 280, 600), detailRect: rect(300, 0, 600, 600) }
-  const narrowList = { listVisible: true, detailVisible: false, horizontalOverflow: false }
-  const drillIn = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context }
-  const returned = { listVisible: true, detailVisible: false, horizontalOverflow: false, ...context }
-  const restored = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context }
+  const desktop = { listVisible: true, detailVisible: true, independentRegions: true, horizontalOverflow: false, listRect: rect(0, 0, 280, 600), detailRect: rect(300, 0, 600, 600), focus: focus('[data-agent-detail]') }
+  const narrowList = { listVisible: true, detailVisible: false, horizontalOverflow: false, focus: focus('[data-action="open-agent"]') }
+  const drillIn = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context, focus: focus('[data-agent-field="name"]') }
+  const returned = { listVisible: true, detailVisible: false, horizontalOverflow: false, ...context, focus: focus('[data-action="open-agent"]') }
+  const restored = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context, focus: focus('[data-agent-field="name"]') }
   assert.deepEqual(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored }), [])
   assert.match(masterDetailProblems({ desktop: { ...desktop, listVisible: false }, narrowList, drillIn, returned, restored }).join('\n'), /desktop.*list/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: { ...restored, draft: { name: 'lost' } } }).join('\n'), /draft/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: { ...restored, readCount: 5 } }).join('\n'), /reread/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned: { ...returned, readCount: 5 }, restored }).join('\n'), /Back.*reread/)
+  assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned: { ...returned, focus: { ...returned.focus, active: false, activeTag: 'body' } }, restored }).join('\n'), /returned.*activeElement/)
+  const missingFocus = { ...restored }
+  delete missingFocus.focus
+  assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: missingFocus }).join('\n'), /restored.*focus/)
 })
 
 test('selector layout guard requires visual-viewport containment fixed ends and independent body scrolling', () => {
@@ -262,16 +271,55 @@ test('selector layout guard requires visual-viewport containment fixed ends and 
   assert.match(selectorLayoutProblems({ ...zoomed, viewport: { ...zoomed.viewport, rects: { ...zoomed.viewport.rects, dialog } } }, { scale: 2, scrollable: true }).join('\n'), /visual viewport/)
   const few = { ...evidence, bodyScrollHeight: 180, bodyClientHeight: 180, bodyScrollTopAfter: 0, viewport: { ...measuredViewport, rects: { ...measuredViewport.rects, dialog: { ...dialog, height: 240, bottom: 260 } } } }
   assert.deepEqual(selectorLayoutProblems(few, { scale: 1, scrollable: false }), [])
+  const longText = '暂时无法读取或保存决策助手选择。已有页面内容不会被清除。请保留当前页面并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。'
+  const longStatus = { expected: longText, actual: longText, role: 'alert', whiteSpace: 'normal', overflowWrap: 'anywhere', clientWidth: 280, scrollWidth: 280, rectHeight: 90, lineHeight: 18, primaryAction: { accessibleName: '重试', visible: true, hitTest: true, keyboard: { reached: true } }, ax: [{ ignored: false, role: 'alert', name: '' }, { ignored: false, role: 'staticText', name: longText }] }
+  const longOptions = { scale: 1, scrollable: true, longStatus: { text: longText, language: 'zh' } }
+  assert.deepEqual(selectorLayoutProblems({ ...evidence, longStatus }, longOptions), [])
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, actual: 'short' } }, longOptions).join('\n'), /exact long/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, scrollWidth: 340 } }, longOptions).join('\n'), /wrapping|horizontal/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, primaryAction: { ...longStatus.primaryAction, hitTest: false } } }, longOptions).join('\n'), /primary action/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, primaryAction: { ...longStatus.primaryAction, keyboard: { reached: false } } } }, longOptions).join('\n'), /keyboard/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, ax: [{ ignored: false, role: 'alert', name: '' }] } }, longOptions).join('\n'), /accessible.*long|long.*accessible/)
 })
 
 test('scroll guard requires real wheel touch and PageDown attempts when requested', () => {
   const names = ['root', 'body']
-  const before = Object.fromEntries(names.map(name => [name, { scrollTop: 20, scrollLeft: 0, inline: { overflow: '', overflowX: '', overflowY: '', overscrollBehavior: '', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '' } }]))
-  const during = Object.fromEntries(names.map(name => [name, { ...before[name], inline: { ...before[name].inline, overflow: 'hidden', overscrollBehavior: 'none' } }]))
+  const before = Object.fromEntries(names.map(name => [name, { scrollTop: 20, scrollLeft: 0, inline: { overflow: '', overflowX: '', overflowY: '', overscrollBehavior: '', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '', overflowAnchor: 'auto' } }]))
+  const during = Object.fromEntries(names.map(name => [name, { ...before[name], inline: { ...before[name].inline, overflow: 'hidden', overscrollBehavior: 'none', overflowAnchor: 'none' } }]))
   const after = structuredClone(before)
   const attempts = [{ type: 'wheel', observed: true }, { type: 'touch', observed: true }, { type: 'PageDown', observed: true }]
   assert.deepEqual(scrollLockProblems({ before, during, after, attempts }, names, ['wheel', 'touch', 'PageDown']), [])
   assert.match(scrollLockProblems({ before, during, after, attempts: attempts.slice(1) }, names, ['wheel', 'touch', 'PageDown']).join('\n'), /wheel/)
+})
+
+test('scroll lock guard requires browser scroll anchoring to be disabled and restored', () => {
+  const before = { root: { scrollTop: 20, scrollLeft: 0, inline: { overflow: '', overscrollBehavior: '', overflowAnchor: 'auto' } } }
+  const during = { root: { scrollTop: 20, scrollLeft: 0, inline: { overflow: 'hidden', overscrollBehavior: 'none', overflowAnchor: 'none' } } }
+  const after = structuredClone(before)
+  assert.deepEqual(scrollLockProblems({ before, during, after }, ['root']), [])
+  const anchored = { root: { ...during.root, inline: { ...during.root.inline, overflowAnchor: 'auto' } } }
+  assert.match(scrollLockProblems({ before, during: anchored, after }, ['root']).join('\n'), /anchoring/)
+})
+
+test('session scroller audit requires real before during after evidence or a justified absence', async () => {
+  const { sessionScrollerProblems } = await import('../spikes/decision/gui-product-lib.mjs')
+  assert.equal(typeof sessionScrollerProblems, 'function')
+  const composerIdentity = { tag: 'DIV', id: null, class: 'host_scrollBody' }
+  const sharedProof = { required: true, originConnected: true, relation: 'same-element', sameElement: true, aliasOf: 'composer', onlyOneOverflowAncestor: true, composer: composerIdentity, session: composerIdentity, ancestorChain: [composerIdentity] }
+  const sharedSession = { identity: composerIdentity, aliasOf: 'composer', sameElement: true }
+  const shared = { sessionIdentity: sharedProof, before: { composer: { identity: composerIdentity }, session: sharedSession }, during: { composer: { identity: composerIdentity }, session: sharedSession }, after: { composer: { identity: composerIdentity }, session: sharedSession } }
+  assert.deepEqual(sessionScrollerProblems(shared), [])
+  assert.match(sessionScrollerProblems({ ...shared, before: { composer: { identity: composerIdentity } } }).join('\n'), /before.*session/)
+  assert.match(sessionScrollerProblems({ ...shared, sessionIdentity: { ...sharedProof, sameElement: false } }).join('\n'), /same-element|alias/)
+  const absent = { sessionIdentity: { required: false, originConnected: true, relation: 'not-present', ancestorChain: [] }, before: {}, during: {}, after: {} }
+  assert.deepEqual(sessionScrollerProblems(absent), [])
+  assert.match(sessionScrollerProblems({ ...absent, sessionIdentity: { ...absent.sessionIdentity, relation: 'assumed-absent' } }).join('\n'), /not-present|justif/)
+  assert.match(sessionScrollerProblems({ before: {}, during: {}, after: {} }).join('\n'), /identity|justif/)
+  const distinctIdentity = { tag: 'SECTION', id: 'real-session', class: 'conversation-scroll' }
+  const distinctProof = { ...sharedProof, relation: 'distinct-element', sameElement: false, aliasOf: null, onlyOneOverflowAncestor: false, session: distinctIdentity, ancestorChain: [composerIdentity, distinctIdentity] }
+  const distinctSession = { identity: distinctIdentity, aliasOf: null, sameElement: false }
+  const distinct = { sessionIdentity: distinctProof, before: { composer: { identity: composerIdentity }, session: distinctSession }, during: { composer: { identity: composerIdentity }, session: distinctSession }, after: { composer: { identity: composerIdentity }, session: distinctSession } }
+  assert.deepEqual(sessionScrollerProblems(distinct), [])
 })
 
 test('confirmation focus guard rejects restoration before the authoritative action promise settles', () => {
@@ -282,4 +330,19 @@ test('confirmation focus guard rejects restoration before the authoritative acti
   assert.match(confirmationFocusProblems({ beforeSettle, afterSettle: { ...afterSettle, target: { ...afterSettle.target, visible: false } } }).join('\n'), /valid target|logical fallback/)
   const fallback = { promiseSettled: true, target: { connected: false, enabled: false, visible: false, focused: false }, fallback: { connected: true, enabled: true, visible: true, focused: true, logical: true } }
   assert.deepEqual(confirmationFocusProblems({ beforeSettle, afterSettle: fallback }), [])
+})
+
+test('shutdown socket-closure stderr stays raw and separately scoped from runtime channels', async () => {
+  const { shutdownSocketClosureEntries } = await import('../spikes/decision/gui-product-lib.mjs')
+  assert.equal(typeof shutdownSocketClosureEntries, 'function')
+  const entries = shutdownSocketClosureEntries({
+    'desktop-enabled.log': 'ordinary startup\n[TypeError: fetch failed]\nSocketError: other side closed\nRuntime.exceptionThrown must not be relabelled',
+    'desktop-disabled.log': 'no socket closure here',
+  })
+  assert.equal(entries.length, 2)
+  assert.deepEqual(entries.map(entry => [entry.scope, entry.path, entry.line]), [
+    ['desktop-shutdown-socket-closure-stderr', 'desktop-enabled.log', 2],
+    ['desktop-shutdown-socket-closure-stderr', 'desktop-enabled.log', 3],
+  ])
+  assert.ok(entries.every(entry => entry.text && entry.countsAsRuntimeError === false && entry.countsAsImportFailure === false))
 })
