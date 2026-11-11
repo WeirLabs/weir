@@ -899,6 +899,72 @@ test('assistant create edit and narrow Back transitions hand off connected visib
   harness.unmount()
 })
 
+test('successful assistant save hands focus to the resulting connected visible detail', async () => {
+  const created = { ...assistantDetail, agentId: 'ag_new', name: 'New assistant', learningRuns: [], snapshots: [], currentSnapshotId: null }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [],
+    agent: async id => id === 'ag_new' ? created : assistantDetail,
+    profileUpsert: async payload => ({ ...created, name: payload.name }),
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  findAll(harness.render(), node => node['data-action'] === 'create-agent')[0].onClick()
+  agentField(harness, 'name').onChange({ target: { value: 'New assistant' } })
+  agentField(harness, 'preference').onChange({ target: { value: 'Prefer short answers' } })
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+
+  // Chromium moves focus to body when the focused editor is removed. Model that
+  // native unmount before the component's mounted-region focus effect runs.
+  harness.document.activeElement = { isConnected: true, className: '', tagName: 'BODY', getClientRects: () => [1] }
+  const tree = harness.render()
+  const detail = findAll(tree, node => node['data-agent-detail'] === 'ag_new')[0]
+  assert.ok(detail, 'successful save reveals the resulting assistant detail')
+  assert.equal(currentAgentEditor(harness), undefined)
+  const active = harness.document.activeElement
+  assert.equal(active?.isConnected, true, 'save focus is connected')
+  assert.ok(active?.getClientRects().length > 0, 'save focus is visible')
+  assert.ok(active === detail.ref?.current || /weir-da-agent-back/.test(active?.className ?? ''), 'save focus lands on the resulting detail or its navigation')
+  harness.unmount()
+})
+
+test('non-dirty editor close hands focus to visible create or resulting detail navigation', async () => {
+  const detail = { ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }
+  const reads = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [detail], inbox: async () => [],
+    agent: async id => { reads.push(id); return detail },
+  } })
+  const bodyFocus = () => { harness.document.activeElement = { isConnected: true, className: '', action: null, tagName: 'BODY', getClientRects: () => [1] } }
+  const cancel = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Button && node.children === 'decisionCancel')[0].onClick()
+  await harness.settle()
+  await openAgents(harness)
+
+  findAll(harness.render(), node => node['data-action'] === 'create-agent')[0].onClick()
+  cancel()
+  bodyFocus()
+  let tree = harness.render()
+  const createCloseFocus = harness.document.activeElement
+  assert.equal(findAll(tree, node => node.type === harness.ui.ConfirmDialog).length, 0, 'non-dirty create close needs no confirmation')
+
+  await openAssistant(harness, 'ag_a')
+  findAll(harness.render(), node => node['data-action'] === 'edit-agent')[0].onClick()
+  cancel()
+  bodyFocus()
+  tree = harness.render()
+  const editCloseFocus = harness.document.activeElement
+  assert.equal(findAll(tree, node => node.type === harness.ui.ConfirmDialog).length, 0, 'non-dirty edit close needs no confirmation')
+  assert.equal(currentAgentEditor(harness), undefined)
+  assert.deepEqual(reads, ['ag_a'], 'non-dirty close adds no same-target authority reread')
+
+  assert.equal(createCloseFocus?.action, 'create-agent', 'create close returns to its visible create navigation')
+  assert.match(editCloseFocus?.className ?? '', /weir-da-agent-back/, 'edit close returns to the resulting assistant detail navigation')
+  for (const active of [createCloseFocus, editCloseFocus]) {
+    assert.equal(active?.isConnected, true, 'close focus is connected')
+    assert.ok(active?.getClientRects().length > 0, 'close focus is visible')
+  }
+  harness.unmount()
+})
+
 test('narrow same-assistant Back preserves the selected learning run and snapshot with zero rereads', async () => {
   const runs = [
     { learningRunId: 'lr-candidate', agentId: 'ag_a', outcome: 'candidate', revision: 5, operations: [], inputFrozen: { parentSnapshotId: 'ms-current' } },

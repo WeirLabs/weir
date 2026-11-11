@@ -567,7 +567,7 @@ async function fillAgent(name, preference) {
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("form[data-agent-editor]"))'), 30_000)
   await keyboardFill('Edit assistant name', '[data-agent-field="name"]', name)
   await keyboardFill('Edit assistant preference', '[data-agent-field="preference"]', preference)
-  await keyboardActivate('Save assistant', 'form[data-agent-editor] button[type="submit"]')
+  await keyboardActivate('Save assistant', 'form[data-agent-editor] button[type="submit"]', { expectFocus: '.weir-da-agent-back,[data-agent-detail]' })
 }
 
 async function createAgent(sessionId, name, preference) {
@@ -2502,6 +2502,8 @@ try {
   const editedName = `${longName} · 已编辑 / edited`
   const editedPreference = `${preference} 编辑后仍保持相同 scope 与模型继承。`
   await fillAgent(editedName, editedPreference)
+  await keyboardActivate('Open non-dirty assistant editor', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
+  await keyboardActivate('Close non-dirty assistant editor', 'button', { scope: 'form[data-agent-editor] .weir-da-actions', labels: ['取消', 'Cancel'], expectFocus: `.weir-da-agent-back,[data-agent-detail="${primary.agentId}"]` })
   const edited = await waitAgent(sessionId, primary.agentId, value => value.name === editedName && value.userDescription?.text === editedPreference)
   await expectMutation('profileUpsert', { sessionId, agentId: primary.agentId, name: editedName, userDescription: editedPreference, scope: primary.scope, modelRoute: primary.modelRoute })
   check('assistantEditPreservesIdentity', edited.agentId === primary.agentId && edited.revision > primary.revision, { agentId: edited.agentId, before: primary.revision, after: edited.revision })
@@ -2825,7 +2827,7 @@ try {
   const requiredKeyboardActions = ['Open assistant editor', 'Edit assistant', 'Request assistant disabled', 'Confirm assistant disabled', 'Request assistant enabled', 'Confirm assistant enabled', 'Choose native answer Native Off', 'Choose native answer Use Short', 'Choose native answer User backed GUI answer', 'Use inbox suggestions', 'Submit inbox decision', 'Apply feedback rating_up', 'Apply feedback undo_rating_up', 'Apply feedback rating_down', 'Apply feedback undo_rating_down', 'Enter independent note', 'Enter correction', 'Submit note', 'Submit correction', 'Start principle review', 'Request snapshotPublish', 'Confirm snapshotPublish', 'Request snapshotReject', 'Confirm snapshotReject', 'Request snapshotRollback', 'Confirm snapshotRollback']
   const keyboardProblems = requiredKeyboardActions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && (audit.activation || audit.input)))
   check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
-  const requiredFocusTransitions = ['Create assistant from selector', 'Open assistant editor', 'Open assistant details', 'Edit assistant', 'Back to narrow assistant list', 'Open narrow create draft', 'Back with preserved create draft', 'Resume same create draft', 'Back before real create target change', 'Open narrow edit draft', 'Back with preserved edit draft', 'Resume same assistant edit draft', 'Back before real edit target change', 'Back with selected learning context', 'Resume same assistant learning context']
+  const requiredFocusTransitions = ['Create assistant from selector', 'Open assistant editor', 'Open assistant details', 'Edit assistant', 'Back to narrow assistant list', 'Open narrow create draft', 'Back with preserved create draft', 'Resume same create draft', 'Back before real create target change', 'Open narrow edit draft', 'Back with preserved edit draft', 'Resume same assistant edit draft', 'Back before real edit target change', 'Back with selected learning context', 'Resume same assistant learning context', 'Save assistant', 'Close non-dirty assistant editor']
   const focusProblems = requiredFocusTransitions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && audit.activation && audit.options?.expectFocus === audit.focus?.selector && audit.focus?.connected === true && audit.focus?.visible === true && audit.focus?.active === true && !['body', 'html'].includes(audit.focus?.activeTag)))
   check('completeAssistantTransitionFocusEvidence', focusProblems.length === 0, { missing: focusProblems, required: requiredFocusTransitions })
   check('nativeKeyPacketsPersisted', nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === '\r') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === ' ') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.key === 'Tab') && nativeKeyPackets.some(packet => packet.method === 'Input.insertText'), { packets: nativeKeyPackets.length })

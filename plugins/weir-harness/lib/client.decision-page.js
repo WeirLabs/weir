@@ -784,7 +784,7 @@ window.__ModuleLoader__.load({
               agents: { ...current.agents, status: "ready", value: Array.isArray(agentRows) ? agentRows : [], error: null },
             }));
             await readLearning(refreshed);
-            if (method === "profileUpsert") setEditor(null);
+            if (method === "profileUpsert") { setEditor(null); requestAgentFocus("detail"); }
           } else if (method.startsWith("learning") || method.startsWith("snapshot")) {
             const selected = resources.agent.value;
             if (selected) await selectAgent(selected.agentId);
@@ -818,8 +818,9 @@ window.__ModuleLoader__.load({
       };
       const editorDirty = () => editor && ["name", "preference", "scopeText", "routeText"].some(field => editor[field] !== editor.baseline[field]);
       const closeEditor = after => {
+        const closingMode = editor?.mode;
         if (editorDirty()) { setConfirm({ kind: "discard-editor", after }); return; }
-        setEditor(null); after?.();
+        setEditor(null); if (!after) requestAgentFocus(closingMode === "create" ? "create-list" : "detail"); after?.();
       };
       const openCreate = () => {
         if (!agentDrillIn && editor?.mode === "create") { setAgentDrillIn(true); requestAgentFocus("editor"); return; }
