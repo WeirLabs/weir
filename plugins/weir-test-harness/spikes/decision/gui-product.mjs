@@ -391,6 +391,7 @@ async function keyboardActivate(action, selector, options = {}) {
   await instance.cdp.key(options.key ?? 'Enter')
   if (options.expectFocus) {
     audit.focus = await waitFor(async () => { const focus = await measureFocus(options.expectFocus); return focus.active && focus.connected && focus.visible ? focus : null }, 10_000).catch(() => measureFocus(options.expectFocus))
+    saveKeyboardAudits()
     requireEvidence(audit.focus.active && audit.focus.connected && audit.focus.visible && !['body', 'html'].includes(audit.focus.activeTag), `${action} hands off to its intended visible connected activeElement ${options.expectFocus}`)
   }
   audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active, expectedFocus: audit.focus ?? null }

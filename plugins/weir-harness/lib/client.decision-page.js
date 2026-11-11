@@ -518,14 +518,19 @@ window.__ModuleLoader__.load({
       const agentBackRef = react.useRef(null);
       const agentDetailRef = react.useRef(null);
       const agentNameRef = react.useRef(null);
+      const agentHeaderRef = react.useRef(null);
+      const agentListRef = react.useRef(null);
+      const agentDetailPaneRef = react.useRef(null);
       const requestAgentFocus = target => setAgentFocusRequest({ target });
       react.useEffect(() => {
         if (!agentFocusRequest || tab !== "agents") return;
-        const targets = agentFocusRequest.target === "editor" ? [agentNameRef]
-          : agentFocusRequest.target === "detail" ? [agentBackRef, agentDetailRef]
-          : agentFocusRequest.target === "create-list" ? [agentCreateRef] : [agentSummaryRef];
-        for (const ref of targets) {
-          const element = ref.current;
+        const summaryControl = [...agentListRef.current?.querySelectorAll?.('[data-action="open-agent"]') ?? []].find(element => element.getAttribute("data-agent-id") === selectedAgentId);
+        const createControl = agentHeaderRef.current?.querySelector?.('[data-action="create-agent"]');
+        const backControl = agentDetailPaneRef.current?.querySelector?.('.weir-da-agent-back');
+        const targets = agentFocusRequest.target === "editor" ? [agentNameRef.current]
+          : agentFocusRequest.target === "detail" ? [backControl, agentBackRef.current, agentDetailRef.current]
+          : agentFocusRequest.target === "create-list" ? [createControl, agentCreateRef.current] : [summaryControl, agentSummaryRef.current];
+        for (const element of targets) {
           const style = element?.ownerDocument?.defaultView?.getComputedStyle?.(element);
           if (!element?.isConnected || element.disabled || typeof element.focus !== "function" || !(element.getClientRects?.().length > 0) || style?.display === "none" || style?.visibility === "hidden") continue;
           element.focus();
@@ -957,13 +962,13 @@ window.__ModuleLoader__.load({
           },
         }) : jsx.jsx(ui.EmptyState, { children: t("decisionChooseAssistant") });
       const agentsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-agents-view", children: [
-        jsx.jsxs("div", { className: "weir-da-section-header", children: [
+        jsx.jsxs("div", { ref: agentHeaderRef, className: "weir-da-section-header", children: [
           jsx.jsx("h2", { children: t("decisionAgents") }, "title"),
           jsx.jsx(ui.Button, { ref: agentCreateRef, variant: "primary", "data-action": "create-agent", onClick: openCreate, disabled: pending !== null, children: t("decisionCreateAgent") }, "create"),
         ] }, "header"),
         jsx.jsxs("div", { className: "weir-da-agents-layout", "data-agent-drill-in": agentDrillIn, children: [
-          jsx.jsx("div", { className: "weir-da-agent-list", "aria-label": t("decisionAgents"), children: agentList }, "list"),
-          jsx.jsxs("div", { className: "weir-da-agent-detail-pane", children: [
+          jsx.jsx("div", { ref: agentListRef, className: "weir-da-agent-list", "aria-label": t("decisionAgents"), children: agentList }, "list"),
+          jsx.jsxs("div", { ref: agentDetailPaneRef, className: "weir-da-agent-detail-pane", children: [
             jsx.jsx(ui.Button, { ref: agentBackRef, variant: "ghost", className: "weir-da-agent-back", onClick: backToAgents, children: `← ${t("decisionAgents")}` }, "back"),
             agentPane,
           ] }, "detail"),
