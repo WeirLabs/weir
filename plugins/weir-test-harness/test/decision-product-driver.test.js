@@ -723,6 +723,7 @@ test('narrow visual audit natively closes the host drawer and requires independe
   for (const evidence of ['mainRegionProblems(candidate)', 'mainRegionProblems(audit)', 'elementsFromPoint', 'hitTestSamples', 'hostNavigation', 'navigationActions', 'primaryActions', 'weir-da-page-header']) assert.ok(audit.includes(evidence), evidence)
   assert.ok(audit.includes('if(right<left||bottom<top)return'), 'wholly offscreen regions produce zero samples instead of out-of-viewport hit-tests')
   assert.ok(!audit.includes('points.push([left,top]'), 'rounded CSS corners are not misclassified as foreign occlusion')
+  for (const inset of ['value.left+8', 'value.right-8', 'value.top+8', 'value.bottom-8']) assert.ok(audit.includes(inset), `centerlines retain an 8px edge inset: ${inset}`)
 })
 
 test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
