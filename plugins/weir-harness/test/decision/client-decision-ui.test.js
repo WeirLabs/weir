@@ -208,6 +208,13 @@ test('assistant master-detail styles keep compact summaries, independent regions
   assert.match(css, /\.weir-da-agents-layout\[data-agent-drill-in="false"\] \.weir-da-agent-detail-pane \{ display: none; \}/)
 })
 
+test('ordinary narrow content reserves the host navigation strip while scaled containment stays unchanged', async () => {
+  const css = (await load()).DecisionStyles().children
+  const ordinary = css.match(/@media \(max-width: 400px\) \{\s*\.weir-da-page-inner \{([^}]*)\}/)?.[1] ?? ''
+  assert.match(ordinary, /padding:\s*52px 12px 12px/, 'the h1 starts below the native host open-sidebar and new-session controls')
+  assert.match(css, /\.weir-da-page\[data-visual-viewport="compact"\] \.weir-da-page-inner \{ padding: 12px; gap: 16px; \}/, 'real page-scale containment keeps its proven compact padding')
+})
+
 test('Disclosure closes with Escape and restores focus', async () => {
   const runtime = makeReact()
   const ui = await load(runtime.react)

@@ -709,6 +709,18 @@ test('product visual audit waits for target computed colors and retains strict z
   assert.ok(zoomLoop.includes('await instance.cdp.setPageZoom(2)'), '200% uses the real mobile-enabled CDP page-scale mechanism')
 })
 
+test('narrow visual audit natively closes the host drawer and requires independent main-region hit testing', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const normalize = driver.match(/async function normalizeDecisionHostChrome\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(normalize, 'ordinary narrow audits normalize the real host drawer state')
+  assert.match(normalize, /keyboardActivate\('Close host sidebar for Decision visual audit'/)
+  assert.match(normalize, /收起侧边栏/)
+  assert.match(normalize, /Close sidebar/)
+  assert.ok(!normalize.includes('.click('), 'host chrome is changed only through native input')
+  const audit = driver.match(/async function layoutAudit\(name, theme = 'light', zoom = 1\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  for (const evidence of ['mainRegionProblems(candidate)', 'mainRegionProblems(audit)', 'elementsFromPoint', 'hitTestSamples', 'hostNavigation', 'navigationActions', 'primaryActions', 'weir-da-page-header']) assert.ok(audit.includes(evidence), evidence)
+})
+
 test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, 'auto'\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
