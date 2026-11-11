@@ -276,8 +276,27 @@ export function confirmationFocusProblems({ beforeSettle, afterSettle } = {}) {
   return problems
 }
 
-export function scrollLockProblems({ before, during, after, attempts = [] }, requiredContainers = [], requiredAttempts = []) {
+function validContentMutation(value) {
+  return Boolean(
+    value && typeof value.method === 'string' && value.method && value.args && typeof value.args === 'object' && !Array.isArray(value.args)
+    && typeof value.rpcId === 'string' && value.rpcId && value.response?.rpcId === value.rpcId
+    && value.response?.result?.ok === true && value.response?.result?.value?.ok === true
+    && value.settled === true && value.authoritative?.confirmed === true
+  )
+}
+
+function reducedScrollRange(initial, restored, sizeKey, clientKey) {
+  const values = [initial?.[sizeKey], initial?.[clientKey], restored?.[sizeKey], restored?.[clientKey]]
+  if (!values.every(Number.isFinite)) return null
+  const beforeMaximum = Math.max(0, initial[sizeKey] - initial[clientKey])
+  const afterMaximum = Math.max(0, restored[sizeKey] - restored[clientKey])
+  return restored[sizeKey] < initial[sizeKey] && afterMaximum < beforeMaximum ? afterMaximum : null
+}
+
+export function scrollLockProblems({ before, during, after, attempts = [], contentMutation = null }, requiredContainers = [], requiredAttempts = []) {
   const problems = []
+  const mutationValid = validContentMutation(contentMutation)
+  if (contentMutation !== null && !mutationValid) problems.push('shrunk-content restoration lacks a settled authoritative mutation receipt')
   for (const name of requiredContainers) {
     const initial = before?.[name]
     const locked = during?.[name]
@@ -287,7 +306,22 @@ export function scrollLockProblems({ before, during, after, attempts = [] }, req
     if (locked.inline?.overscrollBehavior !== 'none') problems.push(`${name}: overscroll was not contained`)
     if (locked.scrollTop !== initial.scrollTop || locked.scrollLeft !== initial.scrollLeft) problems.push(`${name}: background scroll moved while locked`)
     if (!same(restored.inline, initial.inline)) problems.push(`${name}: inline styles were not restored exactly`)
-    if (restored.scrollTop !== initial.scrollTop || restored.scrollLeft !== initial.scrollLeft) problems.push(`${name}: scroll position was not restored exactly`)
+
+    const verticalReduction = reducedScrollRange(initial, restored, 'scrollHeight', 'clientHeight')
+    const horizontalReduction = reducedScrollRange(initial, restored, 'scrollWidth', 'clientWidth')
+    if ((verticalReduction !== null || horizontalReduction !== null) && !mutationValid) problems.push(`${name}: reduced scroll range lacks settled authoritative mutation evidence`)
+    const verticalMaximum = mutationValid && locked.scrollHeight === initial.scrollHeight && locked.clientHeight === initial.clientHeight ? verticalReduction : null
+    const horizontalMaximum = mutationValid && locked.scrollWidth === initial.scrollWidth && locked.clientWidth === initial.clientWidth ? horizontalReduction : null
+    const expectedTop = verticalMaximum === null ? initial.scrollTop : Math.min(Math.max(initial.scrollTop, 0), verticalMaximum)
+    const expectedLeft = horizontalMaximum === null ? initial.scrollLeft : Math.min(Math.max(initial.scrollLeft, 0), horizontalMaximum)
+    if (restored.scrollTop !== expectedTop) {
+      if (verticalMaximum === null) problems.push(`${name}: scroll position was not restored exactly`)
+      else problems.push(`${name}: scrollTop ${restored.scrollTop} != clamp(${initial.scrollTop}, ${verticalMaximum}) after confirmed content shrink`)
+    }
+    if (restored.scrollLeft !== expectedLeft) {
+      if (horizontalMaximum === null) problems.push(`${name}: scroll position was not restored exactly`)
+      else problems.push(`${name}: scrollLeft ${restored.scrollLeft} != clamp(${initial.scrollLeft}, ${horizontalMaximum}) after confirmed content shrink`)
+    }
   }
   for (const type of requiredAttempts) if (!attempts.some(attempt => attempt?.type === type && attempt?.observed === true)) problems.push(`missing observed ${type} background-scroll attempt`)
   return problems
