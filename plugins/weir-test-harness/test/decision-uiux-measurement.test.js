@@ -60,6 +60,15 @@ test('main region oracle rejects screenshot-proven narrow compression and host o
   intrinsicTitle.mainRegion.hostNavigation = null
   intrinsicTitle.mainRegion.regions.title = visibleRegion(24, 24, 96, 32)
   assert.deepEqual(mainRegionProblems(intrinsicTitle), [], 'the oracle measures title occlusion, not intrinsic text width')
+  const scaled = readableMainRegionAudit()
+  scaled.viewport = { width: 360, visualWidth: 180, scale: 2 }
+  scaled.mainRegion.regions.page = visibleRegion(0, 0, 180, 450)
+  scaled.mainRegion.regions.inner = visibleRegion(0, 0, 175, 450)
+  for (const name of ['header', 'nav', 'view']) scaled.mainRegion.regions[name] = visibleRegion(12, 12, 151, 40)
+  scaled.mainRegion.regions.title = visibleRegion(12, 12, 96, 32)
+  scaled.mainRegion.regions.cards = [visibleRegion(12, 68, 151, 120)]
+  scaled.mainRegion.hostNavigation.occlusions.push({ x: 96, y: 25, stack: [{ tag: 'MAIN', class: 'weir-da-page' }] })
+  assert.deepEqual(mainRegionProblems(scaled), [], 'real zoom permits the measured scrollbar and keeps the approved fixed-page stacking contract')
   const expanded = structuredClone(readable)
   Object.assign(expanded.mainRegion.regions.page.rect, { x: 280.5, left: 280.5, width: 79.5, right: 360 })
   Object.assign(expanded.mainRegion.regions.inner.rect, { x: 280.5, left: 280.5, width: 79.5, right: 360 })

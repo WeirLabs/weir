@@ -72,7 +72,8 @@ export function mainRegionProblems(audit) {
   const visualWidth = Number(audit?.viewport?.visualWidth ?? audit?.viewport?.width)
   if (!Number.isFinite(visualWidth) || visualWidth <= 0) problems.push('missing real visual width for Decision main region')
   const pageMinimum = Math.min(320, Math.max(1, visualWidth - 24))
-  const contentMinimum = Math.min(280, Math.max(1, visualWidth - 24))
+  // Compact padding and a real scrollbar can consume 32 CSS px at 200% zoom.
+  const contentMinimum = Math.min(280, Math.max(1, visualWidth - 32))
   const inspect = (name, target, minimumWidth = 0, required = true) => {
     if (!target) {
       if (required) problems.push(`missing ${name} geometry`)
@@ -97,8 +98,10 @@ export function mainRegionProblems(audit) {
   for (const action of main.navigationActions ?? []) inspect(`Decision navigation action ${action.name ?? 'unnamed'}`, action)
   for (const action of main.primaryActions ?? []) inspect(`Decision primary action ${action.name ?? 'unnamed'}`, action)
   const ordinaryNarrow = Math.abs((audit?.viewport?.scale ?? 1) - 1) < 0.01 && Number(audit?.viewport?.width) <= 400
-  if (ordinaryNarrow && !main.hostNavigation) problems.push('missing visible host navigation return action at ordinary narrow width')
-  else if (main.hostNavigation) inspect('host navigation return action', main.hostNavigation)
+  if (ordinaryNarrow) {
+    if (!main.hostNavigation) problems.push('missing visible host navigation return action at ordinary narrow width')
+    else inspect('host navigation return action', main.hostNavigation)
+  }
   return problems
 }
 
