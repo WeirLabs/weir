@@ -125,6 +125,22 @@ test('5.2 product matrix wires raw modal scroll and settled-focus audits into ev
   for (const token of ['logErrorCount', 'importFailures', 'desktop-enabled.log', 'desktop-disabled.log']) assert.ok(failure.includes(token), `failure runtime scan retains ${token}`)
 })
 
+test('Desktop focus oracle requires save success and non-dirty close without dropping prior transitions', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const source = driver.match(/const requiredFocusTransitions = (\[[^\n]+\])/)?.[1]
+  assert.ok(source, 'the required assistant focus transition list exists')
+  const required = Function(`return (${source})`)()
+  const prior = ['Create assistant from selector', 'Open assistant editor', 'Open assistant details', 'Edit assistant', 'Back to narrow assistant list', 'Open narrow create draft', 'Back with preserved create draft', 'Resume same create draft', 'Back before real create target change', 'Open narrow edit draft', 'Back with preserved edit draft', 'Resume same assistant edit draft', 'Back before real edit target change', 'Back with selected learning context', 'Resume same assistant learning context']
+  for (const action of [...prior, 'Save assistant', 'Close non-dirty assistant editor']) assert.ok(required.includes(action), `required focus transition: ${action}`)
+
+  const fill = driver.match(/async function fillAgent\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const save = fill.match(/await keyboardActivate\('Save assistant',[^\n]+/)?.[0] ?? ''
+  assert.match(save, /expectFocus: ['"]\.weir-da-agent-back,\[data-agent-detail\]['"]/, 'every successful save measures the resulting detail or its navigation')
+  const close = driver.match(/await keyboardActivate\('Close non-dirty assistant editor',[^\n]+/)?.[0] ?? ''
+  assert.match(close, /labels: \['取消', 'Cancel'\]/, 'non-dirty close uses the real localized Cancel action')
+  assert.match(close, /expectFocus: `\.weir-da-agent-back,\[data-agent-detail="\$\{primary\.agentId\}"\]`/, 'non-dirty close measures the resulting assistant detail or its navigation')
+})
+
 test('raw modal inline snapshots include paddingBottom alongside scrollbar compensation', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const measure = driver.match(/async function measureScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
