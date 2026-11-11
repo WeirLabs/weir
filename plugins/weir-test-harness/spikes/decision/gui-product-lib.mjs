@@ -363,9 +363,11 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
 
     const verticalReduction = reducedScrollRange(initial, restored, 'scrollHeight', 'clientHeight')
     const horizontalReduction = reducedScrollRange(initial, restored, 'scrollWidth', 'clientWidth')
-    if ((verticalReduction !== null || horizontalReduction !== null) && !mutationValid) problems.push(`${name}: reduced scroll range lacks settled authoritative mutation evidence`)
-    const verticalMaximum = mutationValid && locked.scrollHeight === initial.scrollHeight && locked.clientHeight === initial.clientHeight ? verticalReduction : null
-    const horizontalMaximum = mutationValid && locked.scrollWidth === initial.scrollWidth && locked.clientWidth === initial.clientWidth ? horizontalReduction : null
+    const verticalClampRequired = verticalReduction !== null && initial.scrollTop > verticalReduction
+    const horizontalClampRequired = horizontalReduction !== null && initial.scrollLeft > horizontalReduction
+    if ((verticalClampRequired || horizontalClampRequired) && !mutationValid) problems.push(`${name}: reduced scroll range lacks settled authoritative mutation evidence`)
+    const verticalMaximum = verticalClampRequired && mutationValid && locked.scrollHeight === initial.scrollHeight && locked.clientHeight === initial.clientHeight ? verticalReduction : null
+    const horizontalMaximum = horizontalClampRequired && mutationValid && locked.scrollWidth === initial.scrollWidth && locked.clientWidth === initial.clientWidth ? horizontalReduction : null
     const expectedTop = verticalMaximum === null ? initial.scrollTop : Math.min(Math.max(initial.scrollTop, 0), verticalMaximum)
     const expectedLeft = horizontalMaximum === null ? initial.scrollLeft : Math.min(Math.max(initial.scrollLeft, 0), horizontalMaximum)
     if (restored.scrollTop !== expectedTop) {

@@ -203,6 +203,10 @@ test('only confirmed content shrink restores an obsolete offset to the reduced l
   const partial = { ...after, decisionPage: container(200, 1100) }
   assert.deepEqual(scrollLockProblems({ before, during, after: partial, contentMutation }, names), [], '372 clamps to the new nonzero maximum 1100 - 900 = 200')
   assert.match(scrollLockProblems({ before, during, after: { ...partial, decisionPage: container(0, 1100) }, contentMutation }, names).join('\n'), /clamp/)
+  const legalBefore = { root: { ...container(20, 900), scrollWidth: 521, clientWidth: 353, scrollLeft: 0 } }
+  const legalDuring = { root: { ...container(20, 900, 'hidden'), scrollWidth: 521, clientWidth: 353, scrollLeft: 0 } }
+  const legalAfter = { root: { ...container(20, 900), scrollWidth: 469, clientWidth: 353, scrollLeft: 0 } }
+  assert.deepEqual(scrollLockProblems({ before: legalBefore, during: legalDuring, after: legalAfter }, ['root']), [], 'an ordinary legal zero offset restores exactly even if unrelated Host content reduces horizontal range')
 })
 
 test('cold reveal guard accepts one ready or error end reveal and rejects loading focus theft or repeats', () => {
