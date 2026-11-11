@@ -370,6 +370,12 @@ async function keyboardFocus(action, selector, options = {}) {
 
 async function keyboardActivate(action, selector, options = {}) {
   const audit = await keyboardFocus(action, selector, options)
+  if (options.scrollBaseline) {
+    requireEvidence(['immediate', 'stable'].includes(options.scrollBaseline), `${action} has a supported pre-activation scroll baseline`)
+    const measure = options.scrollBaseline === 'stable' ? measureStableScrollContainers : measureScrollContainers
+    audit.scrollBefore = await measure({ root: 'html', body: 'body' }, selector)
+    saveKeyboardAudits()
+  }
   await instance.cdp.key(options.key ?? 'Enter')
   audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active }
   saveKeyboardAudits()
@@ -497,9 +503,10 @@ async function keyboardKey(action, key, details = {}) {
   saveKeyboardAudits()
 }
 
-async function selectorOpen() {
-  await keyboardActivate('Open decision assistant selector', '[data-weir-decision-trigger="weir-decision-selector"]')
+async function selectorOpen(options = {}) {
+  const activation = await keyboardActivate('Open decision assistant selector', '[data-weir-decision-trigger="weir-decision-selector"]', options)
   await waitFor(() => instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return Boolean(panel&&!/正在加载判断记录|Loading decision/i.test(panel.innerText)) })()`), 30_000)
+  return activation
 }
 
 async function selectorChoose(sessionId, mode, agentId = null) {
@@ -568,8 +575,7 @@ async function agentState(sessionId, agentId, state) {
   await openIsolatedSession(sessionId, true)
   await openAgent(sessionId, agentId)
   const originSelector = `[data-agent-detail="${agentId}"] [data-agent-state="${state}"]`
-  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
-  await keyboardActivate(`Request assistant ${state}`, originSelector)
+  const scrollBefore = (await keyboardActivate(`Request assistant ${state}`, originSelector, { scrollBaseline: 'immediate' })).scrollBefore
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-agent-state"))'), 30_000)
   const audit = await beginModalAudit(`assistant-${state}-${agentId}`, '#weir-da-agent-state', originSelector, { before: scrollBefore })
   const controlId = await holdDecision('profileSetState', { sessionId, agentId, state })
@@ -854,8 +860,7 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   const snapshotId = candidate.snapshot.snapshotId
   const expectedRevision = candidate.snapshot.revision
   const originSelector = `[data-action="${action}"]`
-  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
-  await keyboardActivate(`Request ${kind}`, originSelector)
+  const scrollBefore = (await keyboardActivate(`Request ${kind}`, originSelector, { scrollBaseline: 'immediate' })).scrollBefore
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#${dialog}'))`), 30_000)
   const confirmation = await instance.cdp.evaluate(`document.querySelector('#${dialog}').innerText`)
   requireEvidence(/只影响|历史|future|history/i.test(confirmation), `${kind} consequence confirmation`)
@@ -876,8 +881,20 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   const afterFocus = await waitFor(async () => { const focus = await measureConfirmationFocus(originSelector, controlId); return focus.control.settled && (focus.targetFocused || focus.fallbackFocused) ? focus : null }, 30_000).catch(() => measureConfirmationFocus(originSelector, controlId))
   const focus = { beforeSettle: { ...beforeFocus, promiseSettled: beforeFocus.control.settled }, afterSettle: { ...afterFocus, promiseSettled: afterFocus.control.settled } }
   const focusProblems = confirmationFocusProblems(focus)
+  const currentSnapshotId = agent.currentSnapshotId ?? null
+  const snapshotState = agent.snapshots.find(snapshot => snapshot.snapshotId === snapshotId)?.state ?? null
+  const runOutcome = candidate.run?.learningRunId ? agent.learningRuns.find(run => run.learningRunId === candidate.run.learningRunId)?.outcome ?? null : null
+  const confirmed = kind === 'snapshotPublish'
+    ? currentSnapshotId === snapshotId && snapshotState === 'published'
+    : kind === 'snapshotReject'
+      ? runOutcome === 'rejected' && snapshotState === 'draft' && currentSnapshotId === expectedCurrentId
+      : snapshotState === 'rolled_back' && currentSnapshotId === expectedCurrentId
+  const contentMutation = {
+    method: kind, args: { sessionId, snapshotId, expectedRevision }, rpcId: mutation.rpcId, response: mutation.response, settled: afterFocus.control.settled,
+    authoritative: { confirmed, currentSnapshotId, snapshotState, runOutcome },
+  }
   uiuxEvidence.confirmations.push({ kind, snapshotId, controlId, focus, problems: focusProblems })
-  await finishModalAudit(audit, { focus, focusProblems })
+  await finishModalAudit(audit, { focus, focusProblems, contentMutation })
   const snapshot = await rpc(sessionId, `${kind}-snapshot`, 'memorySnapshot', { snapshotId })
   const run = candidate.run?.learningRunId ? await rpc(sessionId, `${kind}-run`, 'learningRun', { learningRunId: candidate.run.learningRunId }) : null
   comparisons.push({ phase: kind, kind: 'learning', snapshotId, expectedRevision, rpcId: mutation.rpcId, response: mutation.response, authoritative: { currentSnapshotId: agent.currentSnapshotId ?? null, snapshotState: snapshot.state, snapshotRevision: snapshot.revision, runOutcome: run?.outcome ?? null } })
@@ -1166,8 +1183,7 @@ async function cancelUnownedInbox(sessionId, caseId, label, routeRequired = true
   const article = `article[data-case-id=${JSON.stringify(caseId)}]`
   await openDisclosure(`weir-da-recovery-${caseId}`)
   const originSelector = `${article} .weir-da-disclosure .weir-da-button[data-variant="danger"]`
-  const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
-  await keyboardActivate(`Request cancel ${label}`, 'button', { scope: article, labels: ['取消', 'Cancel'] })
+  const scrollBefore = (await keyboardActivate(`Request cancel ${label}`, 'button', { scope: article, labels: ['取消', 'Cancel'], scrollBaseline: 'immediate' })).scrollBefore
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-cancel-decision"))'), 30_000)
   if (!accessibility.cancelDecisionDialog) await captureAccessibility('cancelDecisionDialog', '#weir-da-cancel-decision')
   const audit = await beginModalAudit(`cancel-decision-${label}`, '#weir-da-cancel-decision', originSelector, { before: scrollBefore })
@@ -1769,8 +1785,8 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false } = {})
 }
 
 async function beginModalAudit(kind, selector, originSelector, options = {}) {
-  const before = options.before ?? await measureScrollContainers({ root: 'html', body: 'body' }, originSelector)
-  requireEvidence(before.root && before.body, `${kind} has root and body scroll measurements`)
+  const before = options.before
+  requireEvidence(before?.root && before?.body, `${kind} has root and body scroll measurements captured after native focus and before activation`)
   let selectorLayout = null
   if (options.selector) selectorLayout = await auditSelectorLayout(kind, options.selector)
   const native = await measureNativeModal(selector, originSelector)
@@ -1793,7 +1809,8 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   return audit
 }
 
-async function finishModalAudit(audit, { focus = null, focusProblems = [] } = {}) {
+async function finishModalAudit(audit, { focus = null, focusProblems = [], contentMutation = null } = {}) {
+  audit.contentMutation = contentMutation
   audit.after = await measureScrollContainers({}, audit.originSelector)
   const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
   audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...focusProblems]
@@ -1974,8 +1991,7 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   await instance.cdp.setViewport(360, 420, false)
   await waitFor(() => instance.cdp.evaluate('innerWidth===360&&innerHeight===420'), 10_000)
   await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
-  const manyBefore = await measureScrollContainers({ root: 'html', body: 'body' }, trigger)
-  await selectorOpen()
+  const manyBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   const manyText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
   const manyCopyProblems = selectorCopyProblems(manyText, { language: 'zh', emptyScope: true, shadow: false })
   const manyCount = await instance.cdp.evaluate(`document.querySelectorAll('#weir-da-selector-panel input[type="radio"]').length`)
@@ -2107,8 +2123,7 @@ async function runAgentResumeMatrix(sessionId, primary, secondary) {
   check('narrowCreateBackSameTargetPreservesExactDraftWithoutReread', createEvidence.problems.length === 0, { problems: createEvidence.problems, readCount: [createDrill.readCount, createReturned.readCount, createRestored.readCount] })
   await keyboardActivate('Back before real create target change', '.weir-da-agent-back')
   const createTargetOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
-  const createTargetScrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, createTargetOrigin)
-  await keyboardActivate('Change from dirty create to assistant', createTargetOrigin)
+  const createTargetScrollBefore = (await keyboardActivate('Change from dirty create to assistant', createTargetOrigin, { scrollBaseline: 'immediate' })).scrollBefore
   await confirmDiscardEditor(sessionId, primary.agentId, createTargetOrigin, createTargetScrollBefore)
 
   await keyboardActivate('Open narrow edit draft', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
@@ -2130,8 +2145,7 @@ async function runAgentResumeMatrix(sessionId, primary, secondary) {
   check('narrowEditBackSameTargetPreservesExactDraftWithoutReread', editEvidence.problems.length === 0, { problems: editEvidence.problems, readCount: [editDrill.readCount, editReturned.readCount, editRestored.readCount] })
   await keyboardActivate('Back before real edit target change', '.weir-da-agent-back')
   const editTargetOrigin = `[data-agent-summary="${secondary.agentId}"] [data-action="open-agent"]`
-  const editTargetScrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, editTargetOrigin)
-  await keyboardActivate('Change from dirty edit to another assistant', editTargetOrigin)
+  const editTargetScrollBefore = (await keyboardActivate('Change from dirty edit to another assistant', editTargetOrigin, { scrollBaseline: 'immediate' })).scrollBefore
   await confirmDiscardEditor(sessionId, secondary.agentId, editTargetOrigin, editTargetScrollBefore)
   await instance.cdp.setViewport(1440, 900, false)
 }
@@ -2259,8 +2273,7 @@ async function runEnglishVisualMatrix(sessionId) {
   await openIsolatedSession(sessionId, true)
   await instance.cdp.setViewport(360, 900, false)
   const trigger = '[data-weir-decision-trigger="weir-decision-selector"]'
-  const scrollBefore = await measureStableScrollContainers({ root: 'html', body: 'body' }, trigger)
-  await selectorOpen()
+  const scrollBefore = (await selectorOpen({ scrollBaseline: 'stable' })).scrollBefore
   const text = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
   const copyProblems = selectorCopyProblems(text, { language: 'en', emptyScope: true, shadow: false })
   const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
@@ -2294,8 +2307,7 @@ async function runSelectorZoomMatrix(sessionId) {
     uiuxEvidence.zoom.push(row)
     saveUiuxEvidence()
     check(`selectorRealBrowserZoom200At${width}`, row.zoomProblems.length === 0, { width, problems: row.zoomProblems, before: before.visualViewport, after: after.visualViewport, innerWidth: after.innerWidth, devicePixelRatio: after.devicePixelRatio, rect: after.rects.reference })
-    const scrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, trigger)
-    await selectorOpen()
+    const scrollBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
     const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
     const audit = await beginModalAudit(`selector-zoom200-${width}`, '#weir-da-selector-panel', trigger, { before: scrollBefore, selector: { scale: 2, scrollable } })
     await keyboardKey(`Close 200 percent selector ${width}`, 'Escape')
@@ -2326,8 +2338,7 @@ try {
   const slots = await instance.cdp.evaluate('window.__decisionQA.getState()')
   writeJson(join(out, 'slots.json'), slots)
   check('newSlotsActive', slots.sidebar.includes('weir-decisions') && slots.main.includes('weir-decisions') && slots.composer.includes('weir-decision-selector') && slots.toolviews.includes('ask_user_question') && slots.toolviews.includes('decision_consult'), slots)
-  const initialScrollBefore = await measureScrollContainers({ root: 'html', body: 'body' }, '[data-weir-decision-trigger="weir-decision-selector"]')
-  await selectorOpen()
+  const initialScrollBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label'),checked:el.checked})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]'))} })()`)
   const initialAuthority = await rpc(sessionId, 'initial-fresh-auto', 'overview')
   const initialCopyProblems = selectorCopyProblems(initialSelector.text, { language: 'zh', emptyScope: true, shadow: false })

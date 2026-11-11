@@ -442,7 +442,7 @@ test('English visual matrix returns to the Decision inbox before layout audits',
 test('English selector baseline waits for stable composer geometry and scroll', async () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const english = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
-  assert.ok(english.includes("const scrollBefore = await measureStableScrollContainers({ root: 'html', body: 'body' }, trigger)"), 'the English selector uses a settled pre-open baseline')
+  assert.ok(english.includes("const scrollBefore = (await selectorOpen({ scrollBaseline: 'stable' })).scrollBefore"), 'the English selector uses a settled baseline after native focus and before activation')
   const source = driver.match(/async function measureStableScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(source, 'measureStableScrollContainers exists')
   const sample = (x, width, scrollTop, scrollHeight) => ({ composer: { rect: { x, width }, scrollTop, scrollLeft: 0, clientHeight: 728, scrollHeight, clientWidth: width, scrollWidth: 615 } })
@@ -460,6 +460,51 @@ test('English selector baseline waits for stable composer geometry and scroll', 
   const result = await measure({ root: 'html', body: 'body' }, 'trigger')
   assert.equal(calls, 3, 'the changing transition sample cannot become the baseline')
   assert.deepEqual(result, samples[2])
+})
+
+test('modal scroll baseline follows native focus and precedes activation', async () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const source = driver.match(/async function keyboardActivate\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(source, 'keyboardActivate exists')
+  const events = []
+  let scrollTop = 2606
+  const audit = {}
+  const keyboardFocus = async () => {
+    events.push('native-focus')
+    scrollTop = 372
+    return audit
+  }
+  const measureScrollContainers = async () => {
+    events.push(`measure:${scrollTop}`)
+    return { decisionPage: { scrollTop } }
+  }
+  const instance = { cdp: { key: async key => events.push(`activate:${key}`) } }
+  const activate = new Function('instance', 'keyboardFocus', 'keyboardSnapshot', 'saveKeyboardAudits', 'measureScrollContainers', 'measureStableScrollContainers', 'requireEvidence', `${source};return keyboardActivate`)(
+    instance,
+    keyboardFocus,
+    async () => ({ active: 'learning-publish' }),
+    () => {},
+    measureScrollContainers,
+    measureScrollContainers,
+    (condition, message) => assert.ok(condition, message),
+  )
+  const activated = await activate('Request snapshotPublish', '[data-action="learning-publish"]', { scrollBaseline: 'immediate' })
+  assert.deepEqual(events, ['native-focus', 'measure:372', 'activate:Enter'])
+  assert.equal(activated.scrollBefore.decisionPage.scrollTop, 372, 'the obsolete pre-focus 2606 sample cannot become the modal baseline')
+
+  const learning = driver.match(/async function confirmLearning\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(learning.includes('scrollBaseline'))
+  assert.ok(!learning.includes('const scrollBefore = await measureScrollContainers'), 'learning cannot sample before its native Shift+Tab traversal')
+  const begin = driver.match(/async function beginModalAudit\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(!begin.includes('options.before ??'), 'an open dialog cannot supply a missing pre-activation baseline')
+})
+
+test('learning shrink restoration is bound to its exact settled mutation receipt', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const learning = driver.match(/async function confirmLearning\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  for (const token of ['const contentMutation = {', 'method: kind', 'args: { sessionId, snapshotId, expectedRevision }', 'rpcId: mutation.rpcId', 'response: mutation.response', 'settled: afterFocus.control.settled', 'authoritative: {', 'const confirmed =', 'finishModalAudit(audit, { focus, focusProblems, contentMutation })']) assert.ok(learning.includes(token), token)
+  const finish = driver.match(/async function finishModalAudit\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(finish.includes('audit.contentMutation = contentMutation'), 'the raw receipt is preserved with the modal measurements')
 })
 
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
@@ -997,7 +1042,7 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   assert.ok(!unowned.includes('weir-da-card-recovery-'), 'the redundant conversation recovery expansion is gone')
   const recovery = unowned.indexOf('await openDisclosure(`weir-da-recovery-${caseId}`)')
   assert.ok(recovery > routeReady && domRead > recovery, 'the actual inbox recovery controls render before no-retry is asserted')
-  const selectorOpenBody = driver.match(/async function selectorOpen\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const selectorOpenBody = driver.match(/async function selectorOpen\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(selectorOpenBody, /正在加载判断记录|Loading decision/i, 'selector opening waits for the real overview loading state to clear')
 })
 

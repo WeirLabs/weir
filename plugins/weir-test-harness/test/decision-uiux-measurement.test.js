@@ -112,6 +112,34 @@ test('scroll lock guard covers root body and nested scrollers with exact restora
   assert.match(scrollLockProblems({ before, during: { ...during, root: { ...during.root, inline: { ...during.root.inline, overflow: 'auto' } } }, after }, names).join('\n'), /root.*overflow/)
 })
 
+test('only confirmed content shrink restores an obsolete offset to the reduced legal boundary', () => {
+  const names = ['root', 'decisionPage']
+  const container = (scrollTop, scrollHeight, overflow = '') => ({
+    scrollTop, scrollLeft: 0, scrollHeight, clientHeight: 900, scrollWidth: 900, clientWidth: 900,
+    inline: { overflow, overflowX: '', overflowY: '', overscrollBehavior: overflow ? 'none' : 'contain', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '' },
+  })
+  const before = { root: container(20, 900), decisionPage: container(372, 3580) }
+  const during = { root: container(20, 900, 'hidden'), decisionPage: container(372, 3580, 'hidden') }
+  const after = { root: container(20, 900), decisionPage: container(0, 900) }
+  const contentMutation = {
+    method: 'snapshotPublish', args: { sessionId: 'root', snapshotId: 'ms_1', expectedRevision: 1 }, rpcId: 'rpc-1', settled: true,
+    response: { rpcId: 'rpc-1', result: { ok: true, value: { ok: true } } },
+    authoritative: { confirmed: true, currentSnapshotId: 'ms_1', snapshotState: 'published', runOutcome: 'published' },
+  }
+  assert.deepEqual(scrollLockProblems({ before, during, after, contentMutation }, names), [], '372 clamps to 0 only after the verified 3580/900 → 900/900 range reduction')
+  assert.match(scrollLockProblems({ before, during, after }, names).join('\n'), /authoritative mutation/, 'a shrunk range cannot be relabelled without a mutation receipt')
+  assert.match(scrollLockProblems({ before, during, after, contentMutation: { ...contentMutation, settled: false } }, names).join('\n'), /authoritative mutation/)
+  assert.match(scrollLockProblems({ before, during, after, contentMutation: { ...contentMutation, response: { rpcId: 'rpc-1', result: { ok: false } } } }, names).join('\n'), /authoritative mutation/)
+  assert.match(scrollLockProblems({ before, during, after: { ...after, decisionPage: container(1, 900) }, contentMutation }, names).join('\n'), /clamp/)
+  assert.match(scrollLockProblems({ before, during: { ...during, decisionPage: container(2606, 3580, 'hidden') }, after, contentMutation }, names).join('\n'), /background scroll moved while locked/, 'content shrink never excuses movement before confirmation')
+  assert.match(scrollLockProblems({ before, during, after: { ...after, decisionPage: container(0, 3580) }, contentMutation }, names).join('\n'), /restored exactly/, 'a mutation receipt is not a blanket offset tolerance without a reduced range')
+  assert.match(scrollLockProblems({ before, during, after: { ...after, root: container(21, 900) }, contentMutation }, names).join('\n'), /root: scroll position was not restored exactly/, 'one shrunk container cannot relax another container')
+
+  const partial = { ...after, decisionPage: container(200, 1100) }
+  assert.deepEqual(scrollLockProblems({ before, during, after: partial, contentMutation }, names), [], '372 clamps to the new nonzero maximum 1100 - 900 = 200')
+  assert.match(scrollLockProblems({ before, during, after: { ...partial, decisionPage: container(0, 1100) }, contentMutation }, names).join('\n'), /clamp/)
+})
+
 test('cold reveal guard accepts one ready or error end reveal and rejects loading focus theft or repeats', () => {
   for (const status of ['ready', 'error']) {
     const loading = { status: 'loading', revealCount: 0, targetBottom: 100, scrollerBottom: 500, scrollTop: 0, active: 'draft', draft: 'keep me' }
