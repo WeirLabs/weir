@@ -314,6 +314,7 @@ export function selectorLayoutProblems(measurement, expected = {}) {
     if (!Number.isFinite(status?.rectHeight) || !Number.isFinite(status?.lineHeight) || status.rectHeight <= status.lineHeight * 1.5) problems.push('long product status did not wrap to multiple rendered lines')
     const actionName = expected.longStatus.language === 'en' ? /Retry/i : /重试/
     if (!status?.primaryAction?.visible || !status?.primaryAction?.hitTest || !actionName.test(status?.primaryAction?.accessibleName ?? '')) problems.push('long product status primary action is not reachable')
+    if (status?.primaryAction?.keyboard?.reached !== true) problems.push('long product status primary action lacks native keyboard reachability evidence')
     const ax = Array.isArray(status?.ax) ? status.ax : []
     if (!ax.some(node => !node.ignored && node.role === 'alert') || !ax.some(node => !node.ignored && String(node.name ?? '').includes(text))) problems.push('long product status lacks accessible alert and exact long-text evidence')
   }

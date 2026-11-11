@@ -1859,6 +1859,7 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false, longSt
   const after = await read()
   let longStatusEvidence = null
   if (longStatus) {
+    const primaryActionFocus = await keyboardFocus(`Reach ${name} primary action with keyboard`, '#weir-da-selector-panel [role="alert"] button')
     longStatusEvidence = await instance.cdp.evaluate(`(() => {
       const status=document.querySelector('#weir-da-selector-panel [role="alert"]')
       const action=status?.querySelector('button')??null
@@ -1873,6 +1874,7 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false, longSt
       const visible=Boolean(action&&action.getClientRects().length&&actionRect.left>=visual.offsetLeft-1&&actionRect.right<=visual.offsetLeft+visual.width+1&&actionRect.top>=Math.max(visual.offsetTop,bodyRect?.top??0)-1&&actionRect.bottom<=Math.min(visual.offsetTop+visual.height,bodyRect?.bottom??visual.height)+1)
       return {expected:${JSON.stringify(longStatus.text)},actual:status?.querySelector('span')?.textContent??null,role:status?.getAttribute('role')??null,whiteSpace:style?.whiteSpace??null,overflowWrap:style?.overflowWrap??null,clientWidth:status?.clientWidth??null,scrollWidth:status?.scrollWidth??null,rectHeight:rect?.height??null,lineHeight:Number.parseFloat(style?.lineHeight??''),primaryAction:{accessibleName:action?.getAttribute('aria-label')||action?.innerText||null,visible,hitTest,rect:actionRect?{left:actionRect.left,top:actionRect.top,right:actionRect.right,bottom:actionRect.bottom}:null}}
     })()`)
+    longStatusEvidence.primaryAction.keyboard = { reached: primaryActionFocus.reached, action: primaryActionFocus.action, activeElement: primaryActionFocus.activeElement }
     longStatusEvidence.ax = await instance.cdp.accessibility('#weir-da-selector-panel [role="alert"]')
   }
   const evidence = { name, native, viewport, panelOverflow: before.panelOverflow, bodyOverflow: before.bodyOverflow, bodyOverscroll: before.bodyOverscroll, bodyScrollHeight: before.bodyScrollHeight, bodyClientHeight: before.bodyClientHeight, bodyScrollTopBefore: before.bodyScrollTop, bodyScrollTopAfter: after.bodyScrollTop, headerBefore: before.header, headerAfter: after.header, footerBefore: before.footer, footerAfter: after.footer, horizontalOverflow: after.horizontalOverflow, longStatus: longStatusEvidence }
