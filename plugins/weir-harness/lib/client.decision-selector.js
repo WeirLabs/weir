@@ -133,7 +133,7 @@ window.__ModuleLoader__.load({
           ],
         }, option.value);
       };
-      const errorText = snapshot.error ? t(view.errorKey ?? "decisionFailed") : "";
+      const errorText = snapshot.error ? t(view.errorKey === "decisionFailed" ? "decisionSelectorFailed" : view.errorKey ?? "decisionFailed") : "";
       const rawError = snapshot.error ? { code: snapshot.error.code, message: snapshot.error.message ?? String(snapshot.error) } : null;
       const panel = open ? jsx.jsxs(ui.DecisionModalFrame, {
         dialogRef: panelRef, initialFocus: panelRef, id: PANEL_ID, className: "weir-da-overlay weir-da-selector-panel",

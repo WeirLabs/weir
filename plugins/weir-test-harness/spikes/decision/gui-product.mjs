@@ -38,6 +38,7 @@ const sqlitePhases = []
 const comparisons = []
 const visualAudits = []
 const uiuxEvidence = { modalAudits: [], selectorLayouts: [], selectorStates: [], confirmations: [], coldReveals: [], masterDetail: [], zoom: [], languages: [] }
+const uiuxFixture = createUiuxFixture()
 const accessibility = {}
 const accessibilityRequirements = {
   selectorTrigger: { role: 'button', name: /决策助手|Decision/i },
@@ -1817,7 +1818,7 @@ async function measureConfirmationFocus(originSelector, controlId = null) {
   })()`).then(async focus => ({ ...focus, control: controlId ? await decisionControl(controlId) : null }))
 }
 
-async function auditSelectorLayout(name, { scale = 1, scrollable = false } = {}) {
+async function auditSelectorLayout(name, { scale = 1, scrollable = false, longStatus = null } = {}) {
   const panel = '#weir-da-selector-panel'
   const body = '.weir-da-selector-body'
   const native = await measureNativeModal(panel)
@@ -1834,12 +1835,30 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false } = {})
   if (scrollable) await waitFor(() => instance.cdp.evaluate(`document.querySelector('.weir-da-selector-body').scrollTop>${before.bodyScrollTop}`), 10_000).catch(() => {})
   else await new Promise(resolve => setTimeout(resolve, 120))
   const after = await read()
-  const evidence = { name, native, viewport, panelOverflow: before.panelOverflow, bodyOverflow: before.bodyOverflow, bodyOverscroll: before.bodyOverscroll, bodyScrollHeight: before.bodyScrollHeight, bodyClientHeight: before.bodyClientHeight, bodyScrollTopBefore: before.bodyScrollTop, bodyScrollTopAfter: after.bodyScrollTop, headerBefore: before.header, headerAfter: after.header, footerBefore: before.footer, footerAfter: after.footer, horizontalOverflow: after.horizontalOverflow }
-  evidence.problems = selectorLayoutProblems(evidence, { scale, scrollable })
+  let longStatusEvidence = null
+  if (longStatus) {
+    longStatusEvidence = await instance.cdp.evaluate(`(() => {
+      const status=document.querySelector('#weir-da-selector-panel [role="alert"]')
+      const action=status?.querySelector('button')??null
+      const style=status?getComputedStyle(status):null
+      const rect=status?.getBoundingClientRect()
+      const actionRect=action?.getBoundingClientRect()
+      const bodyRect=document.querySelector('.weir-da-selector-body')?.getBoundingClientRect()
+      const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0}
+      const x=actionRect?actionRect.left+actionRect.width/2:null
+      const y=actionRect?actionRect.top+actionRect.height/2:null
+      const hitTest=Boolean(action&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight&&document.elementsFromPoint(x,y).includes(action))
+      const visible=Boolean(action&&action.getClientRects().length&&actionRect.left>=visual.offsetLeft-1&&actionRect.right<=visual.offsetLeft+visual.width+1&&actionRect.top>=Math.max(visual.offsetTop,bodyRect?.top??0)-1&&actionRect.bottom<=Math.min(visual.offsetTop+visual.height,bodyRect?.bottom??visual.height)+1)
+      return {expected:${JSON.stringify(longStatus.text)},actual:status?.querySelector('span')?.textContent??null,role:status?.getAttribute('role')??null,whiteSpace:style?.whiteSpace??null,overflowWrap:style?.overflowWrap??null,clientWidth:status?.clientWidth??null,scrollWidth:status?.scrollWidth??null,rectHeight:rect?.height??null,lineHeight:Number.parseFloat(style?.lineHeight??''),primaryAction:{accessibleName:action?.getAttribute('aria-label')||action?.innerText||null,visible,hitTest,rect:actionRect?{left:actionRect.left,top:actionRect.top,right:actionRect.right,bottom:actionRect.bottom}:null}}
+    })()`)
+    longStatusEvidence.ax = await instance.cdp.accessibility('#weir-da-selector-panel [role="alert"]')
+  }
+  const evidence = { name, native, viewport, panelOverflow: before.panelOverflow, bodyOverflow: before.bodyOverflow, bodyOverscroll: before.bodyOverscroll, bodyScrollHeight: before.bodyScrollHeight, bodyClientHeight: before.bodyClientHeight, bodyScrollTopBefore: before.bodyScrollTop, bodyScrollTopAfter: after.bodyScrollTop, headerBefore: before.header, headerAfter: after.header, footerBefore: before.footer, footerAfter: after.footer, horizontalOverflow: after.horizontalOverflow, longStatus: longStatusEvidence }
+  evidence.problems = selectorLayoutProblems(evidence, { scale, scrollable, longStatus })
   uiuxEvidence.selectorLayouts.push(evidence)
   saveUiuxEvidence()
-  await shot(`uiux-${name}`, { kind: 'selector-layout', scale, scrollable, viewport, native, problems: evidence.problems })
-  check(`selectorLayout:${name}`, evidence.problems.length === 0, { problems: evidence.problems, viewport, body: { before: before.bodyScrollTop, after: after.bodyScrollTop, scrollHeight: before.bodyScrollHeight, clientHeight: before.bodyClientHeight } })
+  await shot(`uiux-${name}`, { kind: longStatus ? 'selector-long-status' : 'selector-layout', scale, scrollable, viewport, native, longStatus: longStatusEvidence, problems: evidence.problems })
+  check(`selectorLayout:${name}`, evidence.problems.length === 0, { problems: evidence.problems, viewport, longStatus: longStatusEvidence, body: { before: before.bodyScrollTop, after: after.bodyScrollTop, scrollHeight: before.bodyScrollHeight, clientHeight: before.bodyClientHeight } })
   return evidence
 }
 
@@ -2063,16 +2082,23 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   const otherSession = (await newIsolatedSession('uiux-selector-load-other')).sessionId
   const loadControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'fail' })})`)
   await openIsolatedSession(sessionId, true)
-  await selectorOpen()
+  await instance.cdp.setViewport(360, 320, false)
+  await waitFor(() => instance.cdp.evaluate('innerWidth===360&&innerHeight===320'), 10_000)
+  const loadBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="alert"]'))`), 30_000)
   const loadText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
   const loadState = { kind: 'load-failure', control: await decisionControl(loadControl), text: loadText, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
   uiuxEvidence.selectorStates.push(loadState)
   saveUiuxEvidence()
   await shot('uiux-selector-load-failure', { kind: 'selector-load-failure', controlId: loadControl })
-  check('selectorLoadFailureIsVisibleAndRetryable', loadState.control.used && /决策操作失败|Decision action failed/i.test(loadText) && /重试|Retry/i.test(loadText), { control: loadState.control, text: loadText })
+  const loadModal = await beginModalAudit('selector-load-failure-long', '#weir-da-selector-panel', trigger, { before: loadBefore, selector: { scale: 1, scrollable: true, longStatus: { text: uiuxFixture.agents[0].status.zh, language: 'zh' } } })
+  check('selectorLoadFailureIsVisibleAndRetryable', loadState.control.used && loadText.includes(uiuxFixture.agents[0].status.zh) && /重试|Retry/i.test(loadText), { control: loadState.control, text: loadText, exactLongStatus: uiuxFixture.agents[0].status.zh })
+  await keyboardKey('Close long selector load failure', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(loadModal)
 
   const unknownControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'unknown-auto' })})`)
+  await selectorOpen()
   await keyboardActivate('Retry selector read with unknown status', 'button', { scope: '#weir-da-selector-panel', labels: ['重试', 'Retry'] })
   await waitFor(() => instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel')?.innerText.includes('自动回答状态未知')`), 30_000)
   const unknownText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
@@ -2086,7 +2112,7 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   await openIsolatedSession(otherSession, true)
   await openIsolatedSession(sessionId, true)
 
-  await selectorOpen()
+  const saveBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   const saveControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'setSelector', args: { sessionId, mode: 'agent', agentId: primary.agentId }, action: 'fail' })})`)
   await keyboardFocus('Current automatic selection before failed save', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
   await keyboardKey('Attempt assistant selection with injected save failure', 'ArrowDown', { target: primary.agentId })
@@ -2097,8 +2123,11 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   uiuxEvidence.selectorStates.push(saveState)
   saveUiuxEvidence()
   await shot('uiux-selector-save-failure', { kind: 'selector-save-failure', controlId: saveControl })
-  check('selectorSaveFailurePreservesAuthorityAndAllowsRetry', saveState.control.used && selectorMatches(failedAuthority.selector, 'auto') && /决策操作失败|Decision action failed/i.test(saveText) && /重试|Retry/i.test(saveText), { control: saveState.control, authority: failedAuthority.selector, text: saveText })
+  const saveModal = await beginModalAudit('selector-save-failure-long', '#weir-da-selector-panel', trigger, { before: saveBefore, selector: { scale: 1, scrollable: true, longStatus: { text: uiuxFixture.agents[0].status.zh, language: 'zh' } } })
+  check('selectorSaveFailurePreservesAuthorityAndAllowsRetry', saveState.control.used && selectorMatches(failedAuthority.selector, 'auto') && saveText.includes(uiuxFixture.agents[0].status.zh) && /重试|Retry/i.test(saveText), { control: saveState.control, authority: failedAuthority.selector, text: saveText, exactLongStatus: uiuxFixture.agents[0].status.zh })
   await keyboardKey('Close failed selector save before real retry', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(saveModal)
   const retryControl = await holdDecision('setSelector', { sessionId, mode: 'agent', agentId: primary.agentId })
   await selectorOpen()
   await keyboardFocus('Current automatic selection before held retry', '#weir-da-selector-panel [role="radiogroup"] input[type="radio"]:checked')
@@ -2346,6 +2375,27 @@ async function runEnglishVisualMatrix(sessionId) {
   await keyboardKey('Close English selector', 'Escape')
   await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
   await finishModalAudit(audit)
+  await newIsolatedSession('uiux-selector-long-en-other')
+  const englishControl = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'overview', args: { sessionId }, action: 'fail' })})`)
+  await openIsolatedSession(sessionId, true)
+  await instance.cdp.setViewport(360, 320, false)
+  const englishBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="alert"]))`), 30_000)
+  const englishText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
+  const englishState = { kind: 'load-failure-en', language: 'en', control: await decisionControl(englishControl), text: englishText, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
+  uiuxEvidence.selectorStates.push(englishState)
+  saveUiuxEvidence()
+  await shot('uiux-selector-english-long-failure-before', { kind: 'selector-long-status', controlId: englishControl, text: englishText })
+  const englishFailure = await beginModalAudit('selector-english-long-failure', '#weir-da-selector-panel', trigger, { before: englishBefore, selector: { scale: 1, scrollable: true, longStatus: { text: uiuxFixture.agents[0].status.en, language: 'en' } } })
+  check('englishLongFailureIsVisibleWrappedAndRetryable', englishState.control.used && englishText.includes(uiuxFixture.agents[0].status.en) && /Retry/i.test(englishText), { text: englishText, exactLongStatus: uiuxFixture.agents[0].status.en })
+  await keyboardKey('Close English long failure after measurement', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')&&document.activeElement===document.querySelector(${JSON.stringify(trigger)})`), 30_000)
+  await finishModalAudit(englishFailure)
+  await selectorOpen()
+  await keyboardActivate('Retry English long selector read', 'button', { scope: '#weir-da-selector-panel', labels: ['Retry'] })
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="radiogroup"]'))`), 30_000)
+  await keyboardKey('Close recovered English selector', 'Escape')
+  await waitFor(() => instance.cdp.evaluate(`!document.querySelector('#weir-da-selector-panel')`), 30_000)
   const restore = await setGuiLanguage(original.toLowerCase().startsWith('zh') ? 'zh' : 'en')
   const restored = await instance.cdp.evaluate('document.documentElement.lang')
   uiuxEvidence.languages.push({ language: 'restored', restore, restored })
@@ -2756,11 +2806,23 @@ try {
   const selectorStateKinds = new Set(uiuxEvidence.selectorStates.map(item => item.kind))
   const masterDetailKinds = new Set(uiuxEvidence.masterDetail.map(item => item.kind))
   const zoomComplete = [360, 768, 1440].every(width => ['selector', 'inbox'].every(surface => uiuxEvidence.zoom.some(item => item.width === width && item.surface === surface && item.operation?.method === 'Emulation.setPageScaleFactor' && item.operation?.pageScaleFactor === 2 && item.after?.visualViewport?.scale === 2)))
+  const requiredLongStatuses = [
+    { name: 'selector-load-failure-long', stateKind: 'load-failure', language: 'zh', text: uiuxFixture.agents[0].status.zh },
+    { name: 'selector-save-failure-long', stateKind: 'save-failure', language: 'zh', text: uiuxFixture.agents[0].status.zh },
+    { name: 'selector-english-long-failure', stateKind: 'load-failure-en', language: 'en', text: uiuxFixture.agents[0].status.en },
+  ]
+  const longStatusProblems = requiredLongStatuses.filter(expected => {
+    const layout = uiuxEvidence.selectorLayouts.find(item => item.name === expected.name && item.problems.length === 0 && item.longStatus?.expected === expected.text && item.longStatus?.actual === expected.text && item.longStatus?.role === 'alert' && item.longStatus?.ax?.some(node => !node.ignored && String(node.name ?? '').includes(expected.text)))
+    const state = uiuxEvidence.selectorStates.find(item => item.kind === expected.stateKind && item.control?.used === true && item.text?.includes(expected.text))
+    return !layout || !state
+  })
+  check('completeLongBilingualProductStatusEvidence', longStatusProblems.length === 0, { missing: longStatusProblems, required: requiredLongStatuses })
   const uiuxCoverage = {
     confirmations: requiredConfirmations.filter(kind => !confirmationKinds.has(kind)),
     selectorStates: ['load-failure', 'unknown', 'save-failure', 'save-pending'].filter(kind => !selectorStateKinds.has(kind)),
     masterDetail: ['create', 'edit', 'learning'].filter(kind => !masterDetailKinds.has(kind)),
     focusTransitions: focusProblems,
+    longStatus: longStatusProblems,
     coldReveals: ['success', 'error'].filter(kind => !uiuxEvidence.coldReveals.some(item => item.kind === kind && item.problems.length === 0)),
     zoomComplete,
     english: uiuxEvidence.languages.some(item => item.language === 'en' && item.copyProblems?.length === 0),

@@ -304,6 +304,19 @@ export function selectorLayoutProblems(measurement, expected = {}) {
   for (const [name, before, after] of [['header', measurement?.headerBefore, measurement?.headerAfter], ['footer', measurement?.footerBefore, measurement?.footerAfter]]) {
     if (!before || !after || Math.abs(before.top - after.top) > 0.5 || Math.abs(before.bottom - after.bottom) > 0.5) problems.push(`${name} moved while only the selector body scrolled`)
   }
+  if (expected.longStatus) {
+    const status = measurement?.longStatus
+    const text = expected.longStatus.text
+    if (!status || status.expected !== text || status.actual !== text) problems.push('selector lacks the exact long bilingual product status text')
+    if (status?.role !== 'alert') problems.push('long product status is not a visible alert')
+    if (status?.whiteSpace !== 'normal' || !['anywhere', 'break-word'].includes(status?.overflowWrap)) problems.push('long product status does not use natural wrapping')
+    if (!Number.isFinite(status?.clientWidth) || !Number.isFinite(status?.scrollWidth) || status.scrollWidth > status.clientWidth + 1) problems.push('long product status introduces horizontal wrapping overflow')
+    if (!Number.isFinite(status?.rectHeight) || !Number.isFinite(status?.lineHeight) || status.rectHeight <= status.lineHeight * 1.5) problems.push('long product status did not wrap to multiple rendered lines')
+    const actionName = expected.longStatus.language === 'en' ? /Retry/i : /重试/
+    if (!status?.primaryAction?.visible || !status?.primaryAction?.hitTest || !actionName.test(status?.primaryAction?.accessibleName ?? '')) problems.push('long product status primary action is not reachable')
+    const ax = Array.isArray(status?.ax) ? status.ax : []
+    if (!ax.some(node => !node.ignored && node.role === 'alert') || !ax.some(node => !node.ignored && String(node.name ?? '').includes(text))) problems.push('long product status lacks accessible alert and exact long-text evidence')
+  }
   return problems
 }
 

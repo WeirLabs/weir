@@ -267,6 +267,14 @@ test('selector layout guard requires visual-viewport containment fixed ends and 
   assert.match(selectorLayoutProblems({ ...zoomed, viewport: { ...zoomed.viewport, rects: { ...zoomed.viewport.rects, dialog } } }, { scale: 2, scrollable: true }).join('\n'), /visual viewport/)
   const few = { ...evidence, bodyScrollHeight: 180, bodyClientHeight: 180, bodyScrollTopAfter: 0, viewport: { ...measuredViewport, rects: { ...measuredViewport.rects, dialog: { ...dialog, height: 240, bottom: 260 } } } }
   assert.deepEqual(selectorLayoutProblems(few, { scale: 1, scrollable: false }), [])
+  const longText = '暂时无法读取或保存决策助手选择。已有页面内容不会被清除。请保留当前页面并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。'
+  const longStatus = { expected: longText, actual: longText, role: 'alert', whiteSpace: 'normal', overflowWrap: 'anywhere', clientWidth: 280, scrollWidth: 280, rectHeight: 90, lineHeight: 18, primaryAction: { accessibleName: '重试', visible: true, hitTest: true }, ax: [{ ignored: false, role: 'alert', name: '' }, { ignored: false, role: 'staticText', name: longText }] }
+  const longOptions = { scale: 1, scrollable: true, longStatus: { text: longText, language: 'zh' } }
+  assert.deepEqual(selectorLayoutProblems({ ...evidence, longStatus }, longOptions), [])
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, actual: 'short' } }, longOptions).join('\n'), /exact long/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, scrollWidth: 340 } }, longOptions).join('\n'), /wrapping|horizontal/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, primaryAction: { ...longStatus.primaryAction, hitTest: false } } }, longOptions).join('\n'), /primary action/)
+  assert.match(selectorLayoutProblems({ ...evidence, longStatus: { ...longStatus, ax: [{ ignored: false, role: 'alert', name: '' }] } }, longOptions).join('\n'), /accessible.*long|long.*accessible/)
 })
 
 test('scroll guard requires real wheel touch and PageDown attempts when requested', () => {
