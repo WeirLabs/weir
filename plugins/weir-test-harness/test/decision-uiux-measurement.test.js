@@ -55,6 +55,11 @@ function readableMainRegionAudit() {
 test('main region oracle rejects screenshot-proven narrow compression and host occlusion', () => {
   const readable = readableMainRegionAudit()
   assert.deepEqual(mainRegionProblems(readable), [])
+  const intrinsicTitle = readableMainRegionAudit()
+  intrinsicTitle.viewport = { width: 1440, visualWidth: 1440, scale: 1 }
+  intrinsicTitle.mainRegion.hostNavigation = null
+  intrinsicTitle.mainRegion.regions.title = visibleRegion(24, 24, 96, 32)
+  assert.deepEqual(mainRegionProblems(intrinsicTitle), [], 'the oracle measures title occlusion, not intrinsic text width')
   const expanded = structuredClone(readable)
   Object.assign(expanded.mainRegion.regions.page.rect, { x: 280.5, left: 280.5, width: 79.5, right: 360 })
   Object.assign(expanded.mainRegion.regions.inner.rect, { x: 280.5, left: 280.5, width: 79.5, right: 360 })

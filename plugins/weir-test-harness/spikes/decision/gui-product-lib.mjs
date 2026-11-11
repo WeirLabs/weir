@@ -65,6 +65,43 @@ export function layoutProblems(audit) {
   return problems
 }
 
+export function mainRegionProblems(audit) {
+  const problems = []
+  const main = audit?.mainRegion
+  if (!main) return ['missing Decision main-region geometry and hit-test evidence']
+  const visualWidth = Number(audit?.viewport?.visualWidth ?? audit?.viewport?.width)
+  if (!Number.isFinite(visualWidth) || visualWidth <= 0) problems.push('missing real visual width for Decision main region')
+  const pageMinimum = Math.min(320, Math.max(1, visualWidth - 24))
+  const contentMinimum = Math.min(280, Math.max(1, visualWidth - 24))
+  const inspect = (name, target, minimumWidth = 0, required = true) => {
+    if (!target) {
+      if (required) problems.push(`missing ${name} geometry`)
+      return
+    }
+    const value = target.rect
+    if (!value || !['left', 'right', 'top', 'bottom', 'width', 'height'].every(field => Number.isFinite(value[field])) || value.width <= 0 || value.height <= 0) {
+      problems.push(`missing finite ${name} CSS rect`)
+    } else if (minimumWidth > 0 && value.width + 1 < minimumWidth) {
+      problems.push(`${name} lacks readable width: ${value.width} < ${minimumWidth}`)
+    }
+    if (!Number.isInteger(target.hitTestSamples) || target.hitTestSamples <= 0 || !Array.isArray(target.occlusions)) problems.push(`${name} lacks independent hit-test evidence`)
+    for (const hit of target.occlusions ?? []) problems.push(`${name} occluded by foreign hit-test winner at ${hit.x},${hit.y}`)
+  }
+  const regions = main.regions ?? {}
+  inspect('Decision page', regions.page, pageMinimum)
+  inspect('Decision inner', regions.inner, pageMinimum)
+  for (const name of ['header', 'nav', 'view']) inspect(`Decision ${name}`, regions[name], contentMinimum)
+  inspect('Decision title', regions.title)
+  for (const [index, card] of (regions.cards ?? []).entries()) inspect(`Decision card ${index + 1}`, card, contentMinimum)
+  if (!Array.isArray(main.navigationActions) || main.navigationActions.length !== 3) problems.push('Decision must expose exactly three primary navigation actions')
+  for (const action of main.navigationActions ?? []) inspect(`Decision navigation action ${action.name ?? 'unnamed'}`, action)
+  for (const action of main.primaryActions ?? []) inspect(`Decision primary action ${action.name ?? 'unnamed'}`, action)
+  const ordinaryNarrow = Math.abs((audit?.viewport?.scale ?? 1) - 1) < 0.01 && Number(audit?.viewport?.width) <= 400
+  if (ordinaryNarrow && !main.hostNavigation) problems.push('missing visible host navigation return action at ordinary narrow width')
+  else if (main.hostNavigation) inspect('host navigation return action', main.hostNavigation)
+  return problems
+}
+
 export function recordProjectionProblems(detail, dom) {
   const problems = []
   const current = detail?.case
