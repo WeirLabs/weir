@@ -1716,7 +1716,7 @@ async function measureScrollContainers(selectors = {}, originSelector = null) {
     const result=Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
       identity:{tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):''},
       scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,scrollWidth:el.scrollWidth,
-      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight','paddingBottom'].map(key=>[key,el.style[key]??''])),
+      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight','paddingBottom','overflowAnchor'].map(key=>[key,el.style[key]??''])),
       computed:{overflowY:computed.overflowY,overscrollBehavior:computed.overscrollBehavior},
       rect:{x:rect.x,y:rect.y,left:rect.left,top:rect.top,width:rect.width,height:rect.height,right:rect.right,bottom:rect.bottom},
     }]}))
@@ -2406,7 +2406,7 @@ async function runEnglishVisualMatrix(sessionId) {
   await openIsolatedSession(sessionId, true)
   await instance.cdp.setViewport(360, 320, false)
   const englishBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
-  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role="alert"]))`), 30_000)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#weir-da-selector-panel [role=alert]'))`), 30_000)
   const englishText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
   const englishState = { kind: 'load-failure-en', language: 'en', control: await decisionControl(englishControl), text: englishText, ax: await instance.cdp.accessibility('#weir-da-selector-panel') }
   uiuxEvidence.selectorStates.push(englishState)

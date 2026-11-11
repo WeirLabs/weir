@@ -165,10 +165,10 @@ test('scroll lock guard covers root body and nested scrollers with exact restora
   const names = ['root', 'body', 'decisionPage', 'composer', 'session']
   const before = Object.fromEntries(names.map((name, index) => [name, {
     scrollTop: index * 11, scrollLeft: index,
-    inline: { overflow: index % 2 ? 'auto' : '', overscrollBehavior: 'contain', paddingRight: '' },
+    inline: { overflow: index % 2 ? 'auto' : '', overscrollBehavior: 'contain', paddingRight: '', overflowAnchor: 'auto' },
   }]))
   const during = Object.fromEntries(names.map(name => [name, {
-    ...before[name], inline: { overflow: 'hidden', overscrollBehavior: 'none', paddingRight: '12px' },
+    ...before[name], inline: { overflow: 'hidden', overscrollBehavior: 'none', paddingRight: '12px', overflowAnchor: 'none' },
   }]))
   const after = Object.fromEntries(names.map(name => [name, structuredClone(before[name])]))
   assert.deepEqual(scrollLockProblems({ before, during, after }, names), [])
@@ -181,7 +181,7 @@ test('only confirmed content shrink restores an obsolete offset to the reduced l
   const names = ['root', 'decisionPage']
   const container = (scrollTop, scrollHeight, overflow = '') => ({
     scrollTop, scrollLeft: 0, scrollHeight, clientHeight: 900, scrollWidth: 900, clientWidth: 900,
-    inline: { overflow, overflowX: '', overflowY: '', overscrollBehavior: overflow ? 'none' : 'contain', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '' },
+    inline: { overflow, overflowX: '', overflowY: '', overscrollBehavior: overflow ? 'none' : 'contain', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '', overflowAnchor: overflow ? 'none' : 'auto' },
   })
   const before = { root: container(20, 900), decisionPage: container(372, 3580) }
   const during = { root: container(20, 900, 'hidden'), decisionPage: container(372, 3580, 'hidden') }
@@ -284,12 +284,21 @@ test('selector layout guard requires visual-viewport containment fixed ends and 
 
 test('scroll guard requires real wheel touch and PageDown attempts when requested', () => {
   const names = ['root', 'body']
-  const before = Object.fromEntries(names.map(name => [name, { scrollTop: 20, scrollLeft: 0, inline: { overflow: '', overflowX: '', overflowY: '', overscrollBehavior: '', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '' } }]))
-  const during = Object.fromEntries(names.map(name => [name, { ...before[name], inline: { ...before[name].inline, overflow: 'hidden', overscrollBehavior: 'none' } }]))
+  const before = Object.fromEntries(names.map(name => [name, { scrollTop: 20, scrollLeft: 0, inline: { overflow: '', overflowX: '', overflowY: '', overscrollBehavior: '', overscrollBehaviorX: '', overscrollBehaviorY: '', paddingRight: '', overflowAnchor: 'auto' } }]))
+  const during = Object.fromEntries(names.map(name => [name, { ...before[name], inline: { ...before[name].inline, overflow: 'hidden', overscrollBehavior: 'none', overflowAnchor: 'none' } }]))
   const after = structuredClone(before)
   const attempts = [{ type: 'wheel', observed: true }, { type: 'touch', observed: true }, { type: 'PageDown', observed: true }]
   assert.deepEqual(scrollLockProblems({ before, during, after, attempts }, names, ['wheel', 'touch', 'PageDown']), [])
   assert.match(scrollLockProblems({ before, during, after, attempts: attempts.slice(1) }, names, ['wheel', 'touch', 'PageDown']).join('\n'), /wheel/)
+})
+
+test('scroll lock guard requires browser scroll anchoring to be disabled and restored', () => {
+  const before = { root: { scrollTop: 20, scrollLeft: 0, inline: { overflow: '', overscrollBehavior: '', overflowAnchor: 'auto' } } }
+  const during = { root: { scrollTop: 20, scrollLeft: 0, inline: { overflow: 'hidden', overscrollBehavior: 'none', overflowAnchor: 'none' } } }
+  const after = structuredClone(before)
+  assert.deepEqual(scrollLockProblems({ before, during, after }, ['root']), [])
+  const anchored = { root: { ...during.root, inline: { ...during.root.inline, overflowAnchor: 'auto' } } }
+  assert.match(scrollLockProblems({ before, during: anchored, after }, ['root']).join('\n'), /anchoring/)
 })
 
 test('session scroller audit requires real before during after evidence or a justified absence', async () => {

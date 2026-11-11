@@ -297,7 +297,7 @@ window.__ModuleLoader__.load({
     }
 
     const decisionScrollLocks = new WeakMap();
-    const DECISION_SCROLL_STYLES = ["overflow", "overflowX", "overflowY", "overscrollBehavior", "overscrollBehaviorX", "overscrollBehaviorY", "paddingRight", "paddingBottom"];
+    const DECISION_SCROLL_STYLES = ["overflow", "overflowX", "overflowY", "overscrollBehavior", "overscrollBehaviorX", "overscrollBehaviorY", "paddingRight", "paddingBottom", "overflowAnchor"];
 
     function acquireDecisionScrollLock(hostDocument, originElement, openModal) {
       if (!hostDocument || typeof hostDocument !== "object") { openModal(); return () => {}; }
@@ -356,6 +356,7 @@ window.__ModuleLoader__.load({
         style.overscrollBehavior = "none";
         style.overscrollBehaviorX = "none";
         style.overscrollBehaviorY = "none";
+        style.overflowAnchor = "none";
       }
       for (const [target, position] of preOpen) {
         if (position.window) {

@@ -358,6 +358,7 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
     if (!initial || !locked || !restored) { problems.push(`${name}: missing root/nested scroller measurement`); continue }
     if (locked.inline?.overflow !== 'hidden') problems.push(`${name}: overflow was not locked`)
     if (locked.inline?.overscrollBehavior !== 'none') problems.push(`${name}: overscroll was not contained`)
+    if (locked.inline?.overflowAnchor !== 'none') problems.push(`${name}: browser scroll anchoring was not disabled`)
     if (locked.scrollTop !== initial.scrollTop || locked.scrollLeft !== initial.scrollLeft) problems.push(`${name}: background scroll moved while locked`)
     if (!same(restored.inline, initial.inline)) problems.push(`${name}: inline styles were not restored exactly`)
 

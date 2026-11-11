@@ -109,7 +109,7 @@ function makeScrollFixture() {
     name, parentElement, scrollTop, scrollLeft: scrollTop - 1, offsetWidth: 200, clientWidth: 200,
     style: {
       overflow: 'auto', overflowX: 'hidden', overflowY: 'auto',
-      overscrollBehavior: 'contain', overscrollBehaviorX: 'auto', overscrollBehaviorY: 'contain', paddingRight: '7px',
+      overscrollBehavior: 'contain', overscrollBehaviorX: 'auto', overscrollBehaviorY: 'contain', paddingRight: '7px', overflowAnchor: 'auto',
     },
     computed: { overflowY: 'auto', paddingRight: '7px' },
   })
@@ -136,6 +136,7 @@ function assertScrollLocked(fixture) {
     assert.equal(target.style.overflow, 'hidden', target.name)
     assert.equal(target.style.overflowY, 'hidden', target.name)
     assert.equal(target.style.overscrollBehavior, 'none', target.name)
+    assert.equal(target.style.overflowAnchor, 'none', `${target.name} disables browser scroll anchoring while locked`)
   }
 }
 
@@ -145,6 +146,7 @@ function assertScrollRestored(fixture) {
     assert.equal(target.style.overflowX, 'hidden', target.name)
     assert.equal(target.style.overflowY, 'auto', target.name)
     assert.equal(target.style.overscrollBehavior, 'contain', target.name)
+    assert.equal(target.style.overflowAnchor, 'auto', `${target.name} restores its prior scroll anchoring`)
     assert.equal(target.style.overscrollBehaviorX, 'auto', target.name)
     assert.equal(target.style.overscrollBehaviorY, 'contain', target.name)
     assert.equal(target.style.paddingRight, '7px', target.name)
