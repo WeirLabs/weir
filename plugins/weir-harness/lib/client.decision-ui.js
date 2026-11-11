@@ -368,6 +368,22 @@ window.__ModuleLoader__.load({
           target.scrollLeft = position.scrollLeft;
         }
       }
+      for (const snapshot of state.snapshots.values()) {
+        if (snapshot.onScroll) continue;
+        const target = snapshot.target;
+        const onScroll = () => {
+          if (snapshot.window) {
+            if (target.scrollX === snapshot.scrollX && target.scrollY === snapshot.scrollY) return;
+            if (typeof target.scrollTo === "function") target.scrollTo(snapshot.scrollX, snapshot.scrollY);
+            else { target.scrollX = snapshot.scrollX; target.scrollY = snapshot.scrollY; }
+          } else {
+            if (target.scrollTop !== snapshot.scrollTop) target.scrollTop = snapshot.scrollTop;
+            if (target.scrollLeft !== snapshot.scrollLeft) target.scrollLeft = snapshot.scrollLeft;
+          }
+        };
+        snapshot.onScroll = onScroll;
+        target.addEventListener?.("scroll", onScroll);
+      }
       state.count += 1;
       let released = false;
       return () => {
@@ -378,6 +394,7 @@ window.__ModuleLoader__.load({
         if (state.count > 0) return;
         for (const snapshot of [...state.snapshots.values()].reverse()) {
           const target = snapshot.target;
+          if (snapshot.onScroll) { target.removeEventListener?.("scroll", snapshot.onScroll); snapshot.onScroll = null; }
           if (snapshot.window) {
             if (typeof target.scrollTo === "function") target.scrollTo(snapshot.scrollX, snapshot.scrollY);
             else { target.scrollX = snapshot.scrollX; target.scrollY = snapshot.scrollY; }

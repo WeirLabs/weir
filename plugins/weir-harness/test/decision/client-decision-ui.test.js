@@ -351,6 +351,42 @@ test('native modal locks and restores root, Decision page, session, and composer
   }
 })
 
+test('native modal scroll lock resists Host programmatic auto-follow with event cleanup and no polling', async () => {
+  const fixture = makeScrollFixture()
+  for (const target of [...fixture.targets, fixture.view]) {
+    const listeners = new Map()
+    target.scrollListeners = listeners
+    target.addEventListener = (type, listener) => { if (type === 'scroll') { const current = listeners.get(type) ?? new Set(); current.add(listener); listeners.set(type, current) } }
+    target.removeEventListener = (type, listener) => { if (type === 'scroll') { const current = listeners.get(type); current?.delete(listener); if (current?.size === 0) listeners.delete(type) } }
+    target.emitScroll = () => { for (const listener of listeners.get('scroll') ?? []) listener() }
+  }
+  const native = { open: false, style: {}, showModal() { this.open = true }, close() { this.open = false } }
+  const runtime = makeModalReact(node => node.type === 'dialog' ? native : undefined)
+  const oldDocument = globalThis.document
+  globalThis.document = fixture.document
+  try {
+    const ui = await load(runtime.react)
+    runtime.render(ui.ConfirmDialog, {
+      id: 'scroll-lock-auto-follow', title: 'Confirm', body: 'Body', confirmLabel: 'Confirm', cancelLabel: 'Cancel',
+      returnFocus: fixture.origin, onConfirm() {}, onCancel() {},
+    })
+    const target = fixture.composer
+    const before = { top: target.scrollTop, left: target.scrollLeft }
+    assert.equal(target.scrollListeners.get('scroll')?.size, 1, 'the real scroller has one event-driven lock')
+    target.scrollTop = before.top + 111
+    target.scrollLeft = before.left + 17
+    target.emitScroll()
+    assert.deepEqual({ top: target.scrollTop, left: target.scrollLeft }, before, 'Host auto-follow cannot move the locked background')
+    runtime.unmount()
+    assertScrollRestored(fixture)
+    assert.equal(target.scrollListeners.has('scroll'), false, 'release removes the scroll listener')
+  } finally {
+    runtime.unmount()
+    if (oldDocument === undefined) delete globalThis.document
+    else globalThis.document = oldDocument
+  }
+})
+
 test('native modal preserves fractional pre-open offsets when showModal itself clamps them', async () => {
   const fixture = makeScrollFixture()
   const before = fixture.targets.map((target, index) => {
