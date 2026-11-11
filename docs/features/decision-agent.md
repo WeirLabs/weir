@@ -14,7 +14,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 - 管理页可创建、编辑、停用和归档 Agent。默认表单只需名称与可选的普通语言判断偏好，创建沿用当前 workspace 的默认 scope 并继承会话模型；完整 scope、授权类、模型路由和 `userDescription` 版本历史在高级设置/诊断中维护。同一工作区内名称大小写不敏感唯一。
 - `generatedDescription` 在当前 P0–P3 恒为 `{revision: 0, text: ''}`，只读且没有生成或写入入口；它为空不妨碍决策。P3 只把用户裁决、有效纠正和已赞回答整合为可审阅原则，不生成画像。
-- 会话输入框右侧使用紧凑触发器与专用选择面板，不再是原生下拉框。面板提供 `Off`、独立的 `Auto` 和当前工作区已启用的具体 Agent，选择即保存并关闭，没有额外确认；三态按根会话持久化，子会话解析到同一根会话。Auto 选项根据只读 `overview.auto` 显示实际清理后的 A/B/C 白名单与 Shadow 开关；白名单为空时明确说明新 Auto 请求不会自动回答，状态缺失时不假定就绪。读取中不会伪装成 `Off`，保存失败保留先前有效选择，重复提交受 pending guard 约束，成功后焦点返回已启用的触发器。
+- 会话输入框右侧使用紧凑触发器与专用选择面板，不再是原生下拉框。默认文案为“不启用助手”“自动选择助手”和当前工作区已启用的具体 Agent，选择即保存并关闭，没有额外确认；底层 `off|auto|agent` 三态仍按根会话持久化，子会话解析到同一根会话。自动选择根据只读 `overview.auto` 用普通语言说明真实允许类别数量、空范围、未知状态与“选择对比”状态，A/B/C、Shadow 和原始值只留在高级诊断。面板分为固定头部、独立滚动内容区和固定底部管理入口；宽度不超过 360 CSS px，并按真实动态/可视视口限制高度和位置，长名称与长状态自然换行。读取中不会伪装成未启用，保存失败保留先前有效选择，重复提交受 pending guard 约束，成功后焦点返回已启用的触发器。
 - 总开关 `decisionAgentsEnabled` 默认关闭。全局关闭或会话 `Off` 时，Hook 不拦截、咨询明确失败，不创建 Case、路由样本或数据库文件。
 - 钉选 Agent 不可用时，选择面板保留其名称并明确标为不可用，不静默改派或显示为正常可选；显式咨询指定其他 Agent 只影响该次调用。修订会重新校验目标 Agent 并记录新路由。
 
@@ -48,8 +48,11 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 ### 管理页与恢复
 
 - 左侧栏使用专用图标进入管理页，默认显示“待你决定”；主导航只有待你决定、判断记录、助手管理，指标与路由复盘位于既有高级区域。复盘以普通语言展示 pinned/Shadow 一致或分歧、Shadow/Auto 无选择、歧义、失败、手动改派及不可比较/无基线，附真实 summary、改派方向和时间；窗口可选 `24h|7d|30d|all`，每页 20 条，加载更多追加并按 RouteDecision 去重，记录链接先经既有授权 `record` 读取。复盘没有采纳/忽略或自动晋升操作。待办直接提供单选/多选/文本回答、建议填入和次级恢复动作；记录以题面摘要、助手、状态和时间的可读列表呈现，桌面双栏、窄屏钻进详情，分页追加并去重。
+- 助手管理使用紧凑摘要与独立详情/编辑区域：桌面保留可见列表并形成主从布局，窄屏使用列表 → 详情/编辑 → 返回的钻取路径。摘要只保留名称、状态、两行偏好摘要与待审标记；`agentDrillIn` 独立于记录页状态。返回后再次进入同一助手或同一创建表单只恢复视图，保留精确草稿、所选学习 Run/Snapshot 且不重复读取；真正切换目标仍执行未保存确认和权威重读。
 - 决策记录仍支持 Agent、Case 状态、Attempt 结局、返回原因、scope、反馈状态六维过滤；详情只读拼装 Case/Attempts/Evidence/Feedback 和 RouteDecision。默认只显示当前 Attempt 的证据，历史 Attempt 各自分组；Snapshot pin、L2/L3/L5、层大小、省略项和原始 JSON 仅在高级诊断展示，旧 P1/P2 manifest 与 pinned-empty 不伪造命中。
 - 会话卡与收件箱以真实问题、答案、理由和当前依据为中心，每个区域至多一个主操作。Hook 原生提问保持唯一主回答面，卡片不复制第二套表单；无原生回答面的显式咨询复用同一回答组件。赞、踩、撤销、备注、纠正、裁决、改派、取消和重试都经既有 Host 远端动作写入权威库并校验根会话/workspace，写后重读，重复点击受 pending guard 约束。`agentId=null` 的 Auto 记录显示“尚未选择助手”和真实 Auto 路由状态，保留回答、改派、取消及只读 RouteDecision 历史，但不显示 Agent 反馈、纠正或 retry；明确改派并由权威重读确认归属后，才恢复普通 owned recovery。
+- 选择面板与取消、放弃编辑、助手状态及 Snapshot 发布/拒绝/回滚等确认共用原生 `<dialog>.showModal()` 模态底座，遮罩覆盖真实可视视口，背景 inert；root/body、Decision 页面及实际 composer/session 滚动祖先均被锁定，只有面板内部滚动区可滚动。滚动基线取焦点到达触发器后的实际打开前位置；取消/普通关闭精确恢复，确认删除或缩短内容时恢复到新的合法边界。确认动作等待返回 Promise 结算和下一次布局后再恢复焦点，原目标不可用时回到当前任务导航或选择器。
+- 指定卡片展开使用 `revealOnOpen="end"` 与 `revealReady`：loading 占位不触发定位，首个冷加载成功或错误完成布局后仅经一次 RAF 以 `instant/end` 显示展开区域末尾；同一打开周期的后续刷新不重复跳转，不收走输入焦点或清除草稿。嵌套高级诊断不另建第二套滚动逻辑。
 - Agent 详情把学习治理收敛为“整理新原则 → 审阅变化/来源/结构校验 → 采用或放弃”，当前版本可明确恢复前序版本。只有匹配的候选 Run、Snapshot、父版本（存在时）、diff 和最新 revision 全部加载后才允许写入；候选摘要、加载失败或过期详情不能触发生命周期操作。跨根来源以授权的有界摘录就地展示，只有当前根 record reader 确认可读才导航；当前 Snapshot 超出最近 20 条摘要仍保留真实 revision 和恢复入口。
 - 运行层失败在预算内重试，耗尽后进入可恢复待办。显式 retry/reassign 每次只授权一个新 Attempt，并重新校验 Agent；Auto retry 不因选择器变化重新分类或路由，无归属 Case 必须先改派，不能直接 retry。重复传输不新增 Attempt。重启保留等待状态和三态选择器，未完成 Attempt 标为 `interrupted`，不会变成答案；未提交权威路由的 `received + agentId=null` intake 在打开存储时转为 `awaiting_user(interrupted)`，重放只返回该待办，不重新路由或创建 Attempt。旧版无行与恢复根会话保持 `Off`，不会因 `decisionAgentSelectorDefault=auto` 被补写为 Auto；显式 `Off` 会保留持久行，之后的默认值变化也不能覆盖它。
 
@@ -101,7 +104,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - `DecisionQuery.routingReview({sessionId,workspaceKey,window,cursor})` 只读 SQL 内连接要求 RouteDecision 与 Case 的 `case_id` 和根会话同时匹配，并在 Broker 传入时继续限定授权 workspace；孤行、跨根关联和越界 workspace 不进入投影，也不解析 Profile 名称。`summary` 固定含 `agreement`、`disagreement`、`shadowNone`、`shadowAmbiguous`、`shadowFailure`、`autoNone`、`autoAmbiguous`、`autoFailure`、`manualReassign`、`uncomparable`；每项含 `caseId`、`routeDecisionId`、`mode`、`candidates`、`chosen`、`reason`、`ambiguity`、`createdAt`、当前 `agentId`、`outcome`、至多 240 个 Unicode 字符的 `questionSummary` 与 `record:{caseId}`，Shadow 比较另含 `baselineAgentId`，改派另含 `reassignment`。
 - 复盘窗口为 `24h|7d|30d|all`，按 `createdAt DESC, routeDecisionId DESC` 稳定排序并固定每页 20 条；opaque cursor 绑定根会话、窗口和最后一条的位置，重复翻页不重复，非法窗口/游标分别抛 `INVALID_ROUTING_WINDOW`/`INVALID_ROUTING_CURSOR`。`summary` 覆盖整个窗口而非当前页。`metrics.routing` 与复盘 summary 来自同一次纯投影规则，`reassignments` 复用 `routing.manualReassign`，`selectorOffBypasses` 仍是诚实常量 0。Broker 与 `/api/weirDecision/routingReview` 都先经 `sessionContext` 解析真实根/workspace，记录导航继续调用既有授权 `record`；全局关闭仍只有 `overview` 获得只读降级，空存储读不会为复盘创建数据库。
 - `overview` 的 `auto.answerClasses` 只投影当前经过封闭校验和去重的 A/B/C 白名单，`auto.shadow` 只投影布尔开关；二者不推断 Active Auto 是否就绪，也不取代 `status.enabled/available`。
-- Client 由包内共享视觉组件、纯投影模型和选择器/页面/会话卡/学习 chunk 组成，所有 chunk 在组合根并行加载。界面使用宿主主题 token、locale 和响应式/键盘/读屏契约；诊断、指标与路由复盘按需读取。复盘追加使用请求 token、会话与窗口/epoch guard，迟到响应不会覆盖新会话、窗口或筛选；追加失败保留已有项目，真实空数据、初始错误和追加错误分别呈现。会话卡、收件箱与记录详情的 RouteDecision 历史均只读，无归属记录不开放 Agent 命名空间反馈或 retry。决策卡不写自定义 Session 事件、不使用 `session.append` 或 `commands.execute`，不靠定时轮询刷新。审计镜像尽力而为，不含题面、证据正文或用户画像正文。
+- Client 由包内共享视觉组件、纯投影模型和选择器/页面/会话卡/学习 chunk 组成，所有 chunk 在组合根并行加载。界面使用宿主主题 token、locale 和响应式/键盘/读屏契约；诊断、指标与路由复盘按需读取。共享模态使用原生 top layer、按 visualViewport 实际宽度/高度/偏移及 scale 约束尺寸和位置，并监听 resize/scroll 后精确清理；普通窄屏为宿主返回控件保留顶部空间，真实缩放时启用紧凑钻取布局。滚动锁按 Document 可重入，覆盖两个滚动条方向、保存打开前位置并精确恢复 inline 样式。复盘追加使用请求 token、会话与窗口/epoch guard，迟到响应不会覆盖新会话、窗口或筛选；追加失败保留已有项目，真实空数据、初始错误和追加错误分别呈现。会话卡、收件箱与记录详情的 RouteDecision 历史均只读，无归属记录不开放 Agent 命名空间反馈或 retry。决策卡不写自定义 Session 事件、不使用 `session.append` 或 `commands.execute`，不靠定时轮询刷新。审计镜像尽力而为，不含题面、证据正文或用户画像正文。
 
 ## 边界与失败语义
 
@@ -122,7 +125,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。本轮新增版本化 Router 枚举、不可变 `auto`/`auto_shadow` RouteDecision、Broker 保守配置解析与 `router.test.js` 的受限路由契约；`selector-default.test.js` 和 `legacy-v1.test.js` 覆盖三态、fresh-root/legacy 恢复与 v1 不变。`broker-auto.test.js`/`broker-auto-flight.test.js` 覆盖 Active Auto 准入、严格路由、原子提交、single-flight、修订指纹、并发许可和取消/flush；`broker-shadow.test.js` 覆盖 pinned Hook/consult、Shadow-off 对照、none/ambiguous/failure、全部排除入口、幂等/恢复和领域副作用计数；`cases.test.js`、`broker-actions.test.js`、`broker-consult.test.js` 与 `broker-lifecycle.test.js` 覆盖无 Evidence 的无归属回答/重读/检索、取消/拒绝 retry、原子改派回滚与不可变链，以及 received-null 中断恢复。`routing-review.test.js` 与 `remote.test.js` 覆盖纯链分类、历史不回写、完整链窗口化、20 条稳定游标分页、root/workspace 隔离、同源 metrics、Broker 授权和 bare-args remote/endpointsLive。P4 Client 公共契约另覆盖 Auto 白名单/Shadow 说明、保存/失败/焦点与 root/child 恢复、复盘 summary/普通语言 outcome、20 条追加与 RouteDecision 去重、迟到会话/窗口响应、授权记录导航，以及无归属卡/收件箱/记录的反馈和 retry 边界。最终聚焦 Client **109/109**、完整 Decision **503/503**、测试装置 **453/453**、Client/settings **100/100**、preset/composition **97/97** 与 checkJs 全部通过，33 个 Client chunks 已重建 digest；Weir 全包最终 **3614 PASS / 0 FAIL / 1 既有平台跳过**（共 3615 项）。新增真实 headless 与 Desktop 证据见下。
 - headless 集成：本轮最终从仓库根运行完整 integration 矩阵 **958/958 PASS**，共 77 个场景，日志为 `.weir/decision-auto-router-final-integration.log`；其中 `decision-auto-route` **31/31**，并包含既有 `decision-hook`、`decision-consult`、`decision-batch`、`decision-route`、`decision-recovery`、`decision-feedback`、`decision-isolation`、`decision-ui-remote`、`decision-memory` 与 `decision-learning`，无回归。learning 场景的真实进程阶段（含一次 exact-PID SIGKILL）继续检查生命周期、DB/wire、对抗输入、恢复、预算、历史不可变和 P1/P2/schema-v1 兼容。
 - 真实隔离 Desktop GUI：保留既有 A/B/C 与 P2 memory 验收；P3 主生命周期 run `8wkaN8` **18/18**，整改 run `Tc4Mks` **10/10**，覆盖手动整合、候选 diff/来源/结构重放、发布、只读 Attempt L2、回滚/拒绝、重启、>20 历史、correction/cross-root 来源及 exact-PID/端口清理。测试只启动独立临时 profile/进程，不操作用户当前 App 或其存储。
-- 产品化 UX 的真实隔离 Desktop 最新验收 run `bPxzdF` **72/72 PASS**：54 张真实截图、526 条原始网络 RPC、94 条权威直读，覆盖完整生命周期、360/768/1440 CSS px、明暗主题、真实 200% 缩放、96 组键盘交互与六组持久化 Accessibility 证据；held `decision_consult` 卡已验证只有一个紧随卡头的回答表单，没有重复 `.weir-da-record-answers` 或 `.weir-da-suggestion-review` 内容，次级证据/历史/恢复/反馈/诊断均位于表单下方。三个隔离实例均完成 exact-PID/端口清理，运行异常、console error、Slot crash 与加载失败均为零，Attempt/Snapshot 历史内容对照无改写。
+- 产品化 UIUX 整改的真实隔离 Desktop 验收 run `SpbYkp` **219/219 PASS**：140 张真实截图、2167 条原始网络 RPC、26 项视觉审计、26 组模态量测、20 个确认动作、2 个冷加载展开与 3 组主从/钻取证据。覆盖中英文、light/dark、360/768/1440 CSS px、真实 `Emulation.setPageScaleFactor(2)`、键盘-only、AX/状态播报、全部确认类型、学习现场恢复、重启、设置/选择器/语言恢复与临时 Agent 归档。普通窄屏另以主区几何和命中测试验证宿主返回入口可用；运行时异常、console/Slot/Log/import 错误均为零，三次 owned main/Host 启动均精确停止并释放端口 9468。详见下节；早期 `bPxzdF` 与本轮失败 run 仅作历史/非最终诊断。
 - 既有五项关键安全逻辑均有真实 mutation-red、字节恢复和 GREEN 证据。产品化 UX 的独立审查另行发现并修复了重复可写咨询卡、已有当前版本时的无变化误报、筛选/分页状态混用、文案降级和冲突重读问题；代码/组合独立审查已通过，真实 Desktop 证据与当前 App 部署验收分别记录，不以组件测试或 Slot 接线状态替代。
 
 ### P4 headless 与 mutation 实测（8.3–8.4）
@@ -169,3 +172,21 @@ WEIR_DECISION_PRODUCT_PORT=9468 /Users/young/.dsh/dsh-runtimes/dsh-primary-runti
 - 三个临时 Agent 均经真实 `profileSetState` 归档；设置恢复为 timeout 150 ms、Shadow=false、白名单 `[]`，测试自有选择器恢复且 legacy 会话仍无 selector 行。三个 owned main/Host PID 对 `75553/75592`、`92392/92433`、`92905/92943` 均已停止，端口 9468 无监听；三次启动的 HOME/DSH_HOME/profile/Electron 根均位于本 run 新建隔离目录，未访问当前 App 的记录。
 
 本 Desktop 批次的公共门禁为 driver **41/41**、GUI-enabled decision brain **71/71**、完整测试装置 **453/453**。RED/GREEN 与完整门禁日志位于 `.weir/decision-auto-desktop-acceptance/ax-full-subtree/` 和 `ax-native-multi-select/`。早期失败运行均保留为非最终诊断，未改写为 PASS；独立审计初版 `independent-audit.json` 也因视觉谓词错误保留，后续单独生成的 v2 只修正该审计谓词并重算未更改的原始视觉证据。
+
+### 产品化 UIUX 整改实测
+
+最终候选使用与既有 Desktop 驱动相同的隔离方式，从 lane 根目录执行：
+
+```sh
+WEIR_DECISION_PRODUCT_PORT=9468 \
+WEIR_DECISION_PRODUCT_EVIDENCE_ROOT="$PWD/.weir/decision-uiux-narrow-occlusion" \
+/Users/young/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node \
+  plugins/weir-test-harness/spikes/decision/gui-product.mjs
+```
+
+- 最终 HEAD `f29813a79091eae4c16e7d965f9c4bbcdf3096cb` 的 run `SpbYkp` 为完整 **219/219 PASS**，不是预检、组件测试或多次部分运行的拼接。证据索引为 `.weir/decision-uiux-narrow-occlusion/23-final-evidence-index.json`，原始结果/截图/AX/键盘/运行时与清理记录位于 `run-SpbYkp/`。
+- 选择器覆盖少量/多个助手、长名称/长状态、空白与允许两类、未知状态、读取/保存失败及 pending；取消、放弃编辑、助手停用/启用/归档和 Snapshot 发布/拒绝/回滚均逐一验证 `:modal`、全视口 backdrop、背景 inert、wheel/touch/PageDown 滚动尝试、头尾固定、内部滚动及结算后焦点。
+- 普通关闭保持精确滚动位置。Snapshot 发布用实际打开前 `372`、锁定期间 `372` 证明无背景位移；权威发布删除候选后页面缩至 900px，恢复到合法边界 `0` 并聚焦主导航，不保留伪造空白。该边界契约已经用户明确确认。
+- 冷错误和冷成功都在首个 settled 内容布局后各定位一次到实际末尾，保留输入焦点和草稿，后续刷新不重复。桌面主从、窄屏返回及同目标学习 Run/Snapshot 恢复均无额外权威重读。
+- 中英文与明暗主题覆盖 360/768/1440；真实 200% 时 visual width 分别为 180/384/720 CSS px。普通 360 的主区/标题/导航/卡片/操作有几何与命中测试，宿主返回入口保持可用；截图经人工复核，不能只凭自动计数替代。
+- 本轮最终公共门禁为完整 Decision **531/531**、Desktop driver **72/72**、focused/digest **117/117**、Client digest contract **28/28** 与 checkJs PASS；Client 保持 **33** 个 chunks。早期失败/探索 run 均保留为非最终证据，未用来拼凑完成结论。
