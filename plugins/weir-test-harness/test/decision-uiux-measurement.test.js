@@ -229,18 +229,23 @@ test('cold reveal refresh uses its explicit post-edit baseline and rejects unmou
   assert.match(coldRevealProblems({ loading, ready, refreshBaseline, refreshed: { ...refreshed, active: 'body' } }).join('\n'), /refresh changed focus/)
 })
 
-test('master-detail guard preserves narrow drill-in context and same-target restoration', () => {
+test('master-detail guard preserves narrow drill-in context and same-target restoration with explicit focus', () => {
+  const focus = selector => ({ selector, connected: true, visible: true, active: true, activeTag: 'input' })
   const context = { selectedAgentId: 'agent-long', draft: { name: '未保存 bilingual draft' }, learning: { run: 'lr-1', snapshot: 'ms-1' }, readCount: 4 }
-  const desktop = { listVisible: true, detailVisible: true, independentRegions: true, horizontalOverflow: false, listRect: rect(0, 0, 280, 600), detailRect: rect(300, 0, 600, 600) }
-  const narrowList = { listVisible: true, detailVisible: false, horizontalOverflow: false }
-  const drillIn = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context }
-  const returned = { listVisible: true, detailVisible: false, horizontalOverflow: false, ...context }
-  const restored = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context }
+  const desktop = { listVisible: true, detailVisible: true, independentRegions: true, horizontalOverflow: false, listRect: rect(0, 0, 280, 600), detailRect: rect(300, 0, 600, 600), focus: focus('[data-agent-detail]') }
+  const narrowList = { listVisible: true, detailVisible: false, horizontalOverflow: false, focus: focus('[data-action="open-agent"]') }
+  const drillIn = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context, focus: focus('[data-agent-field="name"]') }
+  const returned = { listVisible: true, detailVisible: false, horizontalOverflow: false, ...context, focus: focus('[data-action="open-agent"]') }
+  const restored = { listVisible: false, detailVisible: true, horizontalOverflow: false, ...context, focus: focus('[data-agent-field="name"]') }
   assert.deepEqual(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored }), [])
   assert.match(masterDetailProblems({ desktop: { ...desktop, listVisible: false }, narrowList, drillIn, returned, restored }).join('\n'), /desktop.*list/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: { ...restored, draft: { name: 'lost' } } }).join('\n'), /draft/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: { ...restored, readCount: 5 } }).join('\n'), /reread/)
   assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned: { ...returned, readCount: 5 }, restored }).join('\n'), /Back.*reread/)
+  assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned: { ...returned, focus: { ...returned.focus, active: false, activeTag: 'body' } }, restored }).join('\n'), /returned.*activeElement/)
+  const missingFocus = { ...restored }
+  delete missingFocus.focus
+  assert.match(masterDetailProblems({ desktop, narrowList, drillIn, returned, restored: missingFocus }).join('\n'), /restored.*focus/)
 })
 
 test('selector layout guard requires visual-viewport containment fixed ends and independent body scrolling', () => {

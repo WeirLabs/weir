@@ -849,6 +849,56 @@ test('narrow same-assistant Back restores the exact dirty editor without confirm
   harness.unmount()
 })
 
+test('assistant create edit and narrow Back transitions hand off connected visible focus', async () => {
+  const detail = { ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }
+  const reads = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [],
+    agent: async id => { reads.push(id); return detail },
+  } })
+  const active = () => {
+    const element = harness.document.activeElement
+    assert.equal(element?.isConnected, true, 'transition focus is connected')
+    assert.ok(element?.getClientRects().length > 0, 'transition focus is visible')
+    return element
+  }
+  const create = () => findAll(harness.render(), node => node['data-action'] === 'create-agent')[0]
+  const back = () => findAll(harness.render(), node => node.className === 'weir-da-agent-back')[0]
+  await harness.settle()
+  await openAgents(harness)
+
+  create().onClick()
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.equal(active().id, 'weir-da-agent-name-create', 'Create enters its name field')
+  back().onClick()
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], false)
+  assert.equal(active().action, 'create-agent', 'Back from create returns to its visible list action')
+  create().onClick()
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.equal(active().id, 'weir-da-agent-name-create', 'same-create resume restores the editor focus')
+
+  back().onClick()
+  currentAgentLayout(harness)
+  await openAssistant(harness, 'ag_a')
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.match(active().className, /weir-da-agent-back/, 'list → detail enters the visible narrow detail navigation')
+  findAll(harness.render(), node => node['data-action'] === 'edit-agent')[0].onClick()
+  assert.equal(agentField(harness, 'name').value, 'Tone')
+  assert.equal(active().id, 'weir-da-agent-name-ag_a', 'Edit enters the existing assistant name field')
+  const readsBeforeResume = [...reads]
+  back().onClick()
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], false)
+  const summaryOpen = findAll(harness.render(), node => node['data-agent-summary'] === 'ag_a')[0]
+  const open = findAll(summaryOpen, node => node['data-action'] === 'open-agent')[0]
+  assert.equal(active(), open.ref?.current, 'Back from edit returns to the same assistant summary action')
+  await openAssistant(harness, 'ag_a')
+  assert.equal(currentAgentLayout(harness)['data-agent-drill-in'], true)
+  assert.equal(active().id, 'weir-da-agent-name-ag_a', 'same-assistant resume restores its dirty editor focus')
+  assert.deepEqual(reads, readsBeforeResume, 'focus handoff adds no same-target authority reread')
+  assert.equal(findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog).length, 0)
+  harness.unmount()
+})
+
 test('narrow same-assistant Back preserves the selected learning run and snapshot with zero rereads', async () => {
   const runs = [
     { learningRunId: 'lr-candidate', agentId: 'ag_a', outcome: 'candidate', revision: 5, operations: [], inputFrozen: { parentSnapshotId: 'ms-current' } },

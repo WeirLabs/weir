@@ -390,7 +390,16 @@ export function masterDetailProblems({ desktop, narrowList, drillIn, returned, r
   if (drillIn?.listVisible || !drillIn?.detailVisible) problems.push('narrow drill-in must show only detail')
   if (!returned?.listVisible || returned?.detailVisible) problems.push('Back must restore the narrow list view')
   if (restored?.listVisible || !restored?.detailVisible) problems.push('same-target restoration must reopen only detail')
-  for (const [name, value] of Object.entries({ desktop, narrowList, drillIn, returned, restored })) if (value?.horizontalOverflow !== false) problems.push(`${name}: horizontal overflow evidence is missing or failing`)
+  for (const [name, value] of Object.entries({ desktop, narrowList, drillIn, returned, restored })) {
+    if (value?.horizontalOverflow !== false) problems.push(`${name}: horizontal overflow evidence is missing or failing`)
+    const focus = value?.focus
+    if (!focus?.selector) problems.push(`${name}: missing intended activeElement focus evidence`)
+    else {
+      if (focus.connected !== true) problems.push(`${name}: focus target is not connected`)
+      if (focus.visible !== true) problems.push(`${name}: focus target is not visible`)
+      if (focus.active !== true || ['body', 'html'].includes(focus.activeTag)) problems.push(`${name}: intended activeElement was not reached`)
+    }
+  }
   for (const [name, stage] of [['returned', returned], ['restored', restored]]) {
     if (stage?.selectedAgentId !== drillIn?.selectedAgentId) problems.push(`${name}: selected assistant changed`)
     if (!same(stage?.draft, drillIn?.draft)) problems.push(`${name}: exact draft changed`)

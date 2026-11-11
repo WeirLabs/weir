@@ -25,8 +25,10 @@ export function deferred() {
   return { promise, resolve, reject }
 }
 
-export function makeReactRuntime() {
+export function makeReactRuntime(document = { activeElement: null }) {
   const hooks = []
+  const pending = new Set()
+  const mounted = new Set()
   let cursor = 0
   const react = {
     cloneElement: (element, props) => ({ ...element, ...props }),
@@ -51,16 +53,40 @@ export function makeReactRuntime() {
       const previous = hooks[index]
       const changed = !previous || !deps || !previous.deps || deps.length !== previous.deps.length || deps.some((value, at) => !Object.is(value, previous.deps[at]))
       if (!changed) return
-      previous?.cleanup?.()
-      const hook = { deps, cleanup: undefined }
+      const hook = { ...previous, deps, source: fn, cleanup: previous?.cleanup }
       hooks[index] = hook
-      hook.cleanup = fn()
+      pending.add(index)
     },
   }
+  const mount = tree => {
+    for (const node of findAll(tree, item => item.ref && typeof item.ref === 'object')) {
+      const element = node.ref.current ?? {
+        isConnected: true,
+        focusCalls: 0,
+        focus() { if (!this.isConnected || this.disabled || this.getClientRects().length === 0) return; this.focusCalls += 1; document.activeElement = this },
+        getClientRects() { return this.visible === false ? [] : [1] },
+      }
+      element.id = node.id ?? ''
+      element.className = node.className ?? ''
+      element.action = node['data-action'] ?? null
+      element.agentId = node['data-agent-id'] ?? null
+      element.disabled = node.disabled === true
+      node.ref.current = element
+      mounted.add(element)
+    }
+  }
+  const effects = () => {
+    for (const index of [...pending]) {
+      pending.delete(index)
+      const hook = hooks[index]
+      hook.cleanup?.()
+      hook.cleanup = hook.source()
+    }
+  }
   return {
-    react,
+    react, document, mount, effects,
     begin: () => { cursor = 0 },
-    unmount: () => { for (const hook of hooks) hook?.cleanup?.() },
+    unmount: () => { for (const hook of hooks) hook?.cleanup?.(); for (const element of mounted) element.isConnected = false },
   }
 }
 
@@ -91,10 +117,13 @@ export async function createPageHarness(options = {}) {
   }
   const render = () => {
     runtime.begin()
-    return page.DecisionPage({
+    const tree = page.DecisionPage({
       ...currentProps,
       getSessionId: () => currentProps.sessionId,
     })
+    runtime.mount(tree)
+    runtime.effects()
+    return tree
   }
   const flush = async () => {
     await Promise.resolve()
@@ -102,7 +131,7 @@ export async function createPageHarness(options = {}) {
     await Promise.resolve()
   }
   return {
-    page, model, ui, learning, runtime,
+    page, model, ui, learning, runtime, document: runtime.document,
     render,
     flush,
     async settle() {

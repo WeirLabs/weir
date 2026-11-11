@@ -270,7 +270,7 @@ window.__ModuleLoader__.load({
         ] }, "header"),
         jsx.jsx("p", { className: "weir-da-agent-summary-preference", children: agent.userDescription?.text || props.t("decisionNoPreference") }, "preference"),
         pendingReview ? jsx.jsx(props.ui.Badge, { variant: "warn", children: props.t("decisionPendingReview") }, "pending") : null,
-        jsx.jsx(props.ui.Button, { "data-action": "open-agent", onClick: () => props.onOpen(props.agent.agentId), children: props.t("decisionViewAssistant") }, "open"),
+        jsx.jsx(props.ui.Button, { ref: props.openRef, "data-action": "open-agent", "data-agent-id": props.agent.agentId, onClick: () => props.onOpen(props.agent.agentId), children: props.t("decisionViewAssistant") }, "open"),
       ] });
     }
 
@@ -280,7 +280,7 @@ window.__ModuleLoader__.load({
       return jsx.jsxs("form", { className: "weir-da-card weir-da-agent-editor", "data-agent-editor": editor.mode, onSubmit: event => { event.preventDefault(); return props.onSave(); }, children: [
         jsx.jsx("h2", { children: t(editor.mode === "create" ? "decisionCreateAgent" : "decisionEditAgent") }, "title"),
         jsx.jsx(ui.Field, { id: `weir-da-agent-name-${suffix}`, label: t("decisionAgentName"), children: jsx.jsx("input", {
-          id: `weir-da-agent-name-${suffix}`, "data-agent-field": "name", "aria-label": t("decisionAgentName"), value: editor.name, disabled: props.pending,
+          ref: props.nameRef, id: `weir-da-agent-name-${suffix}`, "data-agent-field": "name", "aria-label": t("decisionAgentName"), value: editor.name, disabled: props.pending,
           onChange: event => props.onField("name", event.target.value), required: true,
         }) }, "name"),
         jsx.jsx(ui.Field, { id: `weir-da-agent-preference-${suffix}`, label: t("decisionAgentPreference"), hint: t("decisionAgentPreferenceHint"), children: jsx.jsx("textarea", {
@@ -307,7 +307,7 @@ window.__ModuleLoader__.load({
 
     function AgentDetail(props) {
       const { agent, ui, t } = props;
-      return jsx.jsxs("article", { className: "weir-da-card weir-da-agent-detail", "data-agent-detail": agent.agentId, children: [
+      return jsx.jsxs("article", { ref: props.detailRef, tabIndex: -1, className: "weir-da-card weir-da-agent-detail", "data-agent-detail": agent.agentId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [jsx.jsx("h2", { children: agent.name }, "name"), jsx.jsx("p", { children: agent.userDescription?.text || t("decisionNoPreference") }, "preference")] }, "copy"),
           jsx.jsx(ui.Badge, { variant: agent.state === "enabled" ? "success" : agent.state === "disabled" ? "warn" : "idle", children: t(agentStateKey(agent.state)) }, "state"),
@@ -502,6 +502,7 @@ window.__ModuleLoader__.load({
       const [confirm, setConfirm] = react.useState(null);
       const [editor, setEditor] = react.useState(null);
       const [selectedAgentId, setSelectedAgentId] = react.useState(null);
+      const [agentFocusRequest, setAgentFocusRequest] = react.useState(null);
       const pendingRef = react.useRef(false);
       const learningIntentRef = react.useRef(null);
       const epochRef = react.useRef(0);
@@ -512,6 +513,26 @@ window.__ModuleLoader__.load({
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
       const primaryNavRef = react.useRef(null);
+      const agentCreateRef = react.useRef(null);
+      const agentSummaryRef = react.useRef(null);
+      const agentBackRef = react.useRef(null);
+      const agentDetailRef = react.useRef(null);
+      const agentNameRef = react.useRef(null);
+      const requestAgentFocus = target => setAgentFocusRequest({ target });
+      react.useEffect(() => {
+        if (!agentFocusRequest || tab !== "agents") return;
+        const targets = agentFocusRequest.target === "editor" ? [agentNameRef]
+          : agentFocusRequest.target === "detail" ? [agentBackRef, agentDetailRef]
+          : agentFocusRequest.target === "create-list" ? [agentCreateRef] : [agentSummaryRef];
+        for (const ref of targets) {
+          const element = ref.current;
+          const style = element?.ownerDocument?.defaultView?.getComputedStyle?.(element);
+          if (!element?.isConnected || element.disabled || typeof element.focus !== "function" || !(element.getClientRects?.().length > 0) || style?.display === "none" || style?.visibility === "hidden") continue;
+          element.focus();
+          setAgentFocusRequest(current => current === agentFocusRequest ? null : current);
+          return;
+        }
+      }, [agentFocusRequest, agentDrillIn, resources.agent.status, resources.agents.status, selectedAgentId, pending, tab]);
       react.useEffect(() => {
         const viewport = globalThis.window?.visualViewport;
         if (!viewport?.addEventListener) return undefined;
@@ -796,13 +817,14 @@ window.__ModuleLoader__.load({
         setEditor(null); after?.();
       };
       const openCreate = () => {
-        if (!agentDrillIn && editor?.mode === "create") { setAgentDrillIn(true); return; }
-        closeEditor(() => { setAgentDrillIn(true); setSelectedAgentId(null); patchResource("agent", emptyResource()); setEditor(newAgentEditor()); });
+        if (!agentDrillIn && editor?.mode === "create") { setAgentDrillIn(true); requestAgentFocus("editor"); return; }
+        closeEditor(() => { setAgentDrillIn(true); setSelectedAgentId(null); patchResource("agent", emptyResource()); setEditor(newAgentEditor()); requestAgentFocus("editor"); });
       };
       const openAgent = agentId => {
-        if (!agentDrillIn && selectedAgentId === agentId) { setAgentDrillIn(true); return; }
-        closeEditor(() => { setAgentDrillIn(true); return selectAgent(agentId); });
+        if (!agentDrillIn && selectedAgentId === agentId) { setAgentDrillIn(true); requestAgentFocus(editor?.mode === "edit" && editor.agentId === agentId ? "editor" : "detail"); return; }
+        closeEditor(() => { setAgentDrillIn(true); requestAgentFocus("detail"); return selectAgent(agentId); });
       };
+      const backToAgents = () => { setAgentDrillIn(false); requestAgentFocus(editor?.mode === "create" ? "create-list" : "summary"); };
       const saveEditor = async () => {
         if (!editor || pendingRef.current) return;
         let payload;
@@ -843,6 +865,7 @@ window.__ModuleLoader__.load({
         setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
         setAgentDrillIn(agentDestination === "create" && !openCaseId);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
+        setAgentFocusRequest(agentDestination === "create" && !openCaseId ? { target: "editor" } : null);
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
         if (sessionId) {
           loadAgents(sessionId, epoch); loadInbox(sessionId, epoch);
@@ -910,15 +933,15 @@ window.__ModuleLoader__.load({
       const agentList = resources.agents.status === "error" ? retryState(resources.agents, () => loadAgents())
         : resources.agents.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.agents.value.length ? resources.agents.value.map(agent => AgentSummary({
-          agent, detail: selectedAgent, selected: selectedAgentId === agent.agentId, ui, t, onOpen: openAgent,
+          agent, detail: selectedAgent, selected: selectedAgentId === agent.agentId, ui, t, onOpen: openAgent, openRef: selectedAgentId === agent.agentId ? agentSummaryRef : null,
         })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoAgents") });
       const agentPane = editor ? AgentEditor({
-        editor, ui, t, pending: pending !== null, onSave: saveEditor, onCancel: () => closeEditor(),
+        editor, ui, t, pending: pending !== null, onSave: saveEditor, onCancel: () => closeEditor(), nameRef: agentNameRef,
         onField: (field, value) => setEditor(current => ({ ...current, [field]: value })),
       }) : resources.agent.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.agent.status === "error" ? retryState(resources.agent, () => selectAgent(selectedAgentId))
         : selectedAgent ? AgentDetail({
-          agent: selectedAgent, ui, t, onEdit: () => setEditor(newAgentEditor(selectedAgent)),
+          agent: selectedAgent, ui, t, detailRef: agentDetailRef, onEdit: () => { setEditor(newAgentEditor(selectedAgent)); requestAgentFocus("editor"); },
           requestState: state => setConfirm({ kind: "agent-state", agentId: selectedAgent.agentId, state }),
           learningProps: {
             detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
@@ -936,12 +959,12 @@ window.__ModuleLoader__.load({
       const agentsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-agents-view", children: [
         jsx.jsxs("div", { className: "weir-da-section-header", children: [
           jsx.jsx("h2", { children: t("decisionAgents") }, "title"),
-          jsx.jsx(ui.Button, { variant: "primary", "data-action": "create-agent", onClick: openCreate, disabled: pending !== null, children: t("decisionCreateAgent") }, "create"),
+          jsx.jsx(ui.Button, { ref: agentCreateRef, variant: "primary", "data-action": "create-agent", onClick: openCreate, disabled: pending !== null, children: t("decisionCreateAgent") }, "create"),
         ] }, "header"),
         jsx.jsxs("div", { className: "weir-da-agents-layout", "data-agent-drill-in": agentDrillIn, children: [
           jsx.jsx("div", { className: "weir-da-agent-list", "aria-label": t("decisionAgents"), children: agentList }, "list"),
           jsx.jsxs("div", { className: "weir-da-agent-detail-pane", children: [
-            jsx.jsx(ui.Button, { variant: "ghost", className: "weir-da-agent-back", onClick: () => setAgentDrillIn(false), children: `← ${t("decisionAgents")}` }, "back"),
+            jsx.jsx(ui.Button, { ref: agentBackRef, variant: "ghost", className: "weir-da-agent-back", onClick: backToAgents, children: `← ${t("decisionAgents")}` }, "back"),
             agentPane,
           ] }, "detail"),
         ] }, "layout"),

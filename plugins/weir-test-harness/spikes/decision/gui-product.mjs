@@ -311,6 +311,17 @@ async function keyboardSnapshot(selector, options = {}) {
   })()`)
 }
 
+async function measureFocus(selector) {
+  return instance.cdp.evaluate(`(() => {
+    const selector=${JSON.stringify(selector)}
+    const candidates=[...document.querySelectorAll(selector)]
+    const visible=el=>Boolean(el&&el.isConnected&&el.getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden'&&getComputedStyle(el).display!=='none')
+    const active=document.activeElement
+    const target=candidates.find(el=>el===active)??candidates.find(visible)??null
+    return {selector,connected:target?.isConnected===true,visible:visible(target),active:Boolean(target&&target===active&&visible(target)),activeTag:active?.tagName?.toLowerCase()??null,activeId:active?.id||null,activeAction:active?.getAttribute?.('data-action')??null,activeAgentId:active?.getAttribute?.('data-agent-id')??null,targetTag:target?.tagName?.toLowerCase()??null,targetId:target?.id||null}
+  })()`)
+}
+
 async function settleDelayedHostOnboarding(action) {
   const detected = await instance.cdp.evaluate(`(() => {
     const host=document.querySelector('[data-desktop-onboarding="welcome"],[data-desktop-onboarding="credit"]')
@@ -377,7 +388,11 @@ async function keyboardActivate(action, selector, options = {}) {
     saveKeyboardAudits()
   }
   await instance.cdp.key(options.key ?? 'Enter')
-  audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active }
+  if (options.expectFocus) {
+    audit.focus = await waitFor(async () => { const focus = await measureFocus(options.expectFocus); return focus.active && focus.connected && focus.visible ? focus : null }, 10_000).catch(() => measureFocus(options.expectFocus))
+    requireEvidence(audit.focus.active && audit.focus.connected && audit.focus.visible && !['body', 'html'].includes(audit.focus.activeTag), `${action} hands off to its intended visible connected activeElement ${options.expectFocus}`)
+  }
+  audit.activation = { key: options.key ?? 'Enter', activeElement: (await keyboardSnapshot(selector, options)).active, expectedFocus: audit.focus ?? null }
   saveKeyboardAudits()
   return audit
 }
@@ -555,7 +570,7 @@ async function fillAgent(name, preference) {
 
 async function createAgent(sessionId, name, preference) {
   await openPage('agents')
-  await keyboardActivate('Open assistant editor', '[data-action="create-agent"]')
+  await keyboardActivate('Open assistant editor', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
   await fillAgent(name, preference)
   const agents = await waitFor(async () => { const value = await rpc(sessionId, 'agent-create', 'agents'); return value.some(agent => agent.name === name) ? value : null }, 30_000)
   const agent = agents.find(item => item.name === name)
@@ -566,7 +581,7 @@ async function createAgent(sessionId, name, preference) {
 async function openAgent(sessionId, agentId) {
   await openPage('agents')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-summary=${JSON.stringify(agentId)}] [data-action="open-agent"]'))`), 30_000)
-  await keyboardActivate('Open assistant details', `[data-agent-summary="${agentId}"] [data-action="open-agent"]`)
+  await keyboardActivate('Open assistant details', `[data-agent-summary="${agentId}"] [data-action="open-agent"]`, { expectFocus: `.weir-da-agent-back,[data-agent-detail="${agentId}"]` })
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail=${JSON.stringify(agentId)}]'))`), 30_000)
   return rpc(sessionId, 'agent-open', 'agent', { agentId })
 }
@@ -2110,7 +2125,9 @@ async function authorityReadCount() {
   return networkRpc.filter(entry => ['agent', 'agents', 'learningRun', 'memorySnapshot'].includes(entry.method)).length
 }
 
-async function measureAgentStage(selectedAgentId = null, learning = {}) {
+async function measureAgentStage(selectedAgentId = null, learning = {}, focusSelector) {
+  requireEvidence(typeof focusSelector === 'string' && focusSelector, 'every assistant stage names its intended activeElement')
+  const focus = await waitFor(async () => { const value = await measureFocus(focusSelector); return value.active && value.connected && value.visible ? value : null }, 10_000).catch(() => measureFocus(focusSelector))
   const measurement = await measureMasterDetail({ list: '.weir-da-agent-list', detail: '[data-agent-detail],form[data-agent-editor]' })
   const dom = await instance.cdp.evaluate(`(() => {
     const form=document.querySelector('form[data-agent-editor]')
@@ -2121,7 +2138,7 @@ async function measureAgentStage(selectedAgentId = null, learning = {}) {
     const diagnostics=runDetail?.textContent??''
     return {draft:form?Object.fromEntries([...form.querySelectorAll('[data-agent-field]')].map(el=>[el.getAttribute('data-agent-field'),el.value])):{},detailAgentId:detail?.getAttribute('data-agent-detail')??null,formMode:form?.getAttribute('data-agent-editor')??null,learning:{run:runDetail?.getAttribute('data-learning-run-detail')??null,snapshot:run&&snapshot&&diagnostics.includes(snapshot)?snapshot:null}}
   })()`)
-  return { ...measurement, selectedAgentId: dom.detailAgentId ?? (dom.formMode === 'create' ? null : selectedAgentId), draft: dom.draft, learning: learning.run ? dom.learning : {}, readCount: await authorityReadCount() }
+  return { ...measurement, selectedAgentId: dom.detailAgentId ?? (dom.formMode === 'create' ? null : selectedAgentId), draft: dom.draft, learning: learning.run ? dom.learning : {}, focus, readCount: await authorityReadCount() }
 }
 
 async function confirmDiscardEditor(sessionId, targetAgentId, originSelector, scrollBefore) {
@@ -2143,51 +2160,51 @@ async function confirmDiscardEditor(sessionId, targetAgentId, originSelector, sc
 async function runAgentResumeMatrix(sessionId, primary, secondary) {
   await openAgent(sessionId, primary.agentId)
   await instance.cdp.setViewport(1440, 900, false)
-  const desktop = await measureAgentStage(primary.agentId)
+  const desktop = await measureAgentStage(primary.agentId, {}, `[data-agent-detail="${primary.agentId}"]`)
   await shot('uiux-assistant-desktop-master-detail', { kind: 'master-detail', measurement: desktop })
   await instance.cdp.setViewport(360, 900, false)
-  await keyboardActivate('Back to narrow assistant list', '.weir-da-agent-back')
-  const narrowList = await measureAgentStage(primary.agentId)
+  await keyboardActivate('Back to narrow assistant list', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
+  const narrowList = await measureAgentStage(primary.agentId, {}, `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`)
 
-  await keyboardActivate('Open narrow create draft', '[data-action="create-agent"]')
+  await keyboardActivate('Open narrow create draft', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
   const createDraft = { name: '未保存创建草稿 · Exact create draft with a long bilingual name', preference: '保留这个创建草稿的每一个字符； Back → same create must not reread or confirm.' }
   await keyboardFill('Enter exact create draft name', '[data-agent-field="name"]', createDraft.name)
   await keyboardFill('Enter exact create draft preference', '[data-agent-field="preference"]', createDraft.preference)
-  const createDrill = await measureAgentStage(null)
+  const createDrill = await measureAgentStage(null, {}, '[data-agent-field="preference"]')
   await shot('uiux-create-draft-drill-in', { kind: 'master-detail', measurement: createDrill })
-  await keyboardActivate('Back with preserved create draft', '.weir-da-agent-back')
-  const createReturned = await measureAgentStage(null)
-  await keyboardActivate('Resume same create draft', '[data-action="create-agent"]')
-  const createRestored = await measureAgentStage(null)
+  await keyboardActivate('Back with preserved create draft', '.weir-da-agent-back', { expectFocus: '[data-action="create-agent"]' })
+  const createReturned = await measureAgentStage(null, {}, '[data-action="create-agent"]')
+  await keyboardActivate('Resume same create draft', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
+  const createRestored = await measureAgentStage(null, {}, '[data-agent-field="name"]')
   const createEvidence = { kind: 'create', desktop, narrowList, drillIn: createDrill, returned: createReturned, restored: createRestored }
   createEvidence.problems = masterDetailProblems(createEvidence)
   uiuxEvidence.masterDetail.push(createEvidence)
   saveUiuxEvidence()
   await shot('uiux-create-draft-restored', { kind: 'master-detail', measurement: createRestored, problems: createEvidence.problems })
   check('narrowCreateBackSameTargetPreservesExactDraftWithoutReread', createEvidence.problems.length === 0, { problems: createEvidence.problems, readCount: [createDrill.readCount, createReturned.readCount, createRestored.readCount] })
-  await keyboardActivate('Back before real create target change', '.weir-da-agent-back')
+  await keyboardActivate('Back before real create target change', '.weir-da-agent-back', { expectFocus: '[data-action="create-agent"]' })
   const createTargetOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
   const createTargetScrollBefore = (await keyboardActivate('Change from dirty create to assistant', createTargetOrigin, { scrollBaseline: 'immediate' })).scrollBefore
   await confirmDiscardEditor(sessionId, primary.agentId, createTargetOrigin, createTargetScrollBefore)
 
-  await keyboardActivate('Open narrow edit draft', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
+  await keyboardActivate('Open narrow edit draft', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
   const editDraft = { name: `${primary.name} · 未保存编辑 / exact unsaved edit`, preference: 'Exact edit draft survives Back and same-assistant re-entry without confirmation or authority rereads.' }
   await keyboardFill('Enter exact edit draft name', '[data-agent-field="name"]', editDraft.name)
   await keyboardFill('Enter exact edit draft preference', '[data-agent-field="preference"]', editDraft.preference)
-  const editDrill = await measureAgentStage(primary.agentId)
+  const editDrill = await measureAgentStage(primary.agentId, {}, '[data-agent-field="preference"]')
   await shot('uiux-edit-draft-drill-in', { kind: 'master-detail', measurement: editDrill })
-  await keyboardActivate('Back with preserved edit draft', '.weir-da-agent-back')
-  const editReturned = await measureAgentStage(primary.agentId)
+  await keyboardActivate('Back with preserved edit draft', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
+  const editReturned = await measureAgentStage(primary.agentId, {}, `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`)
   const editSameOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
-  await keyboardActivate('Resume same assistant edit draft', editSameOrigin)
-  const editRestored = await measureAgentStage(primary.agentId)
+  await keyboardActivate('Resume same assistant edit draft', editSameOrigin, { expectFocus: '[data-agent-field="name"]' })
+  const editRestored = await measureAgentStage(primary.agentId, {}, '[data-agent-field="name"]')
   const editEvidence = { kind: 'edit', desktop, narrowList, drillIn: editDrill, returned: editReturned, restored: editRestored }
   editEvidence.problems = masterDetailProblems(editEvidence)
   uiuxEvidence.masterDetail.push(editEvidence)
   saveUiuxEvidence()
   await shot('uiux-edit-draft-restored', { kind: 'master-detail', measurement: editRestored, problems: editEvidence.problems })
   check('narrowEditBackSameTargetPreservesExactDraftWithoutReread', editEvidence.problems.length === 0, { problems: editEvidence.problems, readCount: [editDrill.readCount, editReturned.readCount, editRestored.readCount] })
-  await keyboardActivate('Back before real edit target change', '.weir-da-agent-back')
+  await keyboardActivate('Back before real edit target change', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
   const editTargetOrigin = `[data-agent-summary="${secondary.agentId}"] [data-action="open-agent"]`
   const editTargetScrollBefore = (await keyboardActivate('Change from dirty edit to another assistant', editTargetOrigin, { scrollBaseline: 'immediate' })).scrollBefore
   await confirmDiscardEditor(sessionId, secondary.agentId, editTargetOrigin, editTargetScrollBefore)
@@ -2202,15 +2219,15 @@ async function runLearningResumeMatrix(sessionId, primary, candidate) {
   await keyboardActivate('Select exact learning snapshot for narrow resume', `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
   await waitFor(() => instance.cdp.evaluate(`document.querySelector('[data-learning-run-detail=${JSON.stringify(candidate.run.learningRunId)}]')?.textContent.includes(${JSON.stringify(candidate.snapshot.snapshotId)})`), 30_000)
   const learning = { run: candidate.run.learningRunId, snapshot: candidate.snapshot.snapshotId }
-  const desktop = await measureAgentStage(primary.agentId, learning)
+  const desktop = await measureAgentStage(primary.agentId, learning, `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
   await instance.cdp.setViewport(360, 900, false)
-  const drillIn = await measureAgentStage(primary.agentId, learning)
+  const drillIn = await measureAgentStage(primary.agentId, learning, `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
   await shot('uiux-learning-context-drill-in', { kind: 'learning-resume', measurement: drillIn })
-  await keyboardActivate('Back with selected learning context', '.weir-da-agent-back')
-  const returned = await measureAgentStage(primary.agentId, learning)
+  await keyboardActivate('Back with selected learning context', '.weir-da-agent-back', { expectFocus: `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]` })
+  const returned = await measureAgentStage(primary.agentId, learning, `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`)
   const sameOrigin = `[data-agent-summary="${primary.agentId}"] [data-action="open-agent"]`
-  await keyboardActivate('Resume same assistant learning context', sameOrigin)
-  const restored = await measureAgentStage(primary.agentId, learning)
+  await keyboardActivate('Resume same assistant learning context', sameOrigin, { expectFocus: '.weir-da-agent-back' })
+  const restored = await measureAgentStage(primary.agentId, learning, '.weir-da-agent-back')
   const evidence = { kind: 'learning', desktop, narrowList: returned, drillIn, returned, restored }
   evidence.problems = masterDetailProblems(evidence)
   uiuxEvidence.masterDetail.push(evidence)
@@ -2393,7 +2410,7 @@ try {
   await waitFor(() => instance.cdp.evaluate('!document.querySelector("#weir-da-selector-panel") && document.activeElement===document.querySelector(\'[data-weir-decision-trigger="weir-decision-selector"]\')'), 30_000)
   await finishModalAudit(initialModal)
   await selectorOpen()
-  await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'] })
+  await keyboardActivate('Create assistant from selector', 'button', { scope: '#weir-da-selector-panel', labels: ['新建助手', 'New assistant'], expectFocus: '[data-agent-field="name"]' })
   const longName = '桌面验收助手 · Decision Product QA with an intentionally long English assistant name'
   const preference = '只依据可核验证据；高风险操作仍由用户决定。Prefer source-backed concise answers and preserve the existing approval boundary. 这是用于长文本与编辑验收的用户原创判断偏好。'
   await fillAgent(longName, preference)
@@ -2405,7 +2422,7 @@ try {
   await runSelectorFailureMatrix(sessionId, primary, secondary)
   await runAgentResumeMatrix(sessionId, primary, secondary)
   await openAgent(sessionId, primary.agentId)
-  await keyboardActivate('Edit assistant', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`)
+  await keyboardActivate('Edit assistant', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
   const editedName = `${longName} · 已编辑 / edited`
   const editedPreference = `${preference} 编辑后仍保持相同 scope 与模型继承。`
   await fillAgent(editedName, editedPreference)
@@ -2729,6 +2746,9 @@ try {
   const requiredKeyboardActions = ['Open assistant editor', 'Edit assistant', 'Request assistant disabled', 'Confirm assistant disabled', 'Request assistant enabled', 'Confirm assistant enabled', 'Choose native answer Native Off', 'Choose native answer Use Short', 'Choose native answer User backed GUI answer', 'Use inbox suggestions', 'Submit inbox decision', 'Apply feedback rating_up', 'Apply feedback undo_rating_up', 'Apply feedback rating_down', 'Apply feedback undo_rating_down', 'Enter independent note', 'Enter correction', 'Submit note', 'Submit correction', 'Start principle review', 'Request snapshotPublish', 'Confirm snapshotPublish', 'Request snapshotReject', 'Confirm snapshotReject', 'Request snapshotRollback', 'Confirm snapshotRollback']
   const keyboardProblems = requiredKeyboardActions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && (audit.activation || audit.input)))
   check('completeKeyboardInteractionEvidence', keyboardProblems.length === 0, { missing: keyboardProblems, interactions: keyboardAudits.length })
+  const requiredFocusTransitions = ['Create assistant from selector', 'Open assistant editor', 'Open assistant details', 'Edit assistant', 'Back to narrow assistant list', 'Open narrow create draft', 'Back with preserved create draft', 'Resume same create draft', 'Back before real create target change', 'Open narrow edit draft', 'Back with preserved edit draft', 'Resume same assistant edit draft', 'Back before real edit target change', 'Back with selected learning context', 'Resume same assistant learning context']
+  const focusProblems = requiredFocusTransitions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && audit.activation && audit.options?.expectFocus === audit.focus?.selector && audit.focus?.connected === true && audit.focus?.visible === true && audit.focus?.active === true && !['body', 'html'].includes(audit.focus?.activeTag)))
+  check('completeAssistantTransitionFocusEvidence', focusProblems.length === 0, { missing: focusProblems, required: requiredFocusTransitions })
   check('nativeKeyPacketsPersisted', nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === '\r') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === ' ') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.key === 'Tab') && nativeKeyPackets.some(packet => packet.method === 'Input.insertText'), { packets: nativeKeyPackets.length })
   check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 3 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 3 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
   const confirmationKinds = new Set(uiuxEvidence.confirmations.map(item => item.kind))
@@ -2740,6 +2760,7 @@ try {
     confirmations: requiredConfirmations.filter(kind => !confirmationKinds.has(kind)),
     selectorStates: ['load-failure', 'unknown', 'save-failure', 'save-pending'].filter(kind => !selectorStateKinds.has(kind)),
     masterDetail: ['create', 'edit', 'learning'].filter(kind => !masterDetailKinds.has(kind)),
+    focusTransitions: focusProblems,
     coldReveals: ['success', 'error'].filter(kind => !uiuxEvidence.coldReveals.some(item => item.kind === kind && item.problems.length === 0)),
     zoomComplete,
     english: uiuxEvidence.languages.some(item => item.language === 'en' && item.copyProblems?.length === 0),
