@@ -152,7 +152,7 @@ window.__ModuleLoader__.load({
 .weir-da-route-history time { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .weir-da-advanced-record pre, .weir-da-agent-diagnostics pre, .weir-da-metrics pre, .weir-da-learning-diagnostics pre { box-sizing: border-box; max-width: 100%; max-height: 420px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); font-size: 12px; }
 .weir-da-agent-diagnostics button { max-width: 100%; overflow-wrap: anywhere; }
-@media (max-width: 400px) { .weir-da-page-inner { padding: 12px; } }
+@media (max-width: 400px) { .weir-da-page-inner { padding: 52px 12px 12px; } }
 @media (max-width: 600px) {
   .weir-da-button { min-height: 36px; }
   .weir-da-actions { align-items: stretch; }

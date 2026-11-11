@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -904,12 +904,33 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   return { agent, snapshot, run, mutation }
 }
 
+async function normalizeDecisionHostChrome(zoom) {
+  let action = 'not-needed'
+  if (zoom === 1 && await instance.cdp.evaluate('innerWidth') <= 400) {
+    await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+    const labels = ['收起侧边栏', '折叠侧边栏', 'Close sidebar', 'Collapse sidebar']
+    const close = await instance.cdp.evaluate(`(() => {
+      const labels=${JSON.stringify(labels)}
+      return [...document.querySelectorAll('button[aria-label]')].some(button=>{
+        const rect=button.getBoundingClientRect()
+        return button.offsetParent!==null&&labels.includes(button.getAttribute('aria-label'))&&rect.right>0&&rect.left<innerWidth&&rect.bottom>0&&rect.top<innerHeight
+      })
+    })()`)
+    if (close) await keyboardActivate('Close host sidebar for Decision visual audit', 'button[aria-label]', { labels })
+    action = close ? 'native-close' : 'already-closed-or-settling'
+  }
+  await keyboardFocus('Focus Decision navigation for visual audit', 'main.weir-da-page [data-decision-primary-nav] [data-view]')
+  await keyboardKey('Restore Decision page top for visual audit', 'Home')
+  return { action: `${action}+native-home` }
+}
+
 async function layoutAudit(name, theme = 'light', zoom = 1) {
   const expectedColors = {
     light: { background: 'rgb(255, 255, 255)', color: 'rgb(15, 17, 21)' },
     dark: { background: 'rgb(21, 21, 23)', color: 'rgb(249, 250, 251)' },
   }[theme]
   if (!expectedColors) throw new Error(`unsupported visual audit theme: ${theme}`)
+  const hostNormalization = await normalizeDecisionHostChrome(zoom)
   await waitFor(async () => {
     const colors = await instance.cdp.evaluate(`(() => { const page=document.querySelector('.weir-da-page'); return page?{background:getComputedStyle(page).backgroundColor,color:getComputedStyle(page).color}:null })()`)
     return colors?.background === expectedColors.background && colors?.color === expectedColors.color ? colors : null
@@ -923,10 +944,33 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
     const primaries=[...document.querySelectorAll('.weir-da-page .weir-da-button[data-variant="primary"],.weir-da-conversation-card .weir-da-button[data-variant="primary"]')].filter(visible)
     const surfaces=[...document.querySelectorAll('.weir-da-page,.weir-da-selector-panel')].filter(visible)
     const page=document.querySelector('.weir-da-page')
-    const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0}
+    const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0,scale:1}
+    const rect=el=>{if(!el)return null;const value=el.getBoundingClientRect();return {x:value.x,y:value.y,left:value.left,top:value.top,width:value.width,height:value.height,right:value.right,bottom:value.bottom}}
+    const inVisual=el=>{const value=rect(el);if(!value)return false;const left=visual.offsetLeft??0;const top=visual.offsetTop??0;return value.right>left&&value.left<left+visual.width&&value.bottom>top&&value.top<top+visual.height}
+    const probe=el=>{
+      if(!el)return null
+      const value=rect(el);const points=[]
+      const left=Math.max(value.left+8,(visual.offsetLeft??0)+1);const right=Math.min(value.right-8,(visual.offsetLeft??0)+visual.width-1)
+      const top=Math.max(value.top+8,(visual.offsetTop??0)+1);const bottom=Math.min(value.bottom-8,(visual.offsetTop??0)+visual.height-1)
+      if(right<left||bottom<top)return {rect:value,hitTestSamples:0,occlusions:[]}
+      const middleX=(left+right)/2;const middleY=(top+bottom)/2
+      for(let x=left;x<=right;x+=8)points.push([x,middleY])
+      for(let y=top;y<=bottom;y+=32)points.push([middleX,y])
+      const unique=[...new Map(points.filter(([x,y])=>Number.isFinite(x)&&Number.isFinite(y)).map(point=>[point.map(value=>value.toFixed(3)).join(','),point])).values()]
+      const hits=unique.map(([x,y])=>{const owned=el.contains(document.elementFromPoint(x,y));return {x,y,owned,...(!owned?{stack:document.elementsFromPoint(x,y).slice(0,4).map(item=>({tag:item.tagName,id:item.id||null,class:typeof item.className==='string'?item.className.slice(0,160):'',ariaLabel:item.getAttribute('aria-label')}))}:{})}})
+      return {rect:value,hitTestSamples:hits.length,occlusions:hits.filter(hit=>!hit.owned)}
+    }
+    const nav=page?.querySelector('[data-decision-primary-nav]')
+    const hostOpen=[...document.querySelectorAll('button[aria-label]')].find(button=>!page?.contains(button)&&/打开侧边栏|展开侧边栏|open sidebar|expand sidebar/i.test(button.getAttribute('aria-label'))&&inVisual(button))
     const defaultText=page?.innerText??''
     return {
-      viewport:{width:innerWidth,height:innerHeight,visualWidth:visualViewport?.width??null,scale:visualViewport?.scale??1},
+      viewport:{width:innerWidth,height:innerHeight,visualWidth:visual.width??null,scale:visual.scale??1},
+      mainRegion:{
+        regions:{page:probe(page),inner:probe(page?.querySelector('.weir-da-page-inner')),header:probe(page?.querySelector('.weir-da-page-header')),title:probe(page?.querySelector('h1')),nav:probe(nav),view:probe(page?.querySelector('.weir-da-view')),cards:[...page?.querySelectorAll('.weir-da-card')??[]].filter(inVisual).map(probe)},
+        navigationActions:[...nav?.querySelectorAll('button[data-view]')??[]].filter(button=>!button.disabled).map(button=>({name:nameOf(button),...probe(button)})),
+        primaryActions:primaries.filter(inVisual).map(button=>({name:nameOf(button),...probe(button)})),
+        hostNavigation:hostOpen?{name:nameOf(hostOpen),...probe(hostOpen)}:null,
+      },
       document:{clientWidth:document.documentElement.clientWidth,scrollWidth:document.documentElement.scrollWidth,horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1},
       surfaceOverflow:surfaces.filter(el=>el.scrollWidth>el.clientWidth+1).map(el=>el.className),
       clippedPrimary:primaries.filter(el=>{const rect=el.getBoundingClientRect();return el.scrollWidth>el.clientWidth+1||rect.left<visual.offsetLeft-1||rect.right>visual.offsetLeft+visual.width+1}).map(el=>el.innerText||el.getAttribute('aria-label')),
@@ -936,12 +980,12 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
     }
   })()`)
     audit = candidate
-    const settled = layoutProblems(candidate).length===0 && candidate.colors?.background===expectedColors.background && candidate.colors?.color===expectedColors.color && Math.abs((candidate.viewport.scale ?? 1) - zoom) < 0.01
+    const settled = layoutProblems(candidate).length===0 && mainRegionProblems(candidate).length===0 && candidate.colors?.background===expectedColors.background && candidate.colors?.color===expectedColors.color && Math.abs((candidate.viewport.scale ?? 1) - zoom) < 0.01
     return settled ? candidate : null
   }, 10_000).catch(() => {})
   requireEvidence(audit, `${name} produced a real layout measurement`)
-  const problems = layoutProblems(audit)
-  const row = { name, theme, zoom, audit, problems, ax: await instance.cdp.accessibility('.weir-da-page') }
+  const problems = [...layoutProblems(audit), ...mainRegionProblems(audit)]
+  const row = { name, theme, zoom, hostNormalization, audit, problems, ax: await instance.cdp.accessibility('.weir-da-page') }
   visualAudits.push(row)
   writeJson(join(out, 'visual-audits.json'), visualAudits)
   check(`visual-${name}`, problems.length === 0 && audit.colors?.background===expectedColors.background && audit.colors?.color===expectedColors.color && Math.abs((audit.viewport.scale ?? 1) - zoom) < 0.01, { problems, viewport: audit.viewport, colors: audit.colors })

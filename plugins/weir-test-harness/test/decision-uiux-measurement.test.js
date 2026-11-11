@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   browserZoomProblems,
+  mainRegionProblems,
   confirmationFocusProblems,
   coldRevealProblems,
   masterDetailProblems,
@@ -26,6 +27,70 @@ function viewport(width = 360, scale = 1) {
     rects: { reference: rect() },
   }
 }
+
+function visibleRegion(left, top, width, height, occlusions = []) {
+  return { rect: rect(left, top, width, height), hitTestSamples: 12, occlusions }
+}
+
+function readableMainRegionAudit() {
+  return {
+    viewport: { width: 360, visualWidth: 360, scale: 1 },
+    mainRegion: {
+      regions: {
+        page: visibleRegion(0, 0, 360, 900),
+        inner: visibleRegion(0, 0, 360, 760),
+        header: visibleRegion(12, 52, 336, 104),
+        title: visibleRegion(12, 52, 312, 32),
+        nav: visibleRegion(12, 172, 336, 44),
+        view: visibleRegion(12, 232, 336, 300),
+        cards: [visibleRegion(12, 232, 336, 120)],
+      },
+      navigationActions: ['inbox', 'records', 'agents'].map((name, index) => ({ name, ...visibleRegion(16 + index * 100, 176, 90, 36) })),
+      primaryActions: [{ name: 'Submit decision', ...visibleRegion(20, 240, 120, 36) }],
+      hostNavigation: { name: 'Open sidebar', ...visibleRegion(88, 11, 28, 28) },
+    },
+  }
+}
+
+test('main region oracle rejects screenshot-proven narrow compression and host occlusion', () => {
+  const readable = readableMainRegionAudit()
+  assert.deepEqual(mainRegionProblems(readable), [])
+  const intrinsicTitle = readableMainRegionAudit()
+  intrinsicTitle.viewport = { width: 1440, visualWidth: 1440, scale: 1 }
+  intrinsicTitle.mainRegion.hostNavigation = null
+  intrinsicTitle.mainRegion.regions.title = visibleRegion(24, 24, 96, 32)
+  assert.deepEqual(mainRegionProblems(intrinsicTitle), [], 'the oracle measures title occlusion, not intrinsic text width')
+  const scaled = readableMainRegionAudit()
+  scaled.viewport = { width: 360, visualWidth: 180, scale: 2 }
+  scaled.mainRegion.regions.page = visibleRegion(0, 0, 180, 450)
+  scaled.mainRegion.regions.inner = visibleRegion(0, 0, 175, 450)
+  for (const name of ['header', 'nav', 'view']) scaled.mainRegion.regions[name] = visibleRegion(12, 12, 151, 40)
+  scaled.mainRegion.regions.title = visibleRegion(12, 12, 96, 32)
+  scaled.mainRegion.regions.cards = [visibleRegion(12, 68, 151, 120)]
+  scaled.mainRegion.hostNavigation.occlusions.push({ x: 96, y: 25, stack: [{ tag: 'MAIN', class: 'weir-da-page' }] })
+  assert.deepEqual(mainRegionProblems(scaled), [], 'real zoom permits the measured scrollbar and keeps the approved fixed-page stacking contract')
+  const expanded = structuredClone(readable)
+  Object.assign(expanded.mainRegion.regions.page.rect, { x: 280.5, left: 280.5, width: 79.5, right: 360 })
+  Object.assign(expanded.mainRegion.regions.inner.rect, { x: 280.5, left: 280.5, width: 79.5, right: 360 })
+  for (const name of ['header', 'title', 'nav', 'view']) Object.assign(expanded.mainRegion.regions[name].rect, { x: 292.5, left: 292.5, width: 55.5, right: 348 })
+  assert.match(mainRegionProblems(expanded).join('\n'), /readable width/)
+
+  const occluded = readableMainRegionAudit()
+  occluded.mainRegion.regions.title.occlusions.push({ x: 88, y: 28, stack: [{ tag: 'BUTTON', ariaLabel: '打开侧边栏' }] })
+  assert.match(mainRegionProblems(occluded).join('\n'), /title.*occluded|title.*hit-test/)
+
+  const noReturn = readableMainRegionAudit()
+  noReturn.mainRegion.hostNavigation = null
+  assert.match(mainRegionProblems(noReturn).join('\n'), /host.*navigation|host.*return|way back/)
+
+  const blockedPrimary = readableMainRegionAudit()
+  blockedPrimary.mainRegion.primaryActions[0].occlusions.push({ x: 40, y: 250, stack: [{ tag: 'DIV', class: 'host-overlay' }] })
+  assert.match(mainRegionProblems(blockedPrimary).join('\n'), /primary.*occluded|primary.*hit-test/)
+
+  const missingEvidence = readableMainRegionAudit()
+  missingEvidence.mainRegion.regions.nav.hitTestSamples = 0
+  assert.match(mainRegionProblems(missingEvidence).join('\n'), /nav.*hit-test/)
+})
 
 test('UIUX fixture provides independent bilingual long status names and cold content', () => {
   const fixture = createUiuxFixture()
