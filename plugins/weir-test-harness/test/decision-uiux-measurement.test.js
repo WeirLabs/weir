@@ -317,3 +317,18 @@ test('confirmation focus guard rejects restoration before the authoritative acti
   const fallback = { promiseSettled: true, target: { connected: false, enabled: false, visible: false, focused: false }, fallback: { connected: true, enabled: true, visible: true, focused: true, logical: true } }
   assert.deepEqual(confirmationFocusProblems({ beforeSettle, afterSettle: fallback }), [])
 })
+
+test('shutdown socket-closure stderr stays raw and separately scoped from runtime channels', async () => {
+  const { shutdownSocketClosureEntries } = await import('../spikes/decision/gui-product-lib.mjs')
+  assert.equal(typeof shutdownSocketClosureEntries, 'function')
+  const entries = shutdownSocketClosureEntries({
+    'desktop-enabled.log': 'ordinary startup\n[TypeError: fetch failed]\nSocketError: other side closed\nRuntime.exceptionThrown must not be relabelled',
+    'desktop-disabled.log': 'no socket closure here',
+  })
+  assert.equal(entries.length, 2)
+  assert.deepEqual(entries.map(entry => [entry.scope, entry.path, entry.line]), [
+    ['desktop-shutdown-socket-closure-stderr', 'desktop-enabled.log', 2],
+    ['desktop-shutdown-socket-closure-stderr', 'desktop-enabled.log', 3],
+  ])
+  assert.ok(entries.every(entry => entry.text && entry.countsAsRuntimeError === false && entry.countsAsImportFailure === false))
+})

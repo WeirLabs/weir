@@ -124,3 +124,12 @@ test('5.2 product matrix wires raw modal scroll and settled-focus audits into ev
   const failure = driver.slice(driver.indexOf('} catch (error)', driver.indexOf('async function runProductMatrix()')))
   for (const token of ['logErrorCount', 'importFailures', 'desktop-enabled.log', 'desktop-disabled.log']) assert.ok(failure.includes(token), `failure runtime scan retains ${token}`)
 })
+
+test('raw modal inline snapshots include paddingBottom alongside scrollbar compensation', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const measure = driver.match(/async function measureScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(measure)
+  const inline = measure.match(/const computed=getComputedStyle\(el\);return \[name,\{[\s\S]*?inline:Object\.fromEntries\((\[[\s\S]*?\])\.map/ )?.[1] ?? ''
+  assert.ok(inline.includes("'paddingRight'"))
+  assert.ok(inline.includes("'paddingBottom'"), 'raw before/during/after inline evidence retains paddingBottom')
+})

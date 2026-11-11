@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -1715,7 +1715,7 @@ async function measureScrollContainers(selectors = {}, originSelector = null) {
     const result=Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
       identity:{tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):''},
       scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,scrollWidth:el.scrollWidth,
-      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight'].map(key=>[key,el.style[key]??''])),
+      inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight','paddingBottom'].map(key=>[key,el.style[key]??''])),
       computed:{overflowY:computed.overflowY,overscrollBehavior:computed.overscrollBehavior},
       rect:{x:rect.x,y:rect.y,left:rect.left,top:rect.top,width:rect.width,height:rect.height,right:rect.right,bottom:rect.bottom},
     }]}))
@@ -2809,10 +2809,13 @@ try {
   const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
   const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
   auditP4RawEvidence(p4State, primary, secondary)
-  const desktopLogs = ['desktop-enabled.log', 'desktop-disabled.log'].map(path => readFileSync(join(out, path), 'utf8'))
+  const desktopLogPaths = ['desktop-enabled.log', 'desktop-disabled.log']
+  const desktopLogs = desktopLogPaths.map(path => readFileSync(join(out, path), 'utf8'))
   const importFailures = desktopLogs.flatMap(log => log.split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
-  writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs: ['desktop-enabled.log', 'desktop-disabled.log'] })
+  const socketClosures = shutdownSocketClosureEntries(Object.fromEntries(desktopLogPaths.map((path, index) => [path, desktopLogs[index]])))
+  writeJson(join(out, 'runtime-scan.json'), { exceptionCount: exceptions.length, exceptions, consoleErrorCount: consoleErrors.length, consoleErrors, slotCrashCount: slotCrashes.length, slotCrashes, logErrorCount: logErrors.length, logErrors, importFailures, shutdownSocketClosureStderrCount: socketClosures.length, shutdownSocketClosureStderr: socketClosures, scannedLogs: desktopLogPaths })
   check('noRuntimeExceptionsConsoleErrorsOrSlotCrashes', exceptions.length === 0 && consoleErrors.length === 0 && slotCrashes.length === 0 && logErrors.length === 0 && importFailures.length === 0, { exceptions: exceptions.length, consoleErrors: consoleErrors.length, slotCrashes: slotCrashes.length, logErrors: logErrors.length, importFailures })
+  check('shutdownSocketClosureStderrScopedSeparately', socketClosures.every(entry => entry.scope === 'desktop-shutdown-socket-closure-stderr' && entry.countsAsRuntimeError === false && entry.countsAsImportFailure === false), { count: socketClosures.length, scope: 'desktop-shutdown-socket-closure-stderr', excludedFrom: ['Runtime.exceptionThrown', 'Runtime.consoleAPICalled', 'Log.entryAdded', 'importFailures'] })
   await collectNetwork()
   check('completeLifecyclePngEvidence', screenshots.length >= 30 && screenshots.every(item => statSync(item.path).size > 8), { count: screenshots.length })
   validateAccessibility()
@@ -2878,11 +2881,13 @@ try {
     const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
     const scannedLogs = ['desktop-enabled.log', 'desktop-disabled.log'].filter(path => existsSync(join(out, path)))
     const importFailures = scannedLogs.flatMap(path => readFileSync(join(out, path), 'utf8').split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
+    const socketClosures = shutdownSocketClosureEntries(Object.fromEntries(scannedLogs.map(path => [path, readFileSync(join(out, path), 'utf8')])))
     writeJson(join(out, 'runtime-scan.json'), {
       exceptionCount: exceptions.length, exceptions,
       consoleErrorCount: consoleErrors.length, consoleErrors,
       slotCrashCount: slotCrashes.length, slotCrashes,
       logErrorCount: logErrors.length, logErrors, importFailures, scannedLogs,
+      shutdownSocketClosureStderrCount: socketClosures.length, shutdownSocketClosureStderr: socketClosures,
     })
   }
 } finally {

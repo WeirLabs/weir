@@ -380,6 +380,13 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
   return problems
 }
 
+export function shutdownSocketClosureEntries(logs = {}) {
+  return Object.entries(logs).flatMap(([path, contents]) => String(contents ?? '').split('\n').flatMap((text, index) => /\[TypeError: fetch failed\]|SocketError: other side closed/i.test(text) ? [{
+    scope: 'desktop-shutdown-socket-closure-stderr', path, line: index + 1, text,
+    countsAsRuntimeError: false, countsAsImportFailure: false,
+  }] : []))
+}
+
 export function sessionScrollerProblems(audit) {
   const problems = []
   const proof = audit?.sessionIdentity
