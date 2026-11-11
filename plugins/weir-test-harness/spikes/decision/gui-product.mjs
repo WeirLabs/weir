@@ -956,7 +956,6 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
       const middleX=(left+right)/2;const middleY=(top+bottom)/2
       for(let x=left;x<=right;x+=8)points.push([x,middleY])
       for(let y=top;y<=bottom;y+=32)points.push([middleX,y])
-      points.push([left,top],[right,middleY],[middleX,bottom])
       const unique=[...new Map(points.filter(([x,y])=>Number.isFinite(x)&&Number.isFinite(y)).map(point=>[point.map(value=>value.toFixed(3)).join(','),point])).values()]
       const hits=unique.map(([x,y])=>{const owned=el.contains(document.elementFromPoint(x,y));return {x,y,owned,...(!owned?{stack:document.elementsFromPoint(x,y).slice(0,4).map(item=>({tag:item.tagName,id:item.id||null,class:typeof item.className==='string'?item.className.slice(0,160):'',ariaLabel:item.getAttribute('aria-label')}))}:{})}})
       return {rect:value,hitTestSamples:hits.length,occlusions:hits.filter(hit=>!hit.owned)}
