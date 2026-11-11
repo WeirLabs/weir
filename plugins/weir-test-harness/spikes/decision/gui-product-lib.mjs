@@ -380,6 +380,31 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
   return problems
 }
 
+export function sessionScrollerProblems(audit) {
+  const problems = []
+  const proof = audit?.sessionIdentity
+  if (!proof) return ['missing session scroller identity or absence justification']
+  if (proof.originConnected !== true) problems.push('session scroller origin is not connected')
+  if (proof.required === false) {
+    if (proof.relation !== 'not-present' || !Array.isArray(proof.ancestorChain) || proof.ancestorChain.length !== 0) problems.push('session absence lacks a not-present proof with an empty real overflow-ancestor chain')
+    for (const phase of ['before', 'during', 'after']) if (audit?.[phase]?.session) problems.push(`${phase}: session evidence contradicts the not-present justification`)
+    return problems
+  }
+  if (proof.required !== true) problems.push('session scroller requirement is not explicit')
+  const shared = proof.relation === 'same-element'
+  const distinct = proof.relation === 'distinct-element'
+  if (!shared && !distinct) problems.push('session scroller relation must be same-element or distinct-element')
+  if (shared && (proof.sameElement !== true || proof.aliasOf !== 'composer' || proof.onlyOneOverflowAncestor !== true || !same(proof.composer, proof.session))) problems.push('shared session evidence lacks explicit same-element composer alias proof')
+  if (distinct && (proof.sameElement !== false || proof.aliasOf !== null || proof.onlyOneOverflowAncestor !== false || same(proof.composer, proof.session))) problems.push('distinct session evidence lacks a separate real identity')
+  for (const phase of ['before', 'during', 'after']) {
+    const session = audit?.[phase]?.session
+    if (!session) { problems.push(`${phase}: missing named session scroller measurement`); continue }
+    if (shared && (session.sameElement !== true || session.aliasOf !== 'composer' || !same(session.identity, audit?.[phase]?.composer?.identity))) problems.push(`${phase}: session alias differs from the real composer element`)
+    if (distinct && (session.sameElement !== false || session.aliasOf !== null || !same(session.identity, proof.session))) problems.push(`${phase}: distinct session identity differs from the measured ancestor`)
+  }
+  return problems
+}
+
 export function coldRevealProblems({ loading, ready, refreshed, refreshBaseline }, tolerance = 2) {
   const problems = []
   if (loading?.status !== 'loading' || loading?.revealCount !== 0) problems.push('loading must not trigger a reveal')

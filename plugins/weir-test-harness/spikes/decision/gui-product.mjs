@@ -10,7 +10,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -1705,17 +1705,39 @@ async function measureScrollContainers(selectors = {}, originSelector = null) {
     for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))add(el.getAttribute('data-weir-uiux-scroll'),el)
     add('decisionPage',document.querySelector('main.weir-da-page'))
     const originElement=origin?document.querySelector(origin):null
+    const markedComposer=document.querySelector('[data-weir-uiux-scroll="composer"]')
+    const markedSession=document.querySelector('[data-weir-uiux-scroll="session"]')
     const chain=[]
-    for(let current=originElement;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(['auto','scroll','overlay'].includes(overflow))chain.push(current)}
-    if(originElement?.matches?.('[data-weir-decision-trigger="weir-decision-selector"]')){add('composer',chain[0]);add('session',chain[1])}
+    for(let current=originElement;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(current===markedComposer||current===markedSession||['auto','scroll','overlay'].includes(overflow))chain.push(current)}
+    const decisionOrigin=Boolean(originElement&&(originElement.matches('[data-weir-decision-trigger="weir-decision-selector"]')||document.querySelector('main.weir-da-page')?.contains(originElement)))
+    if(decisionOrigin){add('composer',chain[0]);add('session',chain[1])}
     for(let index=0;index<chain.length;index+=1)add('ancestor-'+index,chain[index])
-    return Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
+    const result=Object.fromEntries(entries.map(([name,el])=>{el.setAttribute('data-weir-uiux-scroll',name);const rect=el.getBoundingClientRect();const computed=getComputedStyle(el);return [name,{
       identity:{tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):''},
       scrollTop:el.scrollTop,scrollLeft:el.scrollLeft,clientHeight:el.clientHeight,scrollHeight:el.scrollHeight,clientWidth:el.clientWidth,scrollWidth:el.scrollWidth,
       inline:Object.fromEntries(['overflow','overflowX','overflowY','overscrollBehavior','overscrollBehaviorX','overscrollBehaviorY','paddingRight'].map(key=>[key,el.style[key]??''])),
       computed:{overflowY:computed.overflowY,overscrollBehavior:computed.overscrollBehavior},
       rect:{x:rect.x,y:rect.y,left:rect.left,top:rect.top,width:rect.width,height:rect.height,right:rect.right,bottom:rect.bottom},
     }]}))
+    if(result.composer&&!result.session&&(markedComposer||(decisionOrigin&&chain[0]&&!chain[1])))result.session={...result.composer,identity:{...result.composer.identity},aliasOf:'composer',sameElement:true}
+    if(result.session&&(markedSession||(decisionOrigin&&chain[1]))){result.session.aliasOf=null;result.session.sameElement=false}
+    return result
+  })()`)
+}
+
+async function measureSessionScrollerIdentity(originSelector) {
+  return instance.cdp.evaluate(`(() => {
+    const origin=document.querySelector(${JSON.stringify(originSelector)})
+    const identity=el=>{if(!el)return null;const rect=el.getBoundingClientRect();return {tag:el.tagName,id:el.id||null,class:typeof el.className==='string'?el.className.slice(0,240):'',overflowY:getComputedStyle(el).overflowY,rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}}}
+    const chain=[]
+    const markedComposer=document.querySelector('[data-weir-uiux-scroll="composer"]')
+    const markedSession=document.querySelector('[data-weir-uiux-scroll="session"]')
+    for(let current=origin;current;current=current.parentElement){if(current===document.documentElement||current===document.body||current.matches?.('main.weir-da-page'))continue;const overflow=getComputedStyle(current).overflowY;if(current===markedComposer||current===markedSession||['auto','scroll','overlay'].includes(overflow))chain.push(current)}
+    const composer=chain[0]??null
+    const distinctSession=chain[1]??null
+    const required=Boolean(composer)
+    const relation=!required?'not-present':distinctSession?'distinct-element':'same-element'
+    return {originSelector:${JSON.stringify(originSelector)},originConnected:origin?.isConnected===true,originContained:Boolean(composer&&composer.contains(origin)),required,relation,sameElement:!required?null:distinctSession?false:true,aliasOf:required&&!distinctSession?'composer':null,onlyOneOverflowAncestor:required&&chain.length===1,composer:identity(composer),session:identity(distinctSession??composer),ancestorChain:chain.map(identity),proof:'computed overflow ancestors of the connected real product origin'}
   })()`)
 }
 
@@ -1868,6 +1890,7 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   let selectorLayout = null
   if (options.selector) selectorLayout = await auditSelectorLayout(kind, options.selector)
   const native = await measureNativeModal(selector, originSelector)
+  const sessionIdentity = await measureSessionScrollerIdentity(originSelector)
   requireEvidence(native, `${kind} native dialog exists`)
   const point = await instance.cdp.evaluate(`(() => {const origin=document.querySelector(${JSON.stringify(originSelector)});const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};const rect=origin?.getBoundingClientRect();return {x:Math.max(visual.offsetLeft+4,Math.min(visual.offsetLeft+visual.width-4,rect?rect.left+rect.width/2:visual.offsetLeft+visual.width/2)),y:Math.max(visual.offsetTop+4,Math.min(visual.offsetTop+visual.height-4,rect?rect.top+rect.height/2:visual.offsetTop+visual.height/2))}})()`)
   const attempts = []
@@ -1880,7 +1903,7 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   await instance.cdp.key('PageDown')
   attempts.push({ type: 'PageDown', observed: true })
   const during = await measureScrollContainers({}, originSelector)
-  const audit = { kind, selector, originSelector, before, during, after: null, native, selectorLayout, attempts, problems: [] }
+  const audit = { kind, selector, originSelector, before, during, after: null, native, sessionIdentity, selectorLayout, attempts, problems: [] }
   uiuxEvidence.modalAudits.push(audit)
   saveUiuxEvidence()
   await shot(`uiux-${kind}-modal`, { kind: 'native-product-modal', native, scroll: { before, during }, attempts })
@@ -1891,11 +1914,11 @@ async function finishModalAudit(audit, { focus = null, focusProblems = [], conte
   audit.contentMutation = contentMutation
   audit.after = await measureScrollContainers({}, audit.originSelector)
   const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
-  audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...focusProblems]
+  audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...sessionScrollerProblems(audit), ...focusProblems]
   if (focus) audit.focus = focus
   saveUiuxEvidence()
   await instance.cdp.evaluate(`(() => {for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))el.removeAttribute('data-weir-uiux-scroll');return true})()`)
-  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), focus: focus ?? null })
+  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), sessionIdentity: audit.sessionIdentity, focus: focus ?? null })
   return audit
 }
 
@@ -2817,12 +2840,17 @@ try {
     return !layout || !state
   })
   check('completeLongBilingualProductStatusEvidence', longStatusProblems.length === 0, { missing: longStatusProblems, required: requiredLongStatuses })
+  const sessionProblems = uiuxEvidence.modalAudits.flatMap(audit => sessionScrollerProblems(audit).map(problem => ({ kind: audit.kind, problem })))
+  const sessionAuditCount = uiuxEvidence.modalAudits.filter(audit => audit.sessionIdentity?.required === true && audit.before?.session && audit.during?.session && audit.after?.session).length
+  check('completeSessionScrollerEvidence', sessionProblems.length === 0 && sessionAuditCount > 0, { problems: sessionProblems, sessionAuditCount, modalAudits: uiuxEvidence.modalAudits.length })
   const uiuxCoverage = {
     confirmations: requiredConfirmations.filter(kind => !confirmationKinds.has(kind)),
     selectorStates: ['load-failure', 'unknown', 'save-failure', 'save-pending'].filter(kind => !selectorStateKinds.has(kind)),
     masterDetail: ['create', 'edit', 'learning'].filter(kind => !masterDetailKinds.has(kind)),
     focusTransitions: focusProblems,
     longStatus: longStatusProblems,
+    session: sessionProblems,
+    sessionAudits: sessionAuditCount,
     coldReveals: ['success', 'error'].filter(kind => !uiuxEvidence.coldReveals.some(item => item.kind === kind && item.problems.length === 0)),
     zoomComplete,
     english: uiuxEvidence.languages.some(item => item.language === 'en' && item.copyProblems?.length === 0),

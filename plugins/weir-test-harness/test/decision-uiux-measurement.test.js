@@ -287,6 +287,27 @@ test('scroll guard requires real wheel touch and PageDown attempts when requeste
   assert.match(scrollLockProblems({ before, during, after, attempts: attempts.slice(1) }, names, ['wheel', 'touch', 'PageDown']).join('\n'), /wheel/)
 })
 
+test('session scroller audit requires real before during after evidence or a justified absence', async () => {
+  const { sessionScrollerProblems } = await import('../spikes/decision/gui-product-lib.mjs')
+  assert.equal(typeof sessionScrollerProblems, 'function')
+  const composerIdentity = { tag: 'DIV', id: null, class: 'host_scrollBody' }
+  const sharedProof = { required: true, originConnected: true, relation: 'same-element', sameElement: true, aliasOf: 'composer', onlyOneOverflowAncestor: true, composer: composerIdentity, session: composerIdentity, ancestorChain: [composerIdentity] }
+  const sharedSession = { identity: composerIdentity, aliasOf: 'composer', sameElement: true }
+  const shared = { sessionIdentity: sharedProof, before: { composer: { identity: composerIdentity }, session: sharedSession }, during: { composer: { identity: composerIdentity }, session: sharedSession }, after: { composer: { identity: composerIdentity }, session: sharedSession } }
+  assert.deepEqual(sessionScrollerProblems(shared), [])
+  assert.match(sessionScrollerProblems({ ...shared, before: { composer: { identity: composerIdentity } } }).join('\n'), /before.*session/)
+  assert.match(sessionScrollerProblems({ ...shared, sessionIdentity: { ...sharedProof, sameElement: false } }).join('\n'), /same-element|alias/)
+  const absent = { sessionIdentity: { required: false, originConnected: true, relation: 'not-present', ancestorChain: [] }, before: {}, during: {}, after: {} }
+  assert.deepEqual(sessionScrollerProblems(absent), [])
+  assert.match(sessionScrollerProblems({ ...absent, sessionIdentity: { ...absent.sessionIdentity, relation: 'assumed-absent' } }).join('\n'), /not-present|justif/)
+  assert.match(sessionScrollerProblems({ before: {}, during: {}, after: {} }).join('\n'), /identity|justif/)
+  const distinctIdentity = { tag: 'SECTION', id: 'real-session', class: 'conversation-scroll' }
+  const distinctProof = { ...sharedProof, relation: 'distinct-element', sameElement: false, aliasOf: null, onlyOneOverflowAncestor: false, session: distinctIdentity, ancestorChain: [composerIdentity, distinctIdentity] }
+  const distinctSession = { identity: distinctIdentity, aliasOf: null, sameElement: false }
+  const distinct = { sessionIdentity: distinctProof, before: { composer: { identity: composerIdentity }, session: distinctSession }, during: { composer: { identity: composerIdentity }, session: distinctSession }, after: { composer: { identity: composerIdentity }, session: distinctSession } }
+  assert.deepEqual(sessionScrollerProblems(distinct), [])
+})
+
 test('confirmation focus guard rejects restoration before the authoritative action promise settles', () => {
   const beforeSettle = { promiseSettled: false, targetFocused: false, fallbackFocused: false }
   const afterSettle = { promiseSettled: true, target: { connected: true, enabled: true, visible: true, focused: true }, fallback: { connected: true, enabled: true, visible: true, focused: false, logical: true } }
