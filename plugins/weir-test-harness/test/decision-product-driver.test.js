@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicGuidancePinProblems, publicRecordDetailProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
@@ -1326,7 +1326,7 @@ test('the driver imports every guard it calls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   const imported = new Set((driver.match(/import \{([^}]+)\} from '\.\/gui-product-lib\.mjs'/) ?? [, ''])[1].split(',').map(name => name.trim()).filter(Boolean))
-  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems)\b/g)].map(match => match[1])
+  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicRecordDetailProblems)\b/g)].map(match => match[1])
   for (const name of new Set(called)) {
     assert.ok(imported.has(name), `${name} is called by the driver and must be imported from the lib`)
     assert.ok(lib.includes(`export function ${name}(`), `${name} is really exported by the lib`)
@@ -1366,7 +1366,11 @@ test('the driver keeps the cross-workspace matrix gated, isolated and lane-local
   assert.ok(phase, 'runCrossWorkspaceMemoryMatrix exists')
   assert.ok(phase.includes('if (!CROSS_WORKSPACE_MEMORY) return null'), 'the phase never runs in the default matrix')
   assert.ok(phase.includes('legacyMigratedProfileProblems') === false, 'the migrated legacy profile is no longer judged from its fixture report inside the sharing phase')
-  assert.ok(phase.includes('memoryZoneProblems(candidateDom)') && phase.includes('memoryZoneProblems(gatedDom)') && phase.includes('memoryZoneProblems(publishedDom)'), 'every captured DOM passes the zone guard')
+  // Minor 1: the candidate guard is fed the real workspace paths and foreign ids.
+  for (const dom of ['gatedDom', 'candidateDom', 'publishedDom']) {
+    assert.ok(phase.includes(`memoryZoneProblems({ ...${dom}, workspacePaths, foreignRecordIds`), `${dom} feeds its workspace paths and foreign record ids into the zone guard`)
+  }
+  assert.ok(phase.includes('memoryZoneProblems({ ...secondCandidateDom, workspacePaths, foreignRecordIds'), 'the second candidate feeds the same guard')
   assert.ok(phase.includes('crossWorkspaceShareProblems'), 'the shared-identity facts are guarded')
   assert.ok(phase.includes("join(root, 'cross-w1')") && phase.includes("join(root, 'cross-w2')") && phase.includes("join(root, 'cross-w3')"), 'two workspaces plus an evidence-free Auto workspace live inside the isolated root')
   for (const action of ['public-acknowledge', 'public-publish', 'public-rollback']) {
@@ -1429,4 +1433,221 @@ test('reused drivers expect three primary destinations instead of the retired fo
   }
   const learning = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-learning.mjs'), 'utf8')
   assert.ok(learning.includes('nav.length === 3'), 'gui-learning pins the three-destination contract')
+})
+
+test('public guidance guard accepts a real pinned guidance-only Attempt and rejects every drift', () => {
+  const published = { snapshotId: 'ms_public_1', version: 1, revision: 2, contentHash: 'a'.repeat(64) }
+  const attempt = {
+    outcome: 'escalate',
+    citedEvidenceIds: null,
+    evidence: [{ source: 'user_profile', evidenceId: 'ev_profile' }],
+    pins: {
+      memorySnapshotId: null, memorySnapshotRevision: null, memorySnapshotHash: null,
+      publicMemorySnapshotId: 'ms_public_1', publicMemorySnapshotRevision: 2, publicMemorySnapshotHash: 'a'.repeat(64),
+    },
+    packManifest: {
+      evidenceIds: ['ev_profile'],
+      memory: {
+        L2: { zone: 'workspace', principleIds: [], items: [] },
+        publicL2: {
+          zone: 'public', status: 'populated', snapshotId: 'ms_public_1', snapshotRevision: 2, snapshotHash: 'a'.repeat(64),
+          principleIds: ['pr_public_1'],
+          items: [{ principleId: 'pr_public_1', sources: ['origin_aaaaaaaaaaaa', 'origin_bbbbbbbbbbbb'], evidenceIds: [] }],
+        },
+      },
+    },
+  }
+  assert.deepEqual(publicGuidancePinProblems({ published, attempt }), [])
+  assert.ok(publicGuidancePinProblems({ published, attempt: null }).some(problem => /no real Attempt/.test(problem)))
+  assert.ok(publicGuidancePinProblems({ published: {}, attempt }).some(problem => /current published public Snapshot is unknown/.test(problem)))
+  const driftedPin = { ...attempt, pins: { ...attempt.pins, publicMemorySnapshotId: 'ms_other' } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: driftedPin }).some(problem => /did not pin the current published public Snapshot/.test(problem)))
+  const driftedRevision = { ...attempt, pins: { ...attempt.pins, publicMemorySnapshotRevision: 1 } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: driftedRevision }).some(problem => /did not pin the published public revision/.test(problem)))
+  const driftedHash = { ...attempt, pins: { ...attempt.pins, publicMemorySnapshotHash: 'b'.repeat(64) } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: driftedHash }).some(problem => /did not pin the published public content hash/.test(problem)))
+  const noPublic = { ...attempt, packManifest: { ...attempt.packManifest, memory: { ...attempt.packManifest.memory, publicL2: null } } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: noPublic }).some(problem => /no public L2 partition/.test(problem)))
+  const emptyPublic = { ...attempt, packManifest: { ...attempt.packManifest, memory: { ...attempt.packManifest.memory, publicL2: { ...attempt.packManifest.memory.publicL2, principleIds: [], items: [] } } } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: emptyPublic }).some(problem => /not offered as guidance/.test(problem)))
+  const evidenceLink = { ...attempt, packManifest: { ...attempt.packManifest, memory: { ...attempt.packManifest.memory, publicL2: { ...attempt.packManifest.memory.publicL2, items: [{ principleId: 'pr_public_1', sources: [], evidenceIds: ['ev_1'] }] } } } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: evidenceLink }).some(problem => /claims evidence ids/.test(problem)))
+  const cited = { ...attempt, citedEvidenceIds: ['ms_public_1'] }
+  assert.ok(publicGuidancePinProblems({ published, attempt: cited }).some(problem => /cited evidence ids it never validated/.test(problem)))
+  const citedPrinciple = { ...attempt, citedEvidenceIds: ['pr_public_1'] }
+  assert.ok(publicGuidancePinProblems({ published, attempt: citedPrinciple }).some(problem => /was cited as evidence/.test(problem)))
+  const answered = { ...attempt, outcome: 'answer' }
+  assert.ok(publicGuidancePinProblems({ published, attempt: answered }).some(problem => /must return or escalate/.test(problem)))
+  const privatePin = { ...attempt, pins: { ...attempt.pins, memorySnapshotId: 'ms_private_1' } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: privatePin }).some(problem => /pinned a private Snapshot/.test(problem)))
+  const privateL2 = { ...attempt, packManifest: { ...attempt.packManifest, memory: { ...attempt.packManifest.memory, L2: { zone: 'workspace', principleIds: ['pr_private_1'], items: [] } } } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: privateL2 }).some(problem => /no eligible private principles/.test(problem)))
+  const learnedEvidence = { ...attempt, evidence: [...attempt.evidence, { source: 'user_decision', evidenceId: 'ev_learned' }] }
+  assert.ok(publicGuidancePinProblems({ published, attempt: learnedEvidence }).some(problem => /beyond the authored assistant profile/.test(problem)))
+  const packEvidence = { ...attempt, packManifest: { ...attempt.packManifest, evidenceIds: [...attempt.packManifest.evidenceIds, 'ev_foreign'] } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: packEvidence }).some(problem => /outside the authored profile/.test(problem)))
+  const noEvidence = { ...attempt, evidence: [], packManifest: { ...attempt.packManifest, evidenceIds: [] } }
+  assert.deepEqual(publicGuidancePinProblems({ published, attempt: noEvidence }), [])
+})
+
+test('public wire attribution guard requires every gesture under its own workspace session', () => {
+  const action = (method, sessionId, extra = {}) => ({ label: `${method}@${sessionId}`, method, expectedSessionId: sessionId, sessionId, rpcId: `rpc-${method}`, responded: true, occurrences: 1, ...extra })
+  const binding = (sessionId, bound = sessionId) => ({ label: `page@${sessionId}`, sessionId, attempts: [{ attempt: 1, bound }] })
+  const actions = [
+    action('publicMemoryRefresh', 's1'), action('publicMemoryRefresh', 's4'),
+    action('publicCandidate', 's1'), action('publicCandidate', 's4'),
+    action('snapshotPublish', 's1'), action('snapshotReject', 's4'), action('snapshotRollback', 's1'),
+  ]
+  const bindings = [binding('s1'), binding('s4')]
+  assert.deepEqual(publicWireAttributionProblems({ actions, bindings }), [])
+  assert.ok(publicWireAttributionProblems({ actions: [], bindings }).some(problem => /no UI-triggered public RPC/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions: actions.filter(item => item.method !== 'snapshotReject'), bindings }).some(problem => /no UI gesture exercised snapshotReject/.test(problem)))
+  // The review finding: the gesture carried W2 while the intended page was W1.
+  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'snapshotPublish' ? { ...item, sessionId: 's2' } : item), bindings }).some(problem => /instead of the intended workspace session/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => ({ ...item, sessionId: 's9' })), bindings }).some(problem => /instead of the intended workspace session/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'publicCandidate' ? { ...item, rpcId: null } : item), bindings }).some(problem => /no raw rpc id/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'snapshotRollback' ? { ...item, responded: false } : item), bindings }).some(problem => /no captured response payload/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => ({ ...item, sessionId: 's1', expectedSessionId: 's1' })), bindings }).some(problem => /one workspace session only/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions, bindings: [binding('s1')] }).some(problem => /never re-opened per workspace/.test(problem)))
+  // A page that never bound to its own workspace cannot vouch for any action.
+  assert.ok(publicWireAttributionProblems({ actions, bindings: [binding('s1'), binding('s4', 's1')] }).some(problem => /never bound to its own workspace session/.test(problem)))
+})
+
+test('public candidate rejection guard keeps the published version and demands both audit lines', () => {
+  const candidate = { snapshotId: 'ms_candidate_v2', learningRunId: 'lr_candidate_v2' }
+  const beforeCurrent = { snapshotId: 'ms_public_v1', version: 1, revision: 2 }
+  const afterCurrent = { snapshotId: 'ms_public_v1', version: 1, revision: 2 }
+  const audit = [
+    { kind: 'learning-run', action: 'start', outcome: 'running', learningRunId: 'lr_candidate_v2', rootSessionId: 's4' },
+    { kind: 'learning-run', outcome: 'rejected', learningRunId: 'lr_candidate_v2', rootSessionId: 's4' },
+    { kind: 'snapshot', action: 'reject', snapshotId: 'ms_candidate_v2', rootSessionId: 's4' },
+  ]
+  const good = { sessionId: 's4', wireSessionId: 's4', candidate, beforeCurrent, afterCurrent, runOutcome: 'rejected', runId: 'lr_candidate_v2', snapshotState: 'draft', domVersion: 1, domCandidatePresent: false, auditSessionId: 's4', audit }
+  assert.deepEqual(publicCandidateRejectionProblems(good), [])
+  assert.ok(publicCandidateRejectionProblems({ ...good, wireSessionId: 's2' }).some(problem => /did not carry the intended workspace session/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, auditSessionId: 's2' }).some(problem => /audit belongs to another workspace/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, runOutcome: 'candidate' }).some(problem => /non-rejected learning run/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, runOutcome: null }).some(problem => /non-rejected learning run/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, runId: 'lr_other' }).some(problem => /not the reviewed candidate run/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, snapshotState: 'published' }).some(problem => /no longer a draft/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, afterCurrent: null }).some(problem => /published public version disappeared/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, afterCurrent: { ...afterCurrent, snapshotId: 'ms_other' } }).some(problem => /replaced the current public Snapshot/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, afterCurrent: { ...afterCurrent, version: 2 } }).some(problem => /changed the current public version/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, afterCurrent: { ...afterCurrent, revision: 3 } }).some(problem => /changed the current public revision/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, afterCurrent: { snapshotId: 'ms_candidate_v2', version: 2, revision: 1 } }).some(problem => /became the current public version/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, domVersion: 2 }).some(problem => /no longer renders the previous published version/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, domCandidatePresent: true }).some(problem => /still offered for review/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, audit: audit.filter(line => line.kind !== 'learning-run' || line.outcome !== 'rejected') }).some(problem => /rejected learning run has no audit line/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, audit: audit.filter(line => line.kind !== 'snapshot') }).some(problem => /rejected Snapshot has no audit line/.test(problem)))
+  assert.ok(publicCandidateRejectionProblems({ ...good, candidate: {} }).some(problem => /never identified/.test(problem)))
+})
+
+test('candidate body guard rejects workspace paths and foreign record ids', () => {
+  const clean = {
+    present: true,
+    text: '待你审阅的候选\n涉及的工作区数: 3 · 来源条数: 3\norigin_39e1ded167dc · 1 · 来自其他工作区（只读概览）\nAnswer cross-w1-source: Documented option',
+    workspacePaths: ['/repo/cross-w1', '/repo/cross-w4'],
+    foreignRecordIds: ['dc_feebc83f-20e3-4eb3-96b4-95a987acc293', 'ms_w1'],
+    aliases: ['origin_39e1ded167dc', 'origin_8c3ba8df843a'],
+  }
+  assert.deepEqual(publicCandidateBodyProblems(clean), [])
+  assert.ok(publicCandidateBodyProblems({ ...clean, present: false }).some(problem => /no candidate body was rendered/.test(problem)))
+  assert.ok(publicCandidateBodyProblems({ ...clean, text: '  ' }).some(problem => /candidate body was empty/.test(problem)))
+  assert.ok(publicCandidateBodyProblems({ ...clean, text: `${clean.text}\n/repo/cross-w1` }).some(problem => /workspace path/.test(problem)))
+  assert.ok(publicCandidateBodyProblems({ ...clean, text: `${clean.text}\ndc_feebc83f-20e3-4eb3-96b4-95a987acc293` }).some(problem => /foreign record id/.test(problem)))
+  assert.ok(publicCandidateBodyProblems({ ...clean, text: `${clean.text}\n/Users/young/secret` }).some(problem => /absolute path/.test(problem)))
+  assert.ok(publicCandidateBodyProblems({ ...clean, aliases: ['workspace-one'] }).some(problem => /non-opaque source label/.test(problem)))
+})
+
+test('record detail guard requires both partitions and the real public pin', () => {
+  const capture = {
+    caseId: 'dc_w4', advancedOpen: true,
+    publicTitle: '公共记忆', privateTitle: '当前工作区经验',
+    publicText: '公共记忆\n状态: 已装入\n{\n  "snapshotId": "ms_public_v1"\n}\npr_public_1\n来源映射',
+    privateText: '当前工作区经验\n状态: 未固定版本',
+    publicPin: { snapshotId: 'ms_public_v1', snapshotRevision: 2, snapshotHash: 'a'.repeat(64) },
+    publicMapping: [{ principleId: 'pr_public_1', evidenceIds: [] }],
+    publicPrincipleIds: ['pr_public_1'],
+    summary: '本次处理的判断依据\n当前工作区经验: 本次处理未使用经审阅原则。\n公共记忆: 本次处理包含经审阅的公共指导 (1)',
+  }
+  const expected = { snapshotId: 'ms_public_v1', revision: 2, principleId: 'pr_public_1', workspacePaths: ['/repo/cross-w4'], foreignRecordIds: ['dc_w1'] }
+  assert.deepEqual(publicRecordDetailProblems(capture, expected), [])
+  assert.ok(publicRecordDetailProblems(null, expected).some(problem => /never read/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicTitle: '公共' }, expected).some(problem => /title the public partition/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, privateTitle: '经验' }, expected).some(problem => /title the current workspace partition/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, advancedOpen: false }, expected).some(problem => /must be opened/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, privateText: '' }, expected).some(problem => /rendered nothing/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicPin: null }, expected).some(problem => /shows no Snapshot pin/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicPin: { snapshotId: 'ms_other', snapshotRevision: 2 } }, expected).some(problem => /real published public pin/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicPin: { snapshotId: 'ms_public_v1', snapshotRevision: 1 } }, expected).some(problem => /not the published revision/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicPrincipleIds: ['pr_other'] }, expected).some(problem => /does not list the published principle/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicMapping: [{ principleId: 'pr_public_1', evidenceIds: ['ev_1'] }] }, expected).some(problem => /maps evidence ids/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicMapping: [] }, expected).some(problem => /does not map every listed principle/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, summary: '本次处理的判断依据' }, expected).some(problem => /included as guidance/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicText: `${capture.publicText} /repo/cross-w4` }, expected).some(problem => /workspace path/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, publicText: `${capture.publicText} dc_w1` }, expected).some(problem => /foreign record id/.test(problem)))
+})
+
+test('the matrix binds every public gesture to its workspace before acting', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(phase, 'the sharing phase exists')
+  // M4: the page is re-opened and its own read proves the binding before a gesture.
+  const binding = driver.match(/async function openDecisionPageForSession\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(binding, 'openDecisionPageForSession exists')
+  assert.ok(binding.includes("item.method === 'agents' || item.method === 'inbox'"), 'the binding is read from the page-issued RPC')
+  assert.ok(binding.includes('observed.sessionId === sessionId'), 'the page must be bound to the intended workspace session')
+  assert.ok(binding.includes('for (let attempt = 1; attempt <= 3; attempt += 1)'), 'a stale capture is re-opened, not accepted')
+  // The product keeps its captured session per renderer lifetime: a repeated
+  // switch cannot re-bind it, so a stale capture is corrected by a reload.
+  assert.ok(binding.includes('if (attempt > 1) await reloadDecisionShell('), 'a stale capture is corrected by reloading the renderer')
+  const reload = driver.match(/async function reloadDecisionShell\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(reload, 'reloadDecisionShell exists')
+  assert.ok(reload.includes("instance.cdp.request('Page.reload'"), 'the reload is a real renderer reload')
+  assert.ok(reload.includes('cross-page-shell-reloads.json'), 'every reload is durable evidence')
+  assert.ok(reload.includes('instance.network.completed = new Set()'), 'a reload cannot hide a fresh RPC behind a reused request id')
+  assert.ok(binding.includes('pageBindings.push(receipt)'), 'every binding is durable evidence')
+  for (const session of ['w1', 'w2', 'w3', 'w4']) {
+    assert.ok(phase.includes(`openDecisionPageForSession(${session}.sessionId`), `${session}: the page is re-opened per workspace`)
+  }
+  // Every public gesture asserts its exact args, including the workspace session.
+  for (const [method, session] of [['snapshotPublish', 'w1'], ['snapshotReject', 'w4'], ['snapshotRollback', 'w1']]) {
+    assert.ok(phase.includes(`method: '${method}', args: { sessionId: ${session}.sessionId`), `${method} carries the ${session} session on the wire`)
+  }
+  assert.ok(phase.includes("method: 'publicMemoryRefresh', args: { sessionId: w1.sessionId, agentId: shared.agentId, acknowledgedDisclosure: true }"), 'the first acknowledged refresh is attributed')
+  assert.ok(phase.includes('publicWireAttributionProblems({ bindings: pageBindings, actions: publicWires })'), 'the M4 guard judges every gesture and binding')
+  assert.ok(phase.includes("check('publicUiActionsCarryTheIntendedWorkspaceSession'"), 'the attribution is its own falsifiable check')
+  // B1 runs with the public version live and B2 precedes the rollback-to-empty leg.
+  const b1 = phase.indexOf("const w4Case = await waitCase(w4.sessionId, 'CROSS_W1_Q'")
+  const b2 = phase.indexOf("await keyboardActivate('Discard public candidate'")
+  const rollback = phase.indexOf("await keyboardActivate('Restore previous public version'")
+  const rollbackRpc = phase.indexOf("method: 'snapshotRollback'")
+  assert.ok(b1 > 0 && b2 > b1 && rollback > b2 && rollbackRpc > rollback, 'order: public guidance Attempt -> second candidate -> rejection -> rollback')
+  assert.ok(phase.includes("check('publicGuidanceAttemptPinsPublishedSnapshotWithoutEvidence'"), 'the pinned-guidance Attempt is a real check')
+  assert.ok(phase.includes("check('publicGuidanceRecordDetailShowsBothPartitionsWithRealPin'"), 'the dual-partition record detail is a real check')
+  assert.ok(phase.includes("check('publicCandidateRejectionKeepsPublishedVersion'"), 'the rejection is a real check')
+  assert.ok(phase.includes('publicAuditLines(workspaceFour)'), 'the rejection audit is read from the rejecting workspace')
+  assert.ok(phase.includes("const w4Guidance = await waitFor(async () => { const value = await record(w4.sessionId, 'w4-public-attempt', w4Case.caseId)"), 'the Attempt is read from the record detail of the evidence-free workspace')
+})
+
+// The driver builds its page expressions as template literals; a raw newline
+// inside an injected single-quoted string is a page-level SyntaxError that only
+// surfaces mid-run, so every new probe is compiled here first.
+test('the injected page probes compile before the real run reaches them', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const templateAfter = marker => {
+    const from = driver.indexOf('instance.cdp.evaluate(`', driver.indexOf(marker))
+    assert.ok(from > 0, `${marker}: an injected expression exists`)
+    const to = driver.indexOf('`)', from)
+    assert.ok(to > from, `${marker}: the injected expression closes`)
+    return driver.slice(from + 'instance.cdp.evaluate(`'.length, to)
+  }
+  const memoryZone = templateAfter('async function crossWorkspaceMemoryDom(')
+  const memoryExpression = new Function('agentId', `return \`${memoryZone}\``)('ag_compile_check')
+  assert.ok(memoryExpression.includes('ag_compile_check'), 'the zone probe interpolates its agent id')
+  assert.doesNotThrow(() => new Function('document', `return (${memoryExpression})`), 'the zone probe is valid page source')
+  const recordProbe = templateAfter('const recordCapture = await waitFor(')
+  const recordExpression = new Function('w4Case', 'w4Attempt', `return \`${recordProbe}\``)({ caseId: 'dc_compile_check' }, { attemptId: 'at_compile_check' })
+  assert.ok(recordExpression.includes('dc_compile_check') && recordExpression.includes('at_compile_check'), 'the record probe interpolates its case and attempt ids')
+  assert.doesNotThrow(() => new Function('document', `return (${recordExpression})`), 'the record probe is valid page source')
 })

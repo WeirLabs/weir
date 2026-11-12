@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicGuidancePinProblems, publicRecordDetailProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -64,6 +64,10 @@ const processProvenance = []
 const p4Evidence = {}
 const nativeKeyPackets = []
 const hostOnboardingDismissals = []
+const publicWires = []
+const pageBindings = []
+const shellReloads = []
+const pageReadWitnesses = []
 writeJson(join(out, 'host-onboarding.json'), hostOnboardingDismissals)
 let instance = null
 let instanceNumber = 0
@@ -1778,6 +1782,7 @@ async function crossWorkspaceMemoryDom(agentId) {
       guidance:publicZone?.querySelector('[data-public-guidance-only]')?.textContent??'',
       privateIsolation:privateZone?.querySelector('[data-private-isolation]')?.textContent??'',
       text:detail.innerText,
+      publicStatus:status?.getAttribute('data-public-status')??null,
       navigation:[...document.querySelectorAll('main.weir-da-page [data-decision-primary-nav] [data-view]')].map(el=>el.getAttribute('data-view')),
       controls,
       status:status?{present:true,role:status.getAttribute('role')??'',live:status.getAttribute('aria-live')??''}:{present:false},
@@ -1790,6 +1795,8 @@ async function crossWorkspaceMemoryDom(agentId) {
         discard:Boolean(candidate.querySelector('[data-action="public-reject"]')),
         readableLinks:candidate.querySelectorAll('[data-action="open-learning-record"],[data-learning-source-record] button').length,
         adoptOnRender:false,
+        text:candidate.innerText,
+        aliasesText:[...candidate.querySelectorAll('[data-public-source]')].map(el=>el.innerText).join('\\n'),
       }:{present:false},
       current:current?{version:current.getAttribute('data-public-current'),rollback:Boolean(publicZone.querySelector('[data-action="public-rollback"]'))}:null,
     }
@@ -1903,17 +1910,147 @@ async function runMigratedLegacyProfileSurface() {
   return { sessions: { boot: boot.sessionId, restart: restart.sessionId }, expected, problems }
 }
 
+/**
+ * The Decision page captures the workspace session it saw when its region was
+ * first rendered: the product keeps that capture per renderer lifetime, so a
+ * plain session switch (or five of them) never re-binds it. A public gesture is
+ * only attributable when the wire proves the page is bound to the intended
+ * workspace, so the first attempt is a plain re-open and a stale capture is
+ * corrected by reloading the renderer, which restores the session from scratch.
+ */
+async function openDecisionPageForSession(sessionId, label, tab = 'agents') {
+  requireEvidence(knownSessionIds.has(sessionId), 'only a session created by this run can own the Decision page')
+  const attempts = []
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (attempt > 1) await reloadDecisionShell(`${label}#${attempt}`)
+    const mark = networkRpc.length
+    await openIsolatedSession(sessionId)
+    await openPage(tab)
+    let observed = null
+    try {
+      observed = await waitFor(async () => {
+        await collectNetwork()
+        const reads = networkRpc.slice(mark).filter(item => item.method === 'agents' || item.method === 'inbox')
+        const last = reads.at(-1)
+        return last ? { sessionId: last.args?.sessionId ?? null, method: last.method, rpcId: last.rpcId ?? null } : null
+      }, 20_000)
+    } catch { observed = null }
+    attempts.push({ attempt, reloaded: attempt > 1, bound: observed?.sessionId ?? null, method: observed?.method ?? null, rpcId: observed?.rpcId ?? null })
+    if (observed && observed.sessionId === sessionId) {
+      const receipt = { label, sessionId, method: observed.method, rpcId: observed.rpcId, attempts }
+      pageBindings.push(receipt)
+      writeJson(join(out, 'cross-page-session-bindings.json'), pageBindings)
+      return receipt
+    }
+  }
+  pageBindings.push({ label, sessionId, method: null, rpcId: null, attempts })
+  writeJson(join(out, 'cross-page-session-bindings.json'), pageBindings)
+  throw new Error(`The Decision page never bound to the intended workspace session for ${label}: ${JSON.stringify(attempts)}`)
+}
+
+/** Reload the renderer so the restored workspace session renders from scratch. */
+async function reloadDecisionShell(label) {
+  await instance.cdp.request('Page.reload', { ignoreCache: false })
+  await waitFor(() => instance.cdp.evaluate('Boolean(window.__decisionQA)'), 90_000)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]'))`), 90_000)
+  // A reload renumbers CDP request ids; drop the previous per-load maps so a
+  // reused id can never hide a fresh RPC from the evidence.
+  if (instance.network) {
+    instance.network.requests = new Map()
+    instance.network.responses = new Map()
+    instance.network.completed = new Set()
+  }
+  shellReloads.push({ label })
+  writeJson(join(out, 'cross-page-shell-reloads.json'), shellReloads)
+}
+
+/** The raw service payload of one captured Decision RPC response. */
+function publicRpcPayload(entry) {
+  const envelope = entry?.response?.result ?? null
+  if (envelope?.ok !== true) return null
+  return envelope.value?.ok === true ? envelope.value.value : null
+}
+
+/** The audit lines a workspace wrote for its own decisions. */
+function publicAuditLines(cwd) {
+  return readAuditLines(cwd)
+    .filter(line => typeof line?.type === 'string' && line.type.startsWith('weir/decision/'))
+    .map(line => ({ kind: line.type.slice('weir/decision/'.length), ...line.data }))
+}
+
+/**
+ * One UI gesture's wire receipt. The exact args include the intended workspace
+ * session, so a public action issued from another workspace's page cannot pass.
+ * `exactly: null` accepts one read repeated by a reload; a gesture passes 1.
+ */
+async function assertUiRpc({ label, method, args, mark, exactly = null }) {
+  const match = () => networkRpc.slice(mark).filter(item => item.method === method && exactArgs(item.args, args))
+  try {
+    await waitFor(async () => {
+      await collectNetwork()
+      const found = match()
+      return exactly === null ? (found.length ? found : null) : (found.length >= exactly ? found : null)
+    }, 30_000)
+  } catch {
+    throw new Error(`${label}: no ${method} carried the intended workspace session: ${JSON.stringify(args)}`)
+  }
+  // Let the reload the gesture triggers settle before counting occurrences.
+  await new Promise(resolve => setTimeout(resolve, 400))
+  await collectNetwork()
+  const entries = match()
+  if (exactly !== null) requireEvidence(entries.length === exactly, `${label}: ${method} ran ${entries.length} times, expected exactly ${exactly}`)
+  const entry = entries.at(-1)
+  // The product payload is the evidence; a reloaded renderer may not report the
+  // transport status for every response, so only the raw body must be captured.
+  requireEvidence(Boolean(entry?.rpcId) && entry?.response != null, `${label}: ${method} raw rpcId and response captured`)
+  requireEvidence(entry.args?.sessionId === args.sessionId, `${label}: ${method} did not carry the intended workspace session`)
+  const payload = publicRpcPayload(entry)
+  const receipt = {
+    label, method, expectedSessionId: args.sessionId, sessionId: entry.args?.sessionId ?? null,
+    args: entry.args, rpcId: entry.rpcId, status: entry.status ?? null, responded: entry.response != null, occurrences: entries.length,
+    payloadStatus: payload?.status ?? null,
+  }
+  publicWires.push(receipt)
+  writeJson(join(out, 'cross-public-wire.json'), publicWires)
+  return { entry, payload, receipt }
+}
+
+/**
+ * A page that is reused across tabs keeps its captured session: record this
+ * page's own next read so the record view is attributed, not assumed.
+ */
+async function assertPageSession(mark, sessionId, label, methods = ['records', 'record']) {
+  const read = await waitFor(async () => {
+    await collectNetwork()
+    const reads = networkRpc.slice(mark).filter(item => methods.includes(item.method))
+    return reads.length ? reads.at(-1) : null
+  }, 30_000)
+  requireEvidence(read.args?.sessionId === sessionId, `${label}: the page read ${read.method} under another workspace session`)
+  const receipt = { label, method: read.method, expectedSessionId: sessionId, sessionId: read.args?.sessionId ?? null, rpcId: read.rpcId ?? null, args: read.args, responded: read.response != null }
+  pageReadWitnesses.push(receipt)
+  writeJson(join(out, 'cross-page-workspace-reads.json'), pageReadWitnesses)
+  return receipt
+}
+
+/**
+ * Explicit public adoption, rejection, rollback and the two per-workspace
+ * observations all reuse one gesture path: open the page bound to the intended
+ * workspace, act, and prove the exact args (including the session) on the wire.
+ */
 async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   if (!CROSS_WORKSPACE_MEMORY) return null
   const phase = 'GUI-cross-workspace-memory'
   const workspaceOne = join(root, 'cross-w1')
   const workspaceTwo = join(root, 'cross-w2')
   const workspaceThree = join(root, 'cross-w3')
-  for (const path of [workspaceOne, workspaceTwo, workspaceThree]) mkdirSync(path, { recursive: true })
+  const workspaceFour = join(root, 'cross-w4')
+  const workspacePaths = [workspaceOne, workspaceTwo, workspaceThree, workspaceFour, root]
+  for (const path of [workspaceOne, workspaceTwo, workspaceThree, workspaceFour]) mkdirSync(path, { recursive: true })
 
   const w1 = await newIsolatedSession('cross-w1', workspaceOne)
   const w2 = await newIsolatedSession('cross-w2', workspaceTwo)
   const w3 = await newIsolatedSession('cross-w3', workspaceThree)
+  const w4 = await newIsolatedSession('cross-w4', workspaceFour)
   await openIsolatedSession(w1.sessionId)
   const shared = await createAgent(w1.sessionId, 'Shared memory assistant', 'Prefer the documented option')
   // The assistant page owns the main region, so the composer (and its selector
@@ -1924,6 +2061,10 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   await selectorChoose(w2.sessionId, 'agent', shared.agentId)
   await openIsolatedSession(w3.sessionId)
   await selectorChoose(w3.sessionId, 'auto')
+  // B1 needs a workspace with no private experience of its own, so the published
+  // public L2 can be exercised with no eligible private L5 at all.
+  await openIsolatedSession(w4.sessionId)
+  await selectorChoose(w4.sessionId, 'agent', shared.agentId)
 
   // One real user decision per source workspace: the only eligible public sources.
   await openIsolatedSession(w1.sessionId)
@@ -1934,9 +2075,13 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   await submitMarker(instance, 'CROSS_W2_Q')
   const w2Case = await waitCase(w2.sessionId, 'CROSS_W2_Q', current => current.state === 'awaiting_user')
   await answerInboxWithSuggestions(w2.sessionId, w2Case.caseId, 'cross-w2-source')
+  const sharedPrivateIds = [privateMemory.learningRunId, privateMemory.snapshotId]
+  const foreignForW1 = [w2Case.caseId, ...sharedPrivateIds]
+  const foreignForW2 = [w1Case.caseId, ...sharedPrivateIds]
+  const foreignForW3 = [w1Case.caseId, w2Case.caseId, ...sharedPrivateIds]
 
   // W1 opens the public zone: disclosure first, then exactly one automatic candidate.
-  await openIsolatedSession(w1.sessionId)
+  await openDecisionPageForSession(w1.sessionId, 'w1-public-zone')
   await openAgent(w1.sessionId, shared.agentId)
   // Evaluate may only return plain data: a DOM node cannot cross the CDP boundary.
   const gated = await waitFor(() => instance.cdp.evaluate(`(() => {
@@ -1946,14 +2091,21 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   requireEvidence(gated, 'the first public review is disclosure-gated')
   const gatedDom = await crossWorkspaceMemoryDom(shared.agentId)
   await shot('cross-public-disclosure')
-  check('publicFirstReviewRequiresDisclosure', memoryZoneProblems(gatedDom).length === 0 && gatedDom.disclosure.required === true && gatedDom.candidate.present === false, memoryZoneProblems(gatedDom))
+  const gatedProblems = memoryZoneProblems({ ...gatedDom, workspacePaths, foreignRecordIds: foreignForW1 })
+  check('publicFirstReviewRequiresDisclosure', gatedProblems.length === 0 && gatedDom.disclosure.required === true && gatedDom.candidate.present === false, { problems: gatedProblems, disclosure: gatedDom.disclosure })
+  const publicMark = networkRpc.length
   await keyboardActivate('Acknowledge public memory disclosure', `[data-agent-detail="${shared.agentId}"] [data-action="public-acknowledge"]`)
+  const acknowledgement = await assertUiRpc({ label: 'W1 acknowledgement', method: 'publicMemoryRefresh', args: { sessionId: w1.sessionId, agentId: shared.agentId, acknowledgedDisclosure: true }, mark: publicMark, exactly: 1 })
+  requireEvidence(acknowledgement.payload?.status === 'candidate', 'the acknowledged refresh produced the one automatic public candidate')
   const review = await waitFor(() => instance.cdp.evaluate(`(() => {
     const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
     const candidate=zone?.querySelector('[data-public-candidate]')
     return Boolean(candidate&&candidate.querySelector('[data-public-source]'))
   })()`), 60_000)
   requireEvidence(review, 'the acknowledged refresh produced a reviewable candidate')
+  const candidateReview = await assertUiRpc({ label: 'W1 candidate review', method: 'publicCandidate', args: { sessionId: w1.sessionId, agentId: shared.agentId }, mark: publicMark })
+  const candidateAuthority = candidateReview.payload
+  requireEvidence(candidateAuthority?.candidate?.snapshotId && candidateAuthority?.candidate?.revision === 1, 'the review returned the real draft Snapshot')
   await collectNetwork()
   const candidateDom = await crossWorkspaceMemoryDom(shared.agentId)
   await shot('cross-public-candidate')
@@ -1962,43 +2114,222 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   check('publicCandidateAutomaticallyExtractedOnceFromTwoWorkspaces',
     refreshRpc.filter(entry => entry.args?.acknowledgedDisclosure === true).length === 1 &&
     reviewRpc.length >= 1 &&
+    acknowledgement.payload?.workspaceCount === 2 &&
     candidateDom.candidate.aliases.length >= 1 &&
     candidateDom.candidate.aliases.every(alias => /^origin_[0-9a-f]+$/.test(alias)),
-    { refresh: refreshRpc.map(entry => entry.args), review: reviewRpc.map(entry => entry.args), aliases: candidateDom.candidate.aliases })
-  check('publicCandidateReviewMatchesMemoryZoneGuards', memoryZoneProblems(candidateDom).length === 0, memoryZoneProblems(candidateDom))
+    { refresh: refreshRpc.map(entry => entry.args), review: reviewRpc.map(entry => entry.args), aliases: candidateDom.candidate.aliases, workspaceCount: acknowledgement.payload?.workspaceCount })
+  const candidateProblems = memoryZoneProblems({ ...candidateDom, workspacePaths, foreignRecordIds: foreignForW1 })
+  check('publicCandidateReviewMatchesMemoryZoneGuards', candidateProblems.length === 0, candidateProblems)
+  // Minor 1: the rendered candidate body itself must carry no path and no foreign id.
+  const candidateBodyProblems = publicCandidateBodyProblems({ present: candidateDom.candidate.present, text: candidateDom.candidate.text, workspacePaths, foreignRecordIds: foreignForW1, aliases: candidateDom.candidate.aliases })
+  check('publicCandidateBodyHidesPathsAndForeignRecordIds', candidateBodyProblems.length === 0, candidateBodyProblems)
 
-  // Explicit adoption, then the same published version in every real workspace.
+  // Explicit adoption, proved on the wire under the workspace that adopted it.
+  const candidateSnapshotId = candidateAuthority.candidate.snapshotId
+  const candidateRevision = candidateAuthority.candidate.revision
+  const publishMark = networkRpc.length
   await keyboardActivate('Adopt public principles', `[data-agent-detail="${shared.agentId}"] [data-action="public-publish"]`)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-publish"))'), 30_000)
+  const adoptionConfirmation = await instance.cdp.evaluate('document.querySelector("#weir-da-learning-public-publish").innerText')
+  requireEvidence(/指导|guidance/i.test(adoptionConfirmation), 'the public adoption confirmation restates that the version is guidance only')
+  await shot('cross-public-publish-confirm')
   await keyboardActivate('Confirm public adoption', '#weir-da-learning-public-publish .weir-da-actions button[data-variant="primary"]')
-  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"] [data-public-current]'))`), 30_000)
-  const publishedDom = await crossWorkspaceMemoryDom(shared.agentId)
+  const adoption = await assertUiRpc({ label: 'W1 public adoption', method: 'snapshotPublish', args: { sessionId: w1.sessionId, snapshotId: candidateSnapshotId, expectedRevision: candidateRevision }, mark: publishMark, exactly: 1 })
+  const published = adoption.payload
+  requireEvidence(published?.state === 'published' && published?.zone === 'public' && published?.snapshotId === candidateSnapshotId && published?.version === 1, 'the public adoption published exactly the reviewed draft')
+  const publishedPrincipleId = (published.principles ?? []).find(principle => principle.state === 'active')?.principleId ?? null
+  requireEvidence(Boolean(publishedPrincipleId), 'the published public version carries an active principle')
+  const publishedDom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
   await shot('cross-public-published')
-  check('publicAdoptionIsExplicitAndPublishesOnce', publishedDom.current != null && publishedDom.current.rollback === true && memoryZoneProblems(publishedDom).length === 0, { current: publishedDom.current, problems: memoryZoneProblems(publishedDom) })
+  const publishedProblems = memoryZoneProblems({ ...publishedDom, workspacePaths, foreignRecordIds: foreignForW1 })
+  check('publicAdoptionIsExplicitAndPublishesOnce', publishedDom.current != null && publishedDom.current.rollback === true && publishedProblems.length === 0, { current: publishedDom.current, problems: publishedProblems })
 
-  await openIsolatedSession(w2.sessionId)
-  await openAgent(w2.sessionId, shared.agentId)
-  const w2PublishedDom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
-  await shot('cross-w2-shared-public-memory')
-  await openIsolatedSession(w3.sessionId)
-  await openAgent(w3.sessionId, shared.agentId)
-  const w3PublishedDom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
-  await shot('cross-w3-shared-public-memory')
-  const publicVersions = { w1: Number(publishedDom.current?.version), w2: Number(w2PublishedDom.current?.version), w3: Number(w3PublishedDom.current?.version) }
-  check('publicMemoryVersionIsSharedAcrossWorkspaces', publicVersions.w1 === publicVersions.w2 && publicVersions.w1 === publicVersions.w3 && memoryZoneProblems(w2PublishedDom).length === 0 && memoryZoneProblems(w3PublishedDom).length === 0, { publicVersions, problems: [...memoryZoneProblems(w2PublishedDom), ...memoryZoneProblems(w3PublishedDom)] })
+  // The published version is profile-global: each workspace session must read the
+  // same Snapshot on the wire and render that same version from its own page.
+  const publicObservations = {}
+  for (const [label, session, foreignRecordIds] of [['w1', w1, foreignForW1], ['w2', w2, foreignForW2], ['w3', w3, foreignForW3], ['w4', w4, foreignForW3]]) {
+    const binding = await openDecisionPageForSession(session.sessionId, `${label}-public-version`)
+    const mark = networkRpc.length
+    await openAgent(session.sessionId, shared.agentId)
+    const refresh = await assertUiRpc({ label: `${label} public zone read`, method: 'publicMemoryRefresh', args: { sessionId: session.sessionId, agentId: shared.agentId }, mark })
+    const dom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
+    const authority = await rpc(session.sessionId, `${label}-public-version`, 'agent', { agentId: shared.agentId })
+    publicObservations[label] = {
+      sessionId: session.sessionId, binding,
+      pageRefresh: { rpcId: refresh.entry.rpcId, sessionId: refresh.receipt.sessionId, status: refresh.payload?.status ?? null },
+      dom,
+      wire: authority.publicMemory?.current ?? null,
+      privateSnapshotId: authority.currentSnapshotId ?? null,
+      problems: memoryZoneProblems({ ...dom, workspacePaths, foreignRecordIds }),
+    }
+    await shot(`cross-${label}-shared-public-memory`)
+  }
+  const publicVersions = { w1: Number(publishedDom.current?.version), w2: Number(publicObservations.w2.dom.current?.version), w3: Number(publicObservations.w3.dom.current?.version), w4: Number(publicObservations.w4.dom.current?.version) }
+  const wireSnapshots = Object.fromEntries(Object.entries(publicObservations).map(([label, value]) => [label, value.wire?.snapshotId ?? null]))
+  const versionProblems = [
+    ...Object.entries(publicObservations).flatMap(([label, value]) => {
+      const problems = []
+      if (value.pageRefresh.sessionId !== value.sessionId) problems.push(`${label}: the rendered public zone read another workspace session`)
+      if (value.wire?.snapshotId !== published.snapshotId) problems.push(`${label}: the wire did not return the published public Snapshot`)
+      if (Number(value.wire?.version) !== publicVersions.w1) problems.push(`${label}: the wire returned public version ${value.wire?.version}`)
+      if (Number(value.dom.current?.version) !== Number(value.wire?.version)) problems.push(`${label}: the rendered zone drifted from the wire`)
+      // The zone status follows the last refresh (`up-to-date` after publication);
+      // what must hold is the rendered current version, compared below.
+      if (!Number.isInteger(Number(value.dom.current?.version))) problems.push(`${label}: the rendered public zone shows no current version`)
+      if (value.privateSnapshotId !== null) problems.push(`${label}: the workspace rendered a private Snapshot it does not own`)
+      return problems.concat(value.problems)
+    }),
+    ...(new Set(Object.values(publicVersions)).size === 1 ? [] : ['the workspaces rendered different public versions']),
+    ...(new Set(Object.values(wireSnapshots)).size === 1 ? [] : ['the workspaces read different public Snapshots']),
+  ]
+  check('publicMemoryVersionIsSharedAcrossWorkspaces', versionProblems.length === 0, { publicVersions, wireSnapshots, wireRevisions: Object.fromEntries(Object.entries(publicObservations).map(([label, value]) => [label, value.wire?.revision ?? null])), problems: versionProblems })
+
+  // B1: with the public version live, an evidence-free workspace still receives
+  // the published public L2 as pinned, non-authoritative guidance.
+  const w4Before = await rpc(w4.sessionId, 'w4-before-public-attempt', 'agent', { agentId: shared.agentId })
+  requireEvidence((w4Before.currentSnapshotId ?? null) === null && (w4Before.learningRuns ?? []).length === 0 && (w4Before.snapshots ?? []).length === 0, 'W4 owns no private experience before the public-guidance Attempt')
+  await openIsolatedSession(w4.sessionId)
+  // The same real user judgment is submitted from a second workspace; the
+  // question id names the fixture, not the workspace, so no scenario edit is needed.
+  await submitMarker(instance, 'CROSS_W1_Q')
+  const w4Case = await waitCase(w4.sessionId, 'CROSS_W1_Q', current => current.state === 'awaiting_user')
+  const w4Guidance = await waitFor(async () => { const value = await record(w4.sessionId, 'w4-public-attempt', w4Case.caseId); return value.attempts.length > 0 ? value : null }, 90_000)
+  const w4Attempt = w4Guidance.attempts.at(-1)
+  const guidanceProblems = publicGuidancePinProblems({ published, attempt: w4Attempt })
+  writeJson(join(out, 'cross-public-guidance-attempt.json'), { published, case: w4Guidance.case, attempt: w4Attempt, problems: guidanceProblems })
+  check('publicGuidanceAttemptPinsPublishedSnapshotWithoutEvidence', guidanceProblems.length === 0 && w4Guidance.case.agentId === shared.agentId && w4Guidance.case.state === 'awaiting_user', { problems: guidanceProblems, outcome: w4Attempt.outcome, citedEvidenceIds: w4Attempt.citedEvidenceIds, pins: w4Attempt.pins, publicL2: { zone: w4Attempt.packManifest?.memory?.publicL2?.zone, status: w4Attempt.packManifest?.memory?.publicL2?.status, principleIds: w4Attempt.packManifest?.memory?.publicL2?.principleIds, items: w4Attempt.packManifest?.memory?.publicL2?.items }, privateL2: w4Attempt.packManifest?.memory?.L2?.principleIds ?? null, case: { caseId: w4Case.caseId, agentId: w4Guidance.case.agentId, state: w4Guidance.case.state } })
+  const foreignForW4 = [w1Case.caseId, w2Case.caseId, ...sharedPrivateIds]
+
+  // The rendered record detail must show both partitions with the real public pin.
+  await openDecisionPageForSession(w4.sessionId, 'w4-public-record')
+  const recordMark = networkRpc.length
+  await openRecord(w4.sessionId, w4Case.caseId)
+  await assertPageSession(recordMark, w4.sessionId, 'W4 record list')
+  await openDisclosure(`weir-da-record-advanced-${w4Case.caseId}`)
+  // The attempt context pack is one native <details>; reveal it with a real
+  // pointer click on its summary (the same gesture a user makes), never by
+  // forcing the open property.
+  const packTarget = await instance.cdp.evaluate(`(() => {
+    const summary=document.querySelector('[data-record-detail=${JSON.stringify(w4Case.caseId)}] details[data-attempt-context-pack=${JSON.stringify(w4Attempt.attemptId)}] > summary')
+    if(!summary)return null
+    summary.scrollIntoView({block:'center',inline:'nearest'})
+    const rect=summary.getBoundingClientRect()
+    return {x:rect.left+rect.width/2,y:rect.top+rect.height/2,text:summary.textContent.trim()}
+  })()`)
+  requireEvidence(packTarget && packTarget.text, 'the attempt context pack disclosure is rendered')
+  for (const [type, buttons] of [['mouseMoved', 0], ['mousePressed', 1], ['mouseReleased', 0]]) {
+    await instance.cdp.request('Input.dispatchMouseEvent', { type, x: packTarget.x, y: packTarget.y, button: type === 'mouseMoved' ? 'none' : 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1 })
+  }
+  writeJson(join(out, 'cross-public-record-reveal.json'), { caseId: w4Case.caseId, attemptId: w4Attempt.attemptId, method: 'CDP Input.dispatchMouseEvent', target: packTarget })
+  const recordCapture = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const detail=document.querySelector('[data-record-detail=${JSON.stringify(w4Case.caseId)}]')
+    if(!detail)return null
+    const pack=detail.querySelector('details[data-attempt-context-pack=${JSON.stringify(w4Attempt.attemptId)}]')
+    if(!pack||pack.open!==true)return null
+    const publicSection=detail.querySelector('[data-partition-section="public"]')
+    const privateSection=detail.querySelector('[data-partition-section="workspace"]')
+    const readMapping=zone=>[...(zone?.querySelectorAll('[data-partition="public"] li')??[])].map(item=>{
+      let parsed={}
+      try { parsed=JSON.parse(item.querySelector('pre')?.textContent??'{}') } catch { parsed={ evidenceIds:['unparseable'] } }
+      return { principleId:item.querySelector('code')?.textContent??'', evidenceIds:Array.isArray(parsed.evidenceIds)?parsed.evidenceIds:['missing'] }
+    })
+    let pin=null
+    try { pin=JSON.parse(publicSection?.querySelector('[data-partition="public"] pre')?.textContent??'null') } catch { pin=null }
+    return {
+      caseId: detail.getAttribute('data-record-detail'),
+      advancedOpen: true,
+      publicTitle: publicSection?.querySelector('strong')?.textContent??'',
+      privateTitle: privateSection?.querySelector('strong')?.textContent??'',
+      publicText: publicSection?.innerText??'',
+      privateText: privateSection?.innerText??'',
+      publicPin: pin,
+      publicMapping: readMapping(publicSection),
+      publicPrincipleIds: [...(publicSection?.querySelectorAll('[data-partition="public"] li code')??[])].map(el=>el.textContent),
+      summary: detail.querySelector('[data-current-evidence]')?.innerText??'',
+      text: detail.innerText,
+    }
+  })()`), 30_000)
+  requireEvidence(recordCapture?.advancedOpen === true, 'the attempt context pack opened through its rendered disclosure')
+  await shot('cross-w4-public-pin-record')
+  const recordProblems = publicRecordDetailProblems(recordCapture, { snapshotId: published.snapshotId, revision: published.revision, principleId: publishedPrincipleId, workspacePaths, foreignRecordIds: foreignForW4 })
+  writeJson(join(out, 'cross-public-record-detail.json'), { capture: recordCapture, problems: recordProblems })
+  check('publicGuidanceRecordDetailShowsBothPartitionsWithRealPin', recordProblems.length === 0, { problems: recordProblems, publicPin: recordCapture.publicPin, publicPrincipleIds: recordCapture.publicPrincipleIds, publicMapping: recordCapture.publicMapping, summary: recordCapture.summary })
+
+  // B2: a new eligible source raises the public high-water mark, and the second
+  // candidate is rejected through the rendered confirmation.
+  await openDecisionPageForSession(w4.sessionId, 'w4-source', 'inbox')
+  const w4Closed = await answerInboxWithSuggestions(w4.sessionId, w4Case.caseId, 'cross-w4-source')
+  requireEvidence(w4Closed.case.state === 'closed' && w4Closed.case.closing === 'escalated', 'the W4 judgment closed as a real user decision')
+  await openDecisionPageForSession(w4.sessionId, 'w4-second-candidate')
+  const secondMark = networkRpc.length
+  await openAgent(w4.sessionId, shared.agentId)
+  const secondRefresh = await assertUiRpc({ label: 'W4 second public draft', method: 'publicMemoryRefresh', args: { sessionId: w4.sessionId, agentId: shared.agentId }, mark: secondMark })
+  const secondReview = await assertUiRpc({ label: 'W4 second candidate review', method: 'publicCandidate', args: { sessionId: w4.sessionId, agentId: shared.agentId }, mark: secondMark })
+  const secondCandidate = secondReview.payload?.candidate ?? null
+  requireEvidence(Boolean(secondCandidate?.snapshotId) && secondCandidate.snapshotId !== published.snapshotId && secondCandidate.version === 2, 'the new high-water mark produced a second, distinct public candidate')
+  requireEvidence(secondRefresh.payload?.workspaceCount === 3 && secondRefresh.payload?.sourceCount === 3, 'the second candidate froze eligible sources from three workspaces')
+  const secondCandidateDom = await waitFor(async () => {
+    const value = await crossWorkspaceMemoryDom(shared.agentId)
+    return value?.candidate?.present === true && value.candidate.aliases.length >= 3 ? value : null
+  }, 60_000)
+  await shot('cross-public-second-candidate')
+  const secondCandidateProblems = memoryZoneProblems({ ...secondCandidateDom, workspacePaths, foreignRecordIds: foreignForW4 })
+  const secondBodyProblems = publicCandidateBodyProblems({ present: secondCandidateDom.candidate.present, text: secondCandidateDom.candidate.text, workspacePaths, foreignRecordIds: foreignForW4, aliases: secondCandidateDom.candidate.aliases })
+  check('publicSecondCandidateStaysOpaqueAndGuarded', secondCandidateProblems.length === 0 && secondBodyProblems.length === 0, { zone: secondCandidateProblems, body: secondBodyProblems, aliases: secondCandidateDom.candidate.aliases })
+
+  const beforeReject = await rpc(w4.sessionId, 'w4-before-public-reject', 'agent', { agentId: shared.agentId })
+  const beforeCurrent = beforeReject.publicMemory?.current ?? null
+  const rejectMark = networkRpc.length
+  await keyboardActivate('Discard public candidate', `[data-agent-detail="${shared.agentId}"] [data-action="public-reject"]`)
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-reject"))'), 30_000)
+  const rejectionConfirmation = await instance.cdp.evaluate('document.querySelector("#weir-da-learning-public-reject").innerText')
+  requireEvidence(/不会影响之后的判断|history|历史/i.test(rejectionConfirmation), 'the public rejection confirmation states its future-only consequence and retained history')
+  await shot('cross-public-reject-confirm')
+  await keyboardActivate('Confirm public rejection', '#weir-da-learning-public-reject .weir-da-actions button:last-child')
+  const rejection = await assertUiRpc({ label: 'W4 public candidate rejection', method: 'snapshotReject', args: { sessionId: w4.sessionId, snapshotId: secondCandidate.snapshotId, expectedRevision: secondCandidate.revision }, mark: rejectMark, exactly: 1 })
+  const rejectionReload = await assertUiRpc({ label: 'W4 public zone after rejection', method: 'publicMemoryRefresh', args: { sessionId: w4.sessionId, agentId: shared.agentId }, mark: rejectMark })
+  const afterRejectDom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value && value.candidate.present === false && value.current?.version != null ? value : null }, 30_000)
+  await shot('cross-public-rejected')
+  const afterReject = await rpc(w4.sessionId, 'w4-after-public-reject', 'agent', { agentId: shared.agentId })
+  const rejectionAudit = publicAuditLines(workspaceFour)
+  const rejectionAuditLine = rejectionAudit.find(line => line.kind === 'snapshot' && line.action === 'reject' && line.snapshotId === secondCandidate.snapshotId) ?? null
+  const rejectionProblems = publicCandidateRejectionProblems({
+    sessionId: w4.sessionId,
+    wireSessionId: rejection.receipt.sessionId,
+    candidate: { snapshotId: secondCandidate.snapshotId, learningRunId: secondReview.payload?.learningRunId ?? null },
+    beforeCurrent,
+    afterCurrent: afterReject.publicMemory?.current ?? null,
+    runOutcome: rejectionReload.payload?.run?.outcome ?? null,
+    runId: rejectionReload.payload?.run?.learningRunId ?? null,
+    snapshotState: rejection.payload?.state ?? null,
+    domVersion: Number(afterRejectDom.current?.version),
+    domCandidatePresent: afterRejectDom.candidate.present,
+    auditSessionId: rejectionAuditLine?.rootSessionId ?? null,
+    audit: rejectionAudit,
+  })
+  writeJson(join(out, 'cross-public-rejection.json'), { candidate: secondCandidate, beforeCurrent, afterCurrent: afterReject.publicMemory?.current ?? null, wire: rejection.receipt, reload: { status: rejectionReload.payload?.status ?? null, run: rejectionReload.payload?.run ?? null }, excluded: rejection.payload?.state ?? null, audit: rejectionAudit, problems: rejectionProblems })
+  check('publicCandidateRejectionKeepsPublishedVersion', rejectionProblems.length === 0, { problems: rejectionProblems, current: afterReject.publicMemory?.current ?? null, run: rejectionReload.payload?.run ?? null, audit: rejectionAudit.filter(line => line.kind === 'learning-run' || line.kind === 'snapshot').slice(-4) })
 
   // Rollback restores the empty public L2 in every workspace and touches no private row.
-  await openIsolatedSession(w1.sessionId)
+  await openDecisionPageForSession(w1.sessionId, 'w1-rollback')
   await openAgent(w1.sessionId, shared.agentId)
+  await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
+  const rollbackMark = networkRpc.length
   await keyboardActivate('Restore previous public version', `[data-agent-detail="${shared.agentId}"] [data-action="public-rollback"]`)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-rollback"))'), 30_000)
   await keyboardActivate('Confirm public rollback', '#weir-da-learning-public-rollback .weir-da-actions button:last-child')
+  const rollback = await assertUiRpc({ label: 'W1 public rollback', method: 'snapshotRollback', args: { sessionId: w1.sessionId, snapshotId: published.snapshotId, expectedRevision: published.revision }, mark: rollbackMark, exactly: 1 })
+  requireEvidence(rollback.payload?.state === 'rolled_back', 'the public rollback retired the published Snapshot')
   const w1RolledBack = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value && value.current === null ? value : null }, 30_000)
   await shot('cross-public-rolled-back')
-  await openIsolatedSession(w2.sessionId)
+  await openDecisionPageForSession(w2.sessionId, 'w2-rollback')
   await openAgent(w2.sessionId, shared.agentId)
   const w2Dom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value && value.current === null ? value : null }, 30_000)
-  check('publicRollbackRestoresEmptyPublicZone', w1RolledBack.current === null && w2Dom.current === null && memoryZoneProblems(w1RolledBack).length === 0 && memoryZoneProblems(w2Dom).length === 0, { w1: w1RolledBack.current, w2: w2Dom.current })
+  const rolledBackProblems = [
+    ...memoryZoneProblems({ ...w1RolledBack, workspacePaths, foreignRecordIds: [w2Case.caseId, w4Case.caseId, ...sharedPrivateIds] }),
+    ...memoryZoneProblems({ ...w2Dom, workspacePaths, foreignRecordIds: [w1Case.caseId, w4Case.caseId, ...sharedPrivateIds] }),
+  ]
+  check('publicRollbackRestoresEmptyPublicZone', w1RolledBack.current === null && w2Dom.current === null && rolledBackProblems.length === 0, { w1: w1RolledBack.current, w2: w2Dom.current, problems: rolledBackProblems })
 
   // W3 has no private experience at all: Auto may select the shared assistant,
   // but it can never answer from public memory alone. The P4 restore leaves the
@@ -2018,11 +2349,15 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
     citedSources: [...new Set(autoRecord.attempts.flatMap(attempt => (attempt.evidence ?? []).map(ref => ref.source)))],
     awaitingReason: autoRecord.case.awaitingReason ?? null,
     caseState: autoRecord.case.state,
+    publicPin: autoRecord.attempts.at(-1)?.pins?.publicMemorySnapshotId ?? null,
   }
   await shot('cross-w3-auto-shared-assistant')
-  await openIsolatedSession(w3.sessionId)
+  await openDecisionPageForSession(w3.sessionId, 'w3-final')
   await openAgent(w3.sessionId, shared.agentId)
   const w3Dom = await crossWorkspaceMemoryDom(shared.agentId)
+  await openDecisionPageForSession(w4.sessionId, 'w4-final')
+  await openAgent(w4.sessionId, shared.agentId)
+  const w4Dom = await crossWorkspaceMemoryDom(shared.agentId)
 
   // Private records never cross workspaces: both directions plus both learning
   // read paths, each with the fail-closed shape its own product path produces.
@@ -2037,24 +2372,32 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const w1Agents = await rpc(w1.sessionId, `${phase}-w1-agents`, 'agents')
   const w2Agents = await rpc(w2.sessionId, `${phase}-w2-agents`, 'agents')
   const w3Agents = await rpc(w3.sessionId, `${phase}-w3-agents`, 'agents')
+  const w4Agents = await rpc(w4.sessionId, `${phase}-w4-agents`, 'agents')
   const w1Records = await records(w1.sessionId)
   const w2Records = await records(w2.sessionId)
+  const w3Records = await records(w3.sessionId)
+  const w4Records = await records(w4.sessionId)
   await shot('cross-w2-shared-identity')
   const identity = agents => agents.map(agent => `${agent.agentId}:${agent.name}`)
   const sharedProblems = crossWorkspaceShareProblems({
     workspaces: [
       { label: 'W1', assistantNames: identity(w1Agents), publicVersion: publicVersions.w1, privateRecordIds: w1Records.records.map(item => item.caseId), navigation: w1RolledBack.navigation, text: w1RolledBack.text },
       { label: 'W2', assistantNames: identity(w2Agents), publicVersion: publicVersions.w2, privateRecordIds: w2Records.records.map(item => item.caseId), navigation: w2Dom.navigation, text: w2Dom.text },
-      { label: 'W3', assistantNames: identity(w3Agents), publicVersion: publicVersions.w3, privateRecordIds: [], navigation: w3Dom.navigation, text: w3Dom.text },
+      { label: 'W3', assistantNames: identity(w3Agents), publicVersion: publicVersions.w3, privateRecordIds: w3Records.records.map(item => item.caseId), navigation: w3Dom.navigation, text: w3Dom.text },
+      { label: 'W4', assistantNames: identity(w4Agents), publicVersion: publicVersions.w4, privateRecordIds: w4Records.records.map(item => item.caseId), navigation: w4Dom.navigation, text: w4Dom.text },
     ],
-    workspacePaths: [workspaceOne, workspaceTwo, workspaceThree, root],
+    workspacePaths,
     denials,
     autoShare,
   })
-  writeJson(join(out, 'cross-workspace-matrix.json'), { phase, sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId }, assistant: shared.agentId, cases: { w1: w1Case.caseId, w2: w2Case.caseId, auto: autoCase.caseId }, publicVersions, denials, gatedDom, candidateDom, publishedDom, w2PublishedDom, w3PublishedDom, rolledBack: { w1: w1RolledBack, w2: w2Dom }, w3Dom, autoShare, refreshRpc, reviewRpc, privateMemory, problems: sharedProblems })
+  // M4: every UI-triggered public action and every page binding is wire-backed.
+  const wireProblems = publicWireAttributionProblems({ bindings: pageBindings, actions: publicWires })
+  check('publicUiActionsCarryTheIntendedWorkspaceSession', wireProblems.length === 0, { problems: wireProblems, actions: publicWires, bindings: pageBindings })
+  writeJson(join(out, 'cross-workspace-matrix.json'), { phase, sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, assistant: shared.agentId, cases: { w1: w1Case.caseId, w2: w2Case.caseId, w4: w4Case.caseId, auto: autoCase.caseId }, publicVersions, published: { snapshotId: published.snapshotId, version: published.version, revision: published.revision, contentHash: published.contentHash, principleId: publishedPrincipleId }, publicObservations, publicWires, pageBindings, publicGuidance: { case: { caseId: w4Case.caseId, state: w4Guidance.case.state, agentId: w4Guidance.case.agentId }, attempt: { attemptId: w4Attempt.attemptId, outcome: w4Attempt.outcome, citedEvidenceIds: w4Attempt.citedEvidenceIds, pins: w4Attempt.pins, publicL2: w4Attempt.packManifest?.memory?.publicL2 ?? null, evidenceIds: w4Attempt.packManifest?.evidenceIds ?? [] }, problems: guidanceProblems }, publicRecordDetail: { capture: recordCapture, problems: recordProblems }, publicRejection: { candidate: secondCandidate, problems: rejectionProblems, audit: rejectionAudit }, denials, gatedDom, candidateDom, secondCandidateDom, publishedDom, rolledBack: { w1: w1RolledBack, w2: w2Dom }, w3Dom, w4Dom, autoShare, refreshRpc, reviewRpc, privateMemory, problems: sharedProblems })
   check('crossWorkspaceSharedIdentityAndPrivateIsolation', sharedProblems.length === 0, sharedProblems)
-  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId }, agentId: shared.agentId, denials, problems: sharedProblems }
+  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, agentId: shared.agentId, denials, problems: [...sharedProblems, ...wireProblems, ...guidanceProblems, ...recordProblems, ...rejectionProblems] }
 }
+
 function writeReport(verdict, error = null) {
   const exceptionCount = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown').length
   const slotCrashCount = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event))).length
