@@ -7,6 +7,9 @@ import assert from 'node:assert/strict'
 import { extract, shellCall } from '../src/mock-kit.js'
 import { shellToolName } from '../src/shell.js'
 import { byId } from '../src/scenarios/index.js'
+import decisionGui from '../src/scenarios/decision-gui.js'
+import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
+import { parseConsolidationCandidate, replayOperations } from '../../weir-harness/src/decision/learning/consolidator.js'
 
 const SHELL = shellToolName()
 
@@ -1010,5 +1013,122 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     const timeout = route('TIMEOUT')
     assert.equal(timeout.chunks.length, 0, 'timeout holds the real stream instead of emitting text')
     assert.equal(timeout.observed.autoRouterHold, 'timeout')
+  })
+})
+
+// Task 7.3 blocker B: the Desktop cross-workspace matrix submits three markers
+// the GUI scenario used to answer with plain text, and the product's public
+// consolidation contract used to fall through to the same unhandled text. This
+// suite imports the scenario module directly (not the WEIR_IT_DECISION_GUI
+// registry gate) so it always runs, and judges the candidate with the product's
+// own parser and structural replay instead of a shape guess.
+describe('decision-gui cross-workspace brain', () => {
+  const gui = options => blockEnds([...decisionGui.decide(options, extract(options))])
+
+  // The driver's exact prompts (gui-qa submitMarker types the bare marker), both
+  // as a first turn and as a prompt that follows earlier tool traffic.
+  const resumedOptions = marker => {
+    const options = userOptions(marker)
+    options.messages.unshift({ role: 'tool', content: [{ type: 'text', text: '{"ok":true}' }], source: { kind: 'tool', toolCallId: 'mock-call-1' } })
+    options.messages.unshift({ role: 'user', content: [{ type: 'text', text: 'earlier GUI turn' }] })
+    return options
+  }
+  for (const marker of ['CROSS_W1_Q', 'CROSS_W2_Q', 'CROSS_AUTO_Q']) {
+    it(`opens one real Case question for ${marker}`, () => {
+      for (const options of [userOptions(marker), resumedOptions(marker)]) {
+        const [call] = gui(options)
+        assert.equal(call.type, 'tool-call')
+        assert.equal(call.name, 'ask_user_question')
+        const [question] = JSON.parse(call.arguments).questions
+        assert.ok(question.id === marker || question.question.includes(marker), `${marker} question identifies its request`)
+        assert.ok(Array.isArray(question.options) && question.options.length >= 2, `${marker} offers answerable options`)
+        assert.ok(question.options.every(option => typeof option.label === 'string' && option.label.length > 0))
+      }
+    })
+  }
+
+  it('keeps unrelated decision turns unhandled instead of inventing a Case', () => {
+    const [text] = gui(userOptions('CROSS_UNKNOWN_Q'))
+    assert.equal(text.type, 'text')
+    assert.equal(text.text, 'unhandled Decision GUI turn')
+    assert.equal(blockEnds([...decisionGui.decide(userOptions('GUI_A_ANSWER'), extract(userOptions('GUI_A_ANSWER')))])[0].name, 'ask_user_question', 'existing GUI_* answers are unchanged')
+  })
+
+  it('lets the shared assistant serve the cross-workspace Auto route', () => {
+    const route = candidates => {
+      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ id: 'cross-auto-question', question: 'CROSS_AUTO_Q: confirm the documented option for the Auto decision', authorizationClass: 'A' }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
+      return JSON.parse(blockEnds([...decisionGui.decideRouterRoute(options, extract(options))])[0].text)
+    }
+    assert.equal(route([{ agentId: 'ag_shared', name: 'Shared memory assistant' }]).agentId, 'ag_shared')
+    assert.equal(route([{ agentId: 'ag_other', name: 'Unrelated helper' }, { agentId: 'ag_shared', name: 'Shared memory assistant' }]).agentId, 'ag_shared')
+    assert.equal(route([{ agentId: 'ag_other', name: 'Unrelated helper' }]).agentId, 'ag_other', 'the first eligible candidate is the bounded fallback')
+    assert.equal(route([]).outcome, 'none')
+  })
+
+  const publicPacket = parentSnapshot => ({
+    schemaVersion: 1, zone: 'public', agentId: 'ag_shared',
+    workspaceAliases: [{ alias: 'origin_aaaaaaaaaaaa', count: 1 }, { alias: 'origin_bbbbbbbbbbbb', count: 1 }],
+    sources: [
+      { sourceId: 'dc_w1_source', kind: 'case', alias: 'origin_aaaaaaaaaaaa', closing: 'escalated', feedbackState: 'open', revision: 1, scope: { workspaces: ['/repo/one'] }, excerpt: 'Question cross-w1-source: choose the documented option' },
+      { sourceId: 'dc_w2_source', kind: 'case', alias: 'origin_bbbbbbbbbbbb', closing: 'escalated', feedbackState: 'open', revision: 1, scope: { workspaces: ['/repo/two'] }, excerpt: 'Question cross-w2-source: choose the documented option' },
+    ],
+    parentSnapshot,
+  })
+  const publicAuthority = {
+    zone: 'public', workspaceKey: undefined, feedbackById: {}, corrections: {},
+    caseById: Object.fromEntries(['dc_w1_source', 'dc_w2_source'].map((sourceId, index) => [sourceId, {
+      caseId: sourceId, revision: 1, closing: 'escalated', feedbackState: 'open',
+      decision: { kind: 'user_decision', answers: [{ id: 'cross-source', selected: ['Documented option'] }] },
+      request: { questions: [{ id: 'cross-source', question: `choose the documented option ${index}` }] },
+      scope: { workspaces: [`/repo/${index === 0 ? 'one' : 'two'}`] },
+      workspaceKey: `/repo/${index === 0 ? 'one' : 'two'}`,
+    }])),
+  }
+  const consolidate = (parentSnapshot = null) => {
+    const options = userOptions(JSON.stringify(publicPacket(parentSnapshot)), { system: PUBLIC_CONSOLIDATION_SYSTEM })
+    const [block] = blockEnds([...decisionGui.decide(options, extract(options))])
+    assert.equal(block.type, 'text', 'the public contract is answered with strict JSON text')
+    return block.text
+  }
+
+  it('produces a replayable public candidate that cites only the frozen sources', () => {
+    const text = consolidate()
+    const operations = parseConsolidationCandidate(text, [], 'public')
+    assert.equal(operations.length, 1)
+    assert.equal(operations[0].op, 'add')
+    assert.deepEqual(operations[0].sources, ['dc_w1_source', 'dc_w2_source'])
+    assert.deepEqual(operations[0].scope, {}, 'a public principle scope is workspace-agnostic')
+    assert.equal(Object.hasOwn(operations[0], 'inputFeedbackIds'), false)
+    const replay = replayOperations([], operations, publicAuthority)
+    assert.equal(replay.passed, true, 'the structural replay passes')
+    assert.equal(replay.detail, undefined)
+
+    // Failing variant: the real product rejects a source outside the frozen set.
+    const foreign = JSON.parse(text)
+    foreign.operations[0].sources = ['dc_foreign_source']
+    const rejected = replayOperations([], parseConsolidationCandidate(JSON.stringify(foreign), [], 'public'), publicAuthority)
+    assert.equal(rejected.passed, false)
+    assert.equal(rejected.detail, 'INVALID_AUTHORITY_SOURCE')
+    // Failing variant: a workspace-list scope is not a public scope at all.
+    const scoped = JSON.parse(text)
+    scoped.operations[0].scope = { workspaces: ['/repo/one'] }
+    assert.throws(() => parseConsolidationCandidate(JSON.stringify(scoped), [], 'public'), /workspaces|INVALID/)
+  })
+
+  it('refines the published public principle instead of inventing an id', () => {
+    const parentSnapshot = { snapshotId: 'ms_public_v1', revision: 1, principles: [{ principleId: 'pr_public_v1', text: 'Prefer the documented option both workspaces agreed on.', scope: {}, sources: ['dc_w1_source'], state: 'active' }] }
+    const operations = parseConsolidationCandidate(consolidate(parentSnapshot), parentSnapshot.principles, 'public')
+    assert.equal(operations.length, 1)
+    assert.equal(operations[0].op, 'refine')
+    assert.equal(operations[0].principleId, 'pr_public_v1')
+    assert.deepEqual(operations[0].sources, ['dc_w1_source', 'dc_w2_source'])
+    assert.equal(replayOperations(parentSnapshot.principles, operations, publicAuthority).passed, true)
+  })
+
+  it('returns no candidate when the public run froze no source', () => {
+    const options = userOptions(JSON.stringify({ ...publicPacket(null), sources: [] }), { system: PUBLIC_CONSOLIDATION_SYSTEM })
+    const [block] = blockEnds([...decisionGui.decide(options, extract(options))])
+    assert.deepEqual(JSON.parse(block.text), { operations: [] }, 'an empty source set is a truthful no-change result, not invalid JSON')
+    assert.throws(() => parseConsolidationCandidate('unhandled Decision GUI turn', [], 'public'), error => error.code === 'INVALID_CANDIDATE_JSON', 'the pre-fix text is exactly what the product rejected as INVALID_CANDIDATE_JSON')
   })
 })

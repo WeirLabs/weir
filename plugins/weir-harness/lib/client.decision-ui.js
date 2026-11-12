@@ -420,11 +420,52 @@ window.__ModuleLoader__.load({
       return typeof target.focus === "function";
     }
 
+    // Returning focus must never move the page: `focus()` scrolls the nearest
+    // scrollable ancestor into view, and after a confirmed action the origin may
+    // be gone (fallback = the page navigation at the top). Preserve every
+    // Decision scroller the focus return could touch — the `.weir-da-page`
+    // document scroller, the destination's overflow ancestors and the window —
+    // across the focus call so a shrunk content region keeps its clamped
+    // position instead of jumping to 0.
+    function decisionFocusScrollers(hostDocument, destination) {
+      const view = hostDocument?.defaultView ?? null;
+      const scrollers = [];
+      const add = target => { if (target && !scrollers.includes(target)) scrollers.push(target); };
+      for (const page of hostDocument?.querySelectorAll?.(".weir-da-page") ?? []) add(page);
+      let current = destination?.parentElement ?? null;
+      while (current && current !== hostDocument) {
+        const computed = view?.getComputedStyle?.(current) ?? current.computed;
+        const overflowY = computed?.overflowY ?? current.style?.overflowY ?? current.style?.overflow;
+        if (["auto", "scroll", "overlay"].includes(overflowY)) add(current);
+        current = current.parentElement ?? null;
+      }
+      return { view, scrollers };
+    }
+
+    function focusWithoutScroll(destination) {
+      const hostDocument = destination?.ownerDocument ?? globalThis.document ?? null;
+      const { view, scrollers } = decisionFocusScrollers(hostDocument, destination);
+      const positions = scrollers.map(target => ({ target, scrollTop: target.scrollTop, scrollLeft: target.scrollLeft }));
+      const windowPosition = view && Number.isFinite(view.scrollX) && Number.isFinite(view.scrollY)
+        ? { scrollX: view.scrollX, scrollY: view.scrollY }
+        : null;
+      try { destination.focus({ preventScroll: true }); }
+      catch { destination.focus(); }
+      for (const position of positions) {
+        if (position.target.scrollTop !== position.scrollTop) position.target.scrollTop = position.scrollTop;
+        if (position.target.scrollLeft !== position.scrollLeft) position.target.scrollLeft = position.scrollLeft;
+      }
+      if (windowPosition && (view.scrollX !== windowPosition.scrollX || view.scrollY !== windowPosition.scrollY)) {
+        if (typeof view.scrollTo === "function") view.scrollTo(windowPosition.scrollX, windowPosition.scrollY);
+        else { view.scrollX = windowPosition.scrollX; view.scrollY = windowPosition.scrollY; }
+      }
+    }
+
     function restoreDecisionFocus(target, fallback) {
       const preferred = focusTarget(target);
       const alternate = focusTarget(fallback);
       const destination = canRestoreFocus(preferred) ? preferred : canRestoreFocus(alternate) ? alternate : null;
-      destination?.focus?.();
+      if (destination) focusWithoutScroll(destination);
     }
 
     const DECISION_MODAL_VIEWPORT_STYLES = ["left", "top", "right", "bottom", "margin", "maxWidth", "maxHeight"];

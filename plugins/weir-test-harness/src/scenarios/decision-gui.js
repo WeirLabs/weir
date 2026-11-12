@@ -50,13 +50,50 @@ for (let index = 1; index <= 21; index += 1) {
   const suffix = String(index).padStart(2, '0')
   QUESTIONS[`GUI_AUTO_PAGE_${suffix}`] = { id: `gui-auto-page-${suffix}`, question: `GUI_AUTO_PAGE_${suffix}: real routing pagination item`, options: [{ label: `Page answer ${suffix}` }, { label: 'Other' }] }
 }
+
+// Task 7.3 cross-workspace matrix markers. The Desktop driver submits these
+// three prompts verbatim (gui-qa submitMarker) and the stock host only opens a
+// Case from a real ask_user_question, so each marker needs its own question with
+// answerable options. They are appended after the GUI_* table so no existing
+// marker answer changes.
+const CROSS_QUESTIONS = {
+  CROSS_W1_Q: { id: 'cross-w1-source', question: 'CROSS_W1_Q: choose the documented option this workspace records', options: [{ label: 'Documented option' }, { label: 'Other' }] },
+  CROSS_W2_Q: { id: 'cross-w2-source', question: 'CROSS_W2_Q: choose the documented option this workspace records', options: [{ label: 'Documented option' }, { label: 'Other' }] },
+  CROSS_AUTO_Q: { id: 'cross-auto-question', question: 'CROSS_AUTO_Q: confirm the documented option for the Auto decision', options: [{ label: 'Documented option' }, { label: 'Other' }] },
+}
+Object.assign(QUESTIONS, CROSS_QUESTIONS)
+// The public zone is workspace-agnostic, so one shared principle text is enough
+// to prove extraction, replay and adoption without naming a workspace.
+const PUBLIC_PRINCIPLE_TEXT = 'Prefer the documented option both workspaces agreed on.'
 const GUI_LEARNING_QUESTION_IDS = Object.values(QUESTIONS).map(question => question.id).filter(id => id.startsWith('gui-learning-'))
 
 function consultArgs(marker) {
   return { question: `${marker}: needs a new user judgment`, options: [{ label: 'User choice' }, { label: 'Other' }], request_id: marker.toLowerCase() }
 }
 
+/**
+ * Public consolidation: emit exactly one workspace-agnostic operation whose
+ * sources are the packet's frozen source ids. The product's parser and
+ * structural replay (parseConsolidationCandidate / replayOperations) reject any
+ * path, foreign record id or workspace scope, so nothing else is emitted.
+ * @param {any} obs
+ */
+function publicConsolidation(obs) {
+  let projection
+  try { projection = JSON.parse(obs.lastUser) } catch { projection = null }
+  const sources = (projection?.sources ?? []).map(source => source.sourceId).filter(id => typeof id === 'string' && id.length > 0)
+  if (sources.length === 0) return textChunks(JSON.stringify({ operations: [] }))
+  const parent = projection?.parentSnapshot?.principles?.find(principle => principle?.state === 'active') ?? projection?.parentSnapshot?.principles?.[0]
+  if (parent?.principleId) {
+    return textChunks(JSON.stringify({ operations: [{ op: 'refine', principleId: parent.principleId, text: PUBLIC_PRINCIPLE_TEXT, sources }] }))
+  }
+  return textChunks(JSON.stringify({ operations: [{ op: 'add', principleId: 'public-principle', text: PUBLIC_PRINCIPLE_TEXT, scope: {}, sources }] }))
+}
+
 function decide(options, obs) {
+  // The public consolidation contract reaches this brain through the generic
+  // dispatcher (mock-llm only special-cases the private consolidation contract).
+  if (obs.system.startsWith('Decision public consolidation contract v1')) return publicConsolidation(obs)
   const messages = options.messages ?? []
   if (messages.at(-1)?.role === 'tool') return textChunks('GUI_SCENARIO_DONE')
   const lastTool = messages.findLastIndex(message => message.role === 'tool')
@@ -169,6 +206,13 @@ function decideRouterRoute(options, obs) {
     }))
   }
   if (question.startsWith('GUI_AUTO_INVALID')) return textChunks('{"contract":"router-contract/1","outcome":"selected","agentId":"ag_not_eligible","reason":"Unknown candidate must be rejected"}')
+  // The cross-workspace matrix has no classless GUI fixture: Auto must stay able
+  // to pick the one shared assistant instead of failing the route brain.
+  if (question.startsWith('CROSS_')) {
+    const shared = pack?.candidates?.find(candidate => /Shared memory assistant/.test(candidate.name ?? '')) ?? pack?.candidates?.[0]
+    if (!shared) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No eligible candidate can serve the cross-workspace request' }))
+    return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: shared.agentId, reason: 'The shared memory assistant owns this cross-workspace request' }))
+  }
   const intendedName = question.startsWith('GUI_SHADOW_PARITY') ? /Empty review assistant|Secondary/ : /Decision Product QA|Primary/
   const selected = pack?.candidates?.find(candidate => intendedName.test(candidate.name ?? ''))
   if (!selected) throw new Error('decision-gui: selected fixture requires an eligible candidate')

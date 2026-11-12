@@ -790,6 +790,73 @@ test('ConfirmDialog chooses fallback focus after confirmation layout removes the
   }
 })
 
+test('ConfirmDialog returns focus without scrolling the Decision page after a confirmed content shrink', async () => {
+  // Real regression (task 7.3, run d1XWW0): after a confirmed publish the
+  // candidate region shrinks, the origin trigger is removed and the product
+  // falls back to the page navigation. A plain focus() scrolls the
+  // `main.weir-da-page` scroller to the top, losing the user's reading position
+  // the driver measures as clamp(811.5, 193) = 193.
+  const restoreAfterConfirm = async ({ engine, targetConnected }) => {
+    const page = {
+      name: 'page', scrollTop: 193, scrollLeft: 0, parentElement: null,
+      offsetWidth: 200, clientWidth: 200, offsetHeight: 900, clientHeight: 900,
+      style: {}, computed: { overflowY: 'auto' },
+      addEventListener() {}, removeEventListener() {},
+    }
+    const focusRecorder = name => ({
+      name, focused: 0, isConnected: true, parentElement: page, getClientRects: () => [1], focusOptions: null,
+      focus(options) {
+        this.focused += 1
+        this.focusOptions = options
+        if (engine === 'ignores-prevent-scroll' || options?.preventScroll !== true) page.scrollTop = 0
+      },
+    })
+    const previous = focusRecorder('previous')
+    const fallback = focusRecorder('fallback')
+    const native = { open: false, showModal() { this.open = true }, close() { this.open = false } }
+    const runtime = makeModalReact(node => node.type === 'dialog' ? native : undefined)
+    const frames = []
+    const oldDocument = globalThis.document
+    const oldAnimationFrame = globalThis.requestAnimationFrame
+    const view = {
+      innerWidth: 1440, innerHeight: 900, scrollX: 0, scrollY: 0,
+      getComputedStyle: element => element.computed ?? {},
+      scrollTo(x, y) { this.scrollX = x; this.scrollY = y },
+    }
+    globalThis.document = {
+      activeElement: previous, defaultView: view, documentElement: null, body: null,
+      querySelectorAll: selector => selector === '.weir-da-page' ? [page] : [],
+    }
+    globalThis.requestAnimationFrame = callback => { frames.push(callback); return frames.length }
+    try {
+      const ui = await load(runtime.react)
+      const tree = runtime.render(ui.ConfirmDialog, {
+        id: `confirm-focus-scroll-${engine}-${targetConnected}`, title: 'Confirm', body: 'Body', confirmLabel: 'Confirm', cancelLabel: 'Cancel',
+        returnFocusFallback: fallback, onCancel() {}, onConfirm: () => Promise.resolve(),
+      })
+      await findAll(tree, node => node.type === ui.Button && node.children === 'Confirm')[0].onClick()
+      if (!targetConnected) previous.isConnected = false
+      runtime.unmount()
+      for (const frame of frames) frame()
+      const destination = targetConnected ? previous : fallback
+      assert.equal(previous.focused, targetConnected ? 1 : 0, `${engine}: the connected origin wins`)
+      assert.equal(fallback.focused, targetConnected ? 0 : 1, `${engine}: the fallback only receives focus when the origin is gone`)
+      assert.equal(destination.focusOptions?.preventScroll, true, `${engine}: focus return never scrolls the page`)
+      assert.equal(page.scrollTop, 193, `${engine}: the Decision page keeps its clamped position`)
+      assert.equal(page.scrollLeft, 0, engine)
+    } finally {
+      runtime.unmount()
+      if (oldDocument === undefined) delete globalThis.document
+      else globalThis.document = oldDocument
+      if (oldAnimationFrame === undefined) delete globalThis.requestAnimationFrame
+      else globalThis.requestAnimationFrame = oldAnimationFrame
+    }
+  }
+  for (const engine of ['honors-prevent-scroll', 'ignores-prevent-scroll']) {
+    for (const targetConnected of [true, false]) await restoreAfterConfirm({ engine, targetConnected })
+  }
+})
+
 test('DecisionAnswers fills suggestions locally and submits one complete original-shaped batch', async () => {
   const runtime = makeReact()
   const ui = await load(runtime.react)
