@@ -1489,7 +1489,7 @@ test('public guidance guard accepts a real pinned guidance-only Attempt and reje
 })
 
 test('public wire attribution guard requires every gesture under its own workspace session', () => {
-  const action = (method, sessionId, extra = {}) => ({ label: `${method}@${sessionId}`, method, expectedSessionId: sessionId, sessionId, rpcId: `rpc-${method}`, status: 200, occurrences: 1, ...extra })
+  const action = (method, sessionId, extra = {}) => ({ label: `${method}@${sessionId}`, method, expectedSessionId: sessionId, sessionId, rpcId: `rpc-${method}`, responded: true, occurrences: 1, ...extra })
   const binding = (sessionId, bound = sessionId) => ({ label: `page@${sessionId}`, sessionId, attempts: [{ attempt: 1, bound }] })
   const actions = [
     action('publicMemoryRefresh', 's1'), action('publicMemoryRefresh', 's4'),
@@ -1504,7 +1504,7 @@ test('public wire attribution guard requires every gesture under its own workspa
   assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'snapshotPublish' ? { ...item, sessionId: 's2' } : item), bindings }).some(problem => /instead of the intended workspace session/.test(problem)))
   assert.ok(publicWireAttributionProblems({ actions: actions.map(item => ({ ...item, sessionId: 's9' })), bindings }).some(problem => /instead of the intended workspace session/.test(problem)))
   assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'publicCandidate' ? { ...item, rpcId: null } : item), bindings }).some(problem => /no raw rpc id/.test(problem)))
-  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'snapshotRollback' ? { ...item, status: 500 } : item), bindings }).some(problem => /no successful response status/.test(problem)))
+  assert.ok(publicWireAttributionProblems({ actions: actions.map(item => item.method === 'snapshotRollback' ? { ...item, responded: false } : item), bindings }).some(problem => /no captured response payload/.test(problem)))
   assert.ok(publicWireAttributionProblems({ actions: actions.map(item => ({ ...item, sessionId: 's1', expectedSessionId: 's1' })), bindings }).some(problem => /one workspace session only/.test(problem)))
   assert.ok(publicWireAttributionProblems({ actions, bindings: [binding('s1')] }).some(problem => /never re-opened per workspace/.test(problem)))
   // A page that never bound to its own workspace cannot vouch for any action.

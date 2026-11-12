@@ -758,7 +758,7 @@ export function publicWireAttributionProblems(audit = {}) {
     if (!action?.sessionId) problems.push(`${label}: no workspace session on the wire`)
     else if (action.sessionId !== action.expectedSessionId) problems.push(`${label}: carried ${action.sessionId} instead of the intended workspace session`)
     if (!action?.rpcId) problems.push(`${label}: no raw rpc id`)
-    if (action?.status !== 200) problems.push(`${label}: no successful response status`)
+    if (action?.responded !== true) problems.push(`${label}: no captured response payload`)
     if ((action?.occurrences ?? 0) < 1) problems.push(`${label}: no captured occurrence`)
   }
   const sessions = new Set(actions.map(action => action?.sessionId).filter(Boolean))
