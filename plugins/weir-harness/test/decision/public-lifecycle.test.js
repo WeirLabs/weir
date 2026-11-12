@@ -154,3 +154,58 @@ test('an archived Agent can neither publish nor create public memory but keeps r
   assert.equal(f.broker.learning.currentPublicSnapshot(f.profile.agentId), null)
   assert.equal(f.broker.learning.getRunById(candidate.learningRunId).outcome, 'candidate')
 })
+
+test('the published public version exposes its reviewed wording read-only and no provenance', async t => {
+  const f = await publicMemoryFixture(t)
+  const w1 = await f.seedDecision({ workspaceKey: f.w1, rootSessionId: 'root1', key: 'wording-w1', paths: ['docs'] })
+  const w2 = await f.seedDecision({ workspaceKey: f.w2, rootSessionId: 'root2', key: 'wording-w2', paths: ['docs'] })
+  assert.deepEqual(f.broker.publicState(f.profile.agentId), { current: null }, 'nothing is published yet')
+  assert.equal(f.broker.publicMemorySummary(f.profile.agentId).current, null, 'the assistant detail reports no public version')
+
+  const wording = 'Prefer the documented option when both workspaces agree'
+  f.respond((_options, pack) => ({
+    operations: [publicAdd(pack.sources.map(source => source.sourceId), { text: wording, scope: { paths: ['docs'] } })],
+  }))
+  const candidate = await createCandidate(f)
+  const review = await f.broker.publicCandidate({ sessionId: 'root2', agentId: f.profile.agentId })
+  assert.equal(review.changes[0].text, wording, 'the candidate review already carried the wording')
+  await publishCandidate(f, candidate)
+
+  const snapshot = f.broker.learning.currentPublicSnapshot(f.profile.agentId)
+  const expected = [{ principleId: snapshot.principles[0].principleId, text: wording, scope: { paths: ['docs'] } }]
+  const state = f.broker.publicState(f.profile.agentId)
+  assert.deepEqual(Object.keys(state.current).sort(), [
+    'contentHash', 'principleCount', 'principles', 'revision', 'snapshotId', 'sourceCount', 'version', 'workspaceCount',
+  ])
+  assert.deepEqual(state.current.principles, expected)
+  assert.deepEqual(f.broker.publicMemorySummary(f.profile.agentId).current, state.current)
+  const refreshed = await f.broker.publicMemoryRefresh({ sessionId: 'root1', agentId: f.profile.agentId })
+  assert.equal(refreshed.status, 'up-to-date')
+  assert.deepEqual(refreshed.current.principles, expected)
+
+  const serialized = JSON.stringify([state, refreshed, f.broker.publicMemorySummary(f.profile.agentId)])
+  for (const workspace of [f.w1, f.w2]) assert.equal(serialized.includes(workspace), false, 'no workspace key')
+  for (const recordId of [w1.caseId, w2.caseId]) assert.equal(serialized.includes(recordId), false, 'no source record id')
+  assert.equal(serialized.includes('origin_'), false, 'no source alias either')
+  assert.equal(serialized.includes('inputFrozen'), false, 'no raw frozen input')
+  assert.equal('workspaces' in state.current.principles[0].scope, false, 'the scope stays workspace-agnostic')
+})
+
+test('a scope hint that carries a path or a record id never reaches the published read model', async t => {
+  const f = await publicMemoryFixture(t)
+  insertSnapshot(f, 'ms_public_dirty_hint', 9, 'published', {
+    zone: 'public',
+    principles: [{
+      principleId: 'pr_dirty', text: 'Prefer the documented option',
+      scope: { paths: ['/Users/alice/repo', 'docs'], tags: ['dc_00000000-0000-4000-8000-000000000000', 'safety'] },
+      sources: [], state: 'active',
+    }],
+  })
+  const state = f.broker.publicState(f.profile.agentId)
+  assert.deepEqual(state.current.principles, [
+    { principleId: 'pr_dirty', text: 'Prefer the documented option', scope: { paths: ['docs'], tags: ['safety'] } },
+  ])
+  const serialized = JSON.stringify(state)
+  assert.equal(serialized.includes('/Users/'), false)
+  assert.equal(serialized.includes('dc_'), false)
+})

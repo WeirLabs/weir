@@ -11,6 +11,10 @@ window.__ModuleLoader__.load({
     const text = (value, fallback = "") => typeof value === "string" ? value : fallback;
     const object = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
 
+    // A public scope hint is workspace-agnostic by contract: a hit here is an
+    // absolute path or a record id, and it never reaches the page.
+    const UNSAFE_PUBLIC_HINT = /^(?:[A-Za-z]:[\\/]|~[\\/]|\\\\|\/|file:)|\b(?:dc|ev|fb|lr|ms)_[A-Za-z0-9][A-Za-z0-9_-]{5,}/;
+
     function narrowRecords(payload) {
       const value = okValue(payload);
       return { records: array(value?.records), nextCursor: typeof value?.nextCursor === "string" ? value.nextCursor : null };
@@ -525,6 +529,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Only the workspace-agnostic hint fields of a public scope reach the page,
+     * and a hint that would carry an absolute path or a record id is dropped.
+     * The published surface is ordinary language, never provenance.
+     */
+    function publicScopeHints(scope) {
+      const value = object(scope) ?? {};
+      const hints = {};
+      for (const key of ["paths", "tags", "authorizationClasses"]) {
+        const entries = array(value[key]).filter(item => typeof item === "string" && item.length > 0 && item.length <= 200 && !UNSAFE_PUBLIC_HINT.test(item));
+        if (entries.length) hints[key] = entries;
+      }
+      return hints;
+    }
+
+    function publicPrincipleRows(principles) {
+      return array(principles)
+        .filter(item => object(item) && typeof item.principleId === "string")
+        .map(item => ({ principleId: item.principleId, text: text(item.text), scope: publicScopeHints(item.scope) }));
+    }
+
+    /**
      * Plain-language projection of the public memory zone. It only ever carries
      * opaque workspace aliases, counts and redacted excerpts: no realpath, no
      * foreign record id and no navigation target.
@@ -565,6 +590,7 @@ window.__ModuleLoader__.load({
           workspaceCount: Number.isInteger(current.workspaceCount) ? current.workspaceCount : 0,
           snapshotId: typeof current.snapshotId === "string" ? current.snapshotId : null,
           revision: Number.isInteger(current.revision) ? current.revision : null,
+          principles: publicPrincipleRows(current.principles),
         } : null,
         candidate: candidate ? {
           learningRunId: typeof candidate.learningRunId === "string" ? candidate.learningRunId : null,
@@ -667,6 +693,8 @@ window.__ModuleLoader__.load({
         decisionPublicRetry: "Retry the review",
         decisionPublicStatusIdle: "No public review yet", decisionPublicStatusLoading: "Reading public memory\u2026", decisionPublicStatusRunning: "Drafting a public candidate\u2026", decisionPublicStatusCandidate: "Candidate awaiting review", decisionPublicStatusPublished: "Public principles published", decisionPublicStatusRejected: "Last candidate discarded", decisionPublicStatusRolledBack: "Public version rolled back", decisionPublicStatusUpToDate: "Up to date; no new eligible experience", decisionPublicStatusEmptySources: "No eligible experience yet", decisionPublicStatusDisclosureRequired: "Your confirmation is needed before the first review", decisionPublicStatusFailed: "The last public review failed", decisionPublicStatusError: "Public memory is unavailable right now",
         decisionPublicReplay: "Structural checks", decisionPublicParents: "Replaces", decisionPublicNoCurrentParent: "No current public version",
+        decisionPublicOpAdd: "Adds a principle", decisionPublicOpRefine: "Rewords a principle", decisionPublicOpMerge: "Merges principles", decisionPublicOpNarrow: "Narrows a principle", decisionPublicOpRetire: "Retires a principle",
+        decisionPublicProposedText: "Proposed wording", decisionPublicCurrentText: "Current wording", decisionPublicCurrentPrinciples: "Published public principles", decisionPublicScope: "Applies to", decisionPublicFrozenInput: "Frozen review input",
         decisionPublicRollbackTitle: "Restore a previous public version?",
         decisionPublicGuidanceUsed: "reviewed public guidance was included", decisionPublicPinnedEmpty: "a public version was pinned, but no public principles were loaded", decisionNoPublicGuidance: "no public guidance was used", decisionPublicLegacy: "recorded before shared public memory; no public memory was used",
         decisionPartitionState: "State", decisionPartitionUsed: "included", decisionPartitionPinnedNotUsed: "version pinned, nothing included", decisionPartitionEmpty: "no version pinned", decisionPartitionLegacy: "recorded before this memory layer", decisionPartitionNoPrinciples: "no principles included", decisionPartitionSources: "Source mapping", decisionLayerSize: "Layer size",
@@ -734,6 +762,8 @@ window.__ModuleLoader__.load({
         decisionPublicRetry: "重试整理",
         decisionPublicStatusIdle: "尚未整理公共记忆", decisionPublicStatusLoading: "正在读取公共记忆…", decisionPublicStatusRunning: "正在生成公共候选…", decisionPublicStatusCandidate: "有待审候选", decisionPublicStatusPublished: "公共原则已发布", decisionPublicStatusRejected: "上次候选已放弃", decisionPublicStatusRolledBack: "公共版本已回滚", decisionPublicStatusUpToDate: "已是最新；没有新的合格经验", decisionPublicStatusEmptySources: "还没有合格经验", decisionPublicStatusDisclosureRequired: "首次整理前需要你的确认", decisionPublicStatusFailed: "上次公共整理失败", decisionPublicStatusError: "公共记忆当前不可用",
         decisionPublicReplay: "结构校验", decisionPublicParents: "将替代", decisionPublicNoCurrentParent: "当前没有公共版本",
+        decisionPublicOpAdd: "新增原则", decisionPublicOpRefine: "改写原则", decisionPublicOpMerge: "合并原则", decisionPublicOpNarrow: "收窄原则", decisionPublicOpRetire: "废止原则",
+        decisionPublicProposedText: "拟定原则文本", decisionPublicCurrentText: "当前原则文本", decisionPublicCurrentPrinciples: "已发布的公共原则", decisionPublicScope: "适用范围", decisionPublicFrozenInput: "本次审阅的冻结输入",
         decisionPublicRollbackTitle: "恢复前序公共版本？",
         decisionPublicGuidanceUsed: "本次处理包含经审阅的公共指导", decisionPublicPinnedEmpty: "本次处理固定了公共版本，但没有装入公共原则", decisionNoPublicGuidance: "本次处理未使用公共指导", decisionPublicLegacy: "该记录早于共享公共记忆，未使用公共记忆",
         decisionPartitionState: "状态", decisionPartitionUsed: "已装入", decisionPartitionPinnedNotUsed: "已固定版本，未装入内容", decisionPartitionEmpty: "未固定版本", decisionPartitionLegacy: "该记录早于这一记忆层", decisionPartitionNoPrinciples: "没有装入原则", decisionPartitionSources: "来源映射", decisionLayerSize: "层大小",

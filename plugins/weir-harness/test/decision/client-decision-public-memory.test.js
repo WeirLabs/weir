@@ -64,16 +64,27 @@ function candidateReview(overrides = {}) {
   }
 }
 
-function publishedValue() {
+function publishedValue(overrides = {}) {
   return {
     status: 'up-to-date', agentId: 'ag', zone: 'public',
     disclosure: { required: false, version: 1, key: 'public-memory-first-extraction' },
     highWater: 'h2', workspaceCount: 2, sourceCount: 3,
     current: { snapshotId: 'ms_public_published', version: 1, revision: 6, contentHash: 'd'.repeat(64), principleCount: 1, workspaceCount: 2, sourceCount: 3 },
     run: null, candidate: null,
+    ...overrides,
   }
 }
 
+/** A published public version whose reviewed wording is readable. */
+function publishedWithPrinciples(overrides = {}) {
+  return publishedValue({
+    current: {
+      ...publishedValue().current,
+      principles: [{ principleId: 'pr_public', text: 'Prefer the documented option', scope: { paths: ['src/decision'] } }],
+    },
+    ...overrides,
+  })
+}
 function pageActions(overrides = {}) {
   const calls = []
   const actions = {
@@ -368,4 +379,125 @@ test('the public zone stays inside a real 200% visual viewport without horizonta
     Object.assign(globalThis.window, { visualViewport: undefined })
     harness.unmount()
   }
+})
+
+test('the public projection carries the reviewed wording read-only and drops provenance hints', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const t = key => model.dictionaries.zh[key]
+
+  const published = model.publicMemoryView({ phase: 'ready', value: publishedWithPrinciples() }, t)
+  assert.deepEqual(published.current.principles, [
+    { principleId: 'pr_public', text: 'Prefer the documented option', scope: { paths: ['src/decision'] } },
+  ])
+  assert.equal(JSON.stringify(published.current.principles).includes('/Users/'), false)
+
+  // An unsafe hint is dropped, never rendered: a workspace list, an absolute
+  // path and a record id have no place on the published surface.
+  const dirty = model.publicMemoryView({
+    phase: 'ready',
+    value: publishedValue({
+      current: {
+        ...publishedValue().current,
+        principles: [
+          {
+            principleId: 'pr_a', text: 'Keep the documented option',
+            scope: {
+              workspaces: ['/repo'],
+              paths: ['/Users/alice/repo', 'docs'],
+              tags: ['dc_00000000-0000-4000-8000-000000000000', 'safety'],
+            },
+          },
+          { text: 'missing an id' },
+          { principleId: 'pr_b' },
+        ],
+      },
+    }),
+  }, t)
+  assert.deepEqual(dirty.current.principles, [
+    { principleId: 'pr_a', text: 'Keep the documented option', scope: { paths: ['docs'], tags: ['safety'] } },
+    { principleId: 'pr_b', text: '', scope: {} },
+  ])
+})
+
+test('a candidate review renders the proposed wording, the frozen input and the adopted principles read-only', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const t = key => model.dictionaries.zh[key]
+  const wording = 'Prefer the documented option when both workspaces agree'
+  const review = candidateReview({
+    changes: [{ op: 'refine', principleId: 'pr_public', text: wording, scope: { paths: ['src'] } }],
+    principles: [{ principleId: 'pr_public', text: wording, scope: { paths: ['src'] }, state: 'active', sourceCount: 2 }],
+  })
+  const { actions, calls } = pageActions({
+    publicMemoryRefresh: async () => candidateValue({ current: publishedWithPrinciples().current }),
+    publicCandidate: async agentId => { calls.push(['publicCandidate', agentId]); return review },
+  })
+  const harness = await createPageHarness({ actions, consumeAgentDestination: () => 'manage', t })
+  await harness.settle()
+  const zoneTree = publicZone(await openAssistant(harness))
+  assert.ok(zoneTree)
+
+  const change = findAll(zoneTree, node => node['data-public-change'] === 'refine')[0]
+  assert.ok(change, 'the review renders one operation')
+  assert.equal(textOf(findAll(change, node => node['data-public-change-text'])[0]), wording)
+  assert.equal(textOf(change).includes(t('decisionPublicOpRefine')), true, 'the operation is labelled in ordinary language')
+  assert.equal(textOf(findAll(change, node => node['data-public-change-scope'])[0]).includes('src'), true)
+
+  const frozen = findAll(zoneTree, node => node['data-public-frozen-input'] === true)[0]
+  assert.ok(frozen, 'the candidate review states the frozen input by counts only')
+  assert.equal(textOf(frozen).includes('2'), true)
+  assert.equal(textOf(frozen).includes('3'), true)
+
+  // The wording must be readable before adopting or discarding.
+  assert.equal(findAll(zoneTree, node => node['data-action'] === 'public-publish')[0].disabled, false)
+  assert.equal(findAll(zoneTree, node => node['data-action'] === 'public-reject')[0].disabled, false)
+
+  const publishedSection = findAll(zoneTree, node => node['data-public-published-principles'] === true)[0]
+  assert.ok(publishedSection, 'the current published principles are readable')
+  assert.equal(textOf(publishedSection).includes('Prefer the documented option'), true)
+  assert.equal(findAll(publishedSection, node => node.type === harness.ui.Button).length, 0, 'the published version stays read-only')
+  assert.deepEqual(findAll(zoneTree, node => node['data-public-published-principle']).map(node => node['data-public-published-principle']), ['pr_public'])
+
+  // Safe fields only: the rendered zone carries the wording, its scope hints and
+  // counts — never an absolute path, a record id or the raw frozen input.
+  const serialized = JSON.stringify(zoneTree)
+  for (const leaked of ['/Users/', 'dc_', 'inputFrozen', 'readableInCurrentWorkspace', 'principleId\":\"pr_other']) {
+    assert.equal(serialized.includes(leaked), false, `${leaked} stays out of the public zone`)
+  }
+  harness.unmount()
+})
+
+test('narrow and retire changes fall back to the wording they keep or remove', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const t = key => model.dictionaries.zh[key]
+
+  const narrow = candidateReview({
+    changes: [{ op: 'narrow', principleId: 'pr_public', scope: { paths: ['docs'] } }],
+    principles: [{ principleId: 'pr_public', text: 'Keep the documented option', scope: { paths: ['docs'] }, state: 'active', sourceCount: 2 }],
+  })
+  const narrowHarness = await createPageHarness({
+    actions: pageActions({ publicMemoryRefresh: async () => candidateValue(), publicCandidate: async () => narrow }).actions,
+    consumeAgentDestination: () => 'manage', t,
+  })
+  await narrowHarness.settle()
+  const narrowZone = publicZone(await openAssistant(narrowHarness))
+  assert.equal(textOf(findAll(narrowZone, node => node['data-public-change-text'])[0]), 'Keep the documented option')
+  narrowHarness.unmount()
+
+  // A retirement removes the principle from the candidate Snapshot, so the
+  // wording it retires comes from the current published version.
+  const retire = candidateReview({ changes: [{ op: 'retire', principleId: 'pr_public' }], principles: [] })
+  const retireHarness = await createPageHarness({
+    actions: pageActions({
+      publicMemoryRefresh: async () => candidateValue({ current: publishedWithPrinciples().current }),
+      publicCandidate: async () => retire,
+    }).actions,
+    consumeAgentDestination: () => 'manage', t,
+  })
+  await retireHarness.settle()
+  const retireZone = publicZone(await openAssistant(retireHarness))
+  const retireChange = findAll(retireZone, node => node['data-public-change'] === 'retire')[0]
+  assert.ok(retireChange)
+  assert.equal(textOf(findAll(retireChange, node => node['data-public-change-text'])[0]), 'Prefer the documented option')
+  assert.equal(textOf(retireChange).includes(t('decisionPublicCurrentText')), true, 'a retirement shows the wording it removes')
+  retireHarness.unmount()
 })
