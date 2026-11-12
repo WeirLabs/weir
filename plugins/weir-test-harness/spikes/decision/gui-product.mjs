@@ -654,9 +654,18 @@ async function decisionConfig(phase) {
 }
 async function openDecisionSettings() {
   await instance.cdp.setViewport(1440)
+  // Host Settings restores whichever page was open last, so no single page's body
+  // text proves readiness: the dialog and its navigation are what every call
+  // needs. A dialog left open is closed first so the menu click is never
+  // swallowed by an existing modal.
+  const settingsDialogOpen = () => instance.cdp.evaluate('(() => { const visible = [...document.querySelectorAll(\'[role="dialog"]\')].find(item => { const rect = item.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(item).visibility === "visible" }); return Boolean(visible) })()')
+  if (await settingsDialogOpen()) {
+    await instance.cdp.key('Escape')
+    await waitFor(async () => !(await settingsDialogOpen()), 30_000)
+  }
   await keyboardActivate('Open account menu', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
   await keyboardActivate('Open Settings', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
-  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
+  await waitFor(settingsDialogOpen, 30_000)
   await keyboardActivate('Open Weir settings', 'button', { scope: '[role="dialog"]', labels: ['Weir'] })
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("Auto Shadow")'), 60_000)
 }

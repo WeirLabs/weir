@@ -370,6 +370,20 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   assert.ok(acceptance.includes('beforeCard = await revealCard(consult.caseId)'), 'the held card is scrolled into view and must expose non-empty rendered text before its screenshot')
 })
 
+test('Decision settings navigation tolerates the Host settings page it restores', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function openDecisionSettings\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(body, 'openDecisionSettings exists')
+  // Host Settings restores the last visited page, so a page-specific version
+  // string is not a readiness probe: two real runs stalled on it.
+  assert.ok(!body.includes('当前版本'), 'readiness is the dialog and the Weir page, not a restored page body')
+  const dialog = body.indexOf('[role="dialog"]')
+  const weir = body.indexOf("keyboardActivate('Open Weir settings'")
+  const controls = body.indexOf('Auto Shadow')
+  assert.ok(dialog >= 0 && weir > dialog && controls > weir, 'dialog → Weir page → its real Auto Shadow controls')
+  assert.ok(body.includes("await instance.cdp.key('Escape')"), 'a restored open dialog is closed before the menu gesture')
+  assert.ok(!/\.click\(|dispatchMouseEvent/.test(body), 'Host Settings navigation stays native-keyboard only')
+})
 test('Host language matrix activates General settings through native keyboard before General-only controls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
