@@ -384,6 +384,16 @@ test('Decision settings navigation tolerates the Host settings page it restores'
   assert.ok(body.includes("await instance.cdp.key('Escape')"), 'a restored open dialog is closed before the menu gesture')
   assert.ok(!/\.click\(|dispatchMouseEvent/.test(body), 'Host Settings navigation stays native-keyboard only')
 })
+test('a delayed host credit page above a Decision modal is still dismissed', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const body = driver.match(/async function settleDelayedHostOnboarding\(action\) \{[\s\S]*?\n\}\n/)?.[0] ?? ''
+  assert.ok(body, 'settleDelayedHostOnboarding exists')
+  // The Host can raise its credit page above an open Decision modal; a blanket
+  // "a Decision modal is open, skip" guard wedged a real run at selectorOpen.
+  assert.ok(body.includes('elementFromPoint'), 'the overlay and the modal are ordered by what is really topmost')
+  assert.ok(!/if\(decisionDialog\)return null/.test(body), 'an overlay that really covers the modal is still dismissed')
+  assert.ok(body.includes("page==='credit'"), 'the credit page keeps its own dismissal path')
+})
 test('Host language matrix activates General settings through native keyboard before General-only controls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''

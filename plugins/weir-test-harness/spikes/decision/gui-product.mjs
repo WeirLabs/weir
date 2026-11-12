@@ -335,11 +335,18 @@ async function settleDelayedHostOnboarding(action) {
   const detected = await instance.cdp.evaluate(`(() => {
     const host=document.querySelector('[data-desktop-onboarding="welcome"],[data-desktop-onboarding="credit"]')
     if(!host||host.getClientRects().length===0)return null
-    const decisionDialog=[...document.querySelectorAll('#weir-da-selector-panel,dialog.weir-da-dialog')].find(dialog=>dialog.open&&dialog.matches(':modal'))
-    if(decisionDialog)return null
     const page=host.getAttribute('data-desktop-onboarding')
     const title=host.querySelector('h1')?.textContent?.trim()??null
-    if(page==='credit')return {page,title,activeInside:host.contains(document.activeElement)}
+    // A delayed credit page can be raised above an open Decision modal, so only
+    // a modal that really covers the overlay centre is a reason to leave the
+    // overlay alone: otherwise the overlay is what blocks the next gesture.
+    const decisionDialog=[...document.querySelectorAll('#weir-da-selector-panel,dialog.weir-da-dialog')].find(dialog=>dialog.open&&dialog.matches(':modal'))
+    if(decisionDialog){
+      const rect=host.getBoundingClientRect()
+      const top=document.elementFromPoint(rect.left+rect.width/2,Math.max(0,Math.min(rect.top+rect.height/2,innerHeight-1)))
+      if(top&&!host.contains(top))return null
+    }
+    if(page==='credit')return {page,title,activeInside:host.contains(document.activeElement),aboveDecisionModal:Boolean(decisionDialog)}
     const start=[...host.querySelectorAll('button')].find(button=>button.offsetParent!==null&&['开始设置','Start setup','Get started'].includes(button.textContent.trim()))
     if(!start)throw new Error('Delayed host welcome onboarding has no visible native start action')
     return {page,title,start:start.textContent.trim(),activeInside:host.contains(document.activeElement)}
