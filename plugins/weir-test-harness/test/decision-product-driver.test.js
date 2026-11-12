@@ -1291,6 +1291,20 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
+test('the P4 candidate fixtures do not rely on workspace-bound eligibility', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const created = driver.indexOf("const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE")
+  assert.ok(created > 0, 'the foreign assistant fixture still exists')
+  const disabled = driver.indexOf("await agentState(foreignSession, foreign.agentId, 'disabled')", created)
+  const firstMarker = driver.indexOf('await submitMarker(instance, \'GUI_AUTO_EMPTY\')', created)
+  assert.ok(disabled > created && disabled < firstMarker, 'the foreign assistant is switched off through the rendered confirmation before any Auto fixture counts candidates')
+  for (const label of ["await agentState(autoSession, primary.agentId, 'disabled')", "await agentState(autoSession, secondary.agentId, 'disabled')"]) {
+    assert.ok(driver.includes(label), `${label} still prepares the zero-candidate fixture`)
+  }
+  assert.ok(driver.includes("check('zeroCandidatesNoRouteOrAttempt'"), 'the zero-candidate check is unchanged')
+  assert.ok(driver.includes("check('oneCandidateDeterministicAllGates'"), 'the single-candidate check is unchanged')
+})
+
 test('SQLite snapshots accept only the v2 store whose row envelopes stay v1', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const snapshot = driver.match(/function sqliteSnapshot\(phase\) \{[\s\S]*?\n\}/)?.[0] ?? ''

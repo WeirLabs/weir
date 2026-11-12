@@ -1321,6 +1321,11 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   check('explicitOffPersistsRowDespiteAutoDefault', explicitOff.rows.selectors.some(row => row.root_session_id === explicitOffSession && row.mode === 'off' && row.agent_id === null), explicitOff.rows.selectors)
   await openIsolatedSession(foreignSession)
   const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE · never route', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY must never enter the main Router pack.')
+  // Assistant identity is profile-global now, so a foreign-workspace assistant is
+  // an eligible Auto candidate instead of being filtered out by workspace. The P4
+  // fixtures below count eligible candidates, so this one is switched off through
+  // the rendered confirmation and stays an identity + private-record fixture.
+  await agentState(foreignSession, foreign.agentId, 'disabled')
   await openIsolatedSession(autoSession)
 
   await submitMarker(instance, 'GUI_AUTO_EMPTY')
