@@ -1787,7 +1787,8 @@ function exportSuccessFixture() {
     wireArgs: { sessionId: 'root' },
     file: {
       exists: true, bytes: 2048, mode: '600', directoryMode: '700', sha256: sha,
-      envelope: { kind: 'weir-decision-export', formatVersion: 1, integrity: { value: sha }, checksumValid: true, counts: { cases: 2 } },
+      envelope: { kind: 'weir-decision-export', formatVersion: 1, integrity: { value: sha }, checksumValid: true, counts: { cases: 2 }, scope: { workspaceAlias: 'origin_abcdef123456' } },
+      aliases: { caller: 'origin_abcdef123456', tokens: ['origin_abcdef123456'], foreign: [] },
       containsWorkspaceKey: false, containsAbsolutePath: false,
     },
     focus: { active: true },
@@ -1814,6 +1815,9 @@ test('export success guard binds the rendered surface, the wire and the file', (
   assert.ok(patch({ file: { ...clean.file, envelope: { ...clean.file.envelope, counts: { cases: 0 } } } }).some(problem => /did not carry the live workspace records/.test(problem)))
   assert.ok(patch({ file: { ...clean.file, containsWorkspaceKey: true } }).some(problem => /real workspaceKey/.test(problem)))
   assert.ok(patch({ file: { ...clean.file, containsAbsolutePath: true } }).some(problem => /carries an absolute path/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, aliases: { ...clean.file.aliases, tokens: ['origin_abcdef123456', 'origin_0123456789ab'], foreign: ['origin_0123456789ab'] } } }).some(problem => /carries other workspaces' aliases: origin_0123456789ab/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, aliases: { caller: 'origin_abcdef123456', tokens: [], foreign: [] } } }).some(problem => /does not carry the exporting workspace alias/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, aliases: undefined } }).some(problem => /not scanned for origin aliases/.test(problem)))
   assert.ok(patch({ wireArgs: { sessionId: 'root', workspaceKey: '/caller/named' } }).some(problem => /instead of only the session/.test(problem)))
   assert.ok(patch({ focus: { active: false } }).some(problem => /focus did not return/.test(problem)))
 })
@@ -1845,6 +1849,8 @@ test('the export leg is gated, uses the real controls and verifies the file itse
   assert.ok(driver.includes('[data-export-result=\"error\"] [data-action=\"export-retry\"]'), 'the retry is reached on the rendered failure surface')
   assert.ok(driver.includes("chmodSync(exportsDir, 0o500)") && driver.includes("chmodSync(exportsDir, 0o700)"), 'the failure path really removes write permission and restores it')
   assert.ok(driver.includes('inspectExportFile(successPayload)'), 'the file is verified from disk, not only from the surface')
+  assert.ok(driver.includes("check('exportFileCarriesNoForeignWorkspaceAlias'"), 'the real file may only carry the exporting workspace alias')
+  assert.ok(driver.includes('aliases: { caller, tokens, foreign: tokens.filter(token => token !== caller) }'), 'the driver derives the alias facts from the file itself')
   assert.ok(driver.includes("check('exportFailureShowsActionableReasonWithoutSuccess'"), 'the failure path cannot show a success surface')
   assert.ok(driver.includes("check('exportSuccessShowsRealFileBytesAndChecksum'"), 'the success path binds path, bytes and checksum')
   assert.ok(driver.includes('exportConfirmationProblems({ dialog, ax: dialogAx })'), 'the confirmation is judged by its own guard')

@@ -3392,6 +3392,12 @@ async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-expor
   writeJson(join(out, 'export-success.json'), { dom: successDom, wire: successPayload, wireArgs: successWire[0].args, file: successFile, focus: successFocus, problems: successProblems })
   await shot('export-success')
   check('exportSuccessShowsRealFileBytesAndChecksum', successProblems.length === 0, { problems: successProblems, dom: successDom, wire: successPayload, file: successFile, focus: successFocus })
+  // The shipped copy promises no public-memory provenance: the real file may only
+  // carry the exporting workspace's own opaque alias.
+  check('exportFileCarriesNoForeignWorkspaceAlias', (successFile.aliases?.foreign ?? null) !== null
+    && successFile.aliases.foreign.length === 0
+    && successFile.aliases.caller === successFile.envelope?.scope?.workspaceAlias
+    && (successFile.aliases.tokens ?? []).includes(successFile.aliases.caller), successFile.aliases ?? null)
 
   // A read-only destination must fail closed on the real surface.
   const exportsDir = dirname(String(successPayload?.file ?? ''))
@@ -3459,7 +3465,8 @@ async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-expor
 
 /**
  * Read the exported file the driver was told about and re-derive every fact the
- * success surface claims: existence, byte count, mode, checksum and envelope.
+ * success surface claims: existence, byte count, mode, checksum, envelope and
+ * the origin aliases the file may carry.
  */
 function inspectExportFile(payload) {
   const path = String(payload?.file ?? '')
@@ -3472,6 +3479,10 @@ function inspectExportFile(payload) {
   // The product checksum is canonical-JSON integrity over the envelope, not a
   // hash of the pretty file bytes: recompute exactly what the product promised.
   const canonicalChecksum = envelope ? createHash('sha256').update(JSON.stringify(canonicalFileJson(withoutIntegrity(envelope)))).digest('hex') : ''
+  // Public-memory provenance and other workspaces' identifiers never enter: the
+  // only origin token the file may carry is the exporting workspace's own alias.
+  const caller = String(envelope?.scope?.workspaceAlias ?? '')
+  const tokens = [...new Set(content.match(/origin_[0-9a-f]{12}/g) ?? [])].sort()
   return {
     exists: true,
     bytes: stat.size,
@@ -3480,6 +3491,7 @@ function inspectExportFile(payload) {
     sha256: canonicalChecksum,
     contentSha256: createHash('sha256').update(content).digest('hex'),
     envelope: envelope ? { ...envelope, checksumValid: canonicalChecksum === envelope?.integrity?.value } : null,
+    aliases: { caller, tokens, foreign: tokens.filter(token => token !== caller) },
     containsWorkspaceKey: content.includes('workspaceKey'),
     containsAbsolutePath: /(?:^|["'\s])(?:\/Users\/|\/home\/|\/private\/|\/var\/|[A-Za-z]:\\)/.test(content),
   }
