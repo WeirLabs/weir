@@ -71,8 +71,8 @@ export function exportChecksum(envelope) {
 
 /**
  * Atomic, bounded write into `<store dir>/exports`. A 0700 directory and a 0600
- * file, a unique name per export, a temp file renamed into place, and no residue
- * on failure: a user-visible export is either complete or absent.
+ * file, a unique name per export, a temp file tightened then renamed into place,
+ * and no residue on failure: a user-visible export is either complete or absent.
  * @param {string} exportsDir
  * @param {any} envelope
  * @param {{fs?: {mkdirSync?:Function,chmodSync?:Function,writeFileSync?:Function,renameSync?:Function,unlinkSync?:Function,existsSync?:Function}}} [options]
@@ -96,8 +96,11 @@ export function writeExportFile(exportsDir, envelope, options = {}) {
     if (created) fs.chmodSync(exportsDir, 0o700)
     fs.writeFileSync(temporary, text, { mode: 0o600 })
     wrote = true
+    // The file is tightened while it still carries a temp name, so a failing
+    // chmod leaves nothing behind: the rename is the last step, and a visible
+    // export is always a complete, owner-only file.
+    fs.chmodSync(temporary, 0o600)
     fs.renameSync(temporary, file)
-    fs.chmodSync(file, 0o600)
   } catch (error) {
     if (wrote || fs.existsSync(temporary)) {
       try { fs.unlinkSync(temporary) } catch { /* The temp file is already gone. */ }
