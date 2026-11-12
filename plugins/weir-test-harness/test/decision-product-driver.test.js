@@ -308,6 +308,7 @@ test('shrunk-content clamp accepts a sub-pixel browser clamp but never a real ju
   // A real browser clamps to a fractional maximum; scrollHeight only reports 1093.
   assert.deepEqual(scrollLockProblems({ ...base, after: { page: container(1093, 900, 193.5) } }, required, attempts), [])
   assert.deepEqual(scrollLockProblems({ ...base, after: { page: container(1093, 900, 193) } }, required, attempts), [])
+  assert.ok(scrollLockProblems({ ...base, after: { page: container(1093, 900, 194) } }, required, attempts).some(problem => /clamp\(552.5, 193\)/.test(problem)), 'a whole-pixel deviation is still a failure')
   assert.ok(scrollLockProblems({ ...base, after: { page: container(1093, 900, 195) } }, required, attempts).some(problem => /clamp\(552.5, 193\)/.test(problem)))
   assert.ok(scrollLockProblems({ ...base, after: { page: container(1093, 900, 0) } }, required, attempts).some(problem => /clamp\(552.5, 193\)/.test(problem)))
   // Without a shrink the restoration must still be exact.
