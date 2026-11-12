@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
@@ -897,7 +897,7 @@ test('global off bypass and enabled restart persistence run in separate owned pr
 
   const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix, 'the original matrix is separate from preflight-only startup')
-  assert.deepEqual([...matrix.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true'], 'the successful path owns enabled, disabled, then fresh enabled instances')
+  assert.deepEqual([...matrix.matchAll(/instance = await startDesktop\((true|false)\)/g)].map(match => match[1]), ['true', 'false', 'true', 'true'], 'the successful path owns enabled, disabled, a fresh enabled restart, and the cross-workspace instance')
   assert.deepEqual([...matrix.matchAll(/await stopOwned\('process-(\d)'(?:, \{ crash: true \})?\)/g)].map(match => match[1]), ['1', '2', '3'], 'all three instances have exact owned cleanup receipts')
   assert.match(driver, /check\(`\$\{label\}ExactOwnedCleanup`, receipt\.pass/, 'each owned cleanup retains its named acceptance check')
   for (const log of ['desktop-enabled.log', 'desktop-disabled.log']) assert.ok(driver.includes(`'${log}'`), `${log} is included in the import scan`)
@@ -1140,25 +1140,100 @@ test('memory zone guard requires both zones, ordinary copy and no fabricated pub
 })
 
 test('cross-workspace guard requires shared identity, private isolation and honest Auto', () => {
+  const denial = (method, extra = {}) => method === 'record'
+    ? { method, shape: 'null', returnedNull: true, bodyLeaked: false, ...extra }
+    : { method, shape: 'error', code: 'OUT_OF_SCOPE', bodyLeaked: false, audit: { recorded: true, action: 'boundary-reject', code: 'OUT_OF_SCOPE', idsOnly: true }, ...extra }
   const good = {
     workspaces: [
-      { label: 'W1', assistantNames: ['Shared'], publicVersion: 1, privateRecordIds: ['c1'], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
-      { label: 'W2', assistantNames: ['Shared'], publicVersion: 1, privateRecordIds: ['c2'], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
-      { label: 'W3', assistantNames: ['Shared'], publicVersion: 1, privateRecordIds: [], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
+      { label: 'W1', assistantNames: ['ag_shared:Shared'], publicVersion: 1, privateRecordIds: ['c1'], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
+      { label: 'W2', assistantNames: ['ag_shared:Shared'], publicVersion: 1, privateRecordIds: ['c2'], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
+      { label: 'W3', assistantNames: ['ag_shared:Shared'], publicVersion: 1, privateRecordIds: [], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
     ],
     workspacePaths: ['/repo/one', '/repo/two'],
-    denials: [{ method: 'record', code: 'OUT_OF_SCOPE', bodyLeaked: false }],
+    denials: [denial('record'), denial('learningRun'), denial('memorySnapshot')],
     autoShare: { selectorAccepted: true, answered: false, awaitingReason: 'authority' },
   }
   assert.deepEqual(crossWorkspaceShareProblems(good), [])
   assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0]] }).some(problem => /at least two/.test(problem)))
-  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], assistantNames: ['Other'] }, good.workspaces[2]] }).some(problem => /same assistant identities/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], assistantNames: ['ag_other:Other'] }, good.workspaces[2]] }).some(problem => /same assistant identities/.test(problem)))
   assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], privateRecordIds: ['c1'] }, good.workspaces[2]] }).some(problem => /never be readable across/.test(problem)))
-  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [] }).some(problem => /at least one cross-workspace/.test(problem)))
-  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [{ method: 'record', code: 'CASE_FOUND', bodyLeaked: true }] }).some(problem => /fail closed/.test(problem)))
+  // The public version must be the one each workspace really rendered.
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: good.workspaces.map(item => ({ ...item, publicVersion: null })) }).some(problem => /placeholder/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], publicVersion: 2 }, good.workspaces[2]] }).some(problem => /same public version/.test(problem)))
+  // Denials: an empty list, an unproven read path and a leaked body all fail.
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [] }).some(problem => /cross-workspace private record denials/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [denial('record')] }).some(problem => /never exercised learningRun/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [denial('record'), denial('learningRun')] }).some(problem => /never exercised memorySnapshot/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [{ method: 'record', shape: 'value', returnedNull: false, bodyLeaked: true }] }).some(problem => /leaked body text/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [{ method: 'record', shape: 'value', returnedNull: false, bodyLeaked: false }] }).some(problem => /did not fail closed/.test(problem)))
+  // A silent null is only legal for the record query, never for a learning read.
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [denial('record'), denial('learningRun'), { method: 'memorySnapshot', shape: 'null', returnedNull: true, bodyLeaked: false }] }).some(problem => /must not silently return an empty body/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [denial('record'), denial('learningRun', { code: 'CASE_FOUND', audit: { recorded: true, action: 'boundary-reject', code: 'CASE_FOUND', idsOnly: true } }), denial('memorySnapshot')] }).some(problem => /did not fail closed/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [denial('record'), denial('learningRun', { audit: { recorded: false, action: null, code: 'OUT_OF_SCOPE', idsOnly: false } }), denial('memorySnapshot')] }).some(problem => /not audited with ids and state only/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [denial('record'), denial('learningRun', { audit: { recorded: true, action: 'boundary-reject', code: 'OUT_OF_SCOPE', idsOnly: false } }), denial('memorySnapshot')] }).some(problem => /not audited with ids and state only/.test(problem)))
   assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: true, attemptCount: 0, citedEvidenceCount: 0 } }).some(problem => /real current-workspace Attempt|current-workspace evidence/.test(problem)))
   assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], text: '/repo/one' }, good.workspaces[2]] }).some(problem => /workspace path/.test(problem)))
   assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: false, awaitingReason: 'answered' } }).some(problem => /fail closed/.test(problem)))
+})
+
+test('legacy live surface guard requires identity, private ownership, an empty public zone and no history rewrite', () => {
+  const expected = {
+    agentIds: ['ag_one_w1', 'ag_one_w2', 'ag_suffixed', 'ag_archived'],
+    names: { ag_one_w1: 'copy-tone', ag_one_w2: 'copy-tone', ag_suffixed: 'copy-tone · 2', ag_archived: 'Retired' },
+    duplicateName: 'copy-tone', privateWorkspaceKey: '/repo/one', privateSnapshotId: 'ms_w1',
+    privateLearningRunId: 'lr_w1', attemptPinSnapshotId: 'ms_w1', ownerAgentId: 'ag_one_w1',
+  }
+  const auditReceipt = { recorded: true, action: 'boundary-reject', code: 'OUT_OF_SCOPE', idsOnly: true }
+  const denials = [
+    { method: 'memorySnapshot', shape: 'error', code: 'OUT_OF_SCOPE', bodyLeaked: false, audit: auditReceipt },
+    { method: 'learningRun', shape: 'error', code: 'OUT_OF_SCOPE', bodyLeaked: false, audit: auditReceipt },
+  ]
+  const agents = [
+    { agentId: 'ag_one_w1', name: 'copy-tone', state: 'enabled', revision: 3, hasWorkspaces: false },
+    { agentId: 'ag_one_w2', name: 'copy-tone', state: 'enabled', revision: 3, hasWorkspaces: false },
+    { agentId: 'ag_suffixed', name: 'copy-tone · 2', state: 'enabled', revision: 3, hasWorkspaces: false },
+    { agentId: 'ag_archived', name: 'Retired', state: 'archived', revision: 3, hasWorkspaces: false },
+  ]
+  const capture = {
+    agents: agents.map(agent => ({ ...agent })), renderedIds: ['ag_one_w1', 'ag_one_w2', 'ag_suffixed', 'ag_archived'],
+    ownerAgentId: 'ag_one_w1', currentSnapshotId: null,
+    public: { currentVersion: null, candidate: false, publishedSnapshots: 0, learningRuns: 0 },
+    pageText: 'copy-tone copy-tone · 2 Retired',
+    snapshot: { zone: 'workspace', namespace_workspace_key: '/repo/one' },
+    attemptPin: { memorySnapshotId: 'ms_w1' }, denials: denials.map(denial => ({ ...denial })),
+  }
+  const tables = { cases: { rows: 1, digest: 'a' }, memory_snapshots: { rows: 1, digest: 'b' } }
+  const good = {
+    expected,
+    boot: capture,
+    restart: { ...capture, agents: agents.map(agent => ({ ...agent })), denials: denials.map(denial => ({ ...denial })) },
+    history: { before: { tables }, afterBoot: { tables }, afterRestart: { tables, integrityCheck: 'ok' } },
+    legacyWorkspacePaths: ['/repo/one'],
+  }
+  assert.deepEqual(legacyLiveSurfaceProblems(good), [])
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, agents: [] } }).some(problem => /never read through the rendered surface/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, expected: { ...expected, agentIds: [...expected.agentIds, 'ag_extra'] } }).some(problem => /missing from the live profile/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, expected: { ...expected, names: { ...expected.names, ag_one_w1: 'renamed' } } }).some(problem => /lost its name/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, renderedIds: ['ag_one_w1'] } }).some(problem => /does not list migrated assistant/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, agents: [{ ...agents[0], hasWorkspaces: true }, ...agents.slice(1)] } }).some(problem => /scopes by workspace membership/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, agents: [agents[0], { ...agents[1], agentId: 'ag_one_w1' }, ...agents.slice(2)] } }).some(problem => /distinct identities/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, pageText: 'copy-tone /repo/one' } }).some(problem => /exposes a legacy workspace path/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, public: { ...capture.public, currentVersion: '1' } } }).some(problem => /must not show a public version/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, public: { ...capture.public, publishedSnapshots: 1 } } }).some(problem => /empty public zone/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, attemptPin: { memorySnapshotId: 'ms_other' } } }).some(problem => /Attempt pin/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, snapshot: { zone: 'workspace', namespace_workspace_key: '/repo/two' } } }).some(problem => /private namespace/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, currentSnapshotId: 'ms_w1' } }).some(problem => /foreign workspace must not see/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, denials: [] } }).some(problem => /both private read paths/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, denials: [{ method: 'memorySnapshot', shape: 'value', code: null, bodyLeaked: true, audit: auditReceipt }] } }).some(problem => /did not fail closed/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, denials: [{ ...denials[0], audit: { recorded: false, action: null, code: 'OUT_OF_SCOPE', idsOnly: false } }, denials[1]] } }).some(problem => /not audited with ids and state only/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, restart: { ...capture, agents: [{ ...agents[0], revision: 4 }, ...agents.slice(1)], denials: denials.map(item => ({ ...item })) } }).some(problem => /changed assistant identity/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, restart: { ...capture, agents: agents.map(agent => ({ ...agent })), currentSnapshotId: 'ms_w1', denials: denials.map(item => ({ ...item })) } }).some(problem => /changed private memory visibility/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, restart: { ...capture, agents: agents.map(agent => ({ ...agent })), public: { ...capture.public, learningRuns: 1 }, denials: denials.map(item => ({ ...item })) } }).some(problem => /resurrected public memory/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, restart: { ...capture, agents: agents.map(agent => ({ ...agent })), denials: [] } }).some(problem => /changed the private denial behaviour/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, history: { before: { tables }, afterBoot: { tables }, afterRestart: { tables, integrityCheck: 'broken' } } }).some(problem => /integrity_check/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, history: { before: { tables }, afterBoot: { tables: { cases: { rows: 2, digest: 'c' }, memory_snapshots: tables.memory_snapshots } }, afterRestart: { tables, integrityCheck: 'ok' } } }).some(problem => /cases gained or lost rows/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, history: { before: { tables }, afterBoot: { tables }, afterRestart: { tables: { cases: { rows: 1, digest: 'z' }, memory_snapshots: tables.memory_snapshots }, integrityCheck: 'ok' } } }).some(problem => /cases bytes changed/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, history: {} }).some(problem => /never measured before the live boots/.test(problem)))
 })
 
 test('legacy migration guard keeps identity and private history and starts public-empty', () => {
@@ -1187,12 +1262,12 @@ test('legacy migration guard keeps identity and private history and starts publi
 
 test('the driver keeps the cross-workspace matrix gated, isolated and lane-local', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   assert.ok(driver.includes("process.env.WEIR_DECISION_PRODUCT_CROSS_WORKSPACE === '1'"), 'the matrix needs an explicit opt-in flag')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(phase, 'runCrossWorkspaceMemoryMatrix exists')
   assert.ok(phase.includes('if (!CROSS_WORKSPACE_MEMORY) return null'), 'the phase never runs in the default matrix')
-  assert.ok(phase.includes("stageMigratedLegacyProfile({ root: join(root, 'cross-legacy'), lane: LANE })"), 'the legacy profile is generated inside the isolated root')
-  assert.ok(phase.includes('legacyMigratedProfileProblems'), 'the legacy report is guarded')
+  assert.ok(phase.includes('legacyMigratedProfileProblems') === false, 'the migrated legacy profile is no longer judged from its fixture report inside the sharing phase')
   assert.ok(phase.includes('memoryZoneProblems(candidateDom)') && phase.includes('memoryZoneProblems(gatedDom)') && phase.includes('memoryZoneProblems(publishedDom)'), 'every captured DOM passes the zone guard')
   assert.ok(phase.includes('crossWorkspaceShareProblems'), 'the shared-identity facts are guarded')
   assert.ok(phase.includes("join(root, 'cross-w1')") && phase.includes("join(root, 'cross-w2')") && phase.includes("join(root, 'cross-w3')"), 'two workspaces plus an evidence-free Auto workspace live inside the isolated root')
@@ -1202,9 +1277,42 @@ test('the driver keeps the cross-workspace matrix gated, isolated and lane-local
   // The discard and adopt affordances are captured by the shared DOM probe.
   for (const action of ['public-publish', 'public-reject']) assert.ok(driver.includes(`[data-action="${action}"]`), `the DOM probe reads ${action}`)
   assert.ok(phase.includes("networkRpc.filter(entry => entry.method === 'publicMemoryRefresh')"), 'the refresh evidence is the real wire, not a component prop')
-  assert.ok(driver.includes('p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State)'), 'the gated phase is wired into the matrix')
+  // The shared public version is what each workspace really rendered.
+  assert.ok(phase.includes('publicVersions = { w1: Number(publishedDom.current?.version)'), 'the public version is read from the rendered zones')
+  assert.ok(phase.includes("check('publicMemoryVersionIsSharedAcrossWorkspaces'"), 'the shared version is its own falsifiable check')
+  // Private denials probe both product shapes and keep their audit receipts.
+  assert.ok(phase.includes("method: 'learningRun'") && phase.includes("method: 'memorySnapshot'"), 'both private learning read paths are probed')
+  assert.ok(driver.includes(".filter(item => item?.type === type && item?.data?.action === 'boundary-reject')"), 'denial receipts are matched to their audit type')
+  assert.ok(driver.includes('idsOnly: Object.keys(data).every(key => DENIAL_AUDIT_FIELDS.has(key))'), 'an audit receipt must carry ids and state only')
+  assert.ok(lib.includes('const FAIL_CLOSED_CODES = new Set([\'OUT_OF_SCOPE\', \'FORBIDDEN\', \'PERMISSION_DENIED\'])'), 'the guard accepts the product denial codes')
+  assert.ok(lib.includes("const NULL_BODY_METHODS = new Set(['record', 'records'])"), 'the guard accepts the empty-body shape only for the record query')
+  assert.ok(lib.includes('export function legacyLiveSurfaceProblems'), 'the migrated legacy profile has its own live-surface guard')
+  // The migrated database is the live isolated store, booted and restarted for real.
+  const legacy = driver.match(/async function runMigratedLegacyProfileSurface\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(legacy, 'runMigratedLegacyProfileSurface exists')
+  assert.ok(legacy.includes('stageMigratedLegacyProfile({ root, lane: LANE })'), 'the legacy fixture is staged into the isolated root itself')
+  assert.equal(legacy.includes("join(root, 'cross-legacy')"), false, 'no separate legacy root is used')
+  assert.equal((legacy.match(/startDesktop\(true\)/g) ?? []).length, 2, 'the migrated profile boots and restarts')
+  assert.equal((legacy.match(/await stopOwned\(/g) ?? []).length, 2, 'each migrated boot is stopped by an exact owned cleanup')
+  assert.ok(legacy.includes('legacyHistoryDigest()'), 'history rows are measured around the live boots')
+  assert.ok(legacy.includes("check('crossWorkspaceLegacyProfileBootsAndRestartsOnTheRealSurface'"), 'the live legacy surface is a real check')
+  assert.ok(legacy.includes('legacyLiveSurfaceProblems'), 'the live legacy surface facts are guarded')
+  assert.ok(driver.includes('p4State.crossWorkspaceLegacy = await runMigratedLegacyProfileSurface()'), 'the migrated boot is wired into the matrix')
+  assert.ok(driver.indexOf('auditP4RawEvidence(p4State, primary, secondary)') < driver.indexOf('p4State.crossWorkspaceLegacy = await runMigratedLegacyProfileSurface()'), 'the migration swap runs after every pre-migration assertion')
+  assert.ok(driver.includes('p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State, { learningRunId: candidateV1.run.learningRunId, snapshotId: candidateV1.snapshot.snapshotId })'), 'the gated phase is wired into the matrix with real private ids')
+  assert.ok(driver.includes('cleanups.length === 6'), 'the matrix now signs off six exact owned process pairs')
   assert.equal(driver.includes('/Users/young'), false, 'the driver never hard-codes a user path')
-  assert.equal(phase.includes('startDesktop('), false, 'the phase reuses the running isolated instance and its owned cleanup')
+  assert.equal(phase.includes('startDesktop('), false, 'the sharing phase reuses the live isolated instance and its owned cleanup')
+})
+
+test('assistant creation is guarded by the profile-global identity contract, not workspace membership', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.equal(/scope\?\.workspaces\?\.includes\(LANE\)/.test(driver), false, 'no oracle may require a profile to belong to the lane workspace')
+  const guard = driver.match(/check\('selectorCreateUsesProfileGlobalIdentity'[^\n]*/)?.[0] ?? ''
+  assert.ok(guard, 'the created assistant is still guarded')
+  assert.ok(guard.includes("!Object.hasOwn(createdScope, 'workspaces')"), 'the guard rejects a workspace membership field, the shape parseProfileScope no longer writes')
+  assert.ok(guard.includes('authorizationClasses'), 'the guard requires the profile-global authorization classes that parseProfileScope always writes')
+  assert.ok(guard.includes("primary.name === longName"), 'the guard still proves the new page created this exact assistant')
 })
 
 test('reused drivers expect three primary destinations instead of the retired four-view contract', () => {

@@ -507,14 +507,28 @@ export function memoryZoneProblems(audit = {}) {
   return problems
 }
 
-/** Two workspaces of one profile share identity and public memory, never records. */
+const FAIL_CLOSED_CODES = new Set(['OUT_OF_SCOPE', 'FORBIDDEN', 'PERMISSION_DENIED'])
+// The two product paths that answer a foreign private read with an empty body.
+const NULL_BODY_METHODS = new Set(['record', 'records'])
+// Both learning read paths deny with an explicit code AND one audit record.
+const AUDITED_DENIAL_METHODS = ['learningRun', 'memorySnapshot']
+
+/**
+ * Two workspaces of one profile share identity and public memory, never records.
+ * Denials must fail closed in the shape the product really produces: `record`
+ * returns an empty body, the learning reads return an explicit denial code with
+ * an audit record that carries ids and state only. A placeholder version or an
+ * unexercised read path is a problem, never a pass.
+ */
 export function crossWorkspaceShareProblems(audit = {}) {
   const problems = []
   const workspaces = audit.workspaces ?? []
   if (workspaces.length < 2) return ['the cross-workspace matrix needs at least two real workspaces']
   const identities = workspaces.map(item => (item.assistantNames ?? []).join('|'))
   if (new Set(identities).size !== 1) problems.push('both workspaces must see the same assistant identities')
-  if (new Set(workspaces.map(item => item.publicVersion ?? null)).size !== 1) problems.push('both workspaces must see the same public version')
+  const versions = workspaces.map(item => item.publicVersion)
+  if (versions.some(version => !Number.isInteger(version) || version < 1)) problems.push('every workspace must report the public version it really rendered, not a placeholder')
+  else if (new Set(versions).size !== 1) problems.push('both workspaces must see the same public version')
   const sets = workspaces.map(item => new Set(item.privateRecordIds ?? []))
   if (sets.some((set, index) => [...set].some(id => sets.some((other, at) => at !== index && other.has(id))))) problems.push('private records must never be readable across workspaces')
   for (const item of workspaces) {
@@ -522,16 +536,87 @@ export function crossWorkspaceShareProblems(audit = {}) {
     if (!Array.isArray(item.navigation) || item.navigation.length !== 3) problems.push(`${item.label ?? 'workspace'}: navigation must stay three actions`)
   }
   const denials = audit.denials ?? []
-  if (!denials.length) problems.push('the matrix must prove at least one cross-workspace private record denial')
+  if (!denials.length) problems.push('the matrix must prove cross-workspace private record denials')
+  const exercised = new Set(denials.map(item => String(item?.method ?? '')))
+  if (!exercised.has('record')) problems.push('the private denial probe never exercised record')
+  for (const method of AUDITED_DENIAL_METHODS) if (!exercised.has(method)) problems.push(`the private denial probe never exercised ${method}`)
   for (const denial of denials) {
-    if (!['OUT_OF_SCOPE', 'FORBIDDEN', 'PERMISSION_DENIED'].includes(denial.code)) problems.push(`private record denial ${denial.method ?? ''} did not fail closed`)
-    if (denial.bodyLeaked === true) problems.push(`private record denial ${denial.method ?? ''} leaked body text`)
+    const method = String(denial?.method ?? '')
+    if (denial?.bodyLeaked === true) problems.push(`private record denial ${method} leaked body text`)
+    if (denial?.shape === 'null') {
+      if (!NULL_BODY_METHODS.has(method)) problems.push(`private read ${method} must not silently return an empty body`)
+      else if (denial.returnedNull !== true) problems.push(`private read ${method} did not return an empty body`)
+    } else if (denial?.shape === 'error') {
+      if (!FAIL_CLOSED_CODES.has(String(denial.code ?? ''))) problems.push(`private read ${method} did not fail closed`)
+      const receipt = denial.audit ?? null
+      if (!receipt || receipt.recorded !== true || receipt.action !== 'boundary-reject' || receipt.code !== denial.code || receipt.idsOnly !== true) {
+        problems.push(`private read ${method} denial is not audited with ids and state only`)
+      }
+    } else {
+      problems.push(`private read ${method} did not fail closed`)
+    }
   }
   const auto = audit.autoShare ?? {}
   if (auto.selectorAccepted !== true) problems.push('the shared assistant must stay selectable from the other workspace Auto path')
   if (auto.answered === true && (auto.attemptCount ?? 0) === 0) problems.push('an Auto answer must come from a real current-workspace Attempt')
   if (auto.answered === true && (auto.citedEvidenceCount ?? 0) === 0) problems.push('an Auto answer must cite current-workspace evidence, never public memory alone')
   if (auto.answered === false && !['no_route', 'route_ambiguous', 'authority'].includes(String(auto.awaitingReason ?? ''))) problems.push('an unanswered Auto request must fail closed with a real awaiting reason')
+  return problems
+}
+
+/**
+ * The real migrated legacy profile, read from the live surface twice (boot and
+ * restart): identity survives, the old private Snapshot stays owned by its own
+ * workspace, the public zone starts and stays empty, and no history row is
+ * rewritten, added or resurrected by the boots.
+ */
+export function legacyLiveSurfaceProblems(audit = {}) {
+  const problems = []
+  const expected = audit.expected ?? {}
+  const boot = audit.boot ?? {}
+  const restart = audit.restart ?? {}
+  const history = audit.history ?? {}
+  if (!Array.isArray(boot.agents) || boot.agents.length === 0) return ['the migrated legacy profile was never read through the rendered surface']
+  const bootIds = boot.agents.map(agent => agent.agentId)
+  for (const id of expected.agentIds ?? []) if (!bootIds.includes(id)) problems.push(`migrated assistant ${id} is missing from the live profile`)
+  for (const agent of boot.agents) {
+    const wanted = expected.names?.[agent.agentId]
+    if (wanted !== undefined && agent.name !== wanted) problems.push(`migrated assistant ${agent.agentId} lost its name`)
+    if (agent.hasWorkspaces === true) problems.push(`migrated assistant ${agent.agentId} still scopes by workspace membership`)
+  }
+  if (!Array.isArray(boot.renderedIds)) problems.push('the rendered management page was never read')
+  else for (const id of expected.agentIds ?? []) if (!boot.renderedIds.includes(id)) problems.push(`the rendered management page does not list migrated assistant ${id}`)
+  if (expected.duplicateName) {
+    const sameName = boot.agents.filter(agent => agent.name === expected.duplicateName)
+    if (sameName.length < 2 || new Set(sameName.map(agent => agent.agentId)).size !== sameName.length) problems.push('two assistants that shared a display name must stay distinct identities')
+  }
+  for (const path of audit.legacyWorkspacePaths ?? []) if (path && String(boot.pageText ?? '').includes(path)) problems.push(`the rendered page exposes a legacy workspace path: ${path}`)
+  if (boot.public?.currentVersion != null) problems.push('a migrated legacy profile must not show a public version')
+  if (boot.public?.candidate === true) problems.push('a migrated legacy profile must not resurrect a public candidate')
+  if ((boot.public?.publishedSnapshots ?? -1) !== 0 || (boot.public?.learningRuns ?? -1) !== 0) problems.push('a migrated legacy profile must start with an empty public zone')
+  if (boot.attemptPin?.memorySnapshotId !== expected.attemptPinSnapshotId) problems.push('the old Attempt pin must still resolve to its migrated Snapshot')
+  if (boot.snapshot?.zone !== 'workspace' || boot.snapshot?.namespace_workspace_key !== expected.privateWorkspaceKey) problems.push('the migrated Snapshot must keep its own private namespace')
+  if (boot.currentSnapshotId != null) problems.push('a foreign workspace must not see the legacy private Snapshot as current')
+  const denials = boot.denials ?? []
+  if (denials.length < 2) problems.push('the legacy surface must prove both private read paths fail closed')
+  for (const denial of denials) {
+    if (denial?.shape !== 'error' || !FAIL_CLOSED_CODES.has(String(denial.code ?? '')) || denial.bodyLeaked === true) problems.push(`reading ${denial?.method ?? 'a private record'} from another workspace did not fail closed`)
+    if (denial?.audit?.recorded !== true || denial?.audit?.idsOnly !== true || denial?.audit?.code !== denial?.code) problems.push(`reading ${denial?.method ?? 'a private record'} from another workspace is not audited with ids and state only`)
+  }
+  if (JSON.stringify(restart.agents ?? null) !== JSON.stringify(boot.agents)) problems.push('restarting the migrated profile changed assistant identity')
+  if (restart.currentSnapshotId !== boot.currentSnapshotId) problems.push('restarting the migrated profile changed private memory visibility')
+  if (restart.public?.currentVersion != null || restart.public?.candidate === true || (restart.public?.publishedSnapshots ?? -1) !== 0 || (restart.public?.learningRuns ?? -1) !== 0) problems.push('restarting the migrated profile resurrected public memory')
+  if (JSON.stringify(restart.denials ?? null) !== JSON.stringify(boot.denials ?? null)) problems.push('restarting the migrated profile changed the private denial behaviour')
+  if (history.afterRestart?.integrityCheck !== 'ok') problems.push('the migrated database must still pass integrity_check after the live boots')
+  const before = history.before?.tables ?? {}
+  if (!Object.keys(before).length) problems.push('the migrated history was never measured before the live boots')
+  for (const [table, baseline] of Object.entries(before)) {
+    for (const [label, digest] of [['boot', history.afterBoot], ['restart', history.afterRestart]]) {
+      const current = digest?.tables?.[table]
+      if (current?.rows !== baseline.rows) problems.push(`${table} gained or lost rows while the migrated profile ran (${label})`)
+      if (current?.digest !== baseline.digest) problems.push(`${table} bytes changed while the migrated profile ran (${label})`)
+    }
+  }
   return problems
 }
 
@@ -577,6 +662,8 @@ export function stageMigratedLegacyProfile({ root, lane, execPath = process.exec
   const reportPath = join(out, 'fixture-report.json')
   const report = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8')) : null
   const source = join(out, 'fixture-v1-migrated.db')
+  // The migrated database must be the store the live isolated instance opens:
+  // a copy parked beside it could never be booted, rendered or restarted.
   const target = join(root, 'home', 'weir', 'profiles', 'desktop', 'decisions', 'decision.db')
   mkdirSync(dirname(target), { recursive: true })
   for (const suffix of ['', '-wal', '-shm']) rmSync(`${target}${suffix}`, { force: true })
