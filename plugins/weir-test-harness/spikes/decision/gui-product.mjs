@@ -10,10 +10,13 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, exactArgs, immutableChanges, layoutProblems, mainRegionProblems, masterDetailProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
+// Task 6.7 cross-workspace memory matrix. It is implemented here and pinned by
+// unit tests, but only the full acceptance run (7.3) executes it.
+const CROSS_WORKSPACE_MEMORY = process.env.WEIR_DECISION_PRODUCT_CROSS_WORKSPACE === '1'
 const BASE_HEAD = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: LANE, encoding: 'utf8' }).stdout.trim()
 const PORT = Number(process.env.WEIR_DECISION_PRODUCT_PORT ?? 9468)
 if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65535) throw new Error('WEIR_DECISION_PRODUCT_PORT must be a valid TCP port')
@@ -1619,6 +1622,182 @@ function auditP4RawEvidence(state, primary, secondary) {
   return { proof, comparison }
 }
 
+
+// ---------------------------------------------------------------------------
+// Task 6.7: one isolated profile, two real workspaces, the same shared assistant.
+// Everything below runs on the already-running isolated instance: DOM facts and
+// raw RPC come from the real Electron window, never from a component tree.
+// ---------------------------------------------------------------------------
+
+async function crossWorkspaceMemoryDom(agentId) {
+  return instance.cdp.evaluate(`(() => {
+    const detail=document.querySelector('[data-agent-detail=${JSON.stringify(agentId)}]')
+    if(!detail)return null
+    const visible=el=>el.offsetParent!==null
+    const zone=name=>detail.querySelector('[data-memory-zone="'+name+'"]')
+    const controls=[...detail.querySelectorAll('button')].filter(visible).map(button=>({text:button.textContent.trim(),action:button.getAttribute('data-action'),disabled:button.disabled===true}))
+    const publicZone=zone('public')
+    const privateZone=zone('workspace')
+    const status=publicZone?.querySelector('[data-public-status]')
+    const disclosure=publicZone?.querySelector('[data-public-disclosure]')
+    const candidate=publicZone?.querySelector('[data-public-candidate]')
+    const current=publicZone?.querySelector('[data-public-current]')
+    return {
+      zones:{public:Boolean(publicZone),workspace:Boolean(privateZone)},
+      headings:[...detail.querySelectorAll('h3')].map(el=>el.textContent.trim()),
+      guidance:publicZone?.querySelector('[data-public-guidance-only]')?.textContent??'',
+      privateIsolation:privateZone?.querySelector('[data-private-isolation]')?.textContent??'',
+      text:detail.innerText,
+      navigation:[...document.querySelectorAll('main.weir-da-page [data-decision-primary-nav] [data-view]')].map(el=>el.getAttribute('data-view')),
+      controls,
+      status:status?{present:true,role:status.getAttribute('role')??'',live:status.getAttribute('aria-live')??''}:{present:false},
+      disclosure:{required:Boolean(disclosure),acknowledge:Boolean(disclosure?.querySelector('[data-action="public-acknowledge"]'))},
+      candidate:candidate?{
+        present:true,
+        aliases:[...candidate.querySelectorAll('[data-public-source]')].map(el=>el.getAttribute('data-public-source')),
+        replay:candidate.querySelector('[data-public-replay]')?.getAttribute('data-public-replay')??'',
+        adopt:Boolean(candidate.querySelector('[data-action="public-publish"]')),
+        discard:Boolean(candidate.querySelector('[data-action="public-reject"]')),
+        readableLinks:candidate.querySelectorAll('[data-action="open-learning-record"],[data-learning-source-record] button').length,
+        adoptOnRender:false,
+      }:{present:false},
+      current:current?{version:current.getAttribute('data-public-current'),rollback:Boolean(publicZone.querySelector('[data-action="public-rollback"]'))}:null,
+    }
+  })()`)
+}
+
+async function crossWorkspaceDenial(sessionId, caseId, learningRunId) {
+  const record = await instance.cdp.evaluate(`window.__decisionQA.decision('record', ${JSON.stringify({ sessionId, caseId })})`)
+  const run = learningRunId
+    ? await instance.cdp.evaluate(`window.__decisionQA.decision('learningRun', ${JSON.stringify({ sessionId, learningRunId })})`)
+    : null
+  const code = value => value?.value?.error?.code ?? value?.error?.code ?? (value?.value?.value === null || value?.value?.value === null ? 'CASE_NOT_FOUND' : 'UNKNOWN')
+  return [
+    { method: 'record', sessionId, code: code(record), bodyLeaked: JSON.stringify(record).includes('"excerpt"') || JSON.stringify(record).includes('"question"') },
+    ...(run ? [{ method: 'learningRun', sessionId, code: code(run), bodyLeaked: JSON.stringify(run).includes('"operations"') || JSON.stringify(run).includes('"principles"') }] : []),
+  ]
+}
+
+async function runCrossWorkspaceMemoryMatrix(state) {
+  if (!CROSS_WORKSPACE_MEMORY) return null
+  const phase = 'GUI-cross-workspace-memory'
+  const workspaceOne = join(root, 'cross-w1')
+  const workspaceTwo = join(root, 'cross-w2')
+  mkdirSync(workspaceOne, { recursive: true })
+  mkdirSync(workspaceTwo, { recursive: true })
+
+  // A genuine v1 database migrated by production code, staged inside the
+  // isolated evidence root only. The live Desktop profile is untouched.
+  const legacy = stageMigratedLegacyProfile({ root: join(root, 'cross-legacy'), lane: LANE })
+  const legacyProblems = legacy.report ? legacyMigratedProfileProblems({ ...legacy.report, walSidecarsLeft: existsSync(`${legacy.target}-wal`) || existsSync(`${legacy.target}-shm`), currentAppTouched: false }) : ['the migration fixture produced no report']
+  writeJson(join(out, 'cross-workspace-legacy-profile.json'), { exitCode: legacy.exitCode, reportPath: legacy.reportPath, target: legacy.target, report: legacy.report, problems: legacyProblems })
+  check('crossWorkspaceLegacyProfileMigratesConservatively', legacy.exitCode === 0 && legacyProblems.length === 0, { exitCode: legacy.exitCode, problems: legacyProblems, stderr: legacy.stderr })
+
+  const w1 = await newIsolatedSession('cross-w1', workspaceOne)
+  const w2 = await newIsolatedSession('cross-w2', workspaceTwo)
+  await openIsolatedSession(w1.sessionId)
+  const shared = await createAgent(w1.sessionId, 'Shared memory assistant', 'Prefer the documented option')
+  await selectorChoose(w1.sessionId, 'agent', shared.agentId)
+  await selectorChoose(w2.sessionId, 'agent', shared.agentId)
+
+  // One real user decision per workspace: the only eligible public sources.
+  await submitMarker(instance, 'CROSS_W1_Q')
+  const w1Case = await waitCase(w1.sessionId, 'CROSS_W1_Q', current => current.state === 'awaiting_user')
+  await answerInboxWithSuggestions(w1.sessionId, w1Case.caseId, 'cross-w1-source')
+  await openIsolatedSession(w2.sessionId)
+  await submitMarker(instance, 'CROSS_W2_Q')
+  const w2Case = await waitCase(w2.sessionId, 'CROSS_W2_Q', current => current.state === 'awaiting_user')
+  await answerInboxWithSuggestions(w2.sessionId, w2Case.caseId, 'cross-w2-source')
+
+  // W1 opens the public zone: disclosure first, then one automatic candidate.
+  await openIsolatedSession(w1.sessionId)
+  await openAgent(w1.sessionId, shared.agentId)
+  const gated = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
+    return zone?.querySelector('[data-public-disclosure]')?zone:null
+  })()`), 30_000)
+  requireEvidence(gated, 'the first public review is disclosure-gated')
+  const gatedDom = await crossWorkspaceMemoryDom(shared.agentId)
+  await shot('cross-public-disclosure')
+  check('publicFirstReviewRequiresDisclosure', memoryZoneProblems(gatedDom).length === 0 && gatedDom.disclosure.required === true && gatedDom.candidate.present === false, memoryZoneProblems(gatedDom))
+  await keyboardActivate('Acknowledge public memory disclosure', `[data-agent-detail="${shared.agentId}"] [data-action="public-acknowledge"]`)
+  const review = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
+    const candidate=zone?.querySelector('[data-public-candidate]')
+    return candidate&&candidate.querySelector('[data-public-source]')?zone:null
+  })()`), 60_000)
+  requireEvidence(review, 'the acknowledged refresh produced a reviewable candidate')
+  await collectNetwork()
+  const candidateDom = await crossWorkspaceMemoryDom(shared.agentId)
+  await shot('cross-public-candidate')
+  const refreshRpc = networkRpc.filter(entry => entry.method === 'publicMemoryRefresh')
+  const reviewRpc = networkRpc.filter(entry => entry.method === 'publicCandidate')
+  check('publicCandidateAutomaticallyExtractedOnceFromTwoWorkspaces',
+    refreshRpc.some(entry => entry.args?.acknowledgedDisclosure === true) &&
+    refreshRpc.filter(entry => entry.args?.acknowledgedDisclosure === true).length === 1 &&
+    reviewRpc.length >= 1 &&
+    candidateDom.candidate.aliases.length >= 1 &&
+    candidateDom.candidate.aliases.every(alias => /^origin_[0-9a-f]+$/.test(alias)),
+    { refresh: refreshRpc.map(entry => entry.args), review: reviewRpc.map(entry => entry.args), aliases: candidateDom.candidate.aliases })
+  check('publicCandidateReviewMatchesMemoryZoneGuards', memoryZoneProblems(candidateDom).length === 0, memoryZoneProblems(candidateDom))
+
+  // Explicit adoption, then rollback: both real confirmations.
+  await keyboardActivate('Adopt public principles', `[data-agent-detail="${shared.agentId}"] [data-action="public-publish"]`)
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-publish"))'), 30_000)
+  await keyboardActivate('Confirm public adoption', '#weir-da-learning-public-publish .weir-da-actions button[data-variant="primary"]')
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"] [data-public-current]'))`), 30_000)
+  const publishedDom = await crossWorkspaceMemoryDom(shared.agentId)
+  check('publicAdoptionIsExplicitAndPublishesOnce', publishedDom.current != null && publishedDom.current.rollback === true && memoryZoneProblems(publishedDom).length === 0, { current: publishedDom.current, problems: memoryZoneProblems(publishedDom) })
+  await keyboardActivate('Restore previous public version', `[data-agent-detail="${shared.agentId}"] [data-action="public-rollback"]`)
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-rollback"))'), 30_000)
+  await keyboardActivate('Confirm public rollback', '#weir-da-learning-public-rollback .weir-da-actions button:last-child')
+  const rolledBack = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
+    return zone&&!zone.querySelector('[data-public-current]')?zone.innerText:null
+  })()`), 30_000)
+  check('publicRollbackRestoresEmptyPublicZone', typeof rolledBack === 'string', { text: String(rolledBack ?? '').slice(0, 200) })
+
+  // W3 has no private experience at all: Auto may select the shared assistant,
+  // but it can never answer from public memory alone.
+  const workspaceThree = join(root, 'cross-w3')
+  mkdirSync(workspaceThree, { recursive: true })
+  const w3 = await newIsolatedSession('cross-w3', workspaceThree)
+  await selectorChoose(w3.sessionId, 'auto')
+  await submitMarker(instance, 'CROSS_AUTO_Q')
+  const autoCase = await waitCase(w3.sessionId, 'CROSS_AUTO_Q')
+  const autoRecord = await record(w3.sessionId, `${phase}-auto`, autoCase.caseId)
+  const autoShare = {
+    selectorAccepted: true,
+    answered: autoRecord.case.state === 'closed' && autoRecord.case.closing === 'answered',
+    attemptCount: autoRecord.attempts.length,
+    citedEvidenceCount: autoRecord.attempts.reduce((sum, attempt) => sum + (attempt.citedEvidenceIds?.length ?? 0), 0),
+    awaitingReason: autoRecord.case.awaitingReason ?? null,
+  }
+  await shot('cross-w3-auto-shared-assistant')
+
+  // W2 sees the same identity and public zone, never W1's private record.
+  await openIsolatedSession(w2.sessionId)
+  await openAgent(w2.sessionId, shared.agentId)
+  const w2Dom = await crossWorkspaceMemoryDom(shared.agentId)
+  const denials = await crossWorkspaceDenial(w2.sessionId, w1Case.caseId)
+  const w2Records = await records(w2.sessionId)
+  const w1Records = await records(w1.sessionId)
+  await shot('cross-w2-shared-identity')
+  const sharedProblems = crossWorkspaceShareProblems({
+    workspaces: [
+      { label: 'W1', assistantNames: [shared.name], publicVersion: null, privateRecordIds: w1Records.records.map(item => item.caseId), navigation: candidateDom.navigation, text: candidateDom.text },
+      { label: 'W2', assistantNames: [shared.name], publicVersion: null, privateRecordIds: w2Records.records.map(item => item.caseId), navigation: w2Dom.navigation, text: w2Dom.text },
+      { label: 'W3', assistantNames: [shared.name], publicVersion: null, privateRecordIds: [], navigation: w2Dom.navigation, text: w2Dom.text },
+    ],
+    workspacePaths: [workspaceOne, workspaceTwo, root],
+    denials,
+    autoShare,
+  })
+  writeJson(join(out, 'cross-workspace-matrix.json'), { workspaces: { w1: w1.sessionId, w2: w2.sessionId }, assistant: shared.agentId, denials, gatedDom, candidateDom, publishedDom, w2Dom, problems: sharedProblems, refreshRpc, reviewRpc })
+  check('crossWorkspaceSharedIdentityAndPrivateIsolation', sharedProblems.length === 0, sharedProblems)
+  return { w1: w1.sessionId, w2: w2.sessionId, agentId: shared.agentId, denials, problems: sharedProblems }
+}
+
 function writeReport(verdict, error = null) {
   const exceptionCount = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown').length
   const slotCrashCount = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event))).length
@@ -2803,6 +2982,7 @@ try {
   const scanAfterEnabledRestart = await scanSession(sessionId, 'session-after-enabled-restart.json')
   check('enabledRestartAddsNoForbiddenSessionEvents', scanAfterEnabledRestart.commandEvents.length === 0 && scanAfterEnabledRestart.customDecisionEvents.length === 0)
   await runP4AfterRestart(p4State, legacySession, primary, secondary)
+  p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State)
   await stopOwned('process-3')
   sqliteSnapshot('final-stopped')
   copyFileSync(databasePath, join(out, 'decision.db'))

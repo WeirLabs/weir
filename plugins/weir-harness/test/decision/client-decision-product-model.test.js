@@ -211,18 +211,35 @@ test('candidate readiness requires matching loaded detail and accepts a first ca
 
 test('memory summaries distinguish used, empty, pinned-empty, and legacy attempts without inventing hits', async () => {
   const model = await load()
-  assert.deepEqual(model.memoryView({
+  const used = model.memoryView({
     packManifest: { memory: {
-      L2: { status: 'populated', principleIds: ['pr-one'], items: [{ principleId: 'pr-one' }] },
+      L2: { status: 'populated', snapshotId: 'ms-private', snapshotRevision: 3, snapshotHash: 'a'.repeat(64), principleIds: ['pr-one'], items: [{ principleId: 'pr-one' }] },
+      publicL2: { status: 'populated', zone: 'public', snapshotId: 'ms-public', snapshotRevision: 2, snapshotHash: 'b'.repeat(64), principleIds: ['pr-public'], items: [{ principleId: 'pr-public', sources: ['ws-alias-1'] }] },
       L3: { sourceCaseIds: ['dc-one', 'dc-two'] },
     } },
-  }), { l2: 'used', l2Count: 1, l3: 'used', l3Count: 2 })
-  assert.deepEqual(model.memoryView({
+  })
+  assert.equal(used.l2, 'used')
+  assert.equal(used.l2Count, 1)
+  assert.equal(used.public, 'used')
+  assert.equal(used.publicCount, 1)
+  assert.deepEqual(used.publicPrinciples, [{ principleId: 'pr-public', sources: ['ws-alias-1'], evidenceIds: [] }])
+  assert.equal(used.l3, 'used')
+  assert.equal(used.l3Count, 2)
+  const pinnedEmpty = model.memoryView({
     pins: { memorySnapshotId: 'ms-pinned' },
     packManifest: { memory: { L2: { status: 'empty', principleIds: [], items: [] }, L3: { sourceCaseIds: [] } } },
-  }), { l2: 'pinned-empty', l2Count: 0, l3: 'empty', l3Count: 0 })
-  assert.deepEqual(model.memoryView({ packManifest: { layerSizes: { L2: 0, L3: 0 } } }), { l2: 'legacy', l2Count: 0, l3: 'legacy', l3Count: 0 })
-  assert.deepEqual(model.memoryView({}), { l2: 'legacy', l2Count: 0, l3: 'legacy', l3Count: 0 })
+  })
+  assert.equal(pinnedEmpty.l2, 'pinned-empty')
+  assert.equal(pinnedEmpty.public, 'legacy')
+  assert.equal(pinnedEmpty.l3, 'empty')
+  for (const legacy of [{ packManifest: { layerSizes: { L2: 0, L3: 0 } } }, {}]) {
+    const value = model.memoryView(legacy)
+    assert.equal(value.l2, 'legacy')
+    assert.equal(value.public, 'legacy')
+    assert.equal(value.l3, 'legacy')
+    assert.equal(value.l2Count, 0)
+    assert.equal(value.publicCount, 0)
+  }
 })
 
 test('metrics projection preserves raw values while formatting counts, rates, durations, and diagnostic groups', async () => {

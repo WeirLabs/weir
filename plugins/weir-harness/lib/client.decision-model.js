@@ -223,20 +223,59 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /** One L2 partition (private or public) projected from the Attempt manifest. */
+    function memoryLayerView(layer) {
+      const value = object(layer);
+      if (!value) return { state: "legacy", count: 0, principles: [], exclusions: [] };
+      const ids = array(value.principleIds).filter(item => typeof item === "string");
+      const items = array(value.items).filter(item => typeof item?.principleId === "string");
+      const count = new Set([...ids, ...items.map(item => item.principleId)]).size;
+      const pinned = Boolean(value.snapshotId ?? value.snapshotRevision ?? value.snapshotHash);
+      return {
+        state: count ? "used" : pinned ? "pinned-empty" : "empty", count,
+        principles: (ids.length ? ids : items.map(item => item.principleId)).map(principleId => {
+          const item = items.find(candidate => candidate.principleId === principleId) ?? null;
+          return {
+            principleId,
+            sources: array(item?.sources).filter(source => typeof source === "string"),
+            evidenceIds: array(item?.evidenceIds).filter(evidenceId => typeof evidenceId === "string"),
+          };
+        }),
+        exclusions: array(value.exclusions).filter(item => typeof item?.principleId === "string")
+          .map(item => ({ principleId: item.principleId, reason: typeof item.reason === "string" ? item.reason : null })),
+      };
+    }
+
     function memoryView(attempt) {
       const memory = object(attempt?.packManifest)?.memory;
-      const l2 = object(memory?.L2);
       const l3 = object(memory?.L3);
-      const items = array(l2?.items).filter(item => typeof item?.principleId === "string");
-      const principleIds = array(l2?.principleIds).filter(value => typeof value === "string");
-      const l2Count = new Set([...principleIds, ...items.map(item => item.principleId)]).size;
       const pins = object(attempt?.pins);
-      const pinned = Boolean(l2?.snapshotId ?? l2?.snapshotRevision ?? l2?.snapshotHash ?? pins?.memorySnapshotId ?? pins?.memorySnapshotRevision ?? pins?.memorySnapshotHash);
+      const privateLayer = memoryLayerView(memory?.L2);
+      // Old Attempts carry only the legacy private pin, in `pins`.
+      if (privateLayer.state === "empty" && (pins?.memorySnapshotId || pins?.memorySnapshotRevision || pins?.memorySnapshotHash)) privateLayer.state = "pinned-empty";
+      // An Attempt written before the public zone existed has no public
+      // partition at all: it is legacy, never a fabricated empty hit.
+      const publicLayer = memoryLayerView(memory?.publicL2);
+      if (publicLayer.state === "empty" && (pins?.publicMemorySnapshotId || pins?.publicMemorySnapshotRevision || pins?.publicMemorySnapshotHash)) publicLayer.state = "pinned-empty";
       const sourceCaseIds = array(l3?.sourceCaseIds).filter(value => typeof value === "string");
       return {
-        l2: !l2 ? "legacy" : l2Count ? "used" : pinned ? "pinned-empty" : "empty", l2Count,
+        l2: privateLayer.state, l2Count: privateLayer.count,
+        l2Principles: privateLayer.principles, l2Exclusions: privateLayer.exclusions,
+        public: publicLayer.state, publicCount: publicLayer.count,
+        publicPrinciples: publicLayer.principles, publicExclusions: publicLayer.exclusions,
         l3: !l3 ? "legacy" : sourceCaseIds.length ? "used" : "empty", l3Count: sourceCaseIds.length,
+        layers: { private: privateLayer, public: publicLayer },
       };
+    }
+
+    /** Human scope without any absolute workspace path. */
+    function scopeSummary(scope, t) {
+      if (!scope || typeof scope !== "object") return t("decisionCurrentScope");
+      const parts = [];
+      if (array(scope.workspaces).length) parts.push(t("decisionScopeCurrentWorkspace"));
+      for (const key of ["paths", "tags"]) for (const value of array(scope[key])) if (typeof value === "string") parts.push(value);
+      if (array(scope.authorizationClasses).length) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
+      return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
 
     const METRIC_LABELS = {
@@ -451,6 +490,107 @@ window.__ModuleLoader__.load({
       return { ready: true, reason: null, snapshotId: snapshot.snapshotId, expectedRevision: snapshot.revision, changeCount: run.operations.length };
     }
 
+    const PUBLIC_STATUS_KEYS = {
+      idle: "decisionPublicStatusIdle",
+      loading: "decisionPublicStatusLoading",
+      running: "decisionPublicStatusRunning",
+      candidate: "decisionPublicStatusCandidate",
+      published: "decisionPublicStatusPublished",
+      rejected: "decisionPublicStatusRejected",
+      rolled_back: "decisionPublicStatusRolledBack",
+      "up-to-date": "decisionPublicStatusUpToDate",
+      "empty-sources": "decisionPublicStatusEmptySources",
+      "disclosure-required": "decisionPublicStatusDisclosureRequired",
+      failed: "decisionPublicStatusFailed",
+      error: "decisionPublicStatusError",
+    };
+
+    /**
+     * Adopt/discard stay unavailable until the candidate summary, the full
+     * candidate review and its structural replay all match the same revision.
+     */
+    function publicCandidateReadiness({ summary, detail, error, loading } = {}) {
+      const failure = reason => ({ ready: false, reason });
+      if (error) return failure("error");
+      const candidate = object(summary?.candidate);
+      if (!candidate || typeof candidate.snapshotId !== "string") return failure("candidate");
+      if (!Number.isInteger(candidate.revision)) return failure("revision");
+      if (!detail) return failure("loading");
+      const review = object(detail.candidate);
+      if (!review || detail.agentId !== summary.agentId) return failure("mismatch");
+      if (review.snapshotId !== candidate.snapshotId || review.revision !== candidate.revision) return failure("mismatch");
+      if (!Array.isArray(detail.changes) || !Array.isArray(detail.principles)) return failure("diff");
+      if (!object(detail.replay) || detail.replay.passed !== true) return failure("replay");
+      return { ready: true, reason: null, snapshotId: candidate.snapshotId, expectedRevision: candidate.revision, changeCount: detail.changes.length };
+    }
+
+    /**
+     * Plain-language projection of the public memory zone. It only ever carries
+     * opaque workspace aliases, counts and redacted excerpts: no realpath, no
+     * foreign record id and no navigation target.
+     */
+    function publicMemoryView(input = {}, locale = "en") {
+      const t = translator(locale);
+      const value = object(input.value);
+      const summary = value ?? {};
+      const phase = ["idle", "loading", "error", "ready"].includes(input.phase) ? input.phase : value ? "ready" : "idle";
+      const current = object(summary.current);
+      const candidate = object(summary.candidate);
+      const disclosure = object(summary.disclosure);
+      const status = phase === "error" ? "error"
+        : typeof summary.status === "string" ? summary.status
+          : candidate ? "candidate" : current ? "published" : phase === "loading" ? "loading" : "idle";
+      const disclosureRequired = phase === "ready" && disclosure?.required === true;
+      const pending = typeof input.pending === "string";
+      const readiness = phase === "ready"
+        ? publicCandidateReadiness({ summary, detail: input.candidate, error: input.candidateError, loading: input.candidatePhase === "loading" })
+        : { ready: false, reason: "loading" };
+      const review = object(input.candidate);
+      const sources = array(review?.sources).filter(item => typeof item?.alias === "string").map(item => ({
+        alias: item.alias,
+        count: Number.isFinite(item.count) ? item.count : 0,
+        preview: typeof item.preview === "string" ? item.preview : "",
+        current: item.readableInCurrentWorkspace === true,
+        kinds: object(item.kinds) ?? {},
+      }));
+      return {
+        phase, status, hasValue: Boolean(value), statusKey: PUBLIC_STATUS_KEYS[status] ?? "decisionPublicStatusIdle",
+        statusVariant: status === "failed" || status === "error" ? "error"
+          : ["candidate", "running", "disclosure-required"].includes(status) ? "warn" : "idle",
+        disclosureRequired,
+        disclosureVersion: Number.isInteger(disclosure?.version) ? disclosure.version : null,
+        current: current ? {
+          version: Number.isInteger(current.version) ? current.version : null,
+          principleCount: Number.isInteger(current.principleCount) ? current.principleCount : null,
+          workspaceCount: Number.isInteger(current.workspaceCount) ? current.workspaceCount : 0,
+          snapshotId: typeof current.snapshotId === "string" ? current.snapshotId : null,
+          revision: Number.isInteger(current.revision) ? current.revision : null,
+        } : null,
+        candidate: candidate ? {
+          learningRunId: typeof candidate.learningRunId === "string" ? candidate.learningRunId : null,
+          snapshotId: typeof candidate.snapshotId === "string" ? candidate.snapshotId : null,
+          revision: Number.isInteger(candidate.revision) ? candidate.revision : null,
+          version: Number.isInteger(candidate.version) ? candidate.version : null,
+          principleCount: Number.isInteger(candidate.principleCount) ? candidate.principleCount : null,
+          workspaceCount: Number.isInteger(candidate.workspaceCount) ? candidate.workspaceCount : 0,
+          sourceCount: Number.isInteger(candidate.sourceCount) ? candidate.sourceCount : 0,
+        } : null,
+        readiness,
+        canReview: readiness.ready && !pending && phase === "ready",
+        canRollback: Boolean(current && Number.isInteger(current.revision) && !pending && phase === "ready"),
+        canRefresh: !pending && phase !== "loading",
+        retryable: (status === "failed" || status === "error") && !pending,
+        pending, failed: status === "failed",
+        changes: array(review?.changes).filter(item => typeof item?.op === "string"),
+        principles: array(review?.principles).filter(item => typeof item?.principleId === "string"),
+        sources,
+        replay: object(review?.replay) ?? null,
+        workspaceCount: Number.isInteger(summary.workspaceCount) ? summary.workspaceCount : 0,
+        sourceCount: Number.isInteger(summary.sourceCount) ? summary.sourceCount : 0,
+        errorKey: phase === "error" ? errorKey(input.error) : null,
+      };
+    }
+
     async function decisionRpc(connection, method, args = {}) {
       const transport = await connection.rpc.call("/api", `weirDecision/${method}`, { args: { args } });
       const service = transport?.value;
@@ -469,7 +609,7 @@ window.__ModuleLoader__.load({
         decisionSuggestionNotSubmitted: "Not submitted", decisionNativeAnswerHint: "Answer in the original question above; this card only explains the decision.", decisionCancelTitle: "Cancel this decision?", decisionCancelConfirmation: "The pending request will be cancelled. Its read-only history remains available.", decisionKeepEditing: "Keep editing",
         decisionRecordFilters: "Record filters", decisionFilterAgent: "Assistant", decisionFilterState: "Status", decisionFilterOutcome: "Evaluation result", decisionFilterReason: "Return reason", decisionFilterScope: "Scope contains", decisionFilterFeedback: "Feedback", decisionAllAssistants: "All assistants", decisionAllStates: "All statuses", decisionAllOutcomes: "All results", decisionAllReasons: "All reasons", decisionAllFeedback: "All feedback", decisionMoreFilters: "More filters", decisionApplyFilters: "Apply filters", decisionLoadMore: "Load more", decisionBackToRecords: "Back to decision records", decisionStatusClosed: "Closed", decisionOutcomeAnswer: "Answered by the assistant", decisionOutcomeReturn: "Returned for more input", decisionOutcomeEscalate: "Escalated to you", decisionOutcomeFailed: "Evaluation failed", decisionFeedbackNone: "No rating", decisionFeedbackValidated: "Confirmed", decisionFeedbackDisputed: "Disputed",
         decisionReviewedPrinciplesUsed: "Reviewed principles were available as non-authoritative guidance", decisionPinnedEmpty: "A principle version was pinned, but no reviewed principles were loaded.", decisionNoReviewedPrinciples: "No reviewed principles were used.", decisionHistoricalContextUsed: "Historical references were included", decisionNoHistoricalContext: "No historical references were used.", decisionLegacyMemory: "No reviewed-principle or historical-reference use was recorded for this evaluation.", decisionEvaluationNumber: "Evaluation", decisionEvaluationHistory: "Evaluation history", decisionNoEarlierEvaluations: "No earlier evaluations.", decisionFeedbackHistory: "Feedback history", decisionNoFeedback: "No feedback has been recorded.", decisionNoteNoEffect: "A note is retained with this record and does not change future decisions.", decisionAddNote: "Add note", decisionCorrectionScope: "Applies to", decisionCorrectionTarget: "Supersedes the answer to", decisionCorrectionFutureOnly: "Only future decisions are affected; the original answer remains unchanged.", decisionSubmitCorrection: "Submit correction", decisionCurrentScope: "The current record scope", decisionAuthorizationClasses: "Authorization classes",
-        decisionAgentStateEnabled: "Enabled", decisionAgentStateDisabled: "Disabled", decisionAgentStateArchived: "Archived", decisionNoPreference: "No decision preference recorded.", decisionVersionUnavailable: "Version unavailable in the summary", decisionPrincipleDetailsOnOpen: "Open the assistant to review principle versions.", decisionPendingReview: "Changes await review", decisionEditAgent: "Edit assistant", decisionAgentName: "Name", decisionAgentPreference: "Decision preference (optional)", decisionAgentPreferenceHint: "Plain-language guidance for this assistant.", decisionAdvancedSettings: "Advanced settings", decisionAdvancedSettingsHint: "Scope and model routing use the existing authoritative profile format.", decisionAgentScopeJson: "Full scope (JSON)", decisionAgentModelRouteJson: "Model route (JSON)", decisionModelInheritanceHint: "A new assistant inherits the session route when no route is supplied.", decisionDisableAgent: "Disable assistant", decisionEnableAgent: "Enable assistant", decisionArchiveAgent: "Archive assistant", decisionProfileHistory: "Preference version history", decisionDiscardTitle: "Discard unsaved changes?", decisionDiscardConfirmation: "Your unsaved assistant edits will be lost.", decisionDiscard: "Discard changes", decisionArchiveTitle: "Archive this assistant?", decisionArchiveConfirmation: "The assistant can no longer receive new decisions. Existing records and history are retained.", decisionDisableTitle: "Disable this assistant?", decisionDisableConfirmation: "New decisions will not be routed to this assistant until it is enabled again.", decisionEnableTitle: "Enable this assistant?", decisionEnableConfirmation: "This assistant can receive new decisions again.",
+        decisionAgentStateEnabled: "Enabled", decisionAgentStateDisabled: "Disabled", decisionAgentStateArchived: "Archived", decisionNoPreference: "No decision preference recorded.", decisionVersionUnavailable: "Version unavailable in the summary", decisionPrincipleDetailsOnOpen: "Open the assistant to review principle versions.", decisionPendingReview: "Changes await review", decisionEditAgent: "Edit assistant", decisionAgentName: "Name", decisionAgentPreference: "Decision preference (optional)", decisionAgentPreferenceHint: "Plain-language guidance for this assistant.", decisionAdvancedSettings: "Advanced settings", decisionAdvancedSettingsHint: "Expertise hints and model routing use the existing authoritative profile format. Assistants carry no workspace ownership setting.", decisionAgentScopeJson: "Full scope (JSON)", decisionAgentModelRouteJson: "Model route (JSON)", decisionModelInheritanceHint: "A new assistant inherits the session route when no route is supplied.", decisionDisableAgent: "Disable assistant", decisionEnableAgent: "Enable assistant", decisionArchiveAgent: "Archive assistant", decisionProfileHistory: "Preference version history", decisionDiscardTitle: "Discard unsaved changes?", decisionDiscardConfirmation: "Your unsaved assistant edits will be lost.", decisionDiscard: "Discard changes", decisionArchiveTitle: "Archive this assistant?", decisionArchiveConfirmation: "The assistant can no longer receive new decisions. Existing records and history are retained.", decisionDisableTitle: "Disable this assistant?", decisionDisableConfirmation: "New decisions will not be routed to this assistant until it is enabled again.", decisionEnableTitle: "Enable this assistant?", decisionEnableConfirmation: "This assistant can receive new decisions again.",
         decisionMetricActivity: "Activity", decisionMetricReturns: "Returns by reason", decisionMetricEvidenceFailures: "Evidence issues", decisionMetricFeedback: "Feedback", decisionMetricCasesOpened: "Decisions opened", decisionMetricAttemptsTotal: "Evaluations", decisionMetricAutoAnswered: "Automatically answered", decisionMetricAutoAnswerRate: "Automatic answer rate", decisionMetricEscalated: "Decided by you", decisionMetricExhausted: "Needs attention", decisionMetricCancelled: "Cancelled", decisionMetricInterrupted: "Interrupted evaluations", decisionMetricCorrections: "Corrections", decisionMetricReassignments: "Reassignments", decisionMetricFeedbackParticipation: "Records with feedback", decisionMetricSelectorOffBypasses: "Off bypasses (not sampled)", decisionMetricMeanLatency: "Mean evaluation latency", decisionMetricEvidenceStale: "Stale evidence", decisionMetricEvidenceConflicting: "Conflicting evidence", decisionMetricEvidenceDeleted: "Deleted evidence", decisionMetricRatingsUp: "Confirmations", decisionMetricRatingsDown: "Disputes", decisionMetricRatingsUndone: "Undone ratings", decisionMetricWindow: "Window", decisionMetricWindowAll: "All time", decisionMetricWindow24h: "Last 24 hours", decisionMetricWindow7d: "Last 7 days", decisionMetricWindow30d: "Last 30 days", decisionRawMetrics: "Raw metric values",
         decisionSelector: "Decision assistant", decisionOff: "Do not use an assistant", decisionAgents: "Assistants", decisionRecords: "Decision records",
         decisionInbox: "Needs your decision", decisionMetrics: "Metrics", decisionLoading: "Loading decisions…", decisionLoadingShort: "Loading…", decisionSaving: "Saving…", decisionFailed: "The decision information could not be read, or the requested action could not be completed. Existing page content is preserved. Review the current status and retry when ready; this failure does not confirm a new selection, enable automatic answers, or change approval and permission boundaries. The Advanced diagnostics section retains the original error for troubleshooting.",
@@ -478,7 +618,7 @@ window.__ModuleLoader__.load({
         decisionNoPermission: "You do not have permission to read these decision records.", decisionRecordsCleaned: "Decision records were cleaned up.", decisionNoFilteredRecords: "No decision records match these filters.", decisionNoAgents: "No assistants yet. Create an assistant to get started.",
         decisionUp: "Confirm", decisionDown: "Dispute", decisionUndo: "Undo rating", decisionUndoUp: "Undo confirmation", decisionUndoDown: "Undo dispute", decisionComment: "Note", decisionCorrect: "Correction", decisionConfirmConsequence: "Confirmation supports this answer only within its original scope.", decisionDisputeConsequence: "Dispute immediately stops this answer from being used alone for automatic answers; it does not infer the opposite answer.",
         decisionDecide: "Submit decision", decisionReassign: "Reassign", decisionCancel: "Cancel", decisionRetry: "Retry", decisionSave: "Save", decisionUseSuggestions: "Use suggestions", decisionAnswersIncomplete: "Answer every question before submitting.",
-        decisionSelectTitle: "Choose a decision assistant", decisionSelectorSafety: "Only this session; approvals and high-risk actions still ask you.", decisionManageAgents: "Manage assistants", decisionCreateAgent: "New assistant",
+        decisionSelectTitle: "Choose a decision assistant", decisionSelectorSafety: "Assistants are shared across this profile\u2019s workspaces; approvals and high-risk actions still ask you.", decisionManageAgents: "Manage assistants", decisionCreateAgent: "New assistant",
         decisionAuto: "Automatically choose an assistant", decisionAutoWhitelist: "Automatic answers are currently allowed for {count} decision categories.", decisionAutoEmptyWhitelist: "No decisions are currently allowed for automatic answers; new decisions will still ask you.", decisionAutoReadinessUnknown: "Automatic-answer status is unknown; no automatic-answer capability is assumed.", decisionAutoShadowOn: "Selection comparison is on; it never changes the actual result.", decisionAutoShadowOff: "Selection comparison is not enabled.",
         decisionAutoShadowUnknown: "Selection comparison status is unknown.",
         decisionRoutingReview: "Routing review", decisionRoutingDiagnostic: "Route comparisons and counts are diagnostic only, not a quality score or automatic promotion.", decisionRoutingAgreement: "Shadow and pinned selections agree", decisionRoutingDisagreement: "Shadow and pinned selections differ", decisionRoutingShadowNone: "Shadow found no assistant", decisionRoutingShadowAmbiguous: "Shadow was ambiguous", decisionRoutingShadowFailure: "Shadow routing failed", decisionRoutingAutoNone: "Auto found no assistant", decisionRoutingAutoAmbiguous: "Auto was ambiguous", decisionRoutingAutoFailure: "Auto routing failed", decisionRoutingManualReassign: "Manually reassigned", decisionRoutingUncomparable: "Not comparable; no usable pinned baseline is recorded", decisionRoutingBaseline: "Pinned baseline for Shadow comparison", decisionRoutingAutoSelected: "Auto selected an assistant", decisionRoutingNoData: "No routing decisions in this window.", decisionRoutingOpenRecord: "Open the authorized decision record for", decisionRoutingShown: "Routing records shown",
@@ -515,13 +655,28 @@ window.__ModuleLoader__.load({
         decisionLearningOutcome_running: "Running", decisionLearningOutcome_candidate: "Candidate", decisionLearningOutcome_published: "Published",
         decisionLearningOutcome_rejected: "Rejected", decisionLearningOutcome_rolled_back: "Rolled back", decisionLearningOutcome_failed: "Failed",
         decisionSnapshotState_draft: "Draft", decisionSnapshotState_published: "Published", decisionSnapshotState_rolled_back: "Rolled back",
+        decisionScopeCurrentWorkspace: "this workspace", decisionAgentsShared: "These assistants are shared across every workspace of this profile.",
+        decisionPublicMemory: "Public memory", decisionWorkspaceExperience: "Current workspace experience",
+        decisionPublicGuidanceOnly: "Public memory is reviewed guidance, not evidence: automatic answers still need support from the current workspace.", decisionPrivateIsolation: "Private experience is readable only in the workspace where it was recorded.",
+        decisionPublicCurrentVersion: "Current published public version", decisionPublicNoCurrent: "No public principles have been published yet.",
+        decisionPublicRefresh: "Refresh public memory", decisionPublicRefreshing: "Refreshing public memory\u2026", decisionPublicReadFailed: "Public memory could not be read. Retry the read.",
+        decisionPublicDisclosureTitle: "Before the first public review", decisionPublicDisclosureBody: "Opening or refreshing public memory sends bounded, redacted excerpts of eligible experience from all workspaces of this profile to the current model to draft a candidate. Nothing is published automatically.", decisionPublicDisclosureAcknowledge: "I understand, review now",
+        decisionPublicCandidate: "Candidate awaiting your review", decisionPublicChanges: "Principle changes", decisionPublicSources: "Redacted sources", decisionPublicWorkspaces: "Workspaces represented", decisionPublicFromThisWorkspace: "From this workspace", decisionPublicFromOtherWorkspace: "From another workspace (read-only overview)", decisionPublicNoChanges: "This candidate has no visible principle changes.", decisionPublicSourceCount: "Source items",
+        decisionPublicNeedReview: "Loading the complete candidate before anything is changed\u2026", decisionPublicReviewMismatch: "The candidate changed since it was read. Reload it before adopting or discarding.",
+        decisionPublicPublish: "Adopt public principles", decisionPublicApplyTitle: "Adopt these public principles?", decisionPublicApplyConfirmation: "The candidate becomes the current public version. Decisions in every workspace can then use it as reviewed guidance only.", decisionPublicDiscardConfirmation: "The candidate will not affect future decisions. Its review and source history remain available.", decisionPublicRollback: "Restore previous public version", decisionPublicRollbackConfirmation: "The current public version stays in read-only history. Future decisions use the most recent earlier public version, or no public principles if none exists.",
+        decisionPublicRetry: "Retry the review",
+        decisionPublicStatusIdle: "No public review yet", decisionPublicStatusLoading: "Reading public memory\u2026", decisionPublicStatusRunning: "Drafting a public candidate\u2026", decisionPublicStatusCandidate: "Candidate awaiting review", decisionPublicStatusPublished: "Public principles published", decisionPublicStatusRejected: "Last candidate discarded", decisionPublicStatusRolledBack: "Public version rolled back", decisionPublicStatusUpToDate: "Up to date; no new eligible experience", decisionPublicStatusEmptySources: "No eligible experience yet", decisionPublicStatusDisclosureRequired: "Your confirmation is needed before the first review", decisionPublicStatusFailed: "The last public review failed", decisionPublicStatusError: "Public memory is unavailable right now",
+        decisionPublicReplay: "Structural checks", decisionPublicParents: "Replaces", decisionPublicNoCurrentParent: "No current public version",
+        decisionPublicRollbackTitle: "Restore a previous public version?",
+        decisionPublicGuidanceUsed: "reviewed public guidance was included", decisionPublicPinnedEmpty: "a public version was pinned, but no public principles were loaded", decisionNoPublicGuidance: "no public guidance was used", decisionPublicLegacy: "recorded before shared public memory; no public memory was used",
+        decisionPartitionState: "State", decisionPartitionUsed: "included", decisionPartitionPinnedNotUsed: "version pinned, nothing included", decisionPartitionEmpty: "no version pinned", decisionPartitionLegacy: "recorded before this memory layer", decisionPartitionNoPrinciples: "no principles included", decisionPartitionSources: "Source mapping", decisionLayerSize: "Layer size",
       },
       zh: {
         decisionPageDescription: "让助手依据证据处理重复判断；重要权限仍由你决定。", decisionPrimaryNavigation: "决策助手任务", decisionInboxEmpty: "当前没有待你决定的事项。", decisionSelectRecord: "选择一条判断记录以查看详情。", decisionNoAnswer: "暂无记录的答案。", decisionReasonSummary: "判断理由", decisionCurrentEvidence: "本次处理的判断依据", decisionNoEvidence: "本次处理没有关联的可核验依据。", decisionEvidenceUnavailable: "依据存在，但没有可阅读的摘录。", decisionEvidenceDeleted: "该支持材料已删除。", decisionEvidenceSuperseded: "该支持材料已被取代。", decisionRecoveryActions: "恢复操作", decisionChooseAssistant: "选择助手", decisionViewAssistant: "查看助手",
         decisionSuggestionNotSubmitted: "尚未提交", decisionNativeAnswerHint: "请在上方的原生问题中作答；此卡片仅说明判断情况。", decisionCancelTitle: "取消这次判断？", decisionCancelConfirmation: "待处理请求将被取消，只读历史仍会保留。", decisionKeepEditing: "继续编辑",
         decisionRecordFilters: "记录筛选", decisionFilterAgent: "助手", decisionFilterState: "状态", decisionFilterOutcome: "处理结果", decisionFilterReason: "返回原因", decisionFilterScope: "适用范围包含", decisionFilterFeedback: "反馈", decisionAllAssistants: "全部助手", decisionAllStates: "全部状态", decisionAllOutcomes: "全部结果", decisionAllReasons: "全部原因", decisionAllFeedback: "全部反馈", decisionMoreFilters: "更多筛选", decisionApplyFilters: "应用筛选", decisionLoadMore: "加载更多", decisionBackToRecords: "返回判断记录", decisionStatusClosed: "已结束", decisionOutcomeAnswer: "助手已回答", decisionOutcomeReturn: "返回等待补充", decisionOutcomeEscalate: "交由你决定", decisionOutcomeFailed: "处理失败", decisionFeedbackNone: "未评分", decisionFeedbackValidated: "已认可", decisionFeedbackDisputed: "已不认可",
         decisionReviewedPrinciplesUsed: "本次处理使用了经审阅原则作为非权威指导", decisionPinnedEmpty: "本次处理固定了原则版本，但没有装入经审阅原则。", decisionNoReviewedPrinciples: "本次处理未使用经审阅原则。", decisionHistoricalContextUsed: "本次处理包含历史参考", decisionNoHistoricalContext: "本次处理未使用历史参考。", decisionLegacyMemory: "本次处理没有记录经审阅原则或历史参考的使用情况。", decisionEvaluationNumber: "处理", decisionEvaluationHistory: "处理历史", decisionNoEarlierEvaluations: "没有更早的处理记录。", decisionFeedbackHistory: "反馈历史", decisionNoFeedback: "暂无反馈记录。", decisionNoteNoEffect: "备注会保留在此记录中，不影响之后的判断。", decisionAddNote: "添加备注", decisionCorrectionScope: "适用于", decisionCorrectionTarget: "取代以下问题的答案", decisionCorrectionFutureOnly: "只影响之后的判断，原回答保留不变。", decisionSubmitCorrection: "提交纠正", decisionCurrentScope: "当前记录的适用范围", decisionAuthorizationClasses: "授权类",
-        decisionAgentStateEnabled: "已启用", decisionAgentStateDisabled: "已停用", decisionAgentStateArchived: "已归档", decisionNoPreference: "暂无判断偏好。", decisionVersionUnavailable: "摘要中没有版本信息", decisionPrincipleDetailsOnOpen: "打开助手以查看原则版本。", decisionPendingReview: "有待审变化", decisionEditAgent: "编辑助手", decisionAgentName: "名称", decisionAgentPreference: "判断偏好（可选）", decisionAgentPreferenceHint: "用普通语言描述此助手的判断偏好。", decisionAdvancedSettings: "高级设置", decisionAdvancedSettingsHint: "适用范围和模型路由沿用既有权威档案格式。", decisionAgentScopeJson: "完整适用范围（JSON）", decisionAgentModelRouteJson: "模型路由（JSON）", decisionModelInheritanceHint: "新助手未提供路由时继承会话模型。", decisionDisableAgent: "停用助手", decisionEnableAgent: "启用助手", decisionArchiveAgent: "归档助手", decisionProfileHistory: "判断偏好版本历史", decisionDiscardTitle: "放弃未保存的修改？", decisionDiscardConfirmation: "未保存的助手修改将丢失。", decisionDiscard: "放弃修改", decisionArchiveTitle: "归档此助手？", decisionArchiveConfirmation: "助手将不再接收新判断，既有记录和历史会保留。", decisionDisableTitle: "停用此助手？", decisionDisableConfirmation: "重新启用前，新判断不会路由到此助手。", decisionEnableTitle: "启用此助手？", decisionEnableConfirmation: "此助手可再次接收新判断。",
+        decisionAgentStateEnabled: "已启用", decisionAgentStateDisabled: "已停用", decisionAgentStateArchived: "已归档", decisionNoPreference: "暂无判断偏好。", decisionVersionUnavailable: "摘要中没有版本信息", decisionPrincipleDetailsOnOpen: "打开助手以查看原则版本。", decisionPendingReview: "有待审变化", decisionEditAgent: "编辑助手", decisionAgentName: "名称", decisionAgentPreference: "判断偏好（可选）", decisionAgentPreferenceHint: "用普通语言描述此助手的判断偏好。", decisionAdvancedSettings: "高级设置", decisionAdvancedSettingsHint: "专长提示与模型路由沿用既有权威档案格式；助手没有工作区归属设置。", decisionAgentScopeJson: "完整适用范围（JSON）", decisionAgentModelRouteJson: "模型路由（JSON）", decisionModelInheritanceHint: "新助手未提供路由时继承会话模型。", decisionDisableAgent: "停用助手", decisionEnableAgent: "启用助手", decisionArchiveAgent: "归档助手", decisionProfileHistory: "判断偏好版本历史", decisionDiscardTitle: "放弃未保存的修改？", decisionDiscardConfirmation: "未保存的助手修改将丢失。", decisionDiscard: "放弃修改", decisionArchiveTitle: "归档此助手？", decisionArchiveConfirmation: "助手将不再接收新判断，既有记录和历史会保留。", decisionDisableTitle: "停用此助手？", decisionDisableConfirmation: "重新启用前，新判断不会路由到此助手。", decisionEnableTitle: "启用此助手？", decisionEnableConfirmation: "此助手可再次接收新判断。",
         decisionMetricActivity: "活动", decisionMetricReturns: "按原因返回", decisionMetricEvidenceFailures: "依据问题", decisionMetricFeedback: "反馈", decisionMetricCasesOpened: "已开启判断", decisionMetricAttemptsTotal: "处理次数", decisionMetricAutoAnswered: "自动回答", decisionMetricAutoAnswerRate: "自动回答率", decisionMetricEscalated: "由你决定", decisionMetricExhausted: "需要处理", decisionMetricCancelled: "已取消", decisionMetricInterrupted: "中断的处理", decisionMetricCorrections: "纠正", decisionMetricReassignments: "改派", decisionMetricFeedbackParticipation: "有反馈的记录", decisionMetricSelectorOffBypasses: "关闭旁路（不采样）", decisionMetricMeanLatency: "平均处理耗时", decisionMetricEvidenceStale: "依据过期", decisionMetricEvidenceConflicting: "依据冲突", decisionMetricEvidenceDeleted: "依据已删除", decisionMetricRatingsUp: "认可", decisionMetricRatingsDown: "不认可", decisionMetricRatingsUndone: "撤销评分", decisionMetricWindow: "时间范围", decisionMetricWindowAll: "全部时间", decisionMetricWindow24h: "最近 24 小时", decisionMetricWindow7d: "最近 7 天", decisionMetricWindow30d: "最近 30 天", decisionRawMetrics: "原始指标值",
         decisionSelector: "决策助手", decisionOff: "不启用助手", decisionAgents: "助手管理", decisionRecords: "判断记录",
         decisionInbox: "待你决定", decisionMetrics: "指标", decisionLoading: "正在加载判断记录…", decisionLoadingShort: "读取中…", decisionSaving: "保存中…", decisionFailed: "暂时无法读取决策信息或完成请求的操作。已有页面内容不会被清除。请核对当前状态并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。",
@@ -530,7 +685,7 @@ window.__ModuleLoader__.load({
         decisionNoPermission: "你没有读取这些判断记录的权限。", decisionRecordsCleaned: "判断记录已清理。", decisionNoFilteredRecords: "没有符合筛选条件的判断记录。", decisionNoAgents: "暂无助手，请先新建助手。",
         decisionUp: "认可", decisionDown: "不认可", decisionUndo: "撤销评分", decisionUndoUp: "撤销认可", decisionUndoDown: "撤销不认可", decisionComment: "备注", decisionCorrect: "纠正", decisionConfirmConsequence: "认可仅在原适用范围内支持此回答作为依据。", decisionDisputeConsequence: "不认可会立即停止此回答单独用于自动回答，但不会反推相反答案。",
         decisionDecide: "提交决定", decisionReassign: "改派", decisionCancel: "取消", decisionRetry: "重试", decisionSave: "保存", decisionUseSuggestions: "使用建议", decisionAnswersIncomplete: "请回答全部问题后再提交。",
-        decisionSelectTitle: "选择决策助手", decisionSelectorSafety: "仅当前会话；审批和高风险操作仍会询问你。", decisionManageAgents: "管理助手", decisionCreateAgent: "新建助手",
+        decisionSelectTitle: "选择决策助手", decisionSelectorSafety: "助手在本 profile 的各工作区之间共享；审批和高风险操作仍会询问你。", decisionManageAgents: "管理助手", decisionCreateAgent: "新建助手",
         decisionAuto: "自动选择助手", decisionAutoWhitelist: "当前允许自动回答 {count} 类判断。", decisionAutoEmptyWhitelist: "尚未允许自动回答；新判断仍会询问你。", decisionAutoReadinessUnknown: "自动回答状态未知；不会假定可以自动回答。", decisionAutoShadowOn: "选择对比已开启；不会影响实际结果。", decisionAutoShadowOff: "选择对比未开启。",
         decisionAutoShadowUnknown: "选择对比状态未知。",
         decisionRoutingReview: "路由复盘", decisionRoutingDiagnostic: "路由比较与计数仅用于诊断，不是质量评分或自动晋升依据。", decisionRoutingAgreement: "Shadow 与钉选选择一致", decisionRoutingDisagreement: "Shadow 与钉选选择不同", decisionRoutingShadowNone: "Shadow 未选择助手", decisionRoutingShadowAmbiguous: "Shadow 路由存在歧义", decisionRoutingShadowFailure: "Shadow 路由失败", decisionRoutingAutoNone: "Auto 未选择助手", decisionRoutingAutoAmbiguous: "Auto 路由存在歧义", decisionRoutingAutoFailure: "Auto 路由失败", decisionRoutingManualReassign: "已手动改派", decisionRoutingUncomparable: "不可比较；没有可用的钉选基线记录", decisionRoutingBaseline: "Shadow 比较的钉选基线", decisionRoutingAutoSelected: "Auto 已选择助手", decisionRoutingNoData: "此时间范围内没有路由决定。", decisionRoutingOpenRecord: "打开以下内容的已授权判断记录", decisionRoutingShown: "已显示的路由记录数",
@@ -567,6 +722,21 @@ window.__ModuleLoader__.load({
         decisionLearningOutcome_running: "运行中", decisionLearningOutcome_candidate: "待审候选", decisionLearningOutcome_published: "已发布",
         decisionLearningOutcome_rejected: "已拒绝", decisionLearningOutcome_rolled_back: "已回滚", decisionLearningOutcome_failed: "失败",
         decisionSnapshotState_draft: "草稿", decisionSnapshotState_published: "已发布", decisionSnapshotState_rolled_back: "已回滚",
+        decisionScopeCurrentWorkspace: "当前工作区", decisionAgentsShared: "这些助手在本 profile 的所有工作区之间共享。",
+        decisionPublicMemory: "公共记忆", decisionWorkspaceExperience: "当前工作区经验",
+        decisionPublicGuidanceOnly: "公共记忆只是经审阅的指导，不是判断依据：自动回答仍需要当前工作区的依据。", decisionPrivateIsolation: "私有经验只在记录它的当前工作区可读。",
+        decisionPublicCurrentVersion: "当前已发布的公共版本", decisionPublicNoCurrent: "还没有已发布的公共原则。",
+        decisionPublicRefresh: "刷新公共记忆", decisionPublicRefreshing: "正在刷新公共记忆…", decisionPublicReadFailed: "公共记忆读取失败，请重试。",
+        decisionPublicDisclosureTitle: "首次整理公共记忆前", decisionPublicDisclosureBody: "打开或刷新公共记忆会把本 profile 各工作区合格经验的有界、脱敏摘要发送给当前模型，用于生成候选；不会自动发布。", decisionPublicDisclosureAcknowledge: "我已了解，开始整理",
+        decisionPublicCandidate: "待你审阅的候选", decisionPublicChanges: "原则变化", decisionPublicSources: "脱敏来源", decisionPublicWorkspaces: "涉及的工作区数", decisionPublicFromThisWorkspace: "来自当前工作区", decisionPublicFromOtherWorkspace: "来自其他工作区（只读概览）", decisionPublicNoChanges: "这次候选没有可见的原则变化。", decisionPublicSourceCount: "来源条数",
+        decisionPublicNeedReview: "正在加载完整候选，加载完成前不会改动任何内容…", decisionPublicReviewMismatch: "候选已变化，请重新读取后再采用或放弃。",
+        decisionPublicPublish: "采用公共原则", decisionPublicApplyTitle: "采用这些公共原则？", decisionPublicApplyConfirmation: "该候选将成为当前公共版本。之后各工作区的判断只能把它当作经审阅的指导。", decisionPublicDiscardConfirmation: "该候选不会影响之后的判断，其审阅和来源历史仍会保留。", decisionPublicRollback: "恢复前序公共版本", decisionPublicRollbackConfirmation: "当前公共版本会保留在只读历史中。之后的判断使用最近的前序公共版本；若没有，则不使用公共原则。",
+        decisionPublicRetry: "重试整理",
+        decisionPublicStatusIdle: "尚未整理公共记忆", decisionPublicStatusLoading: "正在读取公共记忆…", decisionPublicStatusRunning: "正在生成公共候选…", decisionPublicStatusCandidate: "有待审候选", decisionPublicStatusPublished: "公共原则已发布", decisionPublicStatusRejected: "上次候选已放弃", decisionPublicStatusRolledBack: "公共版本已回滚", decisionPublicStatusUpToDate: "已是最新；没有新的合格经验", decisionPublicStatusEmptySources: "还没有合格经验", decisionPublicStatusDisclosureRequired: "首次整理前需要你的确认", decisionPublicStatusFailed: "上次公共整理失败", decisionPublicStatusError: "公共记忆当前不可用",
+        decisionPublicReplay: "结构校验", decisionPublicParents: "将替代", decisionPublicNoCurrentParent: "当前没有公共版本",
+        decisionPublicRollbackTitle: "恢复前序公共版本？",
+        decisionPublicGuidanceUsed: "本次处理包含经审阅的公共指导", decisionPublicPinnedEmpty: "本次处理固定了公共版本，但没有装入公共原则", decisionNoPublicGuidance: "本次处理未使用公共指导", decisionPublicLegacy: "该记录早于共享公共记忆，未使用公共记忆",
+        decisionPartitionState: "状态", decisionPartitionUsed: "已装入", decisionPartitionPinnedNotUsed: "已固定版本，未装入内容", decisionPartitionEmpty: "未固定版本", decisionPartitionLegacy: "该记录早于这一记忆层", decisionPartitionNoPrinciples: "没有装入原则", decisionPartitionSources: "来源映射", decisionLayerSize: "层大小",
       },
     };
 
@@ -590,6 +760,10 @@ window.__ModuleLoader__.load({
     exports.draftsReducer = draftsReducer;
     exports.readDraft = readDraft;
     exports.candidateReadiness = candidateReadiness;
+    exports.memoryLayerView = memoryLayerView;
+    exports.scopeSummary = scopeSummary;
+    exports.publicCandidateReadiness = publicCandidateReadiness;
+    exports.publicMemoryView = publicMemoryView;
     exports.pageView = pageView;
     exports.decisionRpc = decisionRpc;
     return module.exports;

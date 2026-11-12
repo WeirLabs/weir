@@ -49,9 +49,13 @@ window.__ModuleLoader__.load({
     function MemorySummary(props) {
       const memory = props.model.memoryView(props.attempt);
       const rows = [];
-      if (memory.l2 === "used") rows.push(`${props.t("decisionReviewedPrinciplesUsed")} (${memory.l2Count})`);
-      else if (memory.l2 === "pinned-empty") rows.push(props.t("decisionPinnedEmpty"));
-      else if (memory.l2 === "empty") rows.push(props.t("decisionNoReviewedPrinciples"));
+      if (memory.l2 === "used") rows.push(`${props.t("decisionWorkspaceExperience")}: ${props.t("decisionReviewedPrinciplesUsed")} (${memory.l2Count})`);
+      else if (memory.l2 === "pinned-empty") rows.push(`${props.t("decisionWorkspaceExperience")}: ${props.t("decisionPinnedEmpty")}`);
+      else if (memory.l2 === "empty") rows.push(`${props.t("decisionWorkspaceExperience")}: ${props.t("decisionNoReviewedPrinciples")}`);
+      if (memory.public === "used") rows.push(`${props.t("decisionPublicMemory")}: ${props.t("decisionPublicGuidanceUsed")} (${memory.publicCount})`);
+      else if (memory.public === "pinned-empty") rows.push(`${props.t("decisionPublicMemory")}: ${props.t("decisionPublicPinnedEmpty")}`);
+      else if (memory.public === "empty") rows.push(`${props.t("decisionPublicMemory")}: ${props.t("decisionNoPublicGuidance")}`);
+      else rows.push(`${props.t("decisionPublicMemory")}: ${props.t("decisionPublicLegacy")}`);
       if (memory.l3 === "used") rows.push(`${props.t("decisionHistoricalContextUsed")} (${memory.l3Count}). ${props.t("decisionHistoricalNotEvidence")}`);
       else if (memory.l3 === "empty") rows.push(props.t("decisionNoHistoricalContext"));
       if (!rows.length) rows.push(props.t("decisionLegacyMemory"));
@@ -72,7 +76,9 @@ window.__ModuleLoader__.load({
 
     function readableScope(scope, t) {
       if (!scope || typeof scope !== "object") return t("decisionCurrentScope");
-      const parts = [...(Array.isArray(scope.workspaces) ? scope.workspaces : []), ...(Array.isArray(scope.paths) ? scope.paths : []), ...(Array.isArray(scope.tags) ? scope.tags : [])];
+      const parts = [];
+      if (Array.isArray(scope.workspaces) && scope.workspaces.length) parts.push(t("decisionScopeCurrentWorkspace"));
+      for (const key of ["paths", "tags"]) for (const value of Array.isArray(scope[key]) ? scope[key] : []) if (typeof value === "string") parts.push(value);
       if (Array.isArray(scope.authorizationClasses)) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
@@ -305,8 +311,80 @@ window.__ModuleLoader__.load({
       ] });
     }
 
+    function PublicMemory(props) {
+      const { view, ui, t, pending } = props;
+      const busy = typeof pending === "string";
+      const header = jsx.jsxs("header", { className: "weir-da-section-header", children: [
+        jsx.jsx("h4", { children: t("decisionPublicCandidate") }, "label"),
+        jsx.jsx(ui.Badge, { variant: view.statusVariant, "data-public-status": view.status, role: "status", "aria-live": "polite", children: t(view.statusKey) }, "status"),
+      ] }, "header");
+      if (view.phase === "idle" || (view.phase === "loading" && !view.hasValue)) {
+        return jsx.jsxs("div", { className: "weir-da-public-memory", "data-public-memory": true, children: [header, jsx.jsx(ui.LoadingState, { children: t("decisionPublicStatusLoading") }, "loading")] });
+      }
+      if (view.phase === "error") {
+        return jsx.jsxs("div", { className: "weir-da-public-memory", "data-public-memory": true, children: [header, jsx.jsx(ui.ErrorState, { children: jsx.jsxs("div", { className: "weir-da-actions", children: [
+          jsx.jsx("span", { children: view.errorKey ? t(view.errorKey) : t("decisionPublicReadFailed") }, "message"),
+          jsx.jsx(ui.Button, { "data-action": "public-retry", disabled: busy, onClick: () => { if (!busy) return props.onRetry(); }, children: t("decisionRetry") }, "retry"),
+        ] }) }, "error")] });
+      }
+      const current = view.current
+        ? jsx.jsx("p", { "data-public-current": String(view.current.version ?? ""), children: `${t("decisionPublicCurrentVersion")}: ${view.current.version ?? "—"} · ${view.current.principleCount ?? 0}` }, "current")
+        : jsx.jsx("p", { children: t("decisionPublicNoCurrent") }, "no-current");
+      const disclosure = view.disclosureRequired ? jsx.jsxs("section", { className: "weir-da-public-disclosure", "data-public-disclosure": true, role: "note", children: [
+        jsx.jsx("strong", { children: t("decisionPublicDisclosureTitle") }, "title"),
+        jsx.jsx("p", { children: t("decisionPublicDisclosureBody") }, "body"),
+        jsx.jsx(ui.Button, { variant: "primary", "data-action": "public-acknowledge", disabled: busy, onClick: () => { if (!busy) return props.onAcknowledge(); }, children: t("decisionPublicDisclosureAcknowledge") }, "acknowledge"),
+      ] }, "disclosure") : null;
+      const candidate = view.candidate ? jsx.jsxs("section", { className: "weir-da-public-candidate", "data-public-candidate": String(view.candidate.snapshotId ?? ""), children: [
+        jsx.jsxs("p", { children: `${t("decisionPublicCandidate")} · ${t("decisionApplyChangeCount")}: ${view.readiness.changeCount ?? view.changes.length}` }, "summary"),
+        jsx.jsx("p", { className: "weir-da-caption", children: `${t("decisionPublicWorkspaces")}: ${view.candidate.workspaceCount} · ${t("decisionPublicSourceCount")}: ${view.candidate.sourceCount}` }, "counts"),
+        view.changes.length
+          ? jsx.jsx("ul", { "data-public-changes": true, children: view.changes.map((change, index) => jsx.jsx("li", { children: `${change.op} · ${change.principleId ?? "—"}` }, `${change.principleId ?? change.op}:${index}`)) }, "changes")
+          : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionPublicNoChanges") }, "no-changes"),
+        view.sources.length ? jsx.jsxs("section", { "data-public-sources": true, children: [
+          jsx.jsx("strong", { children: t("decisionPublicSources") }, "title"),
+          jsx.jsx("ul", { children: view.sources.map((source, index) => jsx.jsxs("li", { "data-public-source": source.alias, children: [
+            jsx.jsx("code", { children: source.alias }, "alias"),
+            jsx.jsx("span", { children: ` · ${source.count} · ${source.current ? t("decisionPublicFromThisWorkspace") : t("decisionPublicFromOtherWorkspace")}` }, "origin"),
+            source.preview ? jsx.jsx("p", { className: "weir-da-source-excerpt", children: source.preview }, "preview") : null,
+          ] }, `${source.alias}:${index}`)) }, "list"),
+        ] }, "sources") : null,
+        jsx.jsx("p", { className: "weir-da-caption", "data-public-replay": view.replay?.passed === true ? "passed" : view.replay?.passed === false ? "failed" : "pending", children: view.replay?.passed === true ? t("decisionReplayPassed") : view.replay?.passed === false ? t("decisionReplayFailed") : t("decisionReplayPending") }, "replay"),
+        !view.canReview ? jsx.jsx("p", { role: "status", className: "weir-da-caption", children: t(view.candidateError || view.readiness.reason === "replay" || view.readiness.reason === "mismatch" ? "decisionPublicReviewMismatch" : "decisionPublicNeedReview") }, "not-ready") : null,
+        jsx.jsxs("div", { className: "weir-da-actions", children: [
+          jsx.jsx(ui.Button, { variant: "primary", "data-action": "public-publish", disabled: !view.canReview, onClick: () => {
+            if (!view.canReview) return;
+            return props.onPublish({ snapshotId: view.readiness.snapshotId, expectedRevision: view.readiness.expectedRevision, changeCount: view.readiness.changeCount ?? 0, currentVersion: view.current?.version ?? null });
+          }, children: t("decisionPublicPublish") }, "publish"),
+          jsx.jsx(ui.Button, { "data-action": "public-reject", disabled: !view.canReview, onClick: () => {
+            if (!view.canReview) return;
+            return props.onReject({ snapshotId: view.readiness.snapshotId, expectedRevision: view.readiness.expectedRevision });
+          }, children: t("decisionReject") }, "reject"),
+        ] }, "actions"),
+      ] }, "candidate") : null;
+      const rollback = view.current ? jsx.jsx(ui.Button, { variant: "danger", "data-action": "public-rollback", disabled: !view.canRollback, onClick: () => {
+        if (!view.canRollback) return;
+        return props.onRollback({ snapshotId: view.current.snapshotId, expectedRevision: view.current.revision, currentVersion: view.current.version });
+      }, children: t("decisionPublicRollback") }, "rollback") : null;
+      const failed = view.retryable ? jsx.jsx(ui.ErrorState, { children: jsx.jsxs("div", { className: "weir-da-actions", children: [
+        jsx.jsx("span", { children: t("decisionPublicStatusFailed") }, "message"),
+        jsx.jsx(ui.Button, { "data-action": "public-retry", disabled: busy, onClick: () => { if (!busy) return props.onRetry(); }, children: t("decisionPublicRetry") }, "retry"),
+      ] }) }, "failed") : null;
+      return jsx.jsxs("div", { className: "weir-da-public-memory", "data-public-memory": true, children: [
+        header,
+        view.phase === "loading" ? jsx.jsx("p", { role: "status", className: "weir-da-caption", children: t("decisionPublicRefreshing") }, "refreshing") : null,
+        current,
+        disclosure,
+        jsx.jsx("div", { className: "weir-da-actions", children: jsx.jsx(ui.Button, { "data-action": "public-refresh", disabled: !view.canRefresh || busy, "aria-busy": view.phase === "loading", onClick: () => { if (view.canRefresh && !busy) return props.onRefresh(); }, children: t(view.phase === "loading" ? "decisionPublicRefreshing" : "decisionPublicRefresh") }, "refresh") }, "refresh-actions"),
+        failed,
+        candidate,
+        rollback,
+      ] });
+    }
+
     function AgentDetail(props) {
       const { agent, ui, t } = props;
+      const pending = typeof props.pending === "string";
       return jsx.jsxs("article", { ref: props.detailRef, tabIndex: -1, className: "weir-da-card weir-da-agent-detail", "data-agent-detail": agent.agentId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [jsx.jsx("h2", { children: agent.name }, "name"), jsx.jsx("p", { children: agent.userDescription?.text || t("decisionNoPreference") }, "preference")] }, "copy"),
@@ -317,7 +395,22 @@ window.__ModuleLoader__.load({
           jsx.jsx(ui.Button, { "data-agent-state": agent.state === "enabled" ? "disabled" : "enabled", disabled: agent.state === "archived", onClick: () => props.requestState(agent.state === "enabled" ? "disabled" : "enabled"), children: t(agent.state === "enabled" ? "decisionDisableAgent" : "decisionEnableAgent") }, "toggle"),
           jsx.jsx(ui.Button, { variant: "danger", "data-agent-state": "archived", disabled: agent.state === "archived", onClick: () => props.requestState("archived"), children: t("decisionArchiveAgent") }, "archive"),
         ] }, "actions"),
-        jsx.jsx(props.learningProps.learning.AgentLearning, { ...props.learningProps, agent, ui }, "learning"),
+        jsx.jsxs("section", { className: "weir-da-memory-zone weir-da-public-zone", "data-memory-zone": "public", "aria-labelledby": `weir-da-public-zone-${agent.agentId}`, children: [
+          jsx.jsx("h3", { id: `weir-da-public-zone-${agent.agentId}`, ref: props.publicZoneRef, tabIndex: -1, children: t("decisionPublicMemory") }, "title"),
+          jsx.jsx("p", { className: "weir-da-caption", role: "note", "data-public-guidance-only": true, children: t("decisionPublicGuidanceOnly") }, "guidance"),
+          PublicMemory({
+            view: props.publicMemory, ui, t, pending,
+            onRefresh: props.onPublicRefresh, onAcknowledge: props.onPublicAcknowledge, onRetry: props.onPublicRetry,
+            onPublish: action => props.requestPublicAction({ kind: "snapshotPublish", ...action }),
+            onReject: action => props.requestPublicAction({ kind: "snapshotReject", ...action }),
+            onRollback: action => props.requestPublicAction({ kind: "snapshotRollback", ...action }),
+          }),
+        ] }, "public-zone"),
+        jsx.jsxs("section", { className: "weir-da-memory-zone weir-da-private-zone", "data-memory-zone": "workspace", "aria-labelledby": `weir-da-private-zone-${agent.agentId}`, children: [
+          jsx.jsx("h3", { id: `weir-da-private-zone-${agent.agentId}`, children: t("decisionWorkspaceExperience") }, "title"),
+          jsx.jsx("p", { className: "weir-da-caption", role: "note", "data-private-isolation": true, children: t("decisionPrivateIsolation") }, "isolation"),
+          jsx.jsx(props.learningProps.learning.AgentLearning, { ...props.learningProps, agent, ui }, "learning"),
+        ] }, "private-zone"),
         jsx.jsx(ui.Disclosure, { id: `weir-da-agent-advanced-${agent.agentId}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-agent-diagnostics", children: [
           jsx.jsx("h3", { children: t("decisionProfileHistory") }, "history-title"),
           jsx.jsx("ul", { children: (agent.descriptionHistory ?? []).map(item => jsx.jsx("li", { children: `v${item.revision}: ${item.text}` }, item.revision)) }, "history"),
@@ -325,6 +418,7 @@ window.__ModuleLoader__.load({
         ] }) }, "advanced"),
       ] });
     }
+
     function MetricRows(props) {
       return jsx.jsx("dl", { className: "weir-da-metrics-grid", children: props.rows.map(row => jsx.jsxs("div", { className: "weir-da-metric", "data-metric-key": row.key, children: [
         jsx.jsx("dt", { children: row.labelKey ? props.t(row.labelKey) : row.label }, "label"),
@@ -392,6 +486,7 @@ window.__ModuleLoader__.load({
       routingReview: { ...emptyResource(), value: [], summary: {}, window: "all", nextCursor: null, loadingMore: false, loadMoreError: null },
       details: {}, agent: emptyResource(), metrics: emptyResource(),
     });
+    const emptyPublicMemory = () => ({ phase: "idle", value: null, error: null, agentId: null, candidate: null, candidatePhase: "idle", candidateError: null });
     const asError = (reason, code = "DECISION_READ_FAILED") => reason instanceof Error ? reason : Object.assign(new Error(String(reason ?? code)), { code });
 
     function AttemptContextPack(props) {
@@ -399,25 +494,50 @@ window.__ModuleLoader__.load({
       const attempt = props.attempt && typeof props.attempt === "object" ? props.attempt : {};
       const manifest = attempt.packManifest;
       const memory = manifest?.memory;
-      const l2 = memory?.L2;
       const pins = attempt.pins && typeof attempt.pins === "object" ? attempt.pins : {};
       const attemptId = typeof attempt.attemptId === "string" ? attempt.attemptId : "—";
-      const sourceCaseIds = Array.isArray(memory?.L3?.sourceCaseIds) ? memory.L3.sourceCaseIds.filter(caseId => typeof caseId === "string") : [];
       const omissions = Array.isArray(manifest?.omissions) ? manifest.omissions.filter(code => typeof code === "string") : [];
       const layerSizes = manifest?.layerSizes && typeof manifest.layerSizes === "object" && !Array.isArray(manifest.layerSizes) ? Object.entries(manifest.layerSizes) : [];
-      const l2Status = l2 === undefined
-        ? t("decisionMemoryEmpty")
-        : l2?.status === "empty" ? t("decisionMemoryEmpty") : typeof l2?.status === "string" ? l2.status : "—";
-      const snapshotPin = {
-        snapshotId: l2?.snapshotId ?? pins.memorySnapshotId ?? null,
-        snapshotRevision: l2?.snapshotRevision ?? pins.memorySnapshotRevision ?? null,
-        snapshotHash: l2?.snapshotHash ?? pins.memorySnapshotHash ?? null,
+      const sourceCaseIds = Array.isArray(memory?.L3?.sourceCaseIds) ? memory.L3.sourceCaseIds.filter(caseId => typeof caseId === "string") : [];
+      // Each L2 partition is projected from its own manifest record. An Attempt
+      // written before a partition existed renders that partition honestly as
+      // legacy, and an old Attempt keeps its single legacy private pin.
+      const partition = (layer, legacyPin) => {
+        const value = layer && typeof layer === "object" ? layer : null;
+        const ids = Array.isArray(value?.principleIds) ? value.principleIds.filter(id => typeof id === "string") : [];
+        const items = Array.isArray(value?.items) ? value.items.filter(item => item && typeof item === "object" && typeof item.principleId === "string") : [];
+        const principleIds = ids.length ? ids : items.map(item => item.principleId);
+        const snapshotId = value?.snapshotId ?? legacyPin?.snapshotId ?? null;
+        const snapshotRevision = value?.snapshotRevision ?? legacyPin?.snapshotRevision ?? null;
+        const snapshotHash = value?.snapshotHash ?? legacyPin?.snapshotHash ?? null;
+        const pinned = snapshotId !== null || snapshotRevision !== null || snapshotHash !== null;
+        return {
+          legacy: !value, pinned,
+          pin: { snapshotId, snapshotRevision, snapshotHash },
+          statusKey: principleIds.length ? "decisionPartitionUsed" : pinned ? "decisionPartitionPinnedNotUsed" : "decisionPartitionEmpty",
+          principleIds, items,
+          exclusions: Array.isArray(value?.exclusions) ? value.exclusions.filter(item => item && typeof item === "object" && typeof item.principleId === "string") : [],
+          layerSize: Number.isFinite(value?.layerSize) ? value.layerSize : null,
+        };
       };
-      const hasSnapshotPin = snapshotPin.snapshotId !== null || snapshotPin.snapshotRevision !== null || snapshotPin.snapshotHash !== null;
-      const items = Array.isArray(l2?.items) ? l2.items.filter(item => item && typeof item === "object" && typeof item.principleId === "string") : [];
-      const manifestPrincipleIds = Array.isArray(l2?.principleIds) ? l2.principleIds.filter(principleId => typeof principleId === "string") : [];
-      const principleIds = manifestPrincipleIds.length ? manifestPrincipleIds : items.map(item => item.principleId);
-      const exclusions = Array.isArray(l2?.exclusions) ? l2.exclusions.filter(item => item && typeof item === "object" && typeof item.principleId === "string") : [];
+      const privatePartition = partition(memory?.L2, { snapshotId: pins.memorySnapshotId ?? null, snapshotRevision: pins.memorySnapshotRevision ?? null, snapshotHash: pins.memorySnapshotHash ?? null });
+      const publicPartition = partition(memory?.publicL2, { snapshotId: pins.publicMemorySnapshotId ?? null, snapshotRevision: pins.publicMemorySnapshotRevision ?? null, snapshotHash: pins.publicMemorySnapshotHash ?? null });
+      const partitionBody = (value, zone) => jsx.jsxs("div", { "data-partition": zone, children: [
+        jsx.jsx("div", { children: `${t("decisionPartitionState")}: ${value.legacy ? t("decisionPartitionLegacy") : t(value.statusKey)}` }, "status"),
+        value.pinned ? jsx.jsx("pre", { children: JSON.stringify(value.pin, null, 2) }, "pin") : jsx.jsx("div", { children: t("decisionNoSnapshotPin") }, "empty-pin"),
+        value.principleIds.length ? jsx.jsx("ul", { style: contextPackListStyle, children: value.principleIds.map((principleId, index) => {
+          const item = value.items.find(candidate => candidate.principleId === principleId);
+          return jsx.jsxs("li", { children: [
+            jsx.jsx("code", { children: principleId }, "principle"),
+            item ? jsx.jsxs("div", { children: [
+              jsx.jsx("div", { children: t("decisionPartitionSources") }, "mapping-label"),
+              jsx.jsx("pre", { children: JSON.stringify({ sources: Array.isArray(item.sources) ? item.sources : [], evidenceIds: Array.isArray(item.evidenceIds) ? item.evidenceIds : [] }, null, 2) }, "mapping"),
+            ] }, "mapping") : null,
+          ] }, `${principleId}:${index}`);
+        }) }, "principles") : jsx.jsx("div", { children: t("decisionPartitionNoPrinciples") }, "no-principles"),
+        value.exclusions.length ? jsx.jsx("ul", { style: contextPackListStyle, children: value.exclusions.map((item, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: `${item.principleId} · ${item.reason ?? "—"}` }) }, `${item.principleId}:${index}`)) }, "exclusions") : jsx.jsx("div", { children: t("decisionNoExclusions") }, "no-exclusions"),
+        jsx.jsx("div", { children: `${t("decisionLayerSize")}: ${value.layerSize ?? "—"}` }, "layer-size"),
+      ] });
       return jsx.jsxs("details", {
         "data-attempt-context-pack": attemptId,
         "aria-label": `${t("decisionContextPack")}: ${attemptId}`,
@@ -425,54 +545,34 @@ window.__ModuleLoader__.load({
         children: [
           jsx.jsx("summary", { style: { cursor: "pointer" }, children: `${t("decisionContextPack")} · ${attemptId}` }, "summary"),
           jsx.jsxs("div", { style: contextPackBodyStyle, children: [
-            jsx.jsx("div", { children: `${t("decisionL2Memory")}: ${l2Status}` }, "l2"),
-            jsx.jsxs("div", { children: [
-              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionSnapshotPin") }, "label"),
-              hasSnapshotPin
-                ? jsx.jsx("pre", { children: JSON.stringify(snapshotPin, null, 2) }, "pin")
-                : jsx.jsx("div", { children: t("decisionNoSnapshotPin") }, "empty"),
-            ] }, "pin"),
-            jsx.jsxs("div", { children: [
-              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionReviewedPrinciples") }, "label"),
-              principleIds.length
-                ? jsx.jsx("ul", { style: contextPackListStyle, children: principleIds.map((principleId, index) => {
-                  const item = items.find(candidate => candidate.principleId === principleId);
-                  return jsx.jsxs("li", { children: [
-                    jsx.jsx("code", { children: principleId }, "principle"),
-                    item ? jsx.jsxs("div", { children: [
-                      jsx.jsx("div", { children: t("decisionL5Mappings") }, "mapping-label"),
-                      jsx.jsx("pre", { children: JSON.stringify({ sources: Array.isArray(item.sources) ? item.sources : [], evidenceIds: Array.isArray(item.evidenceIds) ? item.evidenceIds : [] }, null, 2) }, "mapping"),
-                    ] }, "mapping") : null,
-                  ] }, `${principleId}:${index}`);
-                }) }, "principles")
-                : jsx.jsx("div", { children: t("decisionMemoryEmpty") }, "empty"),
-            ] }, "l2-principles"),
-            jsx.jsxs("div", { children: [
-              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionExclusions") }, "label"),
-              exclusions.length
-                ? jsx.jsx("ul", { style: contextPackListStyle, children: exclusions.map((item, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: `${item.principleId} · ${item.reason ?? "—"}` }) }, `${item.principleId}:${index}`)) }, "exclusions")
-                : jsx.jsx("div", { children: t("decisionNoExclusions") }, "empty"),
-            ] }, "l2-exclusions"),
-            jsx.jsxs("div", { children: [
+            jsx.jsxs("section", { "data-partition-section": "workspace", children: [
+              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionWorkspaceExperience") }, "title"),
+              partitionBody(privatePartition, "workspace"),
+            ] }, "private"),
+            jsx.jsxs("section", { "data-partition-section": "public", children: [
+              jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionPublicMemory") }, "title"),
+              partitionBody(publicPartition, "public"),
+            ] }, "public"),
+            jsx.jsxs("section", { children: [
               jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionNeutralEpisodes") }, "label"),
               sourceCaseIds.length
                 ? jsx.jsx("ol", { style: contextPackListStyle, children: sourceCaseIds.map((caseId, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: caseId }) }, `${caseId}:${index}`)) }, "sources")
-                : jsx.jsx("div", { children: principleIds.length ? t("decisionMemoryEmpty") : t("decisionNoMemory") }, "empty")
+                : jsx.jsx("div", { children: t("decisionNoHistoricalContext") }, "empty"),
             ] }, "l3"),
-            jsx.jsxs("div", { children: [
+            jsx.jsxs("section", { children: [
               jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionLayerSizes") }, "label"),
               layerSizes.length
                 ? jsx.jsx("dl", { style: contextPackListStyle, children: layerSizes.map(([layer, size]) => jsx.jsxs("div", { children: [jsx.jsx("dt", { children: layer }, "layer"), jsx.jsx("dd", { style: { margin: 0 }, children: String(size) }, "size")] }, layer)) }, "sizes")
-                : jsx.jsx("div", { children: "—" }, "empty")
+                : jsx.jsx("div", { children: "—" }, "empty"),
             ] }, "sizes"),
-            jsx.jsxs("div", { children: [
+            jsx.jsxs("section", { children: [
               jsx.jsx("strong", { style: contextPackLabelStyle, children: t("decisionOmissions") }, "label"),
               omissions.length
                 ? jsx.jsx("ul", { style: contextPackListStyle, children: omissions.map((code, index) => jsx.jsx("li", { children: jsx.jsx("code", { children: code }) }, `${code}:${index}`)) }, "codes")
-                : jsx.jsx("div", { children: Array.isArray(manifest?.omissions) ? "[]" : "—" }, "empty")
-            ] }, "omissions")
-          ] }, "body")
-        ]
+                : jsx.jsx("div", { children: Array.isArray(manifest?.omissions) ? "[]" : "—" }, "empty"),
+            ] }, "omissions"),
+          ] }, "body"),
+        ],
       });
     }
 
@@ -504,11 +604,12 @@ window.__ModuleLoader__.load({
       const [selectedAgentId, setSelectedAgentId] = react.useState(null);
       const [agentFocusRequest, setAgentFocusRequest] = react.useState(null);
       const pendingRef = react.useRef(false);
+      const publicActionRef = react.useRef(false);
       const learningIntentRef = react.useRef(null);
       const epochRef = react.useRef(0);
       const routingAppendRef = react.useRef(false);
       const routingWindowRef = react.useRef("all");
-      const requestsRef = react.useRef({ agents: 0, inbox: 0, records: 0, metrics: 0, routingReview: 0, agent: 0, learning: 0, details: {} });
+      const requestsRef = react.useRef({ agents: 0, inbox: 0, records: 0, metrics: 0, routingReview: 0, agent: 0, learning: 0, publicMemory: 0, details: {} });
       const tabRef = react.useRef(tab);
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
@@ -521,6 +622,10 @@ window.__ModuleLoader__.load({
       const agentHeaderRef = react.useRef(null);
       const agentListRef = react.useRef(null);
       const agentDetailPaneRef = react.useRef(null);
+      const publicZoneRef = react.useRef(null);
+      const publicLoadRef = react.useRef(null);
+      const publicCandidateRef = react.useRef(0);
+      const [publicMemory, setPublicMemory] = react.useState(emptyPublicMemory);
       const requestAgentFocus = target => setAgentFocusRequest({ target });
       react.useEffect(() => {
         if (!agentFocusRequest || tab !== "agents") return;
@@ -529,7 +634,9 @@ window.__ModuleLoader__.load({
         const backControl = agentDetailPaneRef.current?.querySelector?.('.weir-da-agent-back');
         const targets = agentFocusRequest.target === "editor" ? [agentNameRef.current]
           : agentFocusRequest.target === "detail" ? [backControl, agentBackRef.current, agentDetailRef.current]
-          : agentFocusRequest.target === "create-list" ? [createControl, agentCreateRef.current] : [summaryControl, agentSummaryRef.current];
+          : agentFocusRequest.target === "create-list" ? [createControl, agentCreateRef.current]
+          : agentFocusRequest.target === "public" ? [publicZoneRef.current, agentDetailRef.current]
+          : [summaryControl, agentSummaryRef.current];
         for (const element of targets) {
           const style = element?.ownerDocument?.defaultView?.getComputedStyle?.(element);
           if (!element?.isConnected || element.disabled || typeof element.focus !== "function" || !(element.getClientRects?.().length > 0) || style?.display === "none" || style?.visibility === "hidden") continue;
@@ -656,6 +763,47 @@ window.__ModuleLoader__.load({
           }
         }
       };
+      // ---- public memory zone -------------------------------------------------
+      // One automatic read per assistant per open. A re-render never triggers
+      // another model-carrying refresh; only an explicit user action does.
+      const readPublicCandidate = async (agentId, requestSession, epoch) => {
+        const token = ++publicCandidateRef.current;
+        setPublicMemory(current => ({ ...current, candidatePhase: "loading", candidateError: null }));
+        try {
+          const detail = await actions.publicCandidate(agentId);
+          if (publicCandidateRef.current !== token || epochRef.current !== epoch || sessionId !== requestSession) return null;
+          setPublicMemory(current => ({ ...current, candidate: detail ?? null, candidatePhase: detail ? "ready" : "idle" }));
+          return detail;
+        } catch (reason) {
+          if (publicCandidateRef.current === token && epochRef.current === epoch && sessionId === requestSession) {
+            setPublicMemory(current => ({ ...current, candidate: null, candidatePhase: "error", candidateError: asError(reason) }));
+          }
+          return null;
+        }
+      };
+      const loadPublicMemory = async (agentId, options = {}) => {
+        const requestSession = options.sessionId ?? sessionId;
+        const epoch = options.epoch ?? epochRef.current;
+        if (!requestSession || typeof agentId !== "string" || !agentId) return null;
+        const loadKey = `${epoch}:${agentId}`;
+        if (!options.force && publicLoadRef.current === loadKey) return null;
+        publicLoadRef.current = loadKey;
+        const token = ++requestsRef.current.publicMemory;
+        setPublicMemory(current => ({ ...current, phase: "loading", error: null, agentId }));
+        try {
+          const value = await actions.publicMemoryRefresh(agentId, {
+            ...(options.acknowledgedDisclosure === true ? { acknowledgedDisclosure: true } : {}),
+            ...(options.retryFailedExtraction === true ? { retryFailedExtraction: true } : {}),
+          });
+          if (!valid("publicMemory", token, epoch, requestSession)) return null;
+          setPublicMemory(current => ({ ...current, phase: "ready", value: value ?? null, error: null }));
+          if (value?.candidate?.snapshotId) await readPublicCandidate(agentId, requestSession, epoch);
+          return value;
+        } catch (reason) {
+          if (valid("publicMemory", token, epoch, requestSession)) setPublicMemory(current => ({ ...current, phase: "error", value: null, error: asError(reason), candidate: null, candidatePhase: "idle" }));
+          return null;
+        }
+      };
       const readRecord = async (caseId, options = {}) => {
         const requestSession = options.sessionId ?? sessionId;
         const epoch = options.epoch ?? epochRef.current;
@@ -747,11 +895,18 @@ window.__ModuleLoader__.load({
         const token = ++requestsRef.current.agent;
         requestsRef.current.learning += 1;
         setSelectedAgentId(agentId); patchResource("agent", { status: "loading", value: null, error: null }); setLearningDetail(null); setLearningError(null); setLearningLoading(false);
+        publicLoadRef.current = null;
+        publicCandidateRef.current += 1;
+        setPublicMemory(emptyPublicMemory());
         try {
           const value = await actions.agent(agentId);
           if (!valid("agent", token, epoch, requestSession)) return;
           patchResource("agent", { status: "ready", value, error: null });
+          if (value?.publicMemory) {
+            setPublicMemory(current => ({ ...current, phase: "ready", value: { ...value.publicMemory, agentId: value.agentId }, error: null }));
+          }
           await readLearning(value);
+          await loadPublicMemory(agentId, { sessionId: requestSession, epoch });
         } catch (reason) { if (valid("agent", token, epoch, requestSession)) patchResource("agent", { status: "error", error: asError(reason) }); }
       };
       const run = async (method, ...args) => {
@@ -788,6 +943,10 @@ window.__ModuleLoader__.load({
           } else if (method.startsWith("learning") || method.startsWith("snapshot")) {
             const selected = resources.agent.value;
             if (selected) await selectAgent(selected.agentId);
+          }
+          if (publicActionRef.current) {
+            publicActionRef.current = false;
+            requestAgentFocus("public");
           }
           setActionError(null);
           return result;
@@ -862,13 +1021,14 @@ window.__ModuleLoader__.load({
         const openCaseId = props.consumeOpenCase?.();
         const agentDestination = props.consumeAgentDestination?.();
         const epoch = ++epochRef.current;
-        requestsRef.current = { agents: 0, inbox: 0, records: 0, metrics: 0, routingReview: 0, agent: 0, learning: 0, details: {} };
+        requestsRef.current = { agents: 0, inbox: 0, records: 0, metrics: 0, routingReview: 0, agent: 0, learning: 0, publicMemory: 0, details: {} };
         pendingRef.current = false;
         routingAppendRef.current = false;
         routingWindowRef.current = "all";
         learningIntentRef.current = null;
         setPending(null); setActionError(null); setResources(emptyResources());
         setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
+        setPublicMemory(emptyPublicMemory()); publicLoadRef.current = null; publicCandidateRef.current += 1; publicActionRef.current = false;
         setAgentDrillIn(agentDestination === "create" && !openCaseId);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setAgentFocusRequest(agentDestination === "create" && !openCaseId ? { target: "editor" } : null);
@@ -947,10 +1107,21 @@ window.__ModuleLoader__.load({
       }) : resources.agent.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.agent.status === "error" ? retryState(resources.agent, () => selectAgent(selectedAgentId))
         : selectedAgent ? AgentDetail({
-          agent: selectedAgent, ui, t, detailRef: agentDetailRef, onEdit: () => { setEditor(newAgentEditor(selectedAgent)); requestAgentFocus("editor"); },
+          agent: selectedAgent, ui, t, detailRef: agentDetailRef, pending, publicZoneRef,
+          publicMemory: model.publicMemoryView({
+            phase: publicMemory.phase, value: publicMemory.value, error: publicMemory.error,
+            candidate: publicMemory.candidate, candidatePhase: publicMemory.candidatePhase, candidateError: publicMemory.candidateError,
+            pending,
+          }, t),
+          onPublicRefresh: () => loadPublicMemory(selectedAgent.agentId, { force: true, retryFailedExtraction: model.publicMemoryView({ phase: publicMemory.phase, value: publicMemory.value, error: publicMemory.error, candidate: publicMemory.candidate, candidatePhase: publicMemory.candidatePhase, candidateError: publicMemory.candidateError, pending }, t).failed }),
+          onPublicAcknowledge: () => loadPublicMemory(selectedAgent.agentId, { force: true, acknowledgedDisclosure: true }),
+          onPublicRetry: () => loadPublicMemory(selectedAgent.agentId, { force: true, retryFailedExtraction: true }),
+          requestPublicAction: action => { publicActionRef.current = true; setConfirm({ ...action, public: true }); },
+          onEdit: () => { setEditor(newAgentEditor(selectedAgent)); requestAgentFocus("editor"); },
           requestState: state => setConfirm({ kind: "agent-state", agentId: selectedAgent.agentId, state }),
           learningProps: {
             detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
+            scopeSummary: model.scopeSummary,
             loading: learningLoading,
             onStart: () => startLearning(selectedAgent.agentId),
             confirmAction: action => setConfirm(action), error: learningError, onRetry: () => readLearning(selectedAgent),
@@ -967,6 +1138,7 @@ window.__ModuleLoader__.load({
           jsx.jsx("h2", { children: t("decisionAgents") }, "title"),
           jsx.jsx(ui.Button, { ref: agentCreateRef, variant: "primary", "data-action": "create-agent", onClick: openCreate, disabled: pending !== null, children: t("decisionCreateAgent") }, "create"),
         ] }, "header"),
+        jsx.jsx("p", { className: "weir-da-caption", "data-agents-shared": true, children: t("decisionAgentsShared") }, "shared"),
         jsx.jsxs("div", { className: "weir-da-agents-layout", "data-agent-drill-in": agentDrillIn, children: [
           jsx.jsx("div", { ref: agentListRef, className: "weir-da-agent-list", "aria-label": t("decisionAgents"), children: agentList }, "list"),
           jsx.jsxs("div", { ref: agentDetailPaneRef, className: "weir-da-agent-detail-pane", children: [
@@ -991,15 +1163,21 @@ window.__ModuleLoader__.load({
         cancelLabel: t("decisionCancel"), danger: confirm.state === "archived", pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const { agentId, state } = confirm; setConfirm(null); return run("profileSetState", agentId, state); },
       }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
-        id: `weir-da-learning-${confirm.kind === "snapshotPublish" ? "publish" : confirm.kind === "snapshotReject" ? "reject" : "rollback"}`,
-        title: t(confirm.kind === "snapshotPublish" ? "decisionApplyTitle" : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateTitle" : "decisionRollbackTitle"),
+        id: `weir-da-learning-${confirm.public ? "public-" : ""}${confirm.kind === "snapshotPublish" ? "publish" : confirm.kind === "snapshotReject" ? "reject" : "rollback"}`,
+        title: t(confirm.kind === "snapshotPublish"
+          ? confirm.public ? "decisionPublicApplyTitle" : "decisionApplyTitle"
+          : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateTitle"
+            : confirm.public ? "decisionPublicRollbackTitle" : "decisionRollbackTitle"),
         body: jsx.jsxs("div", { children: [
-          jsx.jsx("p", { children: t(confirm.kind === "snapshotPublish" ? "decisionApplyConfirmation" : confirm.kind === "snapshotReject" ? "decisionDiscardCandidateConfirmation" : "decisionRollbackConfirmation") }, "consequence"),
+          jsx.jsx("p", { children: t(confirm.kind === "snapshotPublish"
+            ? confirm.public ? "decisionPublicApplyConfirmation" : "decisionApplyConfirmation"
+            : confirm.kind === "snapshotReject" ? confirm.public ? "decisionPublicDiscardConfirmation" : "decisionDiscardCandidateConfirmation"
+              : confirm.public ? "decisionPublicRollbackConfirmation" : "decisionRollbackConfirmation") }, "consequence"),
           confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t("decisionApplyChangeCount")}: ${confirm.changeCount}` }, "count") : null,
-          confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t("decisionApplyReplaceCurrent")}: ${confirm.currentVersion === null ? t("decisionNoCurrentSnapshot") : `${t("decisionPrincipleVersion")} ${confirm.currentVersion}`}` }, "current") : null,
+          confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t(confirm.public ? "decisionPublicParents" : "decisionApplyReplaceCurrent")}: ${confirm.currentVersion === null ? t(confirm.public ? "decisionPublicNoCurrentParent" : "decisionNoCurrentSnapshot") : `${t("decisionPrincipleVersion")} ${confirm.currentVersion}`}` }, "current") : null,
           confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: t("decisionApplyFutureOnly") }, "future") : null,
         ] }),
-        confirmLabel: t(confirm.kind === "snapshotPublish" ? "decisionPublish" : confirm.kind === "snapshotReject" ? "decisionReject" : "decisionRollback"),
+        confirmLabel: t(confirm.kind === "snapshotPublish" ? confirm.public ? "decisionPublicPublish" : "decisionPublish" : confirm.kind === "snapshotReject" ? "decisionReject" : confirm.public ? "decisionPublicRollback" : "decisionRollback"),
         cancelLabel: t("decisionCancel"), danger: confirm.kind !== "snapshotPublish", pending: pending !== null,
         onCancel: () => setConfirm(null),
         onConfirm: () => { const { kind, snapshotId, expectedRevision } = confirm; setConfirm(null); return run(kind, snapshotId, expectedRevision); },

@@ -63,10 +63,13 @@ window.__ModuleLoader__.load({
       return result;
     }
 
+    // Scope is shown in ordinary language: workspace membership is the current
+    // workspace by contract, so its real path never appears.
     function formatScope(scope, t) {
       if (!scope || typeof scope !== "object") return t("decisionCurrentScope");
-      const values = [...(Array.isArray(scope.workspaces) ? scope.workspaces : []), ...(Array.isArray(scope.paths) ? scope.paths : []), ...(Array.isArray(scope.tags) ? scope.tags : [])];
-      const parts = values.filter(value => typeof value === "string");
+      const parts = [];
+      if (Array.isArray(scope.workspaces) && scope.workspaces.length) parts.push(t("decisionScopeCurrentWorkspace"));
+      for (const key of ["paths", "tags"]) for (const value of Array.isArray(scope[key]) ? scope[key] : []) if (typeof value === "string") parts.push(value);
       if (Array.isArray(scope.authorizationClasses)) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }

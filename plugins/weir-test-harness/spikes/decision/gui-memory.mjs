@@ -271,7 +271,7 @@ async function auditManagementViews(value, caseId, agentName) {
   writeJson(join(out, 'management-views.json'), views)
   const forbidden = views.flatMap(view => view.controls.filter(control => /consolidat|memory snapshot|snapshot|publish|rollback|profile learning|auto(?:matic)?[ -]?route|export|memory edit|cross[ -]workspace/i.test(`${control.text} ${control.aria}`)).map(control => ({ view: view.name, ...control })))
   writeJson(join(out, 'future-capability-controls.json'), forbidden)
-  requireEvidence(views.length === 4 && views.every(view => view.nav.length === 4), 'exactly four management views')
+  requireEvidence(views.length === 3 && views.every(view => view.nav.length === 3), 'exactly three primary management destinations')
   requireEvidence(forbidden.length === 0, 'no future-capability controls')
   requireEvidence(views[0].text.includes(agentName) && views[3].text.includes('Auto answer rate is diagnostic, not a quality metric.'), 'existing Agent and Metrics views remain usable')
   return true
@@ -361,7 +361,7 @@ try {
   await waitFor(async () => !(await nativeState(instance)).pending, 30_000)
   await cdpScreenshot(instance, join(out, '06-native-resolved.png'))
 
-  check('fourManagementViewsAndNoFutureControls', await auditManagementViews(instance, reuse.caseId, agent.name))
+  check('threePrimaryDestinationsAndNoFutureControls', await auditManagementViews(instance, reuse.caseId, agent.name))
   const beforeRestart = await exportRecord(instance, sessionId, reuse.caseId, join(out, 'record-reuse-before-restart.json'))
   await openRecordDetail(instance, reuse.caseId)
   const beforeRestartPacks = await contextPackState(instance, reuse.caseId)

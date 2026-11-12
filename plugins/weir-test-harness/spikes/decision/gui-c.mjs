@@ -198,7 +198,7 @@ async function runC() {
     await cdpScreenshot(instance, `${out}/page-metrics.png`)
     const forbiddenButtons = await instance.cdp.evaluate(`[...document.querySelectorAll('main button')].map(el=>el.textContent.trim()).filter(text=>/consolidat|memory snapshot|auto route|整合|记忆快照|自动路由/i.test(text))`)
     check(checks, 'noP2P5ClickableFeatures', forbiddenButtons.length === 0)
-    check(checks, 'exactlyFourManagementViews', await instance.cdp.evaluate('document.querySelectorAll("main nav button").length === 4'))
+    check(checks, 'exactlyThreePrimaryDestinations', await instance.cdp.evaluate('document.querySelectorAll("main nav button").length === 3'))
 
     await openSettings(instance)
     const settingsText = await instance.cdp.evaluate('document.body.innerText')

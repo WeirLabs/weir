@@ -416,7 +416,7 @@ async function consolidateCandidate(agent, sessionId, label, expectedText) {
     /Structural replay passed|结构重放通过/,
     /Structural checks only; reviewing and publishing remain manual|仅表示结构校验；审阅与发布仍由用户手动完成/,
   ]) requireEvidence(pattern.test(dom.detailText), `${label} rendered review matches ${pattern}`)
-  requireEvidence(dom.detailReadOnly && dom.nav.length === 4 && dom.runIds.includes(run.learningRunId) && dom.snapshotIds.includes(snapshot.snapshotId), `${label} read-only detail in four-view governance`)
+  requireEvidence(dom.detailReadOnly && dom.nav.length === 3 && dom.runIds.includes(run.learningRunId) && dom.snapshotIds.includes(snapshot.snapshotId), `${label} read-only detail in three-destination governance`)
   const forbidden = dom.controls.filter(control => /auto(?:matic)?[ -]?(?:consolidat|publish|route)|schedule|profile learning|generatedDescription.*(?:learn|edit)|cross[ -]workspace|export|import/i.test(`${control.text} ${control.aria}`))
   requireEvidence(forbidden.length === 0, `${label} no automatic/future-capability controls`)
   await instance.cdp.evaluate(`document.querySelector('[data-learning-run-detail=${JSON.stringify(run.learningRunId)}]')?.scrollIntoView({block:'start'})`)
@@ -637,7 +637,7 @@ try {
   await openAgent(instance, agent)
   const initialDom = await governanceState(instance)
   writeJson(join(out, 'dom-01-source-no-auto.json'), initialDom)
-  requireEvidence(initialDom.nav.length === 4 && /No Learning Runs|暂无 Learning Run/.test(initialDom.text) && initialDom.articleText.includes('generatedDescription: {"revision":0,"text":""}'), 'four views, no auto run, empty generatedDescription')
+  requireEvidence(initialDom.nav.length === 3 && /No Learning Runs|暂无 Learning Run/.test(initialDom.text) && initialDom.articleText.includes('generatedDescription: {"revision":0,"text":""}'), 'three destinations, no auto run, empty generatedDescription')
   await screenshot(instance, '01-source-no-auto')
 
   const candidateV1 = await consolidateCandidate(agent, sessionId, '02-candidate-v1', 'Reviewed GUI principle: prefer the source-backed answer.')
@@ -733,7 +733,7 @@ try {
     return value?.detailRunId === rejected.run.learningRunId ? value : null
   }, 30_000)
   writeJson(join(out, 'dom-15-restart-rejected.json'), restartedDom)
-  requireEvidence(restartedDom.nav.length === 4 && /Rejected|已拒绝/.test(restartedDom.text) && /Rolled back|已回滚/.test(restartedDom.text), 'restart renders rejected and rolled-back history in four views')
+  requireEvidence(restartedDom.nav.length === 3 && /Rejected|已拒绝/.test(restartedDom.text) && /Rolled back|已回滚/.test(restartedDom.text), 'restart renders rejected and rolled-back history in three destinations')
   await screenshot(instance, '16-restart-rejected')
   const scanAfter = await instance.cdp.evaluate(`window.__decisionQA.fixture('scanSession', ${JSON.stringify({ sessionId })})`)
   writeJson(join(out, 'session-scan-after-restart.json'), scanAfter)

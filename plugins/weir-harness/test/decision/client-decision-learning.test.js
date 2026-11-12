@@ -566,7 +566,9 @@ test('Attempt Context Pack shows actual L2 pins, principles, L5 sources, and exc
   for (const value of ['ms_two', 'pr_actual', 'dc_source', 'ev_source', 'pr_excluded', 'SOURCE_UNAVAILABLE', 'L2_PRINCIPLE_OMITTED']) {
     assert.equal(text.includes(value), true, value)
   }
-  assert.equal(text.includes('decisionReviewedPrinciples'), true)
+  for (const value of ['decisionWorkspaceExperience', 'decisionPublicMemory', 'decisionPartitionUsed', 'decisionPartitionSources', 'decisionPartitionLegacy']) {
+    assert.equal(text.includes(value), true, value)
+  }
   assert.equal(text.includes('decisionNoMemory'), false, 'actual L2 use must not claim no L2/L3 memory')
   assert.deepEqual(findAll(populated, node => ['button', 'input', 'select', 'textarea'].includes(node.type)), [])
 
@@ -582,7 +584,7 @@ test('Attempt Context Pack shows actual L2 pins, principles, L5 sources, and exc
     t: key => key,
   }))
   assert.equal(pinnedEmpty.includes('ms_empty'), true)
-  assert.equal(pinnedEmpty.includes('decisionMemoryEmpty'), true)
+  assert.equal(pinnedEmpty.includes('decisionPartitionPinnedNotUsed'), true)
   assert.equal(pinnedEmpty.includes('pr_actual'), false)
 })
 
@@ -707,7 +709,8 @@ test('learning review renders bounded Case and correction excerpts without expos
   const disclosures = findAll(rendered, node => typeof node['data-learning-source-record'] === 'string')
   assert.deepEqual(disclosures.map(node => node['data-learning-source-record']), ['dc_cross_root', 'fb_correction'])
   const text = textOf(disclosures)
-  for (const value of ['Answer q: Cross-root A', 'CROSS ROOT SOURCE QUESTION', 'Use the corrected direction', '/repo']) assert.ok(text.includes(value), value)
+  for (const value of ['Answer q: Cross-root A', 'CROSS ROOT SOURCE QUESTION', 'Use the corrected direction', 'decisionScopeCurrentWorkspace']) assert.ok(text.includes(value), value)
+  assert.equal(text.includes('/repo'), false, 'a workspace realpath never renders')
   assert.equal(text.includes('DO_NOT_EXPOSE_TASK_SUMMARY'), false)
   for (const disclosure of disclosures) assert.deepEqual(findAll(disclosure, node => ['button', 'input', 'textarea', 'select'].includes(node.type) || node.type === host.ui.Button), [])
   host.unmount()

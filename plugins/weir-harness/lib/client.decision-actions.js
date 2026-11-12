@@ -23,6 +23,14 @@ window.__ModuleLoader__.load({
         snapshotReject: (snapshotId, expectedRevision) => call("snapshotReject", { snapshotId, expectedRevision }),
         snapshotRollback: (snapshotId, expectedRevision) => call("snapshotRollback", { snapshotId, expectedRevision }),
         memorySnapshot: snapshotId => call("memorySnapshot", { snapshotId }),
+        // Public memory crosses workspaces, so the caller names no workspace:
+        // only the assistant, and the user's explicit disclosure/retry gesture.
+        publicMemoryRefresh: (agentId, options = {}) => call("publicMemoryRefresh", {
+          agentId,
+          ...(options.acknowledgedDisclosure === true ? { acknowledgedDisclosure: true } : {}),
+          ...(options.retryFailedExtraction === true ? { retryFailedExtraction: true } : {}),
+        }),
+        publicCandidate: agentId => call("publicCandidate", { agentId }),
       };
     }
     function errorBanner(reason, fallback = "Decision action failed; retry is available.") {
