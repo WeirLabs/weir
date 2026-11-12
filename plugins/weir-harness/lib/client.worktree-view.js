@@ -15,8 +15,8 @@ window.__ModuleLoader__.load({
 		// inside the surfaces, never thrown: a broken lane view must not take
 		// down the composer or the session list.
 		const NS_LABEL = "worktree";
-		const MONO = "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)";
-		const SUCCESS = "var(--dsw-alias-state-success-primary, #2f855a)";
+		const MONO = "var(--dsw-font-markdown-code-block-font-family)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary)";
 		const ERROR = "var(--dsw-alias-state-error-primary)";
 		const WARN = "var(--dsw-alias-state-warn-primary)";
 		const BUSINESS = "var(--dsw-alias-state-business-primary)";
@@ -30,8 +30,8 @@ window.__ModuleLoader__.load({
 			foot: { fontSize: "11px", lineHeight: "15px", color: "var(--dsw-alias-label-tertiary)" },
 		};
 		const cardStyle = {
-			background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-md, 8px)", padding: "10px 12px",
+			background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l2)",
+			borderRadius: "var(--dsw-radius-md)", padding: "10px 12px",
 			minWidth: 0, maxWidth: "100%", overflow: "hidden",
 		};
 		const buttonBase = {
@@ -52,12 +52,12 @@ window.__ModuleLoader__.load({
 		const calloutStyle = (color) => ({
 			padding: "5px 8px", fontSize: "12px", lineHeight: "16px",
 			color: "var(--dsw-alias-label-secondary)", background: tint(color, 8),
-			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs, 4px)",
+			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs)",
 			overflowWrap: "anywhere",
 		});
 		const inputStyle = {
 			width: "100%", boxSizing: "border-box", background: "var(--dsw-alias-bg-base)",
-			border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)",
+			border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)",
 			padding: "6px 8px", fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-primary)",
 		};
 		// ---- 16x16 stroke icons (stroke: currentColor) ----
@@ -144,7 +144,7 @@ window.__ModuleLoader__.load({
 			const base = { padding: "0 8px", whiteSpace: "pre" };
 			if (kind === "add") return { ...base, color: SUCCESS, background: tint(SUCCESS, 10) };
 			if (kind === "remove") return { ...base, color: ERROR, background: tint(ERROR, 10) };
-			if (kind === "hunk" || kind === "meta") return { ...base, color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-interactive-bg-solid)" };
+			if (kind === "hunk" || kind === "meta") return { ...base, color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-3)" };
 			return { ...base, color: "var(--dsw-alias-label-primary)" };
 		};
 		/** Unified diff with full-bleed line stripes inside a radius-md frame. @param {{ lines: Array<{ text: string, kind: string }>, tool?: boolean }} props */
@@ -153,8 +153,8 @@ window.__ModuleLoader__.load({
 				...(props.tool ? { "data-weir-worktree-tool-diff": "" } : { "data-weir-worktree-diff": "" }),
 				style: {
 					margin: "8px 0 0", padding: "6px 0", maxHeight: "280px", overflow: "auto",
-					background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l2)",
-					borderRadius: "var(--dsw-radius-md, 8px)", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
+					background: "var(--dsw-alias-bg-base)", border: "0.5px solid var(--dsw-alias-border-l2)",
+					borderRadius: "var(--dsw-radius-md)", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
 				},
 				children: jsx("div", {
 					style: { display: "inline-block", minWidth: "100%" },
@@ -267,7 +267,7 @@ window.__ModuleLoader__.load({
 			display: "inline-flex", alignItems: "center", gap: "5px",
 			padding: "1px 7px", fontSize: "11px", lineHeight: "16px", fontWeight: 600,
 			color: "var(--dsw-alias-label-secondary)", cursor: "pointer", background: "none",
-			border: "1px solid var(--dsw-alias-border-l3, rgba(127,127,127,.35))",
+			border: "0.5px solid var(--dsw-alias-border-l3)",
 			borderRadius: "var(--dsw-radius-sm)"
 		};
 		function WorktreeStatusPill(props) {
@@ -290,7 +290,7 @@ window.__ModuleLoader__.load({
 			// Hover paints the neutral base only: an attention pill keeps its tint
 			// instead of losing it on mouse-leave.
 			const hover = attention ? {} : {
-				onMouseEnter: (event) => { event.currentTarget.style.background = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))"; },
+				onMouseEnter: (event) => { event.currentTarget.style.background = "var(--dsw-alias-interactive-bg-hover)"; },
 				onMouseLeave: (event) => { event.currentTarget.style.background = "none"; },
 			};
 			return jsxs("button", {
@@ -351,7 +351,7 @@ window.__ModuleLoader__.load({
 					jsx(Icon, { name: "branch", size: 12 }, "icon"),
 					jsx("span", { style: { ...mono, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `${lane.branch} → ${lane.base ?? "?"}` }, "branches"),
 					lane.ahead !== null && (ahead > 0 || behind > 0) ? jsx("span", {
-						style: { ...text.foot, flex: "none", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "0 5px", color: "var(--dsw-alias-label-secondary)" },
+						style: { ...text.foot, flex: "none", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "0 5px", color: "var(--dsw-alias-label-secondary)" },
 						children: `↑${ahead} ↓${behind}`,
 					}, "counts") : null,
 					lane.stat ? jsxs("span", { style: { ...mono, fontSize: "11px", lineHeight: "15px", flex: "none", display: "inline-flex", gap: "4px", alignItems: "baseline" }, children: [
@@ -438,7 +438,7 @@ window.__ModuleLoader__.load({
 			return jsx("div", {
 				role: "group", "aria-label": props.t("approveLabel"), title: props.title,
 				"data-weir-worktree-approve": current,
-				style: { display: "flex", alignItems: "center", gap: "1px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", overflow: "hidden", flex: "none", opacity: disabled ? 0.5 : 1 },
+				style: { display: "flex", alignItems: "center", gap: "1px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", overflow: "hidden", flex: "none", opacity: disabled ? 0.5 : 1 },
 				children: options.map((value) => {
 					const active = value === current;
 					return jsx("button", {
@@ -586,7 +586,7 @@ window.__ModuleLoader__.load({
 					jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }, children: [
 						jsx("span", { style: { color: "var(--dsw-alias-label-tertiary)", display: "inline-flex" }, children: jsx(Icon, { name: "branch", size: 12 }) }, "icon"),
 						jsx("span", {
-							style: { ...mono, fontSize: "12px", fontWeight: 600, color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-interactive-bg-solid)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+							style: { ...mono, fontSize: "12px", fontWeight: 600, color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-3)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 							title: view.repo?.branch ?? undefined,
 							children: view.repo?.branch ?? "?",
 						}, "branch"),
@@ -638,7 +638,7 @@ window.__ModuleLoader__.load({
 				}
 				if (groups.history.length > 0) {
 					children.push(jsxs("div", { style: { marginTop: "10px" }, children: [
-						jsx("div", { style: { borderTop: "1px solid var(--dsw-alias-separator-primary, var(--dsw-alias-border-l2))" } }, "sep"),
+						jsx("div", { style: { borderTop: "1px solid var(--dsw-alias-separator-primary)" } }, "sep"),
 						jsxs("button", {
 							type: "button", onClick: () => setHistory(!history), "aria-expanded": history,
 							style: { ...ghostStyle, marginTop: "6px", color: "var(--dsw-alias-label-tertiary)" },
@@ -710,7 +710,7 @@ window.__ModuleLoader__.load({
 			if (meta.merge?.commit) {
 				bodyRows.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
 					jsx("span", { style: text.foot, children: t("mergeCommit") }, "label"),
-					jsx("span", { style: { ...mono, fontSize: "11px", background: "var(--dsw-alias-interactive-bg-solid)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", color: "var(--dsw-alias-label-primary)" }, children: String(meta.merge.commit).slice(0, 10) }, "sha"),
+					jsx("span", { style: { ...mono, fontSize: "11px", background: "var(--dsw-alias-bg-layer-3)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", color: "var(--dsw-alias-label-primary)" }, children: String(meta.merge.commit).slice(0, 10) }, "sha"),
 					meta.merge.stat ? jsxs("span", { style: { ...mono, fontSize: "11px", display: "inline-flex", gap: "4px" }, children: [
 						jsx("span", { style: { color: SUCCESS }, children: `+${meta.merge.stat.added}` }, "add"),
 						jsx("span", { style: { color: ERROR }, children: `−${meta.merge.stat.removed}` }, "remove"),
@@ -772,7 +772,7 @@ window.__ModuleLoader__.load({
 			const preStyle = {
 				margin: 0, padding: "6px 8px", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
 				whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto",
-				border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md, 8px)",
+				border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)",
 				background: "var(--dsw-alias-bg-base)", color: "var(--dsw-alias-label-secondary)",
 			};
 			return jsxs("div", {

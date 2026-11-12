@@ -18,11 +18,11 @@ window.__ModuleLoader__.load({
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
-		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)", marginTop: "8px" };
+		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-bg-layer-3)", marginTop: "8px" };
 		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
 		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
-		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
-		const robashEntryInputStyle = { flex: 1, minWidth: 0, background: "var(--dsw-alias-interactive-bg-solid)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 8px", fontSize: "13px" };
+		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "var(--dsw-alias-label-on-color)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
+		const robashEntryInputStyle = { flex: 1, minWidth: 0, background: "var(--dsw-alias-bg-layer-3)", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 8px", fontSize: "13px" };
 		/** Visual editor for one robash whitelist: rows of command names, JSON synthesized on save. */
 		function RobashListEditorField(props) {
 			const model = props.model;

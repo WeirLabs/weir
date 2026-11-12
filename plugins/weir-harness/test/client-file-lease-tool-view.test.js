@@ -165,7 +165,7 @@ describe('client.file-lease-tool-view chunk', () => {
     const { collapsed, expanded } = render(view, reactStub, { phase: 'result', block, t: dictT(view.dictionaries.zh), model })
     const path = [...walk(collapsed)].find((node) => node['data-weir-lease-path'] !== undefined)
     expect(path.children).toBe('src/a.js')
-    expect(path.style.fontFamily).toContain('monospace')
+    expect(path.style.fontFamily).toContain("var(--dsw-font-markdown-code-block-font-family)")
     expect([...walk(collapsed)].find((node) => node['data-weir-lease-more'] !== undefined).children).toBe('+2')
     for (const p of ['src/a.js', 'src/b.js', 'src/c.js']) expect(textOf(expanded)).toContain(p)
     expect(textOf(expanded)).toContain('本轮已申请')

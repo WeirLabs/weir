@@ -20,9 +20,9 @@ window.__ModuleLoader__.load({
 		// snapshot of its call — it never polls and never claims current
 		// ownership. The model helpers arrive through props.model (the entry
 		// composes lib/client.file-lease-tool-model.js); errors never throw out.
-		const MONO = "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)";
+		const MONO = "var(--dsw-font-markdown-code-block-font-family)";
 		const TONES = {
-			success: "var(--dsw-alias-state-success-primary, #2f855a)",
+			success: "var(--dsw-alias-state-success-primary)",
 			wait: "var(--dsw-alias-state-business-primary)",
 			danger: "var(--dsw-alias-state-error-primary)",
 			warn: "var(--dsw-alias-state-warn-primary)",
@@ -37,8 +37,8 @@ window.__ModuleLoader__.load({
 			foot: { fontSize: "11px", lineHeight: "15px", color: "var(--dsw-alias-label-tertiary)", overflowWrap: "anywhere" }
 		};
 		const cardStyle = {
-			background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-md, 8px)", padding: "8px 10px",
+			background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l2)",
+			borderRadius: "var(--dsw-radius-md)", padding: "8px 10px",
 			minWidth: 0, maxWidth: "100%", overflow: "hidden"
 		};
 		const rowButtonStyle = {
@@ -49,14 +49,14 @@ window.__ModuleLoader__.load({
 		const calloutStyle = (color) => ({
 			padding: "5px 8px", fontSize: "12px", lineHeight: "16px",
 			color: "var(--dsw-alias-label-secondary)", background: tint(color, 8),
-			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs, 4px)",
+			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs)",
 			overflowWrap: "anywhere"
 		});
 		const preStyle = {
 			margin: 0, padding: "6px 8px", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
 			whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", maxHeight: "240px", overflow: "auto",
 			boxSizing: "border-box", maxWidth: "100%", minWidth: 0,
-			border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md, 8px)",
+			border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)",
 			background: "var(--dsw-alias-bg-base)", color: "var(--dsw-alias-label-secondary)"
 		};
 		/** `{name}` placeholders, substituted literally (no host interpolation assumed). */

@@ -616,7 +616,7 @@ window.__ModuleLoader__.load({
 		// Card-based group sections (design D7): layered background, l1 border,
 		// radius, the group title inside the card top, hairline l2 separators
 		// between rows. Colors only from theme tokens; geometry hardcoded.
-		const cardStyle = { background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", padding: "6px 16px 12px" };
+		const cardStyle = { background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l1)", borderRadius: "var(--dsw-radius-xl)", padding: "6px 16px 12px" };
 		const cardTitleStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px", padding: "8px 0 2px", color: "var(--dsw-alias-label-primary)" };
 		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "12px" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
@@ -625,15 +625,15 @@ window.__ModuleLoader__.load({
 		// (today only worktreeAutoApprove — its three long option labels squeeze
 		// the row label in a segmented control). Geometry matches the small
 		// inputs of the worktree-view config editor; colors from theme tokens.
-		const selectStyle = { fontSize: "12px", lineHeight: "16px", padding: "3px 6px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", maxWidth: "220px", flex: "none" };
+		const selectStyle = { fontSize: "12px", lineHeight: "16px", padding: "3px 6px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", maxWidth: "220px", flex: "none" };
 		const reminderTagsStyle = { display: "flex", flexWrap: "wrap", gap: "6px" };
 		// Row chrome inside a card: hairline separator (skipped on the first
 		// row), and for child rows a left guide line plus padding scaled by
 		// depth — both in the l2 border token.
 		function rowWrapStyle(depth, first) {
 			return {
-				borderTop: first ? "none" : "1px solid var(--dsw-alias-border-l2)",
-				...(depth > 0 ? { borderLeft: "1px solid var(--dsw-alias-border-l2)", marginLeft: "2px", paddingLeft: `${depth * 16}px` } : {})
+				borderTop: first ? "none" : "0.5px solid var(--dsw-alias-border-l2)",
+				...(depth > 0 ? { borderLeft: "0.5px solid var(--dsw-alias-border-l2)", marginLeft: "2px", paddingLeft: `${depth * 16}px` } : {})
 			};
 		}
 		// The always-on restart-required tag for rows in RESTART_FIELDS — the
@@ -790,14 +790,14 @@ window.__ModuleLoader__.load({
 		// host's Toast surface (dark in BOTH themes) instead of the group cards:
 		// a floating action bar must read as a surface ABOVE the rows, not as
 		// one more row. Colors only from theme tokens, geometry hardcoded.
-		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "10px 14px", background: "var(--dsw-alias-toast-bg)", border: "none", borderRadius: "var(--dsw-radius-lg, 12px)", boxShadow: "var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,.18))" };
+		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "10px 14px", background: "var(--dsw-alias-toast-bg)", border: "none", borderRadius: "var(--dsw-radius-lg)", boxShadow: "var(--dsw-shadow-lv3)" };
 		const saveBarTextStyle = { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-toast-label)" };
 		// warn-label (not warn-primary) is the token designed for dark surfaces.
 		const saveBarFailedStyle = { color: "var(--dsw-alias-state-warn-label)" };
 		// Discard as a plain text action (the host toast's action pattern): the
 		// outline Button variant is tuned for regular surfaces and reads poorly
 		// on the always-dark toast surface.
-		const saveBarDiscardStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", lineHeight: "16px", padding: "4px 2px", color: "var(--dsw-static-deepseek-400, var(--dsw-alias-brand-primary))" };
+		const saveBarDiscardStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", lineHeight: "16px", padding: "4px 2px", color: "var(--dsw-alias-link)" };
 		const saveBarActionsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		// The form-shell notice lines (unavailable / readOnly) keep the host
 		// contract's role="status" lines in the page's hint styling.
@@ -1030,7 +1030,7 @@ window.__ModuleLoader__.load({
 		const columnStyle = {
 			display: "flex",
 			flexDirection: "column",
-			gap: "var(--dsw-spacing-3, 12px)"
+			gap: "12px"
 		};
 		const ITEM_SLOT = "settings.weir.item";
 		// The section shell is page-agnostic: the composition root passes the

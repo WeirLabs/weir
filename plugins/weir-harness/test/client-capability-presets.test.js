@@ -522,7 +522,7 @@ describe('client.capability-presets chunk', () => {
 
     // Preset rows are cards (border + radius-md surface) carrying a tonal
     // namespace badge; the inline actions keep their exact labels.
-    const cards = findAll(tree, (node) => node.__type === 'div' && node.style && node.style.borderRadius === 'var(--dsw-radius-md, 8px)' && node.style.padding === '7px 10px')
+    const cards = findAll(tree, (node) => node.__type === 'div' && node.style && node.style.borderRadius === 'var(--dsw-radius-md)' && node.style.padding === '7px 10px')
     expect(cards).toHaveLength(2)
     expect(findAll(tree, (node) => node.__type === 'span' && node.children === 'workspace')).toHaveLength(1)
     expect(findAll(tree, (node) => node.__type === 'span' && node.children === 'global')).toHaveLength(1)
@@ -532,7 +532,7 @@ describe('client.capability-presets chunk', () => {
     expect(deleteButton).toBeTruthy()
     // The badge is a colored tonal tag (border + tinted background tokens).
     const badge = findAll(tree, (node) => node.__type === 'span' && node.children === 'workspace')[0]
-    expect(badge.style.border).toContain('1px solid')
+    expect(badge.style.border).toContain("1px solid")
     expect(badge.style.background).toContain('color-mix')
 
     // The destructive confirm renders as a warning strip (2px left bar on a

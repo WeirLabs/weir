@@ -54,7 +54,7 @@ window.__ModuleLoader__.load({
 			maxHeight: "320px",
 			overflowY: "auto",
 			background: "var(--dsw-specific-selector)",
-			border: "1px solid var(--dsw-alias-border-l2)",
+			border: "0.5px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-md)",
 			boxShadow: "var(--dsw-elevation-soft)",
 			padding: "4px"

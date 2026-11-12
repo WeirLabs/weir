@@ -270,7 +270,7 @@ describe('client.lsp-panel chunk', () => {
       const collapsed = renderWith(malformedProps)
       const hint = controlsOf(collapsed)[1]
       expect(hint.children).toBe('lspManagerInvalidJson')
-      expect(hint.style.color).toContain('--dsw-alias-state-danger-primary')
+      expect(hint.style.color).toContain('--dsw-alias-state-error-primary')
       // …but the panel still opens with an empty custom list (never trapped)
       controlsOf(collapsed)[0].onClick()
       await flush()

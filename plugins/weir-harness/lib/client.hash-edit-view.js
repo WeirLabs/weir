@@ -16,11 +16,11 @@ window.__ModuleLoader__.load({
 		const hashEditPathStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
 		const hashEditMetaStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", flexShrink: 0 };
 		const hashEditHintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", padding: "4px 4px" };
-		const hashEditPreStyle = { margin: 0, padding: "8px 10px", fontSize: "12px", lineHeight: "16px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)" };
+		const hashEditPreStyle = { margin: 0, padding: "8px 10px", fontSize: "12px", lineHeight: "16px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-bg-layer-3)" };
 		/** Status tone: errors and interruptions stay explicit in the header. */
 		function hashEditStateColor(state) {
-			if (state === "error") return "var(--dsw-alias-state-business-danger, #d64545)";
-			if (state === "stopped") return "var(--dsw-alias-state-business-warning, #b07707)";
+			if (state === "error") return "var(--dsw-alias-state-error-primary)";
+			if (state === "stopped") return "var(--dsw-alias-state-warn-primary)";
 			return "var(--dsw-alias-label-secondary)";
 		}
 		/** Keyed conversation view for hash_edit: one row, expandable diff panel. */

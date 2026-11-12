@@ -42,8 +42,8 @@ window.__ModuleLoader__.load({
 		const sectionStyle = { display: "flex", flexDirection: "column", gap: "10px" };
 		const buttonRowStyle = { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" };
 		const stateRowStyle = { display: "flex", alignItems: "center", gap: "8px" };
-		const errorStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-danger-primary, #d33)" };
-		const stateDot = (state) => ({ width: "8px", height: "8px", borderRadius: "50%", display: "inline-block", flexShrink: 0, background: state === "granted" ? "var(--dsw-alias-state-business-primary)" : state === "denied" ? "var(--dsw-alias-state-danger-primary, #d33)" : "var(--dsw-alias-label-disabled, #999)" });
+		const errorStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-error-primary)" };
+		const stateDot = (state) => ({ width: "8px", height: "8px", borderRadius: "50%", display: "inline-block", flexShrink: 0, background: state === "granted" ? "var(--dsw-alias-state-business-primary)" : state === "denied" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-label-tertiary)" });
 		/**
 		 * Which single step the panel highlights. granted → test, then confirm;
 		 * otherwise test → open settings → wait for the user. The user's own

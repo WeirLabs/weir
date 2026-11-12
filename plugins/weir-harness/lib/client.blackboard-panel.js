@@ -18,31 +18,31 @@ window.__ModuleLoader__.load({
 		// page is hidden) and updatedAt drives detail staleness. Every list and
 		// flow decision comes from the pure model chunk; this tree only paints
 		// state. All hooks run before any derived work — no early returns.
-		const ACCENT = "var(--dsw-alias-state-business-primary, #4176e6)";
-		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover, #3563d1)";
-		const SUCCESS = "var(--dsw-alias-state-success-primary, #22c55e)";
-		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
-		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
-		const DANGER = "var(--dsw-alias-state-error-primary, #ef4444)";
-		const LABEL1 = "var(--dsw-alias-label-primary, inherit)";
-		const LABEL2 = "var(--dsw-alias-label-secondary, #61666b)";
-		const MUTED = "var(--dsw-alias-label-tertiary, #81858c)";
-		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
-		const BORDER_STRONG = "var(--dsw-alias-border-l3, rgba(127,127,127,.26))";
-		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
-		const SKELETON = "var(--dsw-alias-bg-skeleton, rgba(127,127,127,.12))";
-		const CARD_BG = "var(--dsw-alias-bg-base, #fff)";
+		const ACCENT = "var(--dsw-alias-state-business-primary)";
+		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary)";
+		const WARN = "var(--dsw-alias-state-warn-primary)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label)";
+		const DANGER = "var(--dsw-alias-state-error-primary)";
+		const LABEL1 = "var(--dsw-alias-label-primary)";
+		const LABEL2 = "var(--dsw-alias-label-secondary)";
+		const MUTED = "var(--dsw-alias-label-tertiary)";
+		const BORDER = "var(--dsw-alias-border-l2)";
+		const BORDER_STRONG = "var(--dsw-alias-border-l3)";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover)";
+		const SKELETON = "var(--dsw-alias-bg-skeleton)";
+		const CARD_BG = "var(--dsw-alias-bg-base)";
 		const TRANSITION = "background-color 120ms ease, color 120ms ease, border-color 120ms ease";
 		/** Soft tinted background (worktree-view recipe). */
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		// entryType → hue family: knowledge kinds read at a glance; unknown
 		// types fall back to the neutral label hue.
 		const TYPE_HUES = {
-			map: "var(--dsw-static-blue-500, #3b82f6)",
+			map: "var(--dsw-alias-state-business-primary)",
 			contract: SUCCESS,
 			deadend: DANGER,
 			wiring: WARN_TEXT,
-			recipe: "var(--dsw-alias-label-deep-diving, #6d5bd0)",
+			recipe: "var(--dsw-alias-label-deep-diving)",
 			why: ACCENT,
 		};
 		const paint = (event, styles) => {
@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
 			window.addEventListener("pointerdown", () => { keyboardModality = false; }, true);
 		}
 		const ring = {
-			onFocus: (event) => { if (keyboardModality) paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }); },
+			onFocus: (event) => { if (keyboardModality) paint(event, { outline: "2px solid var(--dsw-alias-state-business-primary)", outlineOffset: "1px" }); },
 			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 		};
 		const hover = (over, out) => ({
@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					marginBottom: "8px",
 					paddingBottom: "8px",
-					borderBottom: "1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.10))",
+					borderBottom: "0.5px solid var(--dsw-alias-border-l1)",
 					flex: "none"
 				},
 				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, flex: "none" },
@@ -102,7 +102,7 @@ window.__ModuleLoader__.load({
 					cursor: "pointer",
 					background: "none",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: MUTED,
 					transition: TRANSITION
 				}
@@ -117,8 +117,8 @@ window.__ModuleLoader__.load({
 					lineHeight: "16px",
 					padding: "3px 8px 3px 24px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				}
@@ -132,7 +132,7 @@ window.__ModuleLoader__.load({
 					padding: "2px 8px",
 					cursor: "pointer",
 					border: `1px solid ${active ? (hue ?? ACCENT) : BORDER}`,
-					borderRadius: "var(--dsw-radius-xl, 999px)",
+					borderRadius: "var(--dsw-radius-xl)",
 					background: active ? tint(hue ?? ACCENT, 12) : "none",
 					color: active ? (hue ?? ACCENT) : LABEL2,
 					transition: TRANSITION
@@ -155,7 +155,7 @@ window.__ModuleLoader__.load({
 					color: LABEL2,
 					padding: "3px 2px",
 					margin: "6px 0 2px",
-					background: "var(--dsw-alias-bg-layer-1, #fff)"
+					background: "var(--dsw-alias-bg-layer-1)"
 				},
 				count: {
 					fontSize: "10px",
@@ -163,7 +163,7 @@ window.__ModuleLoader__.load({
 					fontWeight: 600,
 					color: MUTED,
 					background: HOVER_BG,
-					borderRadius: "var(--dsw-radius-xl, 999px)",
+					borderRadius: "var(--dsw-radius-xl)",
 					padding: "0 6px",
 					minWidth: "16px",
 					textAlign: "center",
@@ -183,7 +183,7 @@ window.__ModuleLoader__.load({
 					alignItems: "flex-start",
 					gap: "8px",
 					padding: "4px 6px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					cursor: "pointer",
 					transition: TRANSITION
 				},
@@ -206,7 +206,7 @@ window.__ModuleLoader__.load({
 					lineHeight: "14px",
 					fontWeight: 600,
 					padding: "0 5px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					border: "1px solid transparent",
 					flex: "none",
 					whiteSpace: "nowrap"
@@ -216,7 +216,7 @@ window.__ModuleLoader__.load({
 					return { color: hue, border: `1px solid ${hue}`, background: tint(hue, 10) };
 				},
 				warn: { color: WARN_TEXT, border: `1px solid ${WARN}`, background: tint(WARN, 12) },
-				neutral: { color: MUTED, border: `1px solid ${BORDER_STRONG}`, background: "none" },
+				neutral: { color: MUTED, border: `0.5px solid ${BORDER_STRONG}`, background: "none" },
 				promoted: { color: SUCCESS, border: `1px solid ${SUCCESS}`, background: tint(SUCCESS, 10) }
 			},
 			detail: {
@@ -232,9 +232,9 @@ window.__ModuleLoader__.load({
 					wordBreak: "break-word",
 					maxHeight: "320px",
 					overflow: "auto",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-md, 8px)",
-					background: "var(--dsw-alias-interactive-bg-solid, rgba(127,127,127,.06))"
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-md)",
+					background: "var(--dsw-alias-bg-layer-3)"
 				},
 				actions: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "8px" },
 				banner: {
@@ -246,7 +246,7 @@ window.__ModuleLoader__.load({
 					lineHeight: "16px",
 					padding: "6px 8px",
 					margin: "6px 0",
-					borderRadius: "var(--dsw-radius-md, 8px)",
+					borderRadius: "var(--dsw-radius-md)",
 					border: `1px solid ${WARN}`,
 					background: tint(WARN, 10),
 					color: WARN_TEXT
@@ -261,8 +261,8 @@ window.__ModuleLoader__.load({
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				},
@@ -273,8 +273,8 @@ window.__ModuleLoader__.load({
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					minHeight: "96px",
 					resize: "vertical",
@@ -286,8 +286,8 @@ window.__ModuleLoader__.load({
 					lineHeight: "16px",
 					padding: "3px 6px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				},
@@ -302,9 +302,9 @@ window.__ModuleLoader__.load({
 					padding: "3px 10px",
 					cursor: "pointer",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					background: ACCENT,
-					color: "var(--dsw-alias-bg-base, #fff)",
+					color: "var(--dsw-alias-bg-base)",
 					transition: TRANSITION
 				},
 				ghost: {
@@ -314,8 +314,8 @@ window.__ModuleLoader__.load({
 					padding: "3px 10px",
 					cursor: "pointer",
 					background: "none",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL2,
 					transition: TRANSITION
 				},
@@ -327,7 +327,7 @@ window.__ModuleLoader__.load({
 					cursor: "pointer",
 					background: "none",
 					border: `1px solid ${DANGER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: DANGER,
 					transition: TRANSITION
 				},
@@ -335,7 +335,7 @@ window.__ModuleLoader__.load({
 			},
 			footer: {
 				bar: {
-					borderTop: `1px solid ${BORDER}`,
+					borderTop: `0.5px solid ${BORDER}`,
 					marginTop: "8px",
 					paddingTop: "8px",
 					display: "flex",
@@ -349,7 +349,7 @@ window.__ModuleLoader__.load({
 					lineHeight: "16px",
 					fontWeight: 600,
 					padding: "1px 7px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: hue,
 					background: tint(hue, 12),
 					border: `1px solid ${hue}`,
@@ -385,7 +385,7 @@ window.__ModuleLoader__.load({
 				desc: { fontSize: "11px", lineHeight: "16px", color: MUTED, maxWidth: "280px" },
 				skeleton: { display: "flex", flexDirection: "column", gap: "8px" },
 				skeletonRow: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 6px" },
-				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm, 6px)", background: SKELETON, flex: "none" }),
+				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm)", background: SKELETON, flex: "none" }),
 				srOnly: {
 					position: "absolute",
 					width: "1px",

@@ -21,12 +21,12 @@ window.__ModuleLoader__.load({
 		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
-		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-interactive-bg-solid)", marginTop: "8px" };
+		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-bg-layer-3)", marginTop: "8px" };
 		const chainCategoryStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px" };
 		const chainDescStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
 		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
 		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
-		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "#fff", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
+		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "var(--dsw-alias-label-on-color)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
 		/** Open-state decision for the toggle editor: blank (unset at every
 		 * layer) and malformed stored values both open with EVERY switch off —
 		 * no stored state may strand the field uneditable; `invalid`

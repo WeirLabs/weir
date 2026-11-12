@@ -55,7 +55,7 @@ function findAll(node, pred, out = []) {
   return findAll(node.children, pred, out)
 }
 
-const SKELETON_BG = 'var(--dsw-alias-bg-skeleton, rgba(127,127,127,.12))'
+const SKELETON_BG = 'var(--dsw-alias-bg-skeleton)'
 
 test('the panel keeps an identical hook count across loading, loaded and MCP view renders', async () => {
   const counts = { useState: 0, useEffect: 0 }
@@ -127,12 +127,12 @@ test('visual polish: skeleton loading, sidebar scroll wrapper, sticky group head
   expect(header.children[0].style.marginLeft).toBe('0')
   expect(header.children[1].style.marginLeft).toBe('2px')
   expect(header.children[2].style.marginLeft).toBe('2px')
-  expect(header.children[0].style.borderRadius).toBe('var(--dsw-radius-md, 8px) 0 0 var(--dsw-radius-md, 8px)')
+  expect(header.children[0].style.borderRadius).toBe('var(--dsw-radius-md) 0 0 var(--dsw-radius-md)')
   expect(header.children[1].style.borderRadius).toBe('0')
-  expect(header.children[2].style.borderRadius).toBe('0 var(--dsw-radius-md, 8px) var(--dsw-radius-md, 8px) 0')
+  expect(header.children[2].style.borderRadius).toBe('0 var(--dsw-radius-md) var(--dsw-radius-md) 0')
   expect(header.children[1].children).toBe('MCP')
   // The active segment is the raised layer-1 pill.
-  expect(header.children[0].style.background).toBe('var(--dsw-alias-bg-layer-1, #fff)')
+  expect(header.children[0].style.background).toBe('var(--dsw-alias-bg-layer-1)')
   expect(header.children[1].style.background).toContain('--dsw-alias-interactive-bg-hover')
   // Keyboard focus affordance on the interactive header controls.
   expect(typeof header.children[0].onFocus).toBe('function')
@@ -214,7 +214,7 @@ test('header controls and Skill rows paint focus only for keyboard-style focus a
   const tabs = header.children.slice(0, 3)
   expect(tabs.map(tab => tab.children)).toEqual(['Skills', 'MCP', 'Presets'])
 
-  const focusRing = '2px solid var(--dsw-alias-focus-ring, currentColor)'
+  const focusRing = '2px solid var(--dsw-alias-state-business-primary)'
   const eventTarget = (focusVisible) => ({
     style: {},
     matches(selector) {

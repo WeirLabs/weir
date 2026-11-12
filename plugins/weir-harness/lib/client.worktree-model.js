@@ -28,7 +28,7 @@ window.__ModuleLoader__.load({
 			neutral: "var(--dsw-alias-label-tertiary)",
 			attention: "var(--dsw-alias-state-error-primary)",
 			approval: "var(--dsw-alias-state-warn-primary)",
-			ready: "var(--dsw-alias-state-success-primary, var(--dsw-alias-state-business-primary))",
+			ready: "var(--dsw-alias-state-success-primary)",
 			done: "var(--dsw-alias-label-tertiary)"
 		};
 		const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);

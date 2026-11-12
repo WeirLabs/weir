@@ -17,7 +17,7 @@ window.__ModuleLoader__.load({
 			alignItems: "center",
 			gap: "6px",
 			background: "none",
-			border: "1px solid var(--dsw-alias-border-l2)",
+			border: "0.5px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-sm)",
 			cursor: "pointer",
 			padding: "3px 8px",
@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
 			width: "7px",
 			height: "7px",
 			borderRadius: "50%",
-			background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-disabled, #999)"
+			background: on ? "var(--dsw-alias-state-business-primary)" : "var(--dsw-alias-label-tertiary)"
 		});
 		function LspToggle(props) {
 			const settingsBus = props.settingsBus;

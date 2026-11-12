@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
 			alignItems: "center",
 			gap: "6px",
 			background: "none",
-			border: "1px solid var(--dsw-alias-border-l2)",
+			border: "0.5px solid var(--dsw-alias-border-l2)",
 			borderRadius: "var(--dsw-radius-sm)",
 			cursor: "pointer",
 			padding: "3px 8px",
@@ -70,8 +70,8 @@ window.__ModuleLoader__.load({
 			maxHeight: "50vh",
 			overflow: "auto",
 			background: "var(--dsw-alias-bg-overlay)",
-			border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-md, 8px)",
+			border: "0.5px solid var(--dsw-alias-border-l2)",
+			borderRadius: "var(--dsw-radius-md)",
 			boxShadow: "0 6px 24px var(--dsw-alias-border-l2)",
 			padding: "10px 12px",
 			color: "var(--dsw-alias-label-primary)",
@@ -84,8 +84,8 @@ window.__ModuleLoader__.load({
 		// The degraded notice: amber (the same token the dot uses) at the panel's
 		// own weight — a status line, not an alarm.
 		const noticeStyle = { color: "var(--dsw-alias-state-warn-primary)" };
-		const rowStyle = { display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "8px", padding: "3px 0", borderTop: "1px solid var(--dsw-alias-border-l2)" };
-		const nameStyle = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" };
+		const rowStyle = { display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "8px", padding: "3px 0", borderTop: "0.5px solid var(--dsw-alias-border-l2)" };
+		const nameStyle = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "var(--dsw-font-markdown-code-block-font-family)" };
 		const dot = (state) => react_jsx_runtime.jsx("span", { "aria-hidden": true, style: { display: "inline-block", width: "7px", height: "7px", borderRadius: "50%", background: dotColor[state], flex: "none" } });
 		/**
 		 * The badge state of a view. Anything unreadable is `degraded`: an

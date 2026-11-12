@@ -16,10 +16,10 @@ window.__ModuleLoader__.load({
 		// table + spacing/alignment micro-tuning only. The pinned structure is
 		// untouched: root span children[0] = toggle button (its aria-label keeps
 		// the full counts), children[1] = error boundary → panel.
-		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
-		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
-		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
-		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
+		const WARN = "var(--dsw-alias-state-warn-primary)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label)";
+		const BORDER = "var(--dsw-alias-border-l2)";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover)";
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		// Focus ring and hover paint without stylesheets (inline-style chunk
 		// discipline): the handlers write to the event target's inline style and
@@ -36,7 +36,7 @@ window.__ModuleLoader__.load({
 			onPointerDown: () => { pointerDriven = true; },
 			onFocus: (event) => {
 				if (pointerDriven) { pointerDriven = false; return; }
-				paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" });
+				paint(event, { outline: "2px solid var(--dsw-alias-state-business-primary)", outlineOffset: "1px" });
 			},
 			onBlur: (event) => { pointerDriven = false; paint(event, { outline: "none", outlineOffset: "" }); },
 		};
@@ -47,13 +47,13 @@ window.__ModuleLoader__.load({
 				alignItems: "center",
 				gap: "5px",
 				background: "none",
-				border: `1px solid ${BORDER}`,
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				border: `0.5px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm)",
 				cursor: "pointer",
 				padding: "2px 8px",
 				fontSize: "12px",
 				lineHeight: "16px",
-				color: "var(--dsw-alias-label-secondary, #61666b)",
+				color: "var(--dsw-alias-label-secondary)",
 				transition: "background-color 120ms ease, color 120ms ease, border-color 120ms ease"
 			},
 			warnDot: {
@@ -72,11 +72,11 @@ window.__ModuleLoader__.load({
 				padding: "8px 10px",
 				fontSize: "12px",
 				lineHeight: "16px",
-				border: `1px solid ${BORDER}`,
+				border: `0.5px solid ${BORDER}`,
 				borderLeft: `2px solid ${WARN}`,
-				borderRadius: "var(--dsw-radius-md, 8px)",
-				background: "var(--dsw-alias-bg-overlay, #fff)",
-				boxShadow: "var(--dsw-elevation-soft, 0 4px 16px rgba(0,0,0,.08))",
+				borderRadius: "var(--dsw-radius-md)",
+				background: "var(--dsw-alias-bg-overlay)",
+				boxShadow: "var(--dsw-elevation-soft)",
 				color: WARN_TEXT
 			}
 		};
@@ -211,8 +211,8 @@ window.__ModuleLoader__.load({
 						type: "button",
 						style: S.badge,
 						...ring,
-						onMouseEnter: (event) => paint(event, { background: HOVER_BG, color: "var(--dsw-alias-label-primary, inherit)" }),
-						onMouseLeave: (event) => paint(event, { background: "none", color: "var(--dsw-alias-label-secondary, #61666b)" }),
+						onMouseEnter: (event) => paint(event, { background: HOVER_BG, color: "var(--dsw-alias-label-primary)" }),
+						onMouseLeave: (event) => paint(event, { background: "none", color: "var(--dsw-alias-label-secondary)" }),
 						title,
 						"aria-label": label,
 						// aria-expanded follows the actual destination: only the
