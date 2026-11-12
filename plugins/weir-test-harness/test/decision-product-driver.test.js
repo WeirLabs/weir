@@ -1291,6 +1291,17 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
+test('every cross-workspace selector gesture reopens its session first', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(phase, 'the sharing phase exists')
+  for (const session of ['w1.sessionId', 'w2.sessionId', 'w3.sessionId']) {
+    assert.ok(phase.includes(`await openIsolatedSession(${session})\n  await selectorChoose(${session}`), `${session}: the selector is only reachable after the session is opened again`)
+  }
+  // The assistant page hides the composer, so create must be followed by a reopen.
+  assert.match(phase, /createAgent\(w1\.sessionId,[\s\S]{0,400}?await openIsolatedSession\(w1\.sessionId\)\n  await selectorChoose\(w1\.sessionId/, 'create is followed by a reopen before the selector gesture')
+})
+
 test('the driver imports every guard it calls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')

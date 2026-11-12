@@ -1916,6 +1916,9 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const w3 = await newIsolatedSession('cross-w3', workspaceThree)
   await openIsolatedSession(w1.sessionId)
   const shared = await createAgent(w1.sessionId, 'Shared memory assistant', 'Prefer the documented option')
+  // The assistant page owns the main region, so the composer (and its selector
+  // trigger) only comes back after the session is opened again.
+  await openIsolatedSession(w1.sessionId)
   await selectorChoose(w1.sessionId, 'agent', shared.agentId)
   await openIsolatedSession(w2.sessionId)
   await selectorChoose(w2.sessionId, 'agent', shared.agentId)
