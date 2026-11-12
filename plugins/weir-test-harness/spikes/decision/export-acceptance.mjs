@@ -53,6 +53,10 @@ async function main() {
       workspaceKey: f.w2, rootSessionId: 'root2', key: 'acceptance-w2',
       question: 'ACCEPTANCE-W2-SECRET which other workspace wording?', selected: 'B',
     })
+    // A real user gesture through the feedback store, so the Feedback partition is
+    // exportable evidence and not an empty array.
+    const feedback = await f.broker.feedbackStore.append({ actor: { kind: 'user' }, caseId: w1Case.caseId, kind: 'rating_up' })
+    check('feedback recorded through the real feedback store', feedback.kind === 'rating_up' && /^fb_/.test(String(feedback.feedbackId)), { feedbackId: feedback.feedbackId, kind: feedback.kind })
     const publicWording = 'Prefer the documented option both workspaces agreed on.'
 
     // A real published public principle through the reviewed publish path.
@@ -99,6 +103,11 @@ async function main() {
       && counts.publishedPrinciples === envelope.public.principles.length
       && counts.attempts === envelope.cases.reduce((sum, entry) => sum + entry.attempts.length, 0), counts)
     check('the caller workspace case is present', envelope.cases.some(entry => entry.case.caseId === w1Case.caseId), envelope.cases.map(entry => entry.case.caseId))
+    const exportedW1 = envelope.cases.find(entry => entry.case.caseId === w1Case.caseId)
+    check('the Feedback partition carries the real user rating', counts.feedback > 0
+      && exportedW1.feedback.length === counts.feedback
+      && exportedW1.feedback[0].kind === 'rating_up'
+      && exportedW1.feedback[0].caseId === w1Case.caseId, { counts, feedback: exportedW1.feedback })
     check('the other workspace case is absent', envelope.cases.every(entry => entry.case.caseId !== w2Case.caseId), envelope.cases.map(entry => entry.case.caseId))
     check('the private W1 learning run is present', envelope.learning.runs.some(run => run.learningRunId === started.learningRunId), envelope.learning.runs.map(run => run.learningRunId))
     check('the public zone exports published wording and scope only', envelope.public.kind === 'published-principles-only'

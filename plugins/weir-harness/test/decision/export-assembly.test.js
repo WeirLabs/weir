@@ -166,3 +166,90 @@ test('an empty workspace still exports a verifiable, honest envelope', async t =
   })
   assert.equal(envelope.integrity.value, exportChecksum(envelope))
 })
+
+test('every exported partition carries real rows and the evidence locator is redacted', async t => {
+  const f = await publicMemoryFixture(t)
+  // A real answered Case: one Attempt, one answered decision, one rating_up Feedback.
+  const validated = await f.seedValidated({ workspaceKey: f.w1, rootSessionId: 'root1', key: 'partition-validated' })
+  const stored = f.broker.query.record({ caseId: validated.caseId, sessionId: 'root1' })
+  assert.equal(stored.attempts.length, 1, 'the fixture really created one Attempt')
+  const attempt = stored.attempts[0]
+  // Real Evidence whose locator carries a workspace path and a foreign absolute path.
+  const evidence = await f.broker.evidence.add({
+    agentId: f.profile.agentId, source: 'current_observation',
+    locator: { kind: 'file', path: `${f.w1}/private/notes.md`, foreignPath: '/opt/other-machine/secret.txt', line: 12 },
+    excerpt: `Observed ${f.w1}/private/notes.md and /opt/other-machine/secret.txt`,
+    scope: { workspaces: [f.w1] },
+  })
+  await f.broker.evidence.attach(attempt.attemptId, [evidence.evidenceId])
+  const routeId = await f.broker.cases.recordRoute({
+    caseId: validated.caseId, rootSessionId: 'root1', mode: 'pinned',
+    candidates: [{ agentId: f.profile.agentId, enabled: true }], chosen: f.profile.agentId, reason: 'Pinned by user',
+  })
+
+  const exported = await f.broker.exportData({ sessionId: 'root1' })
+  const text = readFileSync(exported.file, 'utf8')
+  const envelope = JSON.parse(text)
+  const entry = envelope.cases.find(item => item.case.caseId === validated.caseId)
+  assert.ok(entry, 'the validated case is exported')
+
+  // Each partition carries the real row, not an empty placeholder.
+  assert.equal(entry.attempts.length, 1)
+  assert.equal(entry.attempts[0].attemptId, attempt.attemptId)
+  assert.equal(entry.attempts[0].outcome, 'answer')
+  assert.equal(entry.attempts[0].caseId, validated.caseId)
+  assert.equal(entry.attempts[0].evidence.length, 1)
+  assert.equal(entry.feedback.length, 1)
+  assert.equal(entry.routeDecisions.length, 1)
+  assert.equal(entry.routeDecisions[0].routeDecisionId, routeId)
+  assert.equal(entry.routeDecisions[0].mode, 'pinned')
+  assert.equal(entry.routeDecisions[0].chosen, f.profile.agentId)
+  assert.equal(entry.routeDecisions[0].reason, 'Pinned by user')
+
+  // The Feedback holds its real shape, including the effect the product recorded.
+  const feedback = entry.feedback[0]
+  assert.equal(feedback.kind, 'rating_up')
+  assert.equal(feedback.caseId, validated.caseId)
+  assert.match(feedback.feedbackId, /^fb_/)
+  assert.equal(feedback.actor, 'user')
+  assert.deepEqual(feedback.effect, { feedbackStateBefore: 'none', feedbackStateAfter: 'validated', needsReview: false })
+
+  // The counts are the file's own entries and every partition is non-zero.
+  const fileCounts = {
+    attempts: envelope.cases.reduce((sum, item) => sum + item.attempts.length, 0),
+    evidence: envelope.cases.reduce((sum, item) => sum + item.attempts.reduce((inner, item2) => inner + item2.evidence.length, 0), 0),
+    feedback: envelope.cases.reduce((sum, item) => sum + item.feedback.length, 0),
+    routeDecisions: envelope.cases.reduce((sum, item) => sum + item.routeDecisions.length, 0),
+  }
+  assert.deepEqual(fileCounts, { attempts: 1, evidence: 1, feedback: 1, routeDecisions: 1 })
+  assert.deepEqual({
+    attempts: envelope.counts.attempts, evidence: envelope.counts.evidence,
+    feedback: envelope.counts.feedback, routeDecisions: envelope.counts.routeDecisions,
+  }, fileCounts)
+  for (const key of ['attempts', 'evidence', 'feedback', 'routeDecisions']) assert.ok(envelope.counts[key] > 0, `${key} is non-zero`)
+
+  // The Evidence locator keeps its identity and loses every real path.
+  const exportedEvidence = entry.attempts[0].evidence[0]
+  assert.equal(exportedEvidence.evidenceId, evidence.evidenceId)
+  assert.equal(exportedEvidence.agentId, f.profile.agentId)
+  assert.equal(exportedEvidence.source, 'current_observation')
+  assert.equal(exportedEvidence.status, 'active')
+  const locator = exportedEvidence.locator
+  assert.equal(locator.kind, 'file')
+  assert.equal(locator.line, 12)
+  assert.equal(locator.foreignPath, '<path>', 'a foreign absolute path is redacted with the reviewed marker')
+  const locatorPath = String(locator.path)
+  assert.equal(locatorPath.includes(f.w1), false, 'the real workspace key never survives in a locator')
+  assert.equal(locatorPath.startsWith('/'), false, 'no absolute path survives in a locator')
+  assert.ok(locatorPath === '<path>' || locatorPath.startsWith(workspaceAlias(f.w1)), 'the workspace path is either redacted or reduced to the opaque alias')
+  assert.equal(String(exportedEvidence.excerpt).includes(f.w1), false, 'the excerpt loses the workspace key')
+  assert.equal(String(exportedEvidence.excerpt).includes('/opt/other-machine/'), false, 'the excerpt loses the foreign path')
+
+  // Nothing anywhere in the file names a real path, a workspace key or a foreign root.
+  for (const secret of [f.w1, f.w2, '/Users/', '/home/', '/opt/other-machine/', '/var/']) {
+    assert.equal(text.includes(secret), false, `the export never carries ${secret}`)
+  }
+  assert.equal(ABSOLUTE_PATH.test(text), false, 'no absolute path shape survives')
+  assert.equal(text.includes('workspaceKey'), false, 'no real workspace key field survives')
+  assert.equal(envelope.integrity.value, exportChecksum(envelope), 'the richer payload still verifies')
+})
