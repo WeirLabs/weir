@@ -37,6 +37,7 @@ export const OMISSION_CODES = Object.freeze([
   'L5_EVIDENCE_TRUNCATED', 'L5_EVIDENCE_OMITTED', 'L5_EXCERPT_OMITTED', 'L4_TRUNCATED',
   'L3_EPISODE_OMITTED', 'L3_EPISODE_TRUNCATED',
   'L2_PRINCIPLE_OMITTED', 'L2_PRINCIPLE_TRUNCATED',
+  'PUBLIC_L2_PRINCIPLE_OMITTED', 'PUBLIC_L2_PRINCIPLE_TRUNCATED',
 ])
 export const ATTEMPT_FAILURES = Object.freeze([
   'timeout', 'model_error', 'invalid_output', 'truncated', 'aborted', 'interrupted', 'route_unavailable',

@@ -11,19 +11,25 @@ import {
 import { ZONES } from './schema.js'
 import { LEARNING_LIMITS, validateLearningScope } from '../learning/constraints.js'
 export { LEARNING_LIMITS, validateLearningScope } from '../learning/constraints.js'
+import { PRIVATE_ZONE, PUBLIC_ZONE, publicPrincipleScopeForWorkspace, workspaceAlias } from '../learning/namespace.js'
+import { projectPublicLearningInput, projectPublicSources, publicContentIssues } from '../learning/public.js'
 import { caseOf } from './cases.js'
 import { projectLearningRecords } from '../learning/consolidator.js'
 
 export const LEARNING_OUTCOMES = Object.freeze(['running', 'candidate', 'published', 'rejected', 'rolled_back', 'failed'])
 export const SNAPSHOT_STATES = Object.freeze(['draft', 'published', 'rolled_back'])
 export const PRINCIPLE_STATES = Object.freeze(['active', 'contested', 'retired'])
-const TRIGGERS = Object.freeze(['manual', 'schedule', 'threshold'])
+const TRIGGERS = Object.freeze(['manual', 'schedule', 'threshold', 'refresh'])
 const OPERATIONS = Object.freeze(['add', 'refine', 'merge', 'narrow', 'retire'])
 const OPERATION_FIELDS = Object.freeze(['op', 'principleId', 'targetPrincipleIds', 'text', 'scope', 'sources', 'inputFeedbackIds'])
 const INPUT_FIELDS = Object.freeze([
   'requestId', 'workspaceKey', 'startedAt', 'agentProfileRevision', 'caseIds', 'feedbackIds', 'revisions',
   'feedbackDigest', 'parentSnapshotId', 'parentSnapshotRevision', 'promptVersion', 'modelRoute', 'inputHash',
 ])
+// Public runs additionally freeze their workspace-agnostic source lineage. The
+// private frozen shape is unchanged, so pre-Phase-B rows stay readable as-is.
+const PUBLIC_INPUT_FIELDS = Object.freeze(['zone', 'sourceHighWater', 'workspaceAliases', 'sourceWorkspaces'])
+const ALIAS = /^origin_[a-f0-9]{12}$/
 const HEX_256 = /^[a-f0-9]{64}$/
 const REPLAY_DETAILS = new Set([
   'NO_CANDIDATE_CHANGES', 'INTERRUPTED', 'MODEL_TIMEOUT', 'MODEL_ERROR', 'ROUTE_UNAVAILABLE',
@@ -35,7 +41,7 @@ const REPLAY_DETAILS = new Set([
   'SCOPE_EXPANSION', 'SCOPE_NOT_NARROWED', 'TARGET_NOT_ACTIVE', 'DUPLICATE_TARGET', 'CYCLIC_TARGET',
   'DUPLICATE_PRINCIPLE', 'TOO_MANY_PRINCIPLES', 'NON_DETERMINISTIC_REPLAY',
   'STRUCTURAL_REPLAY_FAILED', 'LEARNING_INPUT_TOO_LARGE', 'STALE_PARENT_SNAPSHOT', 'STALE_SOURCE',
-  'CONSOLIDATION_ERROR',
+  'CONSOLIDATION_ERROR', 'PUBLIC_CONTENT_REJECTED',
 ])
 
 /** @param {unknown} value @param {string} label */
@@ -101,8 +107,8 @@ function namespaceOf(row, label) {
   return { zone, namespaceWorkspaceKey }
 }
 
-/** @param {unknown} value */
-export function validatePrinciple(value) {
+/** @param {unknown} value @param {'workspace'|'public'} [zone] */
+export function validatePrinciple(value, zone = PRIVATE_ZONE) {
   const principle = assertClosedObject(value, ['principleId', 'text', 'scope', 'sources', 'state'], ['principleId', 'text', 'scope', 'sources', 'state'], 'MemorySnapshot.principle')
   requiredId(principle.principleId, 'Principle.principleId')
   if (typeof principle.text !== 'string' || !principle.text || principle.text.length > 600) {
@@ -110,12 +116,12 @@ export function validatePrinciple(value) {
   }
   if (!PRINCIPLE_STATES.includes(principle.state)) throw new DecisionContractError('INVALID_PRINCIPLE_STATE', String(principle.state))
   idArray(principle.sources, 'Principle.sources', 256)
-  validateLearningScope(principle.scope)
+  validateLearningScope(principle.scope, 'Principle.scope', zone)
   return principle
 }
 
-/** @param {unknown} value */
-function validateOperation(value) {
+/** @param {unknown} value @param {'workspace'|'public'} [zone] */
+function validateOperation(value, zone = PRIVATE_ZONE) {
   const operation = assertClosedObject(value, OPERATION_FIELDS, ['op'], 'LearningRun.operation')
   if (!OPERATIONS.includes(operation.op)) throw new DecisionContractError('INVALID_LEARNING_OPERATION', String(operation.op))
   requiredId(operation.principleId, 'LearningRun.operation.principleId')
@@ -125,7 +131,7 @@ function validateOperation(value) {
     throw new DecisionContractError('INVALID_LEARNING_OPERATION', `${operation.op}.text must contain 1..600 characters`)
   }
   if (!textRequired && operation.text !== undefined) throw new DecisionContractError('INVALID_LEARNING_OPERATION', `${operation.op}.text is not allowed`)
-  if (['add', 'refine', 'merge', 'narrow'].includes(operation.op)) validateLearningScope(operation.scope, `LearningRun.${operation.op}.scope`)
+  if (['add', 'refine', 'merge', 'narrow'].includes(operation.op)) validateLearningScope(operation.scope, `LearningRun.${operation.op}.scope`, zone)
   else if (operation.scope !== undefined) throw new DecisionContractError('INVALID_LEARNING_OPERATION', 'retire.scope is not allowed')
   if (['add', 'refine', 'merge'].includes(operation.op)) idArray(operation.sources, `LearningRun.${operation.op}.sources`)
   else if (operation.sources !== undefined) idArray(operation.sources, `LearningRun.${operation.op}.sources`)
@@ -134,11 +140,18 @@ function validateOperation(value) {
   return operation
 }
 
-/** @param {unknown} value */
-function validateInputFrozen(value) {
-  const input = assertClosedObject(value, INPUT_FIELDS, INPUT_FIELDS, 'LearningRun.inputFrozen')
+/** @param {unknown} value @param {'workspace'|'public'} [zone] */
+function validateInputFrozen(value, zone = PRIVATE_ZONE) {
+  const input = assertClosedObject(value, [...INPUT_FIELDS, ...PUBLIC_INPUT_FIELDS], INPUT_FIELDS, 'LearningRun.inputFrozen')
   requiredId(input.requestId, 'LearningRun.inputFrozen.requestId')
-  requiredId(input.workspaceKey, 'LearningRun.inputFrozen.workspaceKey')
+  if (zone === PUBLIC_ZONE) {
+    if (input.zone !== PUBLIC_ZONE || input.workspaceKey !== null) {
+      throw new DecisionContractError('INVALID_NAMESPACE', 'a public frozen input must name the public zone and no workspace')
+    }
+  } else {
+    if (input.zone !== undefined && input.zone !== PRIVATE_ZONE) throw new DecisionContractError('INVALID_NAMESPACE', String(input.zone))
+    requiredId(input.workspaceKey, 'LearningRun.inputFrozen.workspaceKey')
+  }
   timestamp(input.startedAt, 'LearningRun.inputFrozen.startedAt')
   positiveInteger(input.agentProfileRevision, 'LearningRun.inputFrozen.agentProfileRevision')
   idArray(input.caseIds, 'LearningRun.inputFrozen.caseIds', LEARNING_LIMITS.cases)
@@ -158,6 +171,7 @@ function validateInputFrozen(value) {
     if (!expectedRevisions.has(id)) throw new DecisionContractError('INVALID_RECORD', 'LearningRun.inputFrozen.revisions contains an unfrozen record')
     positiveInteger(revision, `LearningRun.inputFrozen.revisions.${id}`)
   }
+  if (zone === PUBLIC_ZONE) validatePublicFrozenLineage(input)
   const route = assertClosedObject(input.modelRoute, ['kind', 'provider', 'model', 'reasoningEffort', 'reason'], ['kind'], 'LearningRun.inputFrozen.modelRoute')
   if (!['inherited', 'resolved', 'unavailable'].includes(route.kind)) throw new DecisionContractError('INVALID_MODEL_ROUTE', String(route.kind))
   if (route.kind !== 'unavailable') {
@@ -167,6 +181,47 @@ function validateInputFrozen(value) {
   if (route.reasoningEffort !== undefined) requiredId(route.reasoningEffort, 'LearningRun.inputFrozen.modelRoute.reasoningEffort')
   if (route.reason !== undefined && (typeof route.reason !== 'string' || route.reason.length > 200)) throw new DecisionContractError('INVALID_MODEL_ROUTE', 'route.reason must be bounded text')
   return input
+}
+
+/**
+ * A public frozen input carries lineage for every frozen source: the opaque
+ * alias groups shown to the model and the origin workspace used only for
+ * host-internal revalidation. Neither may be replaced by a sentinel.
+ * @param {any} input
+ */
+function validatePublicFrozenLineage(input) {
+  hash(input.sourceHighWater, 'LearningRun.inputFrozen.sourceHighWater')
+  const aliases = input.workspaceAliases
+  if (!Array.isArray(aliases) || aliases.length > 128) throw new DecisionContractError('INVALID_RECORD', 'LearningRun.inputFrozen.workspaceAliases must be a bounded array')
+  const seen = new Set()
+  for (const group of aliases) {
+    const value = assertClosedObject(group, ['alias', 'count', 'kinds', 'preview'], ['alias', 'count'], 'LearningRun.inputFrozen.workspaceAliases[]')
+    if (typeof value.alias !== 'string' || !ALIAS.test(value.alias) || seen.has(value.alias)) throw new DecisionContractError('INVALID_RECORD', 'public workspace aliases must be unique opaque tokens')
+    seen.add(value.alias)
+    positiveInteger(value.count, 'LearningRun.inputFrozen.workspaceAliases[].count')
+    if (value.kinds !== undefined) {
+      const kinds = assertClosedObject(value.kinds, ['case', 'correction'], ['case', 'correction'], 'LearningRun.inputFrozen.workspaceAliases[].kinds')
+      for (const [key, count] of Object.entries(kinds)) {
+        if (!Number.isSafeInteger(count) || count < 0) throw new DecisionContractError('INVALID_RECORD', `public alias kinds.${key} must be a count`)
+      }
+      if (kinds.case + kinds.correction !== value.count) throw new DecisionContractError('INVALID_RECORD', 'public alias kind counts must sum to the group count')
+    }
+    if (value.preview !== undefined && (typeof value.preview !== 'string' || value.preview.length > 240)) {
+      throw new DecisionContractError('INVALID_RECORD', 'public alias preview must be bounded text')
+    }
+  }
+  const expected = new Set([...input.caseIds, ...input.feedbackIds])
+  const sourceWorkspaces = assertObject(input.sourceWorkspaces, 'LearningRun.inputFrozen.sourceWorkspaces')
+  if (Object.keys(sourceWorkspaces).length !== expected.size) throw new DecisionContractError('INVALID_RECORD', 'LearningRun.inputFrozen.sourceWorkspaces must exactly cover frozen sources')
+  const aliasesSeen = new Set()
+  for (const [sourceId, workspaceKey] of Object.entries(sourceWorkspaces)) {
+    if (!expected.has(sourceId)) throw new DecisionContractError('INVALID_RECORD', 'LearningRun.inputFrozen.sourceWorkspaces contains an unfrozen source')
+    requiredId(workspaceKey, `LearningRun.inputFrozen.sourceWorkspaces.${sourceId}`)
+    aliasesSeen.add(workspaceAlias(workspaceKey))
+  }
+  if (aliasesSeen.size !== seen.size || [...aliasesSeen].some(alias => !seen.has(alias))) {
+    throw new DecisionContractError('INVALID_RECORD', 'public alias groups must match the frozen source workspaces')
+  }
 }
 
 /** @param {unknown} value */
@@ -190,12 +245,12 @@ export function learningRunOf(row) {
   assertSupportedSchemaVersion(row.schema_version, 'LearningRun')
   if (!LEARNING_OUTCOMES.includes(row.outcome)) throw new DecisionContractError('INVALID_LEARNING_OUTCOME', String(row.outcome))
   if (!TRIGGERS.includes(row.trigger)) throw new DecisionContractError('INVALID_LEARNING_TRIGGER', String(row.trigger))
-  const inputFrozen = validateInputFrozen(parseJson(row.input_frozen_json, 'LearningRun.inputFrozen'))
+  const namespace = namespaceOf(row, 'LearningRun')
+  const inputFrozen = validateInputFrozen(parseJson(row.input_frozen_json, 'LearningRun.inputFrozen'), namespace.zone)
   const operations = parseJson(row.operations_json, 'LearningRun.operations')
   if (!Array.isArray(operations) || operations.length > LEARNING_LIMITS.operations) throw new DecisionContractError('INVALID_RECORD', 'LearningRun.operations must be a bounded array')
-  operations.forEach(validateOperation)
+  operations.forEach(operation => validateOperation(operation, namespace.zone))
   const replay = row.replay_json == null ? undefined : validateReplay(parseJson(row.replay_json, 'LearningRun.replay'))
-  const namespace = namespaceOf(row, 'LearningRun')
   return deepFreeze({
     schemaVersion: row.schema_version,
     learningRunId: requiredId(row.learning_run_id, 'LearningRun.learningRunId'),
@@ -212,15 +267,15 @@ export function memorySnapshotOf(row) {
   if (!row) throw new DecisionContractError('SNAPSHOT_NOT_FOUND')
   assertSupportedSchemaVersion(row.schema_version, 'MemorySnapshot')
   if (!SNAPSHOT_STATES.includes(row.state)) throw new DecisionContractError('INVALID_SNAPSHOT_STATE', String(row.state))
+  const namespace = namespaceOf(row, 'MemorySnapshot')
   const principles = parseJson(row.principles_json, 'MemorySnapshot.principles')
   if (!Array.isArray(principles) || principles.length > LEARNING_LIMITS.principles) throw new DecisionContractError('INVALID_RECORD', 'MemorySnapshot.principles must be a bounded array')
-  principles.forEach(validatePrinciple)
+  principles.forEach(principle => validatePrinciple(principle, namespace.zone))
   if (new Set(principles.map(principle => principle.principleId)).size !== principles.length) throw new DecisionContractError('INVALID_RECORD', 'MemorySnapshot principle ids must be unique')
   const generatedDescription = assertClosedObject(parseJson(row.generated_description_json, 'MemorySnapshot.generatedDescription'), ['revision', 'text'], ['revision', 'text'], 'MemorySnapshot.generatedDescription')
   if (generatedDescription.revision !== 0 || generatedDescription.text !== '') {
     throw new DecisionContractError('GENERATED_DESCRIPTION_READONLY', 'P3 generatedDescription must remain empty and read-only')
   }
-  const namespace = namespaceOf(row, 'MemorySnapshot')
   const value = {
     schemaVersion: row.schema_version,
     snapshotId: requiredId(row.snapshot_id, 'MemorySnapshot.snapshotId'),
@@ -265,16 +320,143 @@ export class DecisionLearning {
     return memorySnapshotOf(this.store.db.prepare('SELECT * FROM memory_snapshots WHERE snapshot_id=?').get(snapshotId))
   }
 
-  /** @param {string} agentId */
-  listRuns(agentId) {
-    return deepFreeze(this.store.db.prepare('SELECT * FROM learning_runs WHERE agent_id=? ORDER BY created_at DESC,learning_run_id DESC').all(agentId).map(learningRunOf))
+  /** @param {string} agentId @param {{zone:string,namespaceWorkspaceKey:string|null}} [namespace] */
+  listRuns(agentId, namespace) {
+    const rows = namespace
+      ? this.store.db.prepare('SELECT * FROM learning_runs WHERE agent_id=? AND zone=? AND namespace_workspace_key IS ? ORDER BY created_at DESC,learning_run_id DESC').all(agentId, namespace.zone, namespace.namespaceWorkspaceKey)
+      : this.store.db.prepare('SELECT * FROM learning_runs WHERE agent_id=? ORDER BY created_at DESC,learning_run_id DESC').all(agentId)
+    return deepFreeze(rows.map(learningRunOf))
+  }
+
+  /** @param {string} agentId @param {{zone:string,namespaceWorkspaceKey:string|null}} [namespace] */
+  listSnapshots(agentId, namespace) {
+    const rows = namespace
+      ? this.store.db.prepare('SELECT * FROM memory_snapshots WHERE agent_id=? AND zone=? AND namespace_workspace_key IS ? ORDER BY version DESC,snapshot_id DESC').all(agentId, namespace.zone, namespace.namespaceWorkspaceKey)
+      : this.store.db.prepare('SELECT * FROM memory_snapshots WHERE agent_id=? ORDER BY version DESC,snapshot_id DESC').all(agentId)
+    assertUniqueSnapshotVersions(rows, agentId)
+    return deepFreeze(rows.map(memorySnapshotOf))
+  }
+
+  /** The only active public run/candidate for one Agent, if any. */
+  activePublicRun(agentId) {
+    const row = this.store.db.prepare(`SELECT * FROM learning_runs
+      WHERE agent_id=? AND zone='public' AND outcome IN ('running','candidate')
+      ORDER BY created_at DESC,learning_run_id DESC LIMIT 1`).get(agentId)
+    return row ? learningRunOf(row) : null
+  }
+
+  /** The most recent public run, whatever its outcome. */
+  lastPublicRun(agentId) {
+    const row = this.store.db.prepare(`SELECT * FROM learning_runs WHERE agent_id=? AND zone='public'
+      ORDER BY created_at DESC,learning_run_id DESC LIMIT 1`).get(agentId)
+    return row ? learningRunOf(row) : null
+  }
+
+  /** Frozen input high-water of the most recent public run, or null. */
+  lastPublicHighWater(agentId) {
+    return this.lastPublicRun(agentId)?.inputFrozen?.sourceHighWater ?? null
   }
 
   /** @param {string} agentId */
-  listSnapshots(agentId) {
-    const rows = this.store.db.prepare('SELECT * FROM memory_snapshots WHERE agent_id=? ORDER BY version DESC,snapshot_id DESC').all(agentId)
-    assertUniqueSnapshotVersions(rows, agentId)
-    return deepFreeze(rows.map(memorySnapshotOf))
+  hasPublicRun(agentId) {
+    return Boolean(this.store.db.prepare("SELECT 1 FROM learning_runs WHERE agent_id=? AND zone='public' LIMIT 1").get(agentId))
+  }
+
+  /** The current published public Snapshot: the public zone has no workspace. */
+  currentPublicSnapshot(agentId) {
+    const rows = currentSnapshotRows(this.store.db, agentId, PUBLIC_ZONE, null)
+    return rows.length ? memorySnapshotOf(rows[0]) : null
+  }
+
+  /**
+   * Host-internal public source port. This is the only read path that spans
+   * workspaces, and it returns the bounded whitelist projection only.
+   * @param {string} agentId
+   */
+  publicSourceSet(agentId) {
+    return deepFreeze(readPublicFreeze(this.store.db, agentId).sourceSet)
+  }
+
+  /**
+   * Freeze the full eligible source set and insert a running public run before
+   * any model call. The public zone owns its own version sequence and its own
+   * active-run slot.
+   * @param {{agentId:string,requestId:string,startedAt:number,agentProfileRevision:number,modelRoute:object}} input
+   */
+  async beginPublicRun(input) {
+    let result
+    await this.store.write(db => {
+      const runs = db.prepare("SELECT * FROM learning_runs WHERE agent_id=? AND zone='public'").all(input.agentId).map(learningRunOf)
+      const duplicate = runs.find(run => run.inputFrozen.requestId === input.requestId)
+      if (duplicate) { result = { created: false, run: duplicate }; return }
+      if (runs.some(run => run.outcome === 'running' || run.outcome === 'candidate')) {
+        throw new DecisionContractError('LEARNING_RUN_ACTIVE', 'An active public Learning Run or candidate already exists for this Agent')
+      }
+      const freeze = readPublicFreeze(db, input.agentId)
+      const parentRows = currentSnapshotRows(db, input.agentId, PUBLIC_ZONE, null)
+      if (parentRows[0]) {
+        const rawPrinciples = parseJson(parentRows[0].principles_json, 'MemorySnapshot.principles')
+        if (Array.isArray(rawPrinciples) && rawPrinciples.length > LEARNING_LIMITS.principles) throw new DecisionContractError('LEARNING_INPUT_TOO_LARGE', 'At most 128 parent principles can be learned at once')
+      }
+      const parentSnapshot = parentRows[0] ? memorySnapshotOf(parentRows[0]) : null
+      const projection = projectPublicLearningInput({ agentId: input.agentId, sourceSet: freeze.sourceSet, parentSnapshot })
+      const inputFrozen = {
+        zone: PUBLIC_ZONE, workspaceKey: null, requestId: input.requestId, startedAt: input.startedAt,
+        agentProfileRevision: input.agentProfileRevision,
+        caseIds: freeze.sourceSet.sources.filter(source => source.kind === 'case').map(source => source.sourceId),
+        feedbackIds: freeze.sourceSet.sources.filter(source => source.kind === 'correction').map(source => source.sourceId),
+        revisions: { ...freeze.sourceSet.revisions },
+        feedbackDigest: createHash('sha256').update(canonicalJson(freeze.sourceSet.sources.filter(source => source.kind === 'correction'))).digest('hex'),
+        parentSnapshotId: parentSnapshot?.snapshotId ?? null, parentSnapshotRevision: parentSnapshot?.revision ?? null,
+        promptVersion: 'consolidation-contract/1', modelRoute: clone(input.modelRoute),
+        inputHash: createHash('sha256').update(canonicalJson(projection)).digest('hex'),
+        sourceHighWater: freeze.sourceSet.highWater,
+        workspaceAliases: freeze.sourceSet.workspaces.map(group => ({
+          alias: group.alias, count: group.count, kinds: { ...group.kinds }, preview: group.preview,
+        })),
+        sourceWorkspaces: { ...freeze.sourceSet.sourceWorkspaces },
+      }
+      const learningRunId = `lr_${randomUUID()}`
+      const now = input.startedAt
+      db.prepare(`INSERT INTO learning_runs(
+        learning_run_id,agent_id,zone,namespace_workspace_key,trigger,input_frozen_json,operations_json,
+        replay_json,outcome,created_at,updated_at,revision,schema_version
+      ) VALUES(?,?,'public',NULL,'refresh',?,?,NULL,'running',?,?,1,1)`).run(
+        learningRunId, input.agentId, JSON.stringify(inputFrozen), '[]', now, now,
+      )
+      result = {
+        created: true,
+        run: learningRunOf(db.prepare('SELECT * FROM learning_runs WHERE learning_run_id=?').get(learningRunId)),
+        projection, sourceSet: freeze.sourceSet,
+        authority: {
+          zone: PUBLIC_ZONE, workspaceKey: null, sourceWorkspaces: { ...freeze.sourceSet.sourceWorkspaces },
+          caseById: freeze.caseById, feedbackById: freeze.feedbackById, corrections: freeze.corrections,
+          parentPrinciples: parentSnapshot?.principles ?? [],
+        },
+      }
+    })
+    return result
+  }
+
+  /**
+   * Use-time revalidation: a public principle is omitted when any of its
+   * sources no longer revalidates inside its own origin workspace.
+   * @param {any} snapshot
+   */
+  publicPrincipleIssues(snapshot) {
+    const issues = {}
+    let run
+    try { run = this.getRunById(snapshot.learningRunId) } catch { run = null }
+    for (const principle of snapshot.principles) {
+      if (principle.state !== 'active') continue
+      for (const sourceId of principle.sources) {
+        if (!run || !this.evidence || publicSourceIssue(this.store.db, this.evidence, run, sourceId, principle)) {
+          issues[principle.principleId] = 'SOURCE_UNAVAILABLE'
+          break
+        }
+      }
+    }
+    return issues
   }
 
   /**
@@ -330,7 +512,10 @@ export class DecisionLearning {
     let result
     await this.store.write(db => {
       const runs = db.prepare('SELECT * FROM learning_runs WHERE agent_id=?').all(input.agentId).map(learningRunOf)
-      const duplicate = runs.find(run => run.inputFrozen.requestId === input.requestId)
+      // A duplicate request is only a duplicate inside its own namespace: a W2
+      // requestId must never return a W1 run.
+      const duplicate = runs.find(run => run.zone === 'workspace' && run.namespaceWorkspaceKey === input.workspaceKey
+        && run.inputFrozen.requestId === input.requestId)
       if (duplicate) { result = { created: false, run: duplicate }; return }
       if (runs.some(run => run.zone === 'workspace' && run.namespaceWorkspaceKey === input.workspaceKey
         && (run.outcome === 'running' || run.outcome === 'candidate'))) {
@@ -450,7 +635,9 @@ export class DecisionLearning {
         result = { error: 'STALE_PARENT_SNAPSHOT', run: failCandidate(db, run, 'STALE_PARENT_SNAPSHOT', this.now()) }
         return
       }
-      const issue = sourcePublishIssue(db, run, snapshot, this.evidence)
+      const issue = snapshot.zone === PUBLIC_ZONE
+        ? publicPublishIssue(db, run, snapshot, this.evidence)
+        : sourcePublishIssue(db, run, snapshot, this.evidence)
       if (issue) {
         result = { error: issue, run: failCandidate(db, run, issue, this.now()) }
         return
@@ -593,6 +780,106 @@ function sourcePublishIssue(db, run, snapshot, evidence) {
   return null
 }
 
+/**
+ * Read the eligible public source set from every workspace. Only closed,
+ * authoritative, non-disputed Cases and active corrections of Cases in the same
+ * set are eligible; nothing reads a session log or the raw request/decision JSON.
+ * @param {any} db @param {string} agentId
+ */
+function readPublicFreeze(db, agentId) {
+  const caseRows = db.prepare(`SELECT * FROM cases
+    WHERE agent_id=? AND state='closed' AND closing IN ('answered','escalated')
+    ORDER BY created_at,case_id`).all(agentId)
+  const cases = []
+  const caseById = {}
+  for (const row of caseRows) {
+    const current = caseOf(row)
+    const userDecision = current.closing === 'escalated' && current.decision?.kind === 'user_decision'
+    const validatedAnswer = current.closing === 'answered' && current.feedbackState === 'validated' && current.decision?.kind === 'answer'
+    if (!userDecision && !validatedAnswer) continue
+    if (current.feedbackState === 'disputed') continue
+    if (typeof current.workspaceKey !== 'string' || !current.workspaceKey) continue
+    cases.push(current)
+    caseById[current.caseId] = current
+  }
+  const feedbackRows = db.prepare(`SELECT feedback.* FROM feedback JOIN cases ON cases.case_id=feedback.case_id
+    WHERE feedback.agent_id=? AND feedback.kind='correction'
+    ORDER BY feedback.created_at,feedback.feedback_id`).all(agentId)
+  const corrections = []
+  const feedback = []
+  const feedbackById = {}
+  for (const row of feedbackRows) {
+    const owner = caseById[row.case_id]
+    if (!owner) continue
+    const correctionRow = db.prepare('SELECT * FROM corrections WHERE feedback_id=? AND agent_id=?').get(row.feedback_id, agentId)
+    if (!correctionRow || correctionRow.active !== 1) continue
+    const record = feedbackRecord(row)
+    feedback.push(record)
+    feedbackById[record.feedbackId] = record
+    corrections.push({ ...correctionRecord(correctionRow), caseRecord: owner })
+  }
+  return {
+    sourceSet: projectPublicSources({ agentId, cases, corrections, feedback }),
+    caseById, feedbackById, corrections,
+  }
+}
+
+/** Public candidate text is scanned before display and before publish. */
+function publicPublishIssue(db, run, snapshot, evidence) {
+  const allowed = [...run.inputFrozen.caseIds, ...run.inputFrozen.feedbackIds]
+  for (const principle of snapshot.principles) {
+    if (publicContentIssues(principle.text, allowed).length) return 'PUBLIC_CONTENT_REJECTED'
+  }
+  if (!evidence) return 'STALE_SOURCE'
+  for (const principle of snapshot.principles.filter(value => value.state === 'active')) {
+    for (const sourceId of principle.sources) {
+      if (publicSourceIssue(db, evidence, run, sourceId, principle)) return 'STALE_SOURCE'
+    }
+  }
+  return null
+}
+
+/**
+ * Revalidate one public source inside its own origin workspace. A public source
+ * is "expandable" only when the Host can recheck it there; it never grants the
+ * current session a foreign-record read path.
+ * @param {any} db @param {any} evidence @param {any} run @param {string} sourceId @param {any} principle
+ */
+function publicSourceIssue(db, evidence, run, sourceId, principle) {
+  const expectedRevision = run.inputFrozen.revisions?.[sourceId]
+  const workspaceKey = run.inputFrozen.sourceWorkspaces?.[sourceId]
+  if (!expectedRevision || typeof workspaceKey !== 'string' || !workspaceKey) return 'STALE_SOURCE'
+  const scope = publicPrincipleScopeForWorkspace(principle?.scope ?? {}, workspaceKey)
+  const caseRow = db.prepare('SELECT * FROM cases WHERE case_id=?').get(sourceId)
+  let evidenceSource
+  if (caseRow) {
+    const current = caseOf(caseRow)
+    if (current.agentId !== run.agentId || current.workspaceKey !== workspaceKey || current.revision !== expectedRevision) return 'STALE_SOURCE'
+    if (current.feedbackState === 'disputed') return 'STALE_SOURCE'
+    if (current.closing === 'escalated' && current.decision?.kind === 'user_decision') evidenceSource = 'user_decision'
+    else if (current.closing === 'answered' && current.feedbackState === 'validated' && current.decision?.kind === 'answer') evidenceSource = 'agent_record'
+    else return 'STALE_SOURCE'
+  } else {
+    const feedbackRow = db.prepare(`SELECT feedback.* FROM feedback JOIN cases ON cases.case_id=feedback.case_id
+      WHERE feedback.feedback_id=? AND feedback.agent_id=? AND cases.agent_id=? AND cases.workspace_key=?`)
+      .get(sourceId, run.agentId, run.agentId, workspaceKey)
+    if (!feedbackRow || feedbackRecord(feedbackRow).revision !== expectedRevision || feedbackRow.kind !== 'correction') return 'STALE_SOURCE'
+    const correction = db.prepare('SELECT active FROM corrections WHERE feedback_id=? AND agent_id=?').get(sourceId, run.agentId)
+    if (correction?.active !== 1) return 'STALE_SOURCE'
+    evidenceSource = 'user_correction'
+  }
+  const locatorField = caseRow ? 'caseId' : 'feedbackId'
+  const rows = db.prepare(`SELECT evidence_id FROM evidence
+    WHERE agent_id=? AND source=? AND json_extract(locator_json,?)=?`).all(run.agentId, evidenceSource, `$.${locatorField}`, sourceId)
+  const eligible = rows.some(row => {
+    try {
+      const ref = evidence.get(row.evidence_id)
+      return !evidence.eligibilityIssue(ref, { agentId: run.agentId, workspaceKey, scope })
+    } catch { return false }
+  })
+  return eligible ? null : 'STALE_SOURCE'
+}
+
 /** @template T @param {T} value @returns {T} */
 function clone(value) { return JSON.parse(JSON.stringify(value)) }
 
@@ -605,10 +892,14 @@ function currentSnapshotRows(db, agentId, zone, namespaceWorkspaceKey) {
   return rows.filter(row => row.state === 'published')
 }
 
+/** Versions are unique per namespace, never across the public/private zones. */
 /** @param {any[]} rows @param {string} agentId */
 function assertUniqueSnapshotVersions(rows, agentId) {
-  for (let index = 1; index < rows.length; index++) {
-    if (rows[index].version === rows[index - 1].version) throw new DecisionContractError('SNAPSHOT_VERSION_AMBIGUOUS', `${agentId}@${rows[index].version}`)
+  const seen = new Set()
+  for (const row of rows) {
+    const key = `${row.zone}\u0000${row.namespace_workspace_key ?? ''}\u0000${row.version}`
+    if (seen.has(key)) throw new DecisionContractError('SNAPSHOT_VERSION_AMBIGUOUS', `${agentId}@${row.zone}@${row.version}`)
+    seen.add(key)
   }
 }
 

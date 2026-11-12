@@ -1,8 +1,9 @@
 // Bounded manual semantic consolidation and deterministic structural replay.
 import { createHash, randomUUID } from 'node:crypto'
 import { assertClosedObject, canonicalJson, DecisionContractError } from '../contracts.js'
-import { scopeCovers } from '../store/evidence.js'
+import { scopeCovers, scopeHintsCover } from '../scope.js'
 import { LEARNING_LIMITS, validateLearningScope } from './constraints.js'
+import { PRIVATE_ZONE, PUBLIC_ZONE, publicPrincipleScopeForWorkspace } from './namespace.js'
 
 export const CONSOLIDATION_PROMPT_VERSION = 'consolidation-contract/1'
 export const MAX_CANDIDATE_CHARS = 200_000
@@ -12,10 +13,10 @@ Use only add, refine, merge, narrow, or retire. Every operation may contain only
 add requires text, scope, and authoritative sources. refine requires an existing principleId, text, and sources; it may narrow but never widen scope. merge requires at least two existing targetPrincipleIds, text, and scope. narrow requires an existing principleId and a smaller scope. retire requires only an existing principleId.
 A source must be a frozen user_decision Case, validated closed answered Case, or active correction Feedback from the same Agent and workspace. Comments and negative ratings may only be inputFeedbackIds; never infer an inverse principle from a negative rating. Every source must cover the complete principle scope. Return no operations when no supported change exists.`
 
-/** @param {any} projection */
-export function buildConsolidationPack(projection) {
+/** @param {any} projection @param {string} [system] */
+export function buildConsolidationPack(projection, system = CONSOLIDATION_SYSTEM) {
   return {
-    system: CONSOLIDATION_SYSTEM,
+    system,
     messages: [{ role: 'user', content: canonicalJson(projection) }],
   }
 }
@@ -72,9 +73,9 @@ export function projectLearningRecords(input) {
 
 /**
  * Strictly parse raw model JSON and allocate final ids exactly once.
- * @param {string} text @param {any[]} parentPrinciples
+ * @param {string} text @param {any[]} parentPrinciples @param {'workspace'|'public'} [zone]
  */
-export function parseConsolidationCandidate(text, parentPrinciples) {
+export function parseConsolidationCandidate(text, parentPrinciples, zone = PRIVATE_ZONE) {
   if (typeof text !== 'string' || text.length > MAX_CANDIDATE_CHARS) throw new DecisionContractError('CANDIDATE_TOO_LARGE', 'Consolidation candidate exceeds the output limit')
   let candidate
   try { candidate = JSON.parse(text) } catch { throw new DecisionContractError('INVALID_CANDIDATE_JSON', 'Consolidation candidate must be strict JSON') }
@@ -84,12 +85,12 @@ export function parseConsolidationCandidate(text, parentPrinciples) {
   if (object.operations.length > LEARNING_LIMITS.operations) throw new DecisionContractError('TOO_MANY_OPERATIONS', 'At most 64 operations are allowed')
   const parentById = new Map(parentPrinciples.map(principle => [principle.principleId, principle]))
   const allocated = new Set()
-  const operations = object.operations.map(value => normalizeOperation(value, parentById, allocated))
+  const operations = object.operations.map(value => normalizeOperation(value, parentById, allocated, zone))
   return deepFreeze(operations)
 }
 
-/** @param {unknown} value @param {Map<string,any>} parentById @param {Set<string>} allocated */
-function normalizeOperation(value, parentById, allocated) {
+/** @param {unknown} value @param {Map<string,any>} parentById @param {Set<string>} allocated @param {'workspace'|'public'} zone */
+function normalizeOperation(value, parentById, allocated, zone) {
   const base = assertClosedObject(value, ['op', 'principleId', 'targetPrincipleIds', 'text', 'scope', 'sources', 'inputFeedbackIds'], ['op'], 'ConsolidationOperation')
   if (!['add', 'refine', 'merge', 'narrow', 'retire'].includes(base.op)) throw new DecisionContractError('UNKNOWN_OPERATION', String(base.op))
   const allowed = {
@@ -121,17 +122,17 @@ function normalizeOperation(value, parentById, allocated) {
     result.text = operation.text
   }
   if (operation.op === 'add' || operation.op === 'merge') {
-    result.scope = validateLearningScope(operation.scope, `${operation.op}.scope`)
+    result.scope = validateLearningScope(operation.scope, `${operation.op}.scope`, zone)
   }
   if (operation.op === 'refine') {
     const parent = parentById.get(operation.principleId)
     if (!parent) throw new DecisionContractError('UNKNOWN_TARGET', operation.principleId)
-    result.scope = operation.scope === undefined ? parent.scope : validateLearningScope(operation.scope, 'refine.scope')
+    result.scope = operation.scope === undefined ? parent.scope : validateLearningScope(operation.scope, 'refine.scope', zone)
   }
   if (operation.op === 'narrow') {
     const parent = parentById.get(operation.principleId)
     if (!parent) throw new DecisionContractError('UNKNOWN_TARGET', operation.principleId)
-    result.scope = validateLearningScope(operation.scope, 'narrow.scope')
+    result.scope = validateLearningScope(operation.scope, 'narrow.scope', zone)
   }
   if (operation.op === 'retire' && !parentById.has(operation.principleId)) throw new DecisionContractError('UNKNOWN_TARGET', operation.principleId)
 
@@ -231,7 +232,7 @@ function applyOperations(parentPrinciples, operations, authority) {
       if (operation.targetPrincipleIds.includes(operation.principleId)) throw new DecisionContractError('CYCLIC_TARGET', operation.principleId)
       const targets = operation.targetPrincipleIds.map(id => targetPrinciple(parentPrinciples, id, usedTargets))
       for (const target of targets) {
-        if (!scopeCovers(target.scope, operation.scope, workspaceKey)) throw new DecisionContractError('SCOPE_EXPANSION', operation.principleId)
+        if (!scopeInside(target.scope, operation.scope, authority, workspaceKey)) throw new DecisionContractError('SCOPE_EXPANSION', operation.principleId)
       }
       for (const target of targets) {
         principles.find(principle => principle.principleId === target.principleId).state = 'retired'
@@ -245,7 +246,7 @@ function applyOperations(parentPrinciples, operations, authority) {
       current.state = 'retired'
       continue
     }
-    if (!scopeCovers(target.scope, operation.scope, workspaceKey)) throw new DecisionContractError('SCOPE_EXPANSION', operation.principleId)
+    if (!scopeInside(target.scope, operation.scope, authority, workspaceKey)) throw new DecisionContractError('SCOPE_EXPANSION', operation.principleId)
     if (operation.op === 'refine') {
       current.text = operation.text
       current.scope = clone(operation.scope)
@@ -278,7 +279,7 @@ function validateFinalPrinciples(principles, authority) {
     if (!Array.isArray(principle.sources) || principle.sources.length === 0) throw new DecisionContractError('MISSING_AUTHORITY_SOURCE', principle.principleId)
     const sources = principle.sources.map(id => authoritativeSource(id, authority))
     for (const source of sources) {
-      if (!scopeCovers(source.scope, principle.scope, authority.workspaceKey)) throw new DecisionContractError('SOURCE_SCOPE_MISMATCH', principle.principleId)
+      if (!sourceScopeCovers(source, principle.scope, authority)) throw new DecisionContractError('SOURCE_SCOPE_MISMATCH', principle.principleId)
     }
     for (let left = 0; left < sources.length; left++) for (let right = left + 1; right < sources.length; right++) {
       if (conflictingCases(sources[left].caseRecord, sources[right].caseRecord)) throw new DecisionContractError('AUTHORITY_CONFLICT', principle.principleId)
@@ -293,12 +294,41 @@ function authoritativeSource(id, authority) {
     const userDecision = caseRecord.closing === 'escalated' && caseRecord.decision?.kind === 'user_decision'
     const validatedAnswer = caseRecord.closing === 'answered' && caseRecord.feedbackState === 'validated' && caseRecord.decision?.kind === 'answer'
     if ((!userDecision && !validatedAnswer) || caseRecord.feedbackState === 'disputed') throw new DecisionContractError('INVALID_AUTHORITY_SOURCE', id)
-    return { scope: caseRecord.scope, caseRecord }
+    const workspaceKey = caseRecord.workspaceKey ?? authority.workspaceKey
+    if (typeof workspaceKey !== 'string' || !workspaceKey) throw new DecisionContractError('INVALID_AUTHORITY_SOURCE', id)
+    return { scope: caseRecord.scope, caseRecord, workspaceKey }
   }
   const feedback = authority.feedbackById[id]
   const correction = authority.corrections[id]
-  if (feedback?.kind === 'correction' && correction?.active === true) return { scope: correction.scope, feedback }
+  if (feedback?.kind === 'correction' && correction?.active === true) {
+    const workspaceKey = authority.sourceWorkspaces?.[id] ?? authority.workspaceKey
+    if (typeof workspaceKey !== 'string' || !workspaceKey) throw new DecisionContractError('INVALID_AUTHORITY_SOURCE', id)
+    return { scope: correction.scope, feedback, workspaceKey }
+  }
   throw new DecisionContractError('INVALID_AUTHORITY_SOURCE', id)
+}
+
+/** @param {any} authority */
+function zoneOf(authority) {
+  return authority?.zone === PUBLIC_ZONE ? PUBLIC_ZONE : PRIVATE_ZONE
+}
+
+/**
+ * A derived principle may never widen the scope it was derived from. Public
+ * scopes are workspace-agnostic and compared on hints only.
+ * @param {any} targetScope @param {any} nextScope @param {any} authority @param {string} workspaceKey
+ */
+function scopeInside(targetScope, nextScope, authority, workspaceKey) {
+  if (zoneOf(authority) === PUBLIC_ZONE) return scopeHintsCover(targetScope, nextScope)
+  return scopeCovers(targetScope, nextScope, workspaceKey)
+}
+
+/** A source must cover the principle inside the workspace that produced it. */
+function sourceScopeCovers(source, principleScope, authority) {
+  if (zoneOf(authority) === PUBLIC_ZONE) {
+    return scopeCovers(source.scope, publicPrincipleScopeForWorkspace(principleScope, source.workspaceKey), source.workspaceKey)
+  }
+  return scopeCovers(source.scope, principleScope, authority.workspaceKey)
 }
 
 /** @param {any} left @param {any} right */
