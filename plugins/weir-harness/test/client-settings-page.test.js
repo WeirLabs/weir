@@ -253,8 +253,8 @@ describe('client.settings-page chunk', () => {
     expect(groupIds).toEqual(MAIN_GROUPS)
     // every card: layered background, l1 border, radius, title inside the top
     for (const [id, card] of Object.entries(cards)) {
-      expect(card.style.background).toBe('var(--dsw-alias-bg-layer-1)')
-      expect(card.style.border).toBe('0.5px solid var(--dsw-alias-border-l1)')
+      expect(card.style.background).toBe('var(--dsw-alias-settings-card-fill)')
+      expect(card.style.border).toBe('0.5px solid var(--dsw-alias-settings-card-stroke)')
       expect(card.style.borderRadius).toBe('var(--dsw-radius-xl)')
       expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }

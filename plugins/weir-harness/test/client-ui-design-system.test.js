@@ -33,6 +33,7 @@ const ALLOWED_TOKENS = new Set([
   '--dsw-alias-link',
   '--dsw-alias-separator-primary',
   '--dsw-alias-settings-card-fill',
+  '--dsw-alias-settings-card-stroke',
   '--dsw-alias-state-business-primary',
   '--dsw-alias-state-error-primary',
   '--dsw-alias-state-success-primary',

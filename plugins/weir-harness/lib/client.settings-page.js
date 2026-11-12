@@ -616,7 +616,9 @@ window.__ModuleLoader__.load({
 		// Card-based group sections (design D7): layered background, l1 border,
 		// radius, the group title inside the card top, hairline l2 separators
 		// between rows. Colors only from theme tokens; geometry hardcoded.
-		const cardStyle = { background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l1)", borderRadius: "var(--dsw-radius-xl)", padding: "6px 16px 12px" };
+		// Settings cards share the official material: R20, hairline stroke and the
+		// card fill token, so they read as the same surface as every other card.
+		const cardStyle = { background: "var(--dsw-alias-settings-card-fill)", border: "0.5px solid var(--dsw-alias-settings-card-stroke)", borderRadius: "var(--dsw-radius-xl)", padding: "6px 16px 12px" };
 		const cardTitleStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px", padding: "8px 0 2px", color: "var(--dsw-alias-label-primary)" };
 		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "12px" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
