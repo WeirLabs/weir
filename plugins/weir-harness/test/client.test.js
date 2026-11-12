@@ -2501,6 +2501,25 @@ describe('weir settings client half', () => {
     'decisionPublicCurrentPrinciples', 'decisionPublicCurrentText', 'decisionPublicFrozenInput',
     'decisionPublicOpAdd', 'decisionPublicOpMerge', 'decisionPublicOpNarrow', 'decisionPublicOpRefine', 'decisionPublicOpRetire',
     'decisionPublicProposedText', 'decisionPublicScope',
+    'decisionExport',
+    'decisionExportAdvanced',
+    'decisionExportBytes',
+    'decisionExportChecksum',
+    'decisionExportConfirm',
+    'decisionExportConfirmation',
+    'decisionExportCopied',
+    'decisionExportCopyPath',
+    'decisionExportFailed',
+    'decisionExportFile',
+    'decisionExportHint',
+    'decisionExportInvalidResult',
+    'decisionExportRetry',
+    'decisionExportSucceeded',
+    'decisionExportTitle',
+    'decisionExportTooLarge',
+    'decisionExportUnavailable',
+    'decisionExportWriteFailed',
+    'decisionExporting'
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

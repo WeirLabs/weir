@@ -295,6 +295,41 @@ window.__ModuleLoader__.load({
         ] }) }, "advanced"),
       ] });
     }
+    /**
+     * The explicit data export lives in the records advanced area: one button, a
+     * disclosure explaining the scope and the destination, and nothing that
+     * changes a list, a filter or a detail.
+     */
+    function RecordsAdvancedActions(props) {
+      const { view, ui, t } = props;
+      return jsx.jsx(ui.Disclosure, { id: "weir-da-records-advanced", label: t("decisionExportAdvanced"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-export", "data-record-export": true, children: [
+        jsx.jsx("p", { className: "weir-da-caption", children: t("decisionExportHint") }, "hint"),
+        jsx.jsx(ui.Button, { ref: props.buttonRef, "data-action": "export", disabled: view.busy, "aria-busy": view.busy, onClick: () => { if (!view.busy) return props.onRequest(); }, children: t(view.busy ? "decisionExporting" : "decisionExport") }, "start"),
+      ] }) }, "advanced");
+    }
+
+    /**
+     * A real result or an actionable failure — never a fabricated success. The
+     * success surface shows the real path, size and checksum plus a copy action.
+     */
+    function ExportResult(props) {
+      const { view, ui, t } = props;
+      if (view.errorKey) {
+        return jsx.jsx("section", { className: "weir-da-export-result", "data-export-result": "error", role: "alert", children: jsx.jsxs("div", { className: "weir-da-actions", children: [
+          jsx.jsx("span", { "data-export-error": view.errorKey, children: t(view.errorKey) }, "message"),
+          jsx.jsx(ui.Button, { "data-action": "export-retry", disabled: view.busy, onClick: () => { if (!view.busy) return props.onRetry(); }, children: t("decisionExportRetry") }, "retry"),
+        ] }) });
+      }
+      if (!view.result) return null;
+      return jsx.jsxs("section", { className: "weir-da-export-result", "data-export-result": "success", role: "status", children: [
+        jsx.jsx("h3", { children: t("decisionExportSucceeded") }, "title"),
+        jsx.jsx("p", { "data-export-file": true, children: `${t("decisionExportFile")}: ${view.result.file}` }, "file"),
+        jsx.jsx("p", { "data-export-bytes": true, children: `${t("decisionExportBytes")}: ${view.result.bytesText}` }, "bytes"),
+        jsx.jsx("p", { "data-export-sha256": true, children: `${t("decisionExportChecksum")}: ${view.result.sha256}` }, "checksum"),
+        jsx.jsx(ui.Button, { ref: props.copyRef, "data-action": "export-copy", onClick: () => props.onCopy(), children: t(view.copied ? "decisionExportCopied" : "decisionExportCopyPath") }, "copy"),
+      ] });
+    }
+
     function agentStateKey(state) {
       return state === "enabled" ? "decisionAgentStateEnabled" : state === "disabled" ? "decisionAgentStateDisabled" : state === "archived" ? "decisionAgentStateArchived" : "decisionStatusUnknown";
     }
@@ -668,6 +703,8 @@ window.__ModuleLoader__.load({
       const [learningLoading, setLearningLoading] = react.useState(false);
       const [drafts, setDrafts] = react.useState({});
       const [confirm, setConfirm] = react.useState(null);
+      const [exportState, setExportState] = react.useState({ phase: "idle", value: null, error: null, copied: false });
+      const exportPendingRef = react.useRef(false);
       const [editor, setEditor] = react.useState(null);
       const [selectedAgentId, setSelectedAgentId] = react.useState(null);
       const [agentFocusRequest, setAgentFocusRequest] = react.useState(null);
@@ -682,6 +719,8 @@ window.__ModuleLoader__.load({
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
       const primaryNavRef = react.useRef(null);
+      const exportButtonRef = react.useRef(null);
+      const exportCopyRef = react.useRef(null);
       const agentCreateRef = react.useRef(null);
       const agentSummaryRef = react.useRef(null);
       const agentBackRef = react.useRef(null);
@@ -1079,6 +1118,41 @@ window.__ModuleLoader__.load({
         } catch (reason) { setActionError(asError(reason, "INVALID_ADVANCED_SETTINGS")); return; }
         return run("profileUpsert", payload);
       };
+      /**
+       * One export gesture: the Host derives the scope, the file is written by
+       * the old session's authority, and the page only records the real result.
+       * A thrown or incomplete result becomes an actionable failure state.
+       */
+      const startExport = async () => {
+        if (exportPendingRef.current) return;
+        exportPendingRef.current = true;
+        setExportState({ phase: "pending", value: null, error: null, copied: false });
+        const requestSession = sessionId;
+        const epoch = epochRef.current;
+        try {
+          const value = await actions.exportData();
+          if (epochRef.current !== epoch || sessionId !== requestSession) return;
+          const checked = model.exportResult(value);
+          setExportState(checked.valid
+            ? { phase: "success", value: checked.result, error: null, copied: false }
+            : { phase: "error", value: null, error: { code: "EXPORT_INVALID_RESULT" }, copied: false });
+        } catch (reason) {
+          if (epochRef.current !== epoch || sessionId !== requestSession) return;
+          setExportState({ phase: "error", value: null, error: asError(reason, "EXPORT_FAILED"), copied: false });
+        } finally {
+          exportPendingRef.current = false;
+        }
+      };
+      const copyExportPath = async () => {
+        const file = exportState.value?.file;
+        if (typeof file !== "string" || !file) return;
+        try {
+          await globalThis.navigator?.clipboard?.writeText?.(file);
+          setExportState(current => ({ ...current, copied: true }));
+        } catch {
+          // The path stays on screen; copying is a convenience, not the result.
+        }
+      };
       const filterField = (key, value) => setFilter(current => ({ ...current, [key]: value || undefined }));
       const applyFilters = () => { setSelectedCaseId(null); setDrillIn(false); setAppliedFilter(filter); loadRecords(filter); };
       const navigate = (next, force = false) => {
@@ -1106,6 +1180,7 @@ window.__ModuleLoader__.load({
         setPending(null); setActionError(null); setResources(emptyResources());
         setSelectedCaseId(null); setDrillIn(false); setFilter({}); setAppliedFilter({}); setLearningDetail(null); setLearningError(null); setLearningLoading(false); setConfirm(null); setSelectedAgentId(null);
         setPublicMemory(emptyPublicMemory()); publicLoadRef.current = null; publicCandidateRef.current += 1; publicActionRef.current = false;
+        setExportState({ phase: "idle", value: null, error: null, copied: false }); exportPendingRef.current = false;
         setAgentDrillIn(agentDestination === "create" && !openCaseId);
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setAgentFocusRequest(agentDestination === "create" && !openCaseId ? { target: "editor" } : null);
@@ -1158,8 +1233,11 @@ window.__ModuleLoader__.load({
             summary?.time ? jsx.jsx("time", { children: readableTime(summary.time) }, "time") : null,
           ] }, record.caseId);
         }) : jsx.jsx(ui.EmptyState, { children: t(model.recordEmptyState({ sessionId, filtered: Object.values(appliedFilter).some(Boolean) })) });
+      const exportView = model.exportView(exportState);
       const recordsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-records-view", children: [
         RecordFilters({ filter, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters }),
+        RecordsAdvancedActions({ view: exportView, ui, t, buttonRef: exportButtonRef, onRequest: () => setConfirm({ kind: "export" }) }),
+        ExportResult({ view: exportView, ui, t, copyRef: exportCopyRef, onRetry: startExport, onCopy: copyExportPath }),
         jsx.jsxs("div", { className: "weir-da-records-layout", "data-drill-in": drillIn, children: [
           jsx.jsxs("div", { className: "weir-da-record-list", "aria-label": t("decisionRecords"), children: [
             listBody,
@@ -1239,6 +1317,11 @@ window.__ModuleLoader__.load({
         confirmLabel: t(confirm.state === "archived" ? "decisionArchiveAgent" : confirm.state === "disabled" ? "decisionDisableAgent" : "decisionEnableAgent"),
         cancelLabel: t("decisionCancel"), danger: confirm.state === "archived", pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const { agentId, state } = confirm; setConfirm(null); return run("profileSetState", agentId, state); },
+      }) : confirm?.kind === "export" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
+        id: "weir-da-export", returnFocus: exportButtonRef,
+        title: t("decisionExportTitle"), body: jsx.jsx("p", { children: t("decisionExportConfirmation") }),
+        confirmLabel: t("decisionExportConfirm"), cancelLabel: t("decisionCancel"), pending: pending !== null || exportView.busy,
+        onCancel: () => setConfirm(null), onConfirm: () => { setConfirm(null); return startExport(); },
       }) : ["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(confirm?.kind) ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: `weir-da-learning-${confirm.public ? "public-" : ""}${confirm.kind === "snapshotPublish" ? "publish" : confirm.kind === "snapshotReject" ? "reject" : "rollback"}`,
         title: t(confirm.kind === "snapshotPublish"
