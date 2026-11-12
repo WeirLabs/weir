@@ -3,6 +3,7 @@
 // Only exact owned main/Host PIDs are signalled; the current App is never addressed.
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { basename, join, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
@@ -10,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -602,14 +603,22 @@ async function agentState(sessionId, agentId, state) {
   await keyboardActivate(`Confirm assistant ${state}`, `#weir-da-agent-state .weir-da-actions button${state === 'enabled' ? '[data-variant="primary"]' : ':last-child'}`)
   await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
   const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await startScrollTimeline(`assistant-${state}-${agentId}`)
   await releaseDecision(controlId)
   const agent = await waitFor(async () => { const value = await rpc(sessionId, 'agent-state', 'agent', { agentId }); return value.state === state ? value : null }, 30_000)
-  await expectMutation('profileSetState', { sessionId, agentId, state })
+  const mutation = await expectMutation('profileSetState', { sessionId, agentId, state })
   const afterFocus = await waitFor(async () => { const focus = await measureConfirmationFocus(originSelector, controlId); return focus.control.settled && (focus.targetFocused || focus.fallbackFocused) ? focus : null }, 30_000).catch(() => measureConfirmationFocus(originSelector, controlId))
   const focus = { beforeSettle: { ...beforeFocus, promiseSettled: beforeFocus.control.settled }, afterSettle: { ...afterFocus, promiseSettled: afterFocus.control.settled } }
   const focusProblems = confirmationFocusProblems(focus)
+  // Turning an assistant on or off really does shrink the page, so the clamp
+  // path needs the same settled authoritative mutation receipt as a publish.
+  const contentMutation = {
+    method: 'profileSetState', args: { sessionId, agentId, state }, rpcId: mutation.rpcId, response: mutation.response,
+    settled: afterFocus.control.settled,
+    authoritative: { confirmed: agent.agentId === agentId && agent.state === state, agentId, state: agent.state },
+  }
   uiuxEvidence.confirmations.push({ kind: `assistant-${state}`, agentId, controlId, focus, problems: focusProblems })
-  await finishModalAudit(audit, { focus, focusProblems })
+  await finishModalAudit(audit, { focus, focusProblems, contentMutation })
   return agent
 }
 
@@ -834,7 +843,11 @@ function sqliteSnapshot(phase) {
   try {
     const tables = ['agent_profiles', 'agent_profile_revisions', 'cases', 'attempts', 'evidence', 'attempt_evidence', 'feedback', 'corrections', 'learning_runs', 'memory_snapshots', 'selectors', 'route_decisions']
     const raw = { phase, path: databasePath, schemaVersion: db.prepare('PRAGMA user_version').get().user_version, integrity: db.prepare('PRAGMA integrity_check').get().integrity_check, rows: Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])) }
-    requireEvidence(raw.schemaVersion === 1 && raw.integrity === 'ok', `${phase} SQLite v1 integrity`)
+    // The store is schema v2 (zone/namespace columns); every row envelope it
+    // writes stays schema_version 1, so both facts are required together.
+    const envelopeVersions = [...new Set(ENVELOPE_TABLES.flatMap(table => (raw.rows[table] ?? []).map(row => row.schema_version)))]
+    raw.envelopeVersions = envelopeVersions
+    requireEvidence(raw.schemaVersion === 2 && raw.integrity === 'ok' && envelopeVersions.every(version => version === 1), `${phase} SQLite v2 store with v1 row envelopes`)
     sqlitePhases.push(raw)
     writeJson(join(out, `sqlite-${phase}.json`), raw)
     return raw
@@ -891,6 +904,7 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   await keyboardActivate(`Confirm ${kind}`, `#${dialog} .weir-da-actions button:last-child`)
   await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
   const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await startScrollTimeline(kind)
   await releaseDecision(controlId)
   const agent = await waitAgent(sessionId, candidate.agent.agentId, value => {
     if (kind === 'snapshotPublish') return value.currentSnapshotId === snapshotId
@@ -1307,6 +1321,11 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   check('explicitOffPersistsRowDespiteAutoDefault', explicitOff.rows.selectors.some(row => row.root_session_id === explicitOffSession && row.mode === 'off' && row.agent_id === null), explicitOff.rows.selectors)
   await openIsolatedSession(foreignSession)
   const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE · never route', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY must never enter the main Router pack.')
+  // Assistant identity is profile-global now, so a foreign-workspace assistant is
+  // an eligible Auto candidate instead of being filtered out by workspace. The P4
+  // fixtures below count eligible candidates, so this one is switched off through
+  // the rendered confirmation and stays an identity + private-record fixture.
+  await agentState(foreignSession, foreign.agentId, 'disabled')
   await openIsolatedSession(autoSession)
 
   await submitMarker(instance, 'GUI_AUTO_EMPTY')
@@ -1624,10 +1643,121 @@ function auditP4RawEvidence(state, primary, secondary) {
 
 
 // ---------------------------------------------------------------------------
-// Task 6.7: one isolated profile, two real workspaces, the same shared assistant.
-// Everything below runs on the already-running isolated instance: DOM facts and
-// raw RPC come from the real Electron window, never from a component tree.
+// Tasks 6.7 / 7.3: cross-workspace memory on the real Desktop surface.
+//
+// Order is enforced by the caller and matters:
+//   1. every pre-migration assertion runs on the original isolated store;
+//   2. `runMigratedLegacyProfileSurface` replaces that store with a genuine v1
+//      database migrated by production code, boots it, restarts it, and reads
+//      the legacy identity, the private Snapshot ownership and the empty public
+//      zone from the rendered page and raw RPC;
+//   3. `runCrossWorkspaceMemoryMatrix` creates W1/W2/W3 on the same live
+//      profile and proves shared identity, the public zone and private
+//      isolation.
+// Nothing below reads a component tree or a fabricated projection: DOM facts
+// come from the real Electron window and reads come from the real RPC.
 // ---------------------------------------------------------------------------
+
+const FAIL_CLOSED_CODES = new Set(['OUT_OF_SCOPE', 'FORBIDDEN', 'PERMISSION_DENIED'])
+const DENIAL_AUDIT_TYPES = Object.freeze({ learningRun: 'weir/decision/learning-run', memorySnapshot: 'weir/decision/snapshot' })
+// The Decision audit projection may only carry ids, enums, counts and digests.
+const DENIAL_AUDIT_FIELDS = new Set([
+  'caseId', 'attemptId', 'feedbackId', 'agentId', 'routeDecisionId', 'rootSessionId', 'originSessionId', 'learningRunId', 'snapshotId',
+  'kind', 'action', 'state', 'closing', 'outcome', 'awaitingReason', 'failureKind', 'reason', 'code', 'from', 'target', 'mode', 'entry', 'rejected',
+  'revision', 'version', 'attemptCount', 'answerCount', 'interruptedAttempts', 'interruptedLearningRuns', 'recoveredCases', 'durationMs', 'at', 'operationCount', 'sourceCount', 'activePrincipleCount', 'retiredPrincipleCount',
+  'available', 'enabled', 'needsReview', 'ok', 'explicit',
+  'contentHash', 'inputHash', 'feedbackDigest', 'finalHash',
+])
+const LEGACY_HISTORY_TABLES = ['agent_profiles', 'agent_profile_revisions', 'cases', 'attempts', 'evidence', 'feedback', 'route_decisions', 'learning_runs', 'memory_snapshots']
+// Tables that carry the schema-versioned row envelope.
+const ENVELOPE_TABLES = ['agent_profiles', 'cases', 'attempts', 'evidence', 'feedback', 'route_decisions', 'learning_runs', 'memory_snapshots']
+
+function legacyDatabasePath() {
+  return join(root, 'home', 'weir', 'profiles', 'desktop', 'decisions', 'decision.db')
+}
+
+function readAuditLines(cwd) {
+  const file = join(cwd, '.weir', 'audit.jsonl')
+  if (!existsSync(file)) return []
+  return String(readFileSync(file, 'utf8')).split('\n').filter(Boolean).flatMap(line => {
+    try { return [JSON.parse(line)] } catch { return [] }
+  })
+}
+
+/** Row digests of the migrated history: a live boot must not rewrite or add rows. */
+function legacyHistoryDigest() {
+  const handle = new DatabaseSync(legacyDatabasePath(), { readOnly: true })
+  try {
+    const row = sql => handle.prepare(sql).get() ?? null
+    const tables = Object.fromEntries(LEGACY_HISTORY_TABLES.map(table => {
+      const rows = handle.prepare(`SELECT * FROM ${table}`).all()
+      const canonical = rows.map(value => JSON.stringify(Object.keys(value).sort().map(key => [key, value[key]]))).sort()
+      return [table, { rows: rows.length, digest: createHash('sha256').update(canonical.join('\n')).digest('hex') }]
+    }))
+    const pins = row('SELECT pins_json FROM attempts ORDER BY created_at,rowid LIMIT 1')?.pins_json ?? null
+    return {
+      version: row('PRAGMA user_version')?.user_version ?? null,
+      integrityCheck: row('PRAGMA integrity_check')?.integrity_check ?? null,
+      tables,
+      snapshot: row("SELECT snapshot_id,agent_id,zone,namespace_workspace_key,state,version,revision FROM memory_snapshots WHERE zone='workspace' ORDER BY created_at,rowid LIMIT 1"),
+      run: row("SELECT learning_run_id,agent_id,zone,namespace_workspace_key,outcome,revision FROM learning_runs WHERE zone='workspace' ORDER BY created_at,rowid LIMIT 1"),
+      attemptPin: pins ? JSON.parse(pins) : null,
+      publicRows: {
+        snapshots: row("SELECT COUNT(*) AS n FROM memory_snapshots WHERE zone='public'")?.n ?? -1,
+        runs: row("SELECT COUNT(*) AS n FROM learning_runs WHERE zone='public'")?.n ?? -1,
+      },
+    }
+  } finally { handle.close() }
+}
+
+/** The audit receipt of one denied cross-namespace read, if the product wrote it. */
+function denialAuditReceipt(cwd, method, target) {
+  const type = DENIAL_AUDIT_TYPES[method]
+  if (!type) return null
+  const line = readAuditLines(cwd)
+    .filter(item => item?.type === type && item?.data?.action === 'boundary-reject')
+    .findLast(item => target == null || item.data.learningRunId === target || item.data.snapshotId === target)
+  if (!line) return { recorded: false, type, action: null, code: null, learningRunId: null, snapshotId: null, agentId: null, idsOnly: false }
+  const data = line.data ?? {}
+  return {
+    recorded: true, type, action: data.action ?? null, code: data.code ?? null,
+    learningRunId: data.learningRunId ?? null, snapshotId: data.snapshotId ?? null, agentId: data.agentId ?? null,
+    idsOnly: Object.keys(data).every(key => DENIAL_AUDIT_FIELDS.has(key)),
+  }
+}
+
+/** One raw RPC transport, kept unjudged so the probe can record its real shape. */
+async function rawDecision(method, args) {
+  const transport = await instance.cdp.evaluate(`window.__decisionQA.decision(${JSON.stringify(method)}, ${JSON.stringify(args)})`)
+  const envelope = transport?.value
+  const ok = transport?.ok === true && envelope?.ok === true
+  const error = ok ? null : (envelope?.error ?? transport?.error ?? null)
+  return { ok, value: ok ? (envelope.value ?? null) : null, errorCode: typeof error?.code === 'string' ? error.code : null, serialized: JSON.stringify(transport ?? null) }
+}
+
+/**
+ * Every foreign private read must fail closed. `record` answers with an empty
+ * body; `learningRun`/`memorySnapshot` deny with an explicit code and one audit
+ * record that carries ids and state only.
+ */
+async function crossWorkspaceDenial(sessionId, reads, auditCwd) {
+  const denials = []
+  for (const read of reads) {
+    const raw = await rawDecision(read.method, { sessionId, ...(read.args ?? {}) })
+    const target = read.args?.learningRunId ?? read.args?.snapshotId ?? read.args?.caseId ?? null
+    denials.push({
+      method: read.method,
+      target,
+      shape: !raw.ok ? 'error' : raw.value === null ? 'null' : 'value',
+      code: raw.errorCode,
+      returnedNull: raw.ok && raw.value === null,
+      valueKeys: raw.ok && raw.value && typeof raw.value === 'object' ? Object.keys(raw.value) : [],
+      bodyLeaked: /"(?:excerpt|question|operations|principles|answers|decision|attempts|feedback)"/.test(raw.serialized),
+      audit: denialAuditReceipt(auditCwd, read.method, target),
+    })
+  }
+  return denials
+}
 
 async function crossWorkspaceMemoryDom(agentId) {
   return instance.cdp.evaluate(`(() => {
@@ -1666,41 +1796,137 @@ async function crossWorkspaceMemoryDom(agentId) {
   })()`)
 }
 
-async function crossWorkspaceDenial(sessionId, caseId, learningRunId) {
-  const record = await instance.cdp.evaluate(`window.__decisionQA.decision('record', ${JSON.stringify({ sessionId, caseId })})`)
-  const run = learningRunId
-    ? await instance.cdp.evaluate(`window.__decisionQA.decision('learningRun', ${JSON.stringify({ sessionId, learningRunId })})`)
-    : null
-  const code = value => value?.value?.error?.code ?? value?.error?.code ?? (value?.value?.value === null || value?.value?.value === null ? 'CASE_NOT_FOUND' : 'UNKNOWN')
-  return [
-    { method: 'record', sessionId, code: code(record), bodyLeaked: JSON.stringify(record).includes('"excerpt"') || JSON.stringify(record).includes('"question"') },
-    ...(run ? [{ method: 'learningRun', sessionId, code: code(run), bodyLeaked: JSON.stringify(run).includes('"operations"') || JSON.stringify(run).includes('"principles"') }] : []),
-  ]
+/** What the migration report says the live profile must still own. */
+function legacyExpectations(report) {
+  const profiles = report?.profilesAfterMigration ?? []
+  const snapshots = report?.privateMemory?.snapshots ?? []
+  return {
+    agentIds: profiles.map(profile => profile.agentId),
+    names: Object.fromEntries(profiles.map(profile => [profile.agentId, profile.name])),
+    privateWorkspaceKey: snapshots[0]?.namespaceWorkspaceKey ?? null,
+    privateSnapshotId: snapshots[0]?.snapshotId ?? null,
+    privateLearningRunId: report?.privateMemory?.run?.learningRunId ?? null,
+    attemptPinSnapshotId: report?.attemptPins?.memorySnapshotId ?? null,
+  }
 }
 
-async function runCrossWorkspaceMemoryMatrix(state) {
+function legacySurfaceView(capture, digest) {
+  return {
+    ...capture,
+    snapshot: digest.snapshot,
+    attemptPin: digest.attemptPin,
+    integrityCheck: digest.integrityCheck,
+    public: { ...capture.public, publishedSnapshots: digest.publicRows.snapshots, learningRuns: digest.publicRows.runs },
+  }
+}
+
+/** One rendered read of the migrated legacy profile from a real current workspace. */
+async function legacySurfaceCapture(label, expected) {
+  const cwd = join(root, 'legacy-current-workspace')
+  mkdirSync(cwd, { recursive: true })
+  const session = await newIsolatedSession(`cross-legacy-${label}`, cwd)
+  await openIsolatedSession(session.sessionId)
+  await openPage('agents')
+  const renderedIds = await instance.cdp.evaluate(`[...document.querySelectorAll('main.weir-da-page [data-agent-summary]')].map(el => el.getAttribute('data-agent-summary'))`)
+  const agents = (await rpc(session.sessionId, `legacy-${label}-agents`, 'agents')).map(agent => ({
+    agentId: agent.agentId, name: agent.name, state: agent.state, revision: agent.revision,
+    legacyOriginAlias: agent.legacyOriginAlias ?? null,
+    scope: { paths: [...(agent.scope?.paths ?? [])], tags: [...(agent.scope?.tags ?? [])], authorizationClasses: [...(agent.scope?.authorizationClasses ?? [])] },
+    hasWorkspaces: Object.hasOwn(agent.scope ?? {}, 'workspaces'),
+  }))
+  const ownerAgentId = expected.ownerAgentId ?? agents[0]?.agentId ?? null
+  const agent = await openAgent(session.sessionId, ownerAgentId)
+  const dom = await crossWorkspaceMemoryDom(ownerAgentId)
+  const pageText = await instance.cdp.evaluate(`document.querySelector('main.weir-da-page')?.innerText ?? ''`)
+  const denialCwd = cwd
+  const denials = await crossWorkspaceDenial(session.sessionId, [
+    { method: 'memorySnapshot', args: { snapshotId: expected.privateSnapshotId } },
+    { method: 'learningRun', args: { learningRunId: expected.privateLearningRunId } },
+  ], denialCwd)
+  const capture = {
+    label, sessionId: session.sessionId, workspaceKey: cwd, renderedIds, agents, ownerAgentId,
+    agentRevision: agent.revision ?? null,
+    currentSnapshotId: agent.currentSnapshotId ?? null,
+    public: { currentVersion: dom.current?.version ?? null, candidate: dom.candidate?.present === true },
+    detail: { zones: dom.zones, headings: dom.headings, guidance: dom.guidance, privateIsolation: dom.privateIsolation, navigation: dom.navigation },
+    pageText,
+    denials,
+    audit: readAuditLines(cwd)
+      .filter(line => typeof line?.type === 'string' && line.type.startsWith('weir/decision/'))
+      .map(line => ({ type: line.type, action: line.data?.action ?? null, code: line.data?.code ?? null })),
+  }
+  writeJson(join(out, `cross-workspace-legacy-${label}.json`), capture)
+  return capture
+}
+
+/**
+ * Stage the real v1→v2 migrated database into the live isolated store, boot it,
+ * restart it, and prove identity, private ownership and the empty public zone.
+ * The caller must have stopped the previous owned instance first.
+ */
+async function runMigratedLegacyProfileSurface() {
+  const phase = 'GUI-cross-workspace-legacy'
+  const legacy = stageMigratedLegacyProfile({ root, lane: LANE })
+  const reportProblems = legacy.report
+    ? legacyMigratedProfileProblems({ ...legacy.report, walSidecarsLeft: existsSync(`${legacy.target}-wal`) || existsSync(`${legacy.target}-shm`), currentAppTouched: false })
+    : ['the migration fixture produced no report']
+  const staged = legacyHistoryDigest()
+  const expected = { ...legacyExpectations(legacy.report), ownerAgentId: staged.run?.agent_id ?? null }
+  writeJson(join(out, 'cross-workspace-legacy-profile.json'), { phase, exitCode: legacy.exitCode, reportPath: legacy.reportPath, target: legacy.target, report: legacy.report, problems: reportProblems, expected, staged })
+  check('crossWorkspaceLegacyProfileMigratesConservatively', legacy.exitCode === 0 && reportProblems.length === 0, { exitCode: legacy.exitCode, problems: reportProblems, stderr: legacy.stderr })
+
+  instance = await startDesktop(true)
+  await installUiuxInstrumentation()
+  const boot = await legacySurfaceCapture('boot', expected)
+  await shot('cross-legacy-profile-boot')
+  await stopOwned('cross-legacy-boot')
+  const afterBoot = legacyHistoryDigest()
+
+  instance = await startDesktop(true)
+  await installUiuxInstrumentation()
+  const restart = await legacySurfaceCapture('restart', expected)
+  await shot('cross-legacy-profile-restart')
+  await stopOwned('cross-legacy-restart')
+  const afterRestart = legacyHistoryDigest()
+
+  const bootView = legacySurfaceView(boot, afterBoot)
+  const restartView = legacySurfaceView(restart, afterRestart)
+  const problems = legacyLiveSurfaceProblems({
+    expected,
+    boot: bootView,
+    restart: restartView,
+    history: { before: staged, afterBoot, afterRestart },
+    legacyWorkspacePaths: [expected.privateWorkspaceKey],
+  })
+  writeJson(join(out, 'cross-workspace-legacy-surface.json'), { phase, expected, boot: bootView, restart: restartView, history: { before: staged, afterBoot, afterRestart }, problems })
+  check('crossWorkspaceLegacyProfileBootsAndRestartsOnTheRealSurface', problems.length === 0, problems)
+  return { sessions: { boot: boot.sessionId, restart: restart.sessionId }, expected, problems }
+}
+
+async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   if (!CROSS_WORKSPACE_MEMORY) return null
   const phase = 'GUI-cross-workspace-memory'
   const workspaceOne = join(root, 'cross-w1')
   const workspaceTwo = join(root, 'cross-w2')
-  mkdirSync(workspaceOne, { recursive: true })
-  mkdirSync(workspaceTwo, { recursive: true })
-
-  // A genuine v1 database migrated by production code, staged inside the
-  // isolated evidence root only. The live Desktop profile is untouched.
-  const legacy = stageMigratedLegacyProfile({ root: join(root, 'cross-legacy'), lane: LANE })
-  const legacyProblems = legacy.report ? legacyMigratedProfileProblems({ ...legacy.report, walSidecarsLeft: existsSync(`${legacy.target}-wal`) || existsSync(`${legacy.target}-shm`), currentAppTouched: false }) : ['the migration fixture produced no report']
-  writeJson(join(out, 'cross-workspace-legacy-profile.json'), { exitCode: legacy.exitCode, reportPath: legacy.reportPath, target: legacy.target, report: legacy.report, problems: legacyProblems })
-  check('crossWorkspaceLegacyProfileMigratesConservatively', legacy.exitCode === 0 && legacyProblems.length === 0, { exitCode: legacy.exitCode, problems: legacyProblems, stderr: legacy.stderr })
+  const workspaceThree = join(root, 'cross-w3')
+  for (const path of [workspaceOne, workspaceTwo, workspaceThree]) mkdirSync(path, { recursive: true })
 
   const w1 = await newIsolatedSession('cross-w1', workspaceOne)
   const w2 = await newIsolatedSession('cross-w2', workspaceTwo)
+  const w3 = await newIsolatedSession('cross-w3', workspaceThree)
   await openIsolatedSession(w1.sessionId)
   const shared = await createAgent(w1.sessionId, 'Shared memory assistant', 'Prefer the documented option')
+  // The assistant page owns the main region, so the composer (and its selector
+  // trigger) only comes back after the session is opened again.
+  await openIsolatedSession(w1.sessionId)
   await selectorChoose(w1.sessionId, 'agent', shared.agentId)
+  await openIsolatedSession(w2.sessionId)
   await selectorChoose(w2.sessionId, 'agent', shared.agentId)
+  await openIsolatedSession(w3.sessionId)
+  await selectorChoose(w3.sessionId, 'auto')
 
-  // One real user decision per workspace: the only eligible public sources.
+  // One real user decision per source workspace: the only eligible public sources.
+  await openIsolatedSession(w1.sessionId)
   await submitMarker(instance, 'CROSS_W1_Q')
   const w1Case = await waitCase(w1.sessionId, 'CROSS_W1_Q', current => current.state === 'awaiting_user')
   await answerInboxWithSuggestions(w1.sessionId, w1Case.caseId, 'cross-w1-source')
@@ -1709,12 +1935,13 @@ async function runCrossWorkspaceMemoryMatrix(state) {
   const w2Case = await waitCase(w2.sessionId, 'CROSS_W2_Q', current => current.state === 'awaiting_user')
   await answerInboxWithSuggestions(w2.sessionId, w2Case.caseId, 'cross-w2-source')
 
-  // W1 opens the public zone: disclosure first, then one automatic candidate.
+  // W1 opens the public zone: disclosure first, then exactly one automatic candidate.
   await openIsolatedSession(w1.sessionId)
   await openAgent(w1.sessionId, shared.agentId)
+  // Evaluate may only return plain data: a DOM node cannot cross the CDP boundary.
   const gated = await waitFor(() => instance.cdp.evaluate(`(() => {
     const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
-    return zone?.querySelector('[data-public-disclosure]')?zone:null
+    return Boolean(zone?.querySelector('[data-public-disclosure]'))
   })()`), 30_000)
   requireEvidence(gated, 'the first public review is disclosure-gated')
   const gatedDom = await crossWorkspaceMemoryDom(shared.agentId)
@@ -1724,7 +1951,7 @@ async function runCrossWorkspaceMemoryMatrix(state) {
   const review = await waitFor(() => instance.cdp.evaluate(`(() => {
     const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
     const candidate=zone?.querySelector('[data-public-candidate]')
-    return candidate&&candidate.querySelector('[data-public-source]')?zone:null
+    return Boolean(candidate&&candidate.querySelector('[data-public-source]'))
   })()`), 60_000)
   requireEvidence(review, 'the acknowledged refresh produced a reviewable candidate')
   await collectNetwork()
@@ -1733,7 +1960,6 @@ async function runCrossWorkspaceMemoryMatrix(state) {
   const refreshRpc = networkRpc.filter(entry => entry.method === 'publicMemoryRefresh')
   const reviewRpc = networkRpc.filter(entry => entry.method === 'publicCandidate')
   check('publicCandidateAutomaticallyExtractedOnceFromTwoWorkspaces',
-    refreshRpc.some(entry => entry.args?.acknowledgedDisclosure === true) &&
     refreshRpc.filter(entry => entry.args?.acknowledgedDisclosure === true).length === 1 &&
     reviewRpc.length >= 1 &&
     candidateDom.candidate.aliases.length >= 1 &&
@@ -1741,63 +1967,94 @@ async function runCrossWorkspaceMemoryMatrix(state) {
     { refresh: refreshRpc.map(entry => entry.args), review: reviewRpc.map(entry => entry.args), aliases: candidateDom.candidate.aliases })
   check('publicCandidateReviewMatchesMemoryZoneGuards', memoryZoneProblems(candidateDom).length === 0, memoryZoneProblems(candidateDom))
 
-  // Explicit adoption, then rollback: both real confirmations.
+  // Explicit adoption, then the same published version in every real workspace.
   await keyboardActivate('Adopt public principles', `[data-agent-detail="${shared.agentId}"] [data-action="public-publish"]`)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-publish"))'), 30_000)
   await keyboardActivate('Confirm public adoption', '#weir-da-learning-public-publish .weir-da-actions button[data-variant="primary"]')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"] [data-public-current]'))`), 30_000)
   const publishedDom = await crossWorkspaceMemoryDom(shared.agentId)
+  await shot('cross-public-published')
   check('publicAdoptionIsExplicitAndPublishesOnce', publishedDom.current != null && publishedDom.current.rollback === true && memoryZoneProblems(publishedDom).length === 0, { current: publishedDom.current, problems: memoryZoneProblems(publishedDom) })
+
+  await openIsolatedSession(w2.sessionId)
+  await openAgent(w2.sessionId, shared.agentId)
+  const w2PublishedDom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
+  await shot('cross-w2-shared-public-memory')
+  await openIsolatedSession(w3.sessionId)
+  await openAgent(w3.sessionId, shared.agentId)
+  const w3PublishedDom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value?.current?.version != null ? value : null }, 30_000)
+  await shot('cross-w3-shared-public-memory')
+  const publicVersions = { w1: Number(publishedDom.current?.version), w2: Number(w2PublishedDom.current?.version), w3: Number(w3PublishedDom.current?.version) }
+  check('publicMemoryVersionIsSharedAcrossWorkspaces', publicVersions.w1 === publicVersions.w2 && publicVersions.w1 === publicVersions.w3 && memoryZoneProblems(w2PublishedDom).length === 0 && memoryZoneProblems(w3PublishedDom).length === 0, { publicVersions, problems: [...memoryZoneProblems(w2PublishedDom), ...memoryZoneProblems(w3PublishedDom)] })
+
+  // Rollback restores the empty public L2 in every workspace and touches no private row.
+  await openIsolatedSession(w1.sessionId)
+  await openAgent(w1.sessionId, shared.agentId)
   await keyboardActivate('Restore previous public version', `[data-agent-detail="${shared.agentId}"] [data-action="public-rollback"]`)
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-learning-public-rollback"))'), 30_000)
   await keyboardActivate('Confirm public rollback', '#weir-da-learning-public-rollback .weir-da-actions button:last-child')
-  const rolledBack = await waitFor(() => instance.cdp.evaluate(`(() => {
-    const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
-    return zone&&!zone.querySelector('[data-public-current]')?zone.innerText:null
-  })()`), 30_000)
-  check('publicRollbackRestoresEmptyPublicZone', typeof rolledBack === 'string', { text: String(rolledBack ?? '').slice(0, 200) })
+  const w1RolledBack = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value && value.current === null ? value : null }, 30_000)
+  await shot('cross-public-rolled-back')
+  await openIsolatedSession(w2.sessionId)
+  await openAgent(w2.sessionId, shared.agentId)
+  const w2Dom = await waitFor(async () => { const value = await crossWorkspaceMemoryDom(shared.agentId); return value && value.current === null ? value : null }, 30_000)
+  check('publicRollbackRestoresEmptyPublicZone', w1RolledBack.current === null && w2Dom.current === null && memoryZoneProblems(w1RolledBack).length === 0 && memoryZoneProblems(w2Dom).length === 0, { w1: w1RolledBack.current, w2: w2Dom.current })
 
   // W3 has no private experience at all: Auto may select the shared assistant,
-  // but it can never answer from public memory alone.
-  const workspaceThree = join(root, 'cross-w3')
-  mkdirSync(workspaceThree, { recursive: true })
-  const w3 = await newIsolatedSession('cross-w3', workspaceThree)
-  await selectorChoose(w3.sessionId, 'auto')
+  // but it can never answer from public memory alone. The P4 restore leaves the
+  // answer-class whitelist empty, so Auto admits nothing until it is opened again.
+  await setAutoSettings(`${phase}-auto`, { shadow: false, answerClasses: ['A'], answerTimeoutMs: 150 })
+  await openIsolatedSession(w3.sessionId)
   await submitMarker(instance, 'CROSS_AUTO_Q')
   const autoCase = await waitCase(w3.sessionId, 'CROSS_AUTO_Q')
   const autoRecord = await record(w3.sessionId, `${phase}-auto`, autoCase.caseId)
   const autoShare = {
-    selectorAccepted: true,
+    selectorAccepted: autoRecord.case.agentId === shared.agentId,
     answered: autoRecord.case.state === 'closed' && autoRecord.case.closing === 'answered',
     attemptCount: autoRecord.attempts.length,
     citedEvidenceCount: autoRecord.attempts.reduce((sum, attempt) => sum + (attempt.citedEvidenceIds?.length ?? 0), 0),
+    attemptOutcomes: autoRecord.attempts.map(attempt => attempt.outcome),
+    lastAttemptOutcome: autoRecord.attempts.at(-1)?.outcome ?? null,
+    citedSources: [...new Set(autoRecord.attempts.flatMap(attempt => (attempt.evidence ?? []).map(ref => ref.source)))],
     awaitingReason: autoRecord.case.awaitingReason ?? null,
+    caseState: autoRecord.case.state,
   }
   await shot('cross-w3-auto-shared-assistant')
+  await openIsolatedSession(w3.sessionId)
+  await openAgent(w3.sessionId, shared.agentId)
+  const w3Dom = await crossWorkspaceMemoryDom(shared.agentId)
 
-  // W2 sees the same identity and public zone, never W1's private record.
-  await openIsolatedSession(w2.sessionId)
-  await openAgent(w2.sessionId, shared.agentId)
-  const w2Dom = await crossWorkspaceMemoryDom(shared.agentId)
-  const denials = await crossWorkspaceDenial(w2.sessionId, w1Case.caseId)
-  const w2Records = await records(w2.sessionId)
+  // Private records never cross workspaces: both directions plus both learning
+  // read paths, each with the fail-closed shape its own product path produces.
+  const denials = [
+    ...(await crossWorkspaceDenial(w2.sessionId, [{ method: 'record', args: { caseId: w1Case.caseId } }], workspaceTwo)),
+    ...(await crossWorkspaceDenial(w1.sessionId, [{ method: 'record', args: { caseId: w2Case.caseId } }], workspaceOne)),
+    ...(await crossWorkspaceDenial(w2.sessionId, [
+      { method: 'learningRun', args: { learningRunId: privateMemory.learningRunId } },
+      { method: 'memorySnapshot', args: { snapshotId: privateMemory.snapshotId } },
+    ], workspaceTwo)),
+  ]
+  const w1Agents = await rpc(w1.sessionId, `${phase}-w1-agents`, 'agents')
+  const w2Agents = await rpc(w2.sessionId, `${phase}-w2-agents`, 'agents')
+  const w3Agents = await rpc(w3.sessionId, `${phase}-w3-agents`, 'agents')
   const w1Records = await records(w1.sessionId)
+  const w2Records = await records(w2.sessionId)
   await shot('cross-w2-shared-identity')
+  const identity = agents => agents.map(agent => `${agent.agentId}:${agent.name}`)
   const sharedProblems = crossWorkspaceShareProblems({
     workspaces: [
-      { label: 'W1', assistantNames: [shared.name], publicVersion: null, privateRecordIds: w1Records.records.map(item => item.caseId), navigation: candidateDom.navigation, text: candidateDom.text },
-      { label: 'W2', assistantNames: [shared.name], publicVersion: null, privateRecordIds: w2Records.records.map(item => item.caseId), navigation: w2Dom.navigation, text: w2Dom.text },
-      { label: 'W3', assistantNames: [shared.name], publicVersion: null, privateRecordIds: [], navigation: w2Dom.navigation, text: w2Dom.text },
+      { label: 'W1', assistantNames: identity(w1Agents), publicVersion: publicVersions.w1, privateRecordIds: w1Records.records.map(item => item.caseId), navigation: w1RolledBack.navigation, text: w1RolledBack.text },
+      { label: 'W2', assistantNames: identity(w2Agents), publicVersion: publicVersions.w2, privateRecordIds: w2Records.records.map(item => item.caseId), navigation: w2Dom.navigation, text: w2Dom.text },
+      { label: 'W3', assistantNames: identity(w3Agents), publicVersion: publicVersions.w3, privateRecordIds: [], navigation: w3Dom.navigation, text: w3Dom.text },
     ],
-    workspacePaths: [workspaceOne, workspaceTwo, root],
+    workspacePaths: [workspaceOne, workspaceTwo, workspaceThree, root],
     denials,
     autoShare,
   })
-  writeJson(join(out, 'cross-workspace-matrix.json'), { workspaces: { w1: w1.sessionId, w2: w2.sessionId }, assistant: shared.agentId, denials, gatedDom, candidateDom, publishedDom, w2Dom, problems: sharedProblems, refreshRpc, reviewRpc })
+  writeJson(join(out, 'cross-workspace-matrix.json'), { phase, sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId }, assistant: shared.agentId, cases: { w1: w1Case.caseId, w2: w2Case.caseId, auto: autoCase.caseId }, publicVersions, denials, gatedDom, candidateDom, publishedDom, w2PublishedDom, w3PublishedDom, rolledBack: { w1: w1RolledBack, w2: w2Dom }, w3Dom, autoShare, refreshRpc, reviewRpc, privateMemory, problems: sharedProblems })
   check('crossWorkspaceSharedIdentityAndPrivateIsolation', sharedProblems.length === 0, sharedProblems)
-  return { w1: w1.sessionId, w2: w2.sessionId, agentId: shared.agentId, denials, problems: sharedProblems }
+  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId }, agentId: shared.agentId, denials, problems: sharedProblems }
 }
-
 function writeReport(verdict, error = null) {
   const exceptionCount = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown').length
   const slotCrashCount = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event))).length
@@ -2066,6 +2323,37 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false, longSt
   return evidence
 }
 
+/**
+ * Sample the Decision page scroller on every frame around a confirmed mutation.
+ * It records the page height, the live `overflow-anchor` value and whether the
+ * stamped audit node survived, so a post-mutation jump can be attributed to the
+ * real cause instead of being guessed.
+ */
+async function startScrollTimeline(kind) {
+  return instance.cdp.evaluate(`(() => {
+    const samples = []
+    const started = performance.now()
+    window.__weirUiuxScrollSamples = samples
+    const tick = () => {
+      const el = document.querySelector('main.weir-da-page')
+      samples.push({
+        t: Math.round(performance.now() - started),
+        top: el ? Math.round(el.scrollTop * 100) / 100 : null,
+        height: el ? el.scrollHeight : null,
+        anchor: el ? getComputedStyle(el).overflowAnchor : null,
+        stamped: Boolean(el && el.getAttribute('data-weir-uiux-audit') === ${JSON.stringify(kind)}),
+      })
+      if (performance.now() - started < 4000) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+    return true
+  })()`)
+}
+
+async function readScrollTimeline() {
+  return instance.cdp.evaluate('window.__weirUiuxScrollSamples ?? []')
+}
+
 async function beginModalAudit(kind, selector, originSelector, options = {}) {
   const before = options.before
   requireEvidence(before?.root && before?.body, `${kind} has root and body scroll measurements captured after native focus and before activation`)
@@ -2074,6 +2362,9 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   const native = await measureNativeModal(selector, originSelector)
   const sessionIdentity = await measureSessionScrollerIdentity(originSelector)
   requireEvidence(native, `${kind} native dialog exists`)
+  // Best effort: a selector or composer modal can open with no Decision page on
+  // screen, so a missing page is recorded, never fatal.
+  await instance.cdp.evaluate(`(() => { const page=document.querySelector('main.weir-da-page'); if(!page) return false; page.setAttribute('data-weir-uiux-audit', ${JSON.stringify(kind)}); return true })()`).catch(() => false)
   const point = await instance.cdp.evaluate(`(() => {const origin=document.querySelector(${JSON.stringify(originSelector)});const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};const rect=origin?.getBoundingClientRect();return {x:Math.max(visual.offsetLeft+4,Math.min(visual.offsetLeft+visual.width-4,rect?rect.left+rect.width/2:visual.offsetLeft+visual.width/2)),y:Math.max(visual.offsetTop+4,Math.min(visual.offsetTop+visual.height-4,rect?rect.top+rect.height/2:visual.offsetTop+visual.height/2))}})()`)
   const attempts = []
   await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseWheel', x: point.x, y: point.y, deltaX: 0, deltaY: 240 })
@@ -2095,12 +2386,16 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
 async function finishModalAudit(audit, { focus = null, focusProblems = [], contentMutation = null } = {}) {
   audit.contentMutation = contentMutation
   audit.after = await measureScrollContainers({}, audit.originSelector)
+  const timeline = await readScrollTimeline().catch(() => [])
+  audit.scrollTimeline = timeline
+  audit.stampSurvived = await instance.cdp.evaluate(`(() => { const page=document.querySelector('main.weir-da-page'); return Boolean(page && page.getAttribute('data-weir-uiux-audit') === ${JSON.stringify(audit.kind)}) })()`).catch(() => null)
+  audit.scrollTrace = timeline.filter((sample, index) => index === 0 || index === timeline.length - 1 || sample.top !== timeline[index - 1]?.top || sample.height !== timeline[index - 1]?.height || sample.anchor !== timeline[index - 1]?.anchor).slice(0, 60)
   const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
   audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...sessionScrollerProblems(audit), ...focusProblems]
   if (focus) audit.focus = focus
   saveUiuxEvidence()
   await instance.cdp.evaluate(`(() => {for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))el.removeAttribute('data-weir-uiux-scroll');return true})()`)
-  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), sessionIdentity: audit.sessionIdentity, focus: focus ?? null })
+  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), sessionIdentity: audit.sessionIdentity, focus: focus ?? null, stampSurvived: audit.stampSurvived, scrollTrace: audit.scrollTrace })
   return audit
 }
 
@@ -2672,7 +2967,8 @@ try {
   let agents = await waitFor(async () => { const value = await rpc(sessionId, 'initial-create', 'agents'); return value.some(agent => agent.name === longName) ? value : null }, 30_000)
   const primary = agents.find(agent => agent.name === longName)
   await expectMutation('profileUpsert', { sessionId, name: longName, userDescription: preference })
-  check('selectorCreateUsesNewPage', primary.state === 'enabled' && primary.scope?.workspaces?.includes(LANE), { agentId: primary.agentId })
+  const createdScope = primary.scope ?? {}
+  check('selectorCreateUsesProfileGlobalIdentity', primary.state === 'enabled' && primary.name === longName && !Object.hasOwn(createdScope, 'workspaces') && (createdScope.authorizationClasses ?? []).length > 0, { agentId: primary.agentId, scope: createdScope })
   const secondary = await createAgent(sessionId, '空候选与键盘备用助手 · Empty review assistant', 'No existing decisions: the isolated fixture returns no candidate operations for this assistant only.')
   await runSelectorFailureMatrix(sessionId, primary, secondary)
   await runAgentResumeMatrix(sessionId, primary, secondary)
@@ -2982,18 +3278,31 @@ try {
   const scanAfterEnabledRestart = await scanSession(sessionId, 'session-after-enabled-restart.json')
   check('enabledRestartAddsNoForbiddenSessionEvents', scanAfterEnabledRestart.commandEvents.length === 0 && scanAfterEnabledRestart.customDecisionEvents.length === 0)
   await runP4AfterRestart(p4State, legacySession, primary, secondary)
-  p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State)
   await stopOwned('process-3')
   sqliteSnapshot('final-stopped')
   copyFileSync(databasePath, join(out, 'decision.db'))
   const immutable = immutableChanges(sqlitePhases)
   writeJson(join(out, 'immutable-history.json'), { pass: immutable.length === 0, changes: immutable, phases: sqlitePhases.map(item => item.phase) })
   check('noAttemptSnapshotOrRouteHistoryRewrite', immutable.length === 0, immutable)
+  auditP4RawEvidence(p4State, primary, secondary)
+  // Only after every pre-migration assertion: the isolated profile store is
+  // replaced by a genuine migrated v1 database, and the cross-workspace matrix
+  // then runs on that same live profile.
+  p4State.crossWorkspaceLegacy = await runMigratedLegacyProfileSurface()
+  instance = await startDesktop(true)
+  await installUiuxInstrumentation()
+  // The denial probe must use private rows that exist in the live (migrated)
+  // store, not ids from the store this run replaced.
+  p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State, {
+    learningRunId: p4State.crossWorkspaceLegacy.expected.privateLearningRunId,
+    snapshotId: p4State.crossWorkspaceLegacy.expected.privateSnapshotId,
+  })
+  await stopOwned('cross-workspace-final')
+  copyFileSync(legacyDatabasePath(), join(out, 'decision-migrated.db'))
   const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')
   const consoleErrors = runtimeEvents.filter(item => item.event.method === 'Runtime.consoleAPICalled' && item.event.params?.type === 'error')
   const slotCrashes = runtimeEvents.filter(item => /slot entry crashed|Slot.*crash/i.test(JSON.stringify(item.event)))
   const logErrors = runtimeEvents.filter(item => item.event.method === 'Log.entryAdded' && item.event.params?.entry?.level === 'error')
-  auditP4RawEvidence(p4State, primary, secondary)
   const desktopLogPaths = ['desktop-enabled.log', 'desktop-disabled.log']
   const desktopLogs = desktopLogPaths.map(path => readFileSync(join(out, path), 'utf8'))
   const importFailures = desktopLogs.flatMap(log => log.split('\n').filter(line => /failed to import weir-harness|SessionFormatUnsupportedError|slot entry crashed/i.test(line)))
@@ -3011,7 +3320,7 @@ try {
   const focusProblems = requiredFocusTransitions.filter(action => !keyboardAudits.some(audit => audit.action === `Focus: ${action}` && audit.reached && audit.activation && audit.options?.expectFocus === audit.focus?.selector && audit.focus?.connected === true && audit.focus?.visible === true && audit.focus?.active === true && !['body', 'html'].includes(audit.focus?.activeTag)))
   check('completeAssistantTransitionFocusEvidence', focusProblems.length === 0, { missing: focusProblems, required: requiredFocusTransitions })
   check('nativeKeyPacketsPersisted', nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === '\r') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.text === ' ') && nativeKeyPackets.some(packet => packet.method === 'Input.dispatchKeyEvent' && packet.params?.key === 'Tab') && nativeKeyPackets.some(packet => packet.method === 'Input.insertText'), { packets: nativeKeyPackets.length })
-  check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 3 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 3 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
+  check('allOwnedProcessesAndPortFinallyReleased', cleanups.length === 6 && cleanups.every(item => item.pass) && new Set(processProvenance.map(item => item.mainPid)).size === 6 && await portFree() && !portListeners(), { cleanups: cleanups.map(item => ({ label: item.label, mainPid: item.mainPid, hostPid: item.hostPid, pass: item.pass })), port: PORT })
   const confirmationKinds = new Set(uiuxEvidence.confirmations.map(item => item.kind))
   const requiredConfirmations = ['cancel-decision', 'discard-editor', 'assistant-disabled', 'assistant-enabled', 'assistant-archived', 'snapshotPublish', 'snapshotReject', 'snapshotRollback']
   const selectorStateKinds = new Set(uiuxEvidence.selectorStates.map(item => item.kind))
@@ -3050,6 +3359,10 @@ try {
   result = { phase: 'GUI-decision-uiux-5.2-5.3', verdict: 'PASS', pass: true, runId, root, out, port: PORT, sessionId, primaryAgentId: primary.agentId, secondaryAgentId: secondary.agentId, uiux: { coverage: uiuxCoverage, modalAudits: uiuxEvidence.modalAudits.length, selectorLayouts: uiuxEvidence.selectorLayouts.length, confirmations: uiuxEvidence.confirmations.length, coldReveals: uiuxEvidence.coldReveals.length, masterDetail: uiuxEvidence.masterDetail.length, zoomMeasurements: uiuxEvidence.zoom.length }, p4: { sessions: p4State, caseIds: { selected: p4Evidence.selected.case.caseId, one: p4Evidence.one.case.caseId, none: p4Evidence.none.case.caseId, ambiguous: p4Evidence.ambiguous.case.caseId, invalid: p4Evidence.invalid.case.caseId, timeout: p4Evidence.timeout.case.caseId, explicit: p4Evidence.explicit.case.caseId, returned: p4Evidence.returned.case.caseId, pending: p4Evidence.pending.case.caseId, interrupted: p4Evidence.interrupted.case.caseId }, processProvenance }, caseIds: { first: first.caseId, reuse: reuse.caseId, consult: consult.caseId, long: longCase.caseId, learned: learned.caseId }, checks, checkDetails, screenshots, comparisons, cleanupReceipts: cleanups.map(item => join(out, `${item.label}-exact-pid-cleanup.json`)), artifacts: { uiux: join(out, 'uiux-acceptance.json'), networkRpc: join(out, 'network-rpc.json'), authoritativeRpc: join(out, 'authoritative-rpc.json'), runtime: join(out, 'runtime-scan.json'), visual: join(out, 'visual-audits.json'), accessibility: join(out, 'accessibility.json'), keyboard: join(out, 'keyboard-interactions.json'), immutable: join(out, 'immutable-history.json'), stockClassification: join(out, 'stock-classification-proof.json'), sqliteReadModel: join(out, 'sqlite-read-model-comparison.json'), p4Restoration: join(out, 'p4-restoration.json'), database: join(out, 'decision.db'), report: join(out, 'evidence-zh.md') } }
   result.artifacts.hostOnboarding = join(out, 'host-onboarding.json')
   result.artifacts.nativeKeyPackets = join(out, 'native-key-packets.json')
+  result.artifacts.crossWorkspaceMatrix = join(out, 'cross-workspace-matrix.json')
+  result.artifacts.crossWorkspaceLegacyProfile = join(out, 'cross-workspace-legacy-profile.json')
+  result.artifacts.crossWorkspaceLegacySurface = join(out, 'cross-workspace-legacy-surface.json')
+  result.artifacts.decisionMigrated = join(out, 'decision-migrated.db')
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)
   writeReport('PASS')
