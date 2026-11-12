@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
 import decisionGui from '../src/scenarios/decision-gui.js'
 import { extract } from '../src/mock-kit.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
@@ -1329,7 +1329,7 @@ test('the driver imports every guard it calls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   const imported = new Set((driver.match(/import \{([^}]+)\} from '\.\/gui-product-lib\.mjs'/) ?? [, ''])[1].split(',').map(name => name.trim()).filter(Boolean))
-  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicCandidateWordingProblems|publicPublishedPrinciplesProblems|publicRecordDetailProblems|publicRefinedWordingProblems)\b/g)].map(match => match[1])
+  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicCandidateWordingProblems|publicPublishedPrinciplesProblems|publicRecordDetailProblems|publicRefinedWordingProblems|exportConfirmationProblems|exportSuccessSurfaceProblems|exportFailureSurfaceProblems)\b/g)].map(match => match[1])
   for (const name of new Set(called)) {
     assert.ok(imported.has(name), `${name} is called by the driver and must be imported from the lib`)
     assert.ok(lib.includes(`export function ${name}(`), `${name} is really exported by the lib`)
@@ -1748,6 +1748,105 @@ test('the GUI public consolidation brain refines with wording the review leg can
     dom: { present: true, changes: [{ op: 'refine', label: `改写原则 · ${operation.principleId}`, text: publishedWording }] },
     published,
   }).some(problem => /identical to the wording still published/.test(problem)))
+})
+
+test('export confirmation guard requires the scope and the real dialog surface', () => {
+  const clean = {
+    dialog: {
+      present: true,
+      title: '导出本工作区的决策数据？',
+      body: '文件将包含本工作区的判断记录、私有记忆与已发布的公共原则文本，写入本地决策数据目录。导出不会改变或授权任何东西，也无法从应用内还原：本产品不提供导入。',
+      buttons: [{ text: '取消' }, { text: '导出数据' }],
+    },
+    ax: [
+      { role: 'dialog', name: '', ignored: false },
+      { role: 'button', name: '取消', ignored: false },
+      { role: 'button', name: '导出数据', ignored: false },
+    ],
+  }
+  assert.deepEqual(exportConfirmationProblems(clean), [])
+  const failing = patch => exportConfirmationProblems({ ...clean, dialog: { ...clean.dialog, ...patch } })
+  assert.ok(exportConfirmationProblems({ dialog: {} }).some(problem => /no export confirmation dialog/.test(problem)))
+  assert.ok(failing({ title: 'Are you sure?' }).some(problem => /does not name the workspace export/.test(problem)))
+  assert.ok(failing({ body: 'It writes a file.' }).some(problem => /changes and authorizes nothing/.test(problem)))
+  assert.ok(failing({ body: '只写一个文件。导出不会改变或授权任何东西。' }).some(problem => /no import/.test(problem)))
+  assert.ok(failing({ buttons: [{ text: '导出数据' }] }).some(problem => /instead of a confirm and a cancel/.test(problem)))
+  assert.ok(exportConfirmationProblems({ ...clean, ax: [] }).some(problem => /not an accessible dialog/.test(problem)))
+  assert.ok(exportConfirmationProblems({ ...clean, ax: [{ role: 'button', name: '导出数据', ignored: true }] }).some(problem => /not an accessible dialog/.test(problem)))
+})
+
+function exportSuccessFixture() {
+  const sha = 'a'.repeat(64)
+  return {
+    dom: {
+      present: true, errorPresent: false,
+      file: `文件: /tmp/root/exports/decision-export-origin_abc-1000-deadbeef.json`,
+      bytesText: '大小: 2.0 KB', sha256: `校验和: ${sha}`,
+    },
+    wire: { file: '/tmp/root/exports/decision-export-origin_abc-1000-deadbeef.json', bytes: 2048, sha256: sha, counts: { cases: 2 }, exportedAt: 1000 },
+    wireArgs: { sessionId: 'root' },
+    file: {
+      exists: true, bytes: 2048, mode: '600', directoryMode: '700', sha256: sha,
+      envelope: { kind: 'weir-decision-export', formatVersion: 1, integrity: { value: sha }, checksumValid: true, counts: { cases: 2 } },
+      containsWorkspaceKey: false, containsAbsolutePath: false,
+    },
+    focus: { active: true },
+  }
+}
+
+test('export success guard binds the rendered surface, the wire and the file', () => {
+  const clean = exportSuccessFixture()
+  assert.deepEqual(exportSuccessSurfaceProblems(clean), [])
+  const patch = changes => exportSuccessSurfaceProblems({ ...clean, ...changes })
+  assert.ok(patch({ dom: { ...clean.dom, present: false } }).some(problem => /no export success surface/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, errorPresent: true } }).some(problem => /success and a failure surface/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, file: '文件: /tmp/invented.json' } }).some(problem => /does not show the real path/.test(problem)))
+  assert.ok(patch({ wire: { ...clean.wire, bytes: 0 } }).some(problem => /no byte count/.test(problem)))
+  assert.ok(patch({ wire: { ...clean.wire, sha256: 'nope' } }).some(problem => /no sha256 checksum/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, sha256: '校验和: bbbb' } }).some(problem => /does not show the real checksum/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, exists: false } }).some(problem => /does not exist on disk/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, bytes: 10 } }).some(problem => /file is 10 bytes/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, sha256: 'b'.repeat(64) } }).some(problem => /does not hash to the reported checksum/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, mode: '644' } }).some(problem => /mode is 644/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, directoryMode: '755' } }).some(problem => /directory mode is 755/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, envelope: { kind: 'something-else' } } }).some(problem => /not a versioned decision export envelope/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, envelope: { ...clean.file.envelope, checksumValid: false } } }).some(problem => /checksum does not verify/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, envelope: { ...clean.file.envelope, counts: { cases: 0 } } } }).some(problem => /did not carry the live workspace records/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, containsWorkspaceKey: true } }).some(problem => /real workspaceKey/.test(problem)))
+  assert.ok(patch({ file: { ...clean.file, containsAbsolutePath: true } }).some(problem => /carries an absolute path/.test(problem)))
+  assert.ok(patch({ wireArgs: { sessionId: 'root', workspaceKey: '/caller/named' } }).some(problem => /instead of only the session/.test(problem)))
+  assert.ok(patch({ focus: { active: false } }).some(problem => /focus did not return/.test(problem)))
+})
+
+test('export failure guard forbids a success surface and demands an actionable exit', () => {
+  const clean = {
+    dom: { present: true, successPresent: false, reason: 'exports 目录无法写入。请确认决策数据目录可写后重试。', retry: true },
+    filesBefore: 1, filesAfter: 1, focus: { active: true },
+  }
+  assert.deepEqual(exportFailureSurfaceProblems(clean), [])
+  const patch = changes => exportFailureSurfaceProblems({ ...clean, ...changes })
+  assert.ok(patch({ dom: { present: false } }).some(problem => /no export failure surface/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, successPresent: true } }).some(problem => /still renders a success surface/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, reason: '  ' } }).some(problem => /no ordinary-language reason/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, reason: 'Something went wrong.' } }).some(problem => /not actionable/.test(problem)))
+  assert.ok(patch({ dom: { ...clean.dom, retry: false } }).some(problem => /offers no retry/.test(problem)))
+  assert.ok(patch({ filesAfter: 2 }).some(problem => /left 2 files behind/.test(problem)))
+  assert.ok(patch({ focus: { active: false } }).some(problem => /focus did not return/.test(problem)))
+})
+
+test('the export leg is gated, uses the real controls and verifies the file itself', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes("process.env.WEIR_DECISION_PRODUCT_EXPORT !== '1'"), 'the export leg needs an explicit opt-in flag')
+  assert.ok(driver.includes('p4State.exportSurface = await runExportSurfaceAcceptance()'), 'the leg runs inside the real Desktop matrix')
+  assert.ok(driver.includes("'[data-record-export] [data-action=\"export\"]'"), 'the action is reached through the rendered advanced area')
+  assert.ok(driver.includes("'#weir-da-export .weir-da-actions button:last-child'"), 'the confirmation is the rendered dialog')
+  assert.ok(driver.includes("waitFor(() => instance.cdp.evaluate(`(() => {\n    const section=document.querySelector('[data-export-result=\"success\"]')"), 'success is read from the rendered surface')
+  assert.ok(driver.includes("await shot('export-success')") && driver.includes("await shot('export-failure')"), 'both paths keep screenshots')
+  assert.ok(driver.includes("chmodSync(exportsDir, 0o500)") && driver.includes("chmodSync(exportsDir, 0o700)"), 'the failure path really removes write permission and restores it')
+  assert.ok(driver.includes('inspectExportFile(successPayload)'), 'the file is verified from disk, not only from the surface')
+  assert.ok(driver.includes("check('exportFailureShowsActionableReasonWithoutSuccess'"), 'the failure path cannot show a success surface')
+  assert.ok(driver.includes("check('exportSuccessShowsRealFileBytesAndChecksum'"), 'the success path binds path, bytes and checksum')
+  assert.ok(driver.includes('exportConfirmationProblems({ dialog, ax: dialogAx })'), 'the confirmation is judged by its own guard')
 })
 
 test('record detail guard requires both partitions and the real public pin', () => {
