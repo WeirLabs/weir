@@ -20,6 +20,9 @@ export const EXPORT_MAX_BYTES = 32 * 1024 * 1024
 export const EXPORT_ERROR_CODES = Object.freeze(['EXPORT_UNAVAILABLE', 'EXPORT_WRITE_FAILED', 'EXPORT_TOO_LARGE'])
 const EXPORT_RECORD_PAGE = 100
 const OTHER_WORKSPACE = '<other-workspace>'
+/** The only workspace identity an exported payload may carry is an opaque alias. */
+const ORIGIN_ALIAS_TOKEN = /^origin_[0-9a-f]{12}$/
+const ORIGIN_ALIAS_ANYWHERE = /origin_[0-9a-f]{12}(?![0-9a-f])/g
 
 /**
  * Collect every Case of the caller's root session inside the caller's workspace
@@ -177,15 +180,13 @@ function userVisibleAgent(profile) {
 
 /**
  * Deep redaction of one assembled envelope: the caller's workspace key becomes
- * its opaque alias, every other absolute path shape becomes `<path>`, and no
- * field named `workspaceKey`/`namespaceWorkspaceKey` survives at all.
+ * its opaque alias, every other origin alias or absolute path shape loses its
+ * meaning (`<other-workspace>`/`<path>`), and no field named
+ * `workspaceKey`/`namespaceWorkspaceKey` survives at all.
  * @param {unknown} value @param {string} workspaceKey @param {string} alias
  */
 function sanitize(value, workspaceKey, alias) {
-  if (typeof value === 'string') {
-    const substituted = workspaceKey ? value.split(workspaceKey).join(alias) : value
-    return redactPublicText(substituted)
-  }
+  if (typeof value === 'string') return sanitizeText(value, workspaceKey, alias)
   if (Array.isArray(value)) return value.map(entry => sanitize(entry, workspaceKey, alias))
   if (!value || typeof value !== 'object') return value
   /** @type {Record<string, unknown>} */
@@ -193,15 +194,53 @@ function sanitize(value, workspaceKey, alias) {
   for (const [key, entry] of Object.entries(value)) {
     if (key === 'workspaceKey' || key === 'namespaceWorkspaceKey') continue
     if (entry === undefined) continue
-    if (key === 'sourceWorkspaces' && entry && typeof entry === 'object' && !Array.isArray(entry)) {
-      result[key] = Object.fromEntries(Object.entries(entry).map(([sourceId, workspace]) => [
-        sourceId, typeof workspace === 'string' && workspace === workspaceKey ? alias : OTHER_WORKSPACE,
-      ]))
+    // A source list is cross-workspace provenance: another workspace's alias is
+    // dropped, while a non-alias reference (a record id) stays checkable.
+    if (key === 'sources' && Array.isArray(entry)) {
+      result[key] = entry
+        .filter(item => !(typeof item === 'string' && isForeignAlias(item, alias)))
+        .map(item => sanitize(item, workspaceKey, alias))
+      continue
+    }
+    if (key === 'publicL2' && entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      result[key] = sanitizePublicL2(entry, workspaceKey, alias)
       continue
     }
     result[key] = sanitize(entry, workspaceKey, alias)
   }
   return result
+}
+
+/**
+ * One string of the file: the caller's workspace key becomes its own alias, and
+ * every other workspace's alias becomes `<other-workspace>`. The caller's alias
+ * survives because it is the exported identity, never a foreign identifier.
+ * @param {string} value @param {string} workspaceKey @param {string} alias
+ */
+function sanitizeText(value, workspaceKey, alias) {
+  const substituted = workspaceKey ? value.split(workspaceKey).join(alias) : value
+  const foreignFree = substituted.replace(ORIGIN_ALIAS_ANYWHERE, token => token === alias ? token : OTHER_WORKSPACE)
+  return redactPublicText(foreignFree)
+}
+
+/**
+ * Public-zone pack lineage keeps the pinned Snapshot identity, the principle
+ * ids, the layer size and the empty Evidence Refs; the source aliases are other
+ * workspaces' identifiers, so the file carries no `sources` at all rather than
+ * a masked or partial lineage.
+ * @param {any} value @param {string} workspaceKey @param {string} alias
+ */
+function sanitizePublicL2(value, workspaceKey, alias) {
+  const sanitized = sanitize(value, workspaceKey, alias)
+  for (const item of Array.isArray(sanitized.items) ? sanitized.items : []) {
+    if (item && typeof item === 'object' && !Array.isArray(item)) delete item.sources
+  }
+  return sanitized
+}
+
+/** @param {string} value @param {string} alias */
+function isForeignAlias(value, alias) {
+  return ORIGIN_ALIAS_TOKEN.test(value) && value !== alias
 }
 
 /** Counts are of the redacted envelope, so a reader can verify them from the file. */
