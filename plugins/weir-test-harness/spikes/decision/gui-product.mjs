@@ -335,11 +335,18 @@ async function settleDelayedHostOnboarding(action) {
   const detected = await instance.cdp.evaluate(`(() => {
     const host=document.querySelector('[data-desktop-onboarding="welcome"],[data-desktop-onboarding="credit"]')
     if(!host||host.getClientRects().length===0)return null
-    const decisionDialog=[...document.querySelectorAll('#weir-da-selector-panel,dialog.weir-da-dialog')].find(dialog=>dialog.open&&dialog.matches(':modal'))
-    if(decisionDialog)return null
     const page=host.getAttribute('data-desktop-onboarding')
     const title=host.querySelector('h1')?.textContent?.trim()??null
-    if(page==='credit')return {page,title,activeInside:host.contains(document.activeElement)}
+    // A delayed credit page can be raised above an open Decision modal, so only
+    // a modal that really covers the overlay centre is a reason to leave the
+    // overlay alone: otherwise the overlay is what blocks the next gesture.
+    const decisionDialog=[...document.querySelectorAll('#weir-da-selector-panel,dialog.weir-da-dialog')].find(dialog=>dialog.open&&dialog.matches(':modal'))
+    if(decisionDialog){
+      const rect=host.getBoundingClientRect()
+      const top=document.elementFromPoint(rect.left+rect.width/2,Math.max(0,Math.min(rect.top+rect.height/2,innerHeight-1)))
+      if(top&&!host.contains(top))return null
+    }
+    if(page==='credit')return {page,title,activeInside:host.contains(document.activeElement),aboveDecisionModal:Boolean(decisionDialog)}
     const start=[...host.querySelectorAll('button')].find(button=>button.offsetParent!==null&&['开始设置','Start setup','Get started'].includes(button.textContent.trim()))
     if(!start)throw new Error('Delayed host welcome onboarding has no visible native start action')
     return {page,title,start:start.textContent.trim(),activeInside:host.contains(document.activeElement)}
@@ -654,9 +661,18 @@ async function decisionConfig(phase) {
 }
 async function openDecisionSettings() {
   await instance.cdp.setViewport(1440)
+  // Host Settings restores whichever page was open last, so no single page's body
+  // text proves readiness: the dialog and its navigation are what every call
+  // needs. A dialog left open is closed first so the menu click is never
+  // swallowed by an existing modal.
+  const settingsDialogOpen = () => instance.cdp.evaluate('(() => { const visible = [...document.querySelectorAll(\'[role="dialog"]\')].find(item => { const rect = item.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(item).visibility === "visible" }); return Boolean(visible) })()')
+  if (await settingsDialogOpen()) {
+    await instance.cdp.key('Escape')
+    await waitFor(async () => !(await settingsDialogOpen()), 30_000)
+  }
   await keyboardActivate('Open account menu', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
   await keyboardActivate('Open Settings', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
-  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
+  await waitFor(settingsDialogOpen, 30_000)
   await keyboardActivate('Open Weir settings', 'button', { scope: '[role="dialog"]', labels: ['Weir'] })
   await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("Auto Shadow")'), 60_000)
 }
@@ -3392,6 +3408,12 @@ async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-expor
   writeJson(join(out, 'export-success.json'), { dom: successDom, wire: successPayload, wireArgs: successWire[0].args, file: successFile, focus: successFocus, problems: successProblems })
   await shot('export-success')
   check('exportSuccessShowsRealFileBytesAndChecksum', successProblems.length === 0, { problems: successProblems, dom: successDom, wire: successPayload, file: successFile, focus: successFocus })
+  // The shipped copy promises no public-memory provenance: the real file may only
+  // carry the exporting workspace's own opaque alias.
+  check('exportFileCarriesNoForeignWorkspaceAlias', (successFile.aliases?.foreign ?? null) !== null
+    && successFile.aliases.foreign.length === 0
+    && successFile.aliases.caller === successFile.envelope?.scope?.workspaceAlias
+    && (successFile.aliases.tokens ?? []).includes(successFile.aliases.caller), successFile.aliases ?? null)
 
   // A read-only destination must fail closed on the real surface.
   const exportsDir = dirname(String(successPayload?.file ?? ''))
@@ -3459,7 +3481,8 @@ async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-expor
 
 /**
  * Read the exported file the driver was told about and re-derive every fact the
- * success surface claims: existence, byte count, mode, checksum and envelope.
+ * success surface claims: existence, byte count, mode, checksum, envelope and
+ * the origin aliases the file may carry.
  */
 function inspectExportFile(payload) {
   const path = String(payload?.file ?? '')
@@ -3472,6 +3495,10 @@ function inspectExportFile(payload) {
   // The product checksum is canonical-JSON integrity over the envelope, not a
   // hash of the pretty file bytes: recompute exactly what the product promised.
   const canonicalChecksum = envelope ? createHash('sha256').update(JSON.stringify(canonicalFileJson(withoutIntegrity(envelope)))).digest('hex') : ''
+  // Public-memory provenance and other workspaces' identifiers never enter: the
+  // only origin token the file may carry is the exporting workspace's own alias.
+  const caller = String(envelope?.scope?.workspaceAlias ?? '')
+  const tokens = [...new Set(content.match(/origin_[0-9a-f]{12}/g) ?? [])].sort()
   return {
     exists: true,
     bytes: stat.size,
@@ -3480,6 +3507,7 @@ function inspectExportFile(payload) {
     sha256: canonicalChecksum,
     contentSha256: createHash('sha256').update(content).digest('hex'),
     envelope: envelope ? { ...envelope, checksumValid: canonicalChecksum === envelope?.integrity?.value } : null,
+    aliases: { caller, tokens, foreign: tokens.filter(token => token !== caller) },
     containsWorkspaceKey: content.includes('workspaceKey'),
     containsAbsolutePath: /(?:^|["'\s])(?:\/Users\/|\/home\/|\/private\/|\/var\/|[A-Za-z]:\\)/.test(content),
   }

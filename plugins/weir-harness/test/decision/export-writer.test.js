@@ -72,6 +72,23 @@ test('a write failure leaves no partial file and no temp file', async t => {
   assert.deepEqual(readdirSync(exportsDir), [], 'a failed export leaves zero files, including the temp file')
 })
 
+test('a permission tightening failure leaves no file at all', async t => {
+  const { exportsDir } = await workspace(t)
+  // The directory keeps its own permissions; the file permission step fails.
+  const failing = {
+    chmodSync: (path, mode) => {
+      if (path === exportsDir) return chmodSync(path, mode)
+      throw Object.assign(new Error(`EPERM: operation not permitted, chmod '${path}'`), { code: 'EPERM' })
+    },
+  }
+  assert.throws(() => writeExportFile(exportsDir, envelope(), { fs: failing }), error => {
+    assert.equal(error.code, 'EXPORT_WRITE_FAILED')
+    assert.equal(String(error.message).includes(exportsDir), false, 'a closed error never forwards the path')
+    return true
+  })
+  assert.deepEqual(readdirSync(exportsDir), [], 'a failed export leaves no complete file and no temp file')
+})
+
 test('an envelope over the 32 MiB bound fails closed before any write', async t => {
   const { exportsDir } = await workspace(t)
   const tooLarge = envelope({ padding: 'x'.repeat(EXPORT_MAX_BYTES) })

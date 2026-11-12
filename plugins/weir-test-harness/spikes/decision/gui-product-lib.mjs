@@ -1053,6 +1053,17 @@ export function exportSuccessSurfaceProblems(audit = {}) {
   if (!(Number(file.envelope?.counts?.cases) >= 1)) problems.push('the export did not carry the live workspace records')
   if (file.containsWorkspaceKey === true) problems.push('the export file carries a real workspaceKey')
   if (file.containsAbsolutePath !== false) problems.push('the export file carries an absolute path')
+  // Public-memory provenance is never included: another workspace's opaque alias
+  // is still another workspace's identifier, even without a path or a key.
+  const aliases = file.aliases ?? {}
+  const caller = String(aliases.caller ?? file.envelope?.scope?.workspaceAlias ?? '')
+  const tokens = Array.isArray(aliases.tokens) ? aliases.tokens : null
+  const foreign = Array.isArray(aliases.foreign) ? aliases.foreign : []
+  if (!tokens) problems.push('the export file was not scanned for origin aliases')
+  else {
+    if (!caller || !tokens.includes(caller)) problems.push('the export file does not carry the exporting workspace alias')
+    if (foreign.length > 0) problems.push(`the export file carries other workspaces' aliases: ${foreign.join(', ')}`)
+  }
   // Scope discipline on the wire: only the session is forwarded.
   const wireArgs = audit.wireArgs ?? {}
   const keys = Object.keys(wireArgs).sort()

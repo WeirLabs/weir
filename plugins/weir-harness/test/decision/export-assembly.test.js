@@ -12,7 +12,7 @@ import { canonicalJson } from '../../src/decision/contracts.js'
 import { workspaceAlias } from '../../src/decision/learning/namespace.js'
 import { exportChecksum } from '../../src/decision/store/export.js'
 import { insertLearningRun, insertSnapshot } from './p3-fixtures.js'
-import { publicFrozenInput, publicMemoryFixture } from './public-fixtures.js'
+import { publicAdd, publicFrozenInput, publicMemoryFixture } from './public-fixtures.js'
 
 const ABSOLUTE_PATH = /(?:^|["'\s])(?:\/Users\/|\/home\/|\/private\/|\/var\/|[A-Za-z]:\\)/
 
@@ -252,4 +252,93 @@ test('every exported partition carries real rows and the evidence locator is red
   assert.equal(ABSOLUTE_PATH.test(text), false, 'no absolute path shape survives')
   assert.equal(text.includes('workspaceKey'), false, 'no real workspace key field survives')
   assert.equal(envelope.integrity.value, exportChecksum(envelope), 'the richer payload still verifies')
+})
+
+/**
+ * The shipped client copy promises public-memory provenance is never included.
+ * A real Attempt that used public guidance records the origin aliases of that
+ * guidance in its pack manifest, so the file must lose every foreign alias.
+ */
+test('a real Attempt that used public guidance exports no foreign workspace alias', async t => {
+  const f = await publicMemoryFixture(t)
+  // Two other workspaces contributed to the public zone; the caller is the third.
+  await f.seedDecision({ workspaceKey: f.w1, rootSessionId: 'root1', key: 'alias-w1' })
+  await f.seedDecision({ workspaceKey: f.w2, rootSessionId: 'root2', key: 'alias-w2' })
+  await f.seedDecision({ workspaceKey: f.w3, rootSessionId: 'root3', key: 'alias-w3' })
+  f.respond((_options, pack) => ({
+    operations: [publicAdd(pack.sources.map(source => source.sourceId), { text: 'Prefer the option every workspace agreed on', scope: {} })],
+  }))
+  const refreshed = await f.broker.publicMemoryRefresh({ sessionId: 'root1', agentId: f.profile.agentId, acknowledgedDisclosure: true })
+  assert.equal(refreshed.status, 'candidate', JSON.stringify(refreshed))
+  assert.equal(refreshed.workspaceCount, 3, 'the public guidance really came from three workspaces')
+  const published = await f.broker.snapshotPublish({ sessionId: 'root1', snapshotId: refreshed.candidate.snapshotId, expectedRevision: refreshed.candidate.revision })
+
+  // A real Attempt for the third workspace consumes that guidance.
+  await f.broker.setSelector('root3', 'agent', f.profile.agentId)
+  f.respond(() => ({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'The current workspace has no eligible evidence.' }))
+  const hooked = await f.broker.hook({ agent: f.agents.root3, request: { questions: [{ id: 'q', question: 'Which option now?', options: [{ label: 'A' }, { label: 'B' }] }] } })
+
+  // The stored Attempt really carries the Desktop-shaped lineage: two foreign
+  // aliases and the caller's own one.
+  const stored = f.broker.query.record({ caseId: hooked.caseId, sessionId: 'root3' })
+  const storedAttempt = stored.attempts.at(-1)
+  const storedLineage = storedAttempt.packManifest.memory.publicL2.items[0].sources
+  assert.deepEqual([...storedLineage].sort(), [workspaceAlias(f.w1), workspaceAlias(f.w2), workspaceAlias(f.w3)].sort(), 'the real manifest records two foreign aliases and the caller alias')
+
+  const exported = await f.broker.exportData({ sessionId: 'root3' })
+  const text = readFileSync(exported.file, 'utf8')
+  const envelope = JSON.parse(text)
+  const exportedAttempt = envelope.cases.find(entry => entry.case.caseId === hooked.caseId).attempts.at(-1)
+  const publicL2 = exportedAttempt.packManifest.memory.publicL2
+
+  // The public-zone identity stays checkable; its provenance does not enter.
+  assert.equal(publicL2.snapshotId, published.snapshotId)
+  assert.equal(publicL2.snapshotRevision, published.revision)
+  assert.match(String(publicL2.snapshotHash), /^[0-9a-f]{64}$/)
+  assert.deepEqual(publicL2.principleIds, [published.principles[0].principleId])
+  assert.ok(publicL2.layerSize > 0, 'the real layer size survives')
+  assert.deepEqual(publicL2.items.map(item => item.principleId), [published.principles[0].principleId])
+  for (const item of publicL2.items) {
+    assert.equal('sources' in item, false, 'public-memory provenance never enters the file')
+    assert.deepEqual(item.evidenceIds, [], 'public guidance is still no Evidence Ref')
+  }
+
+  // The only origin_ token in the whole file is the caller's own alias.
+  assert.equal(envelope.scope.workspaceAlias, workspaceAlias(f.w3))
+  const tokens = [...new Set(text.match(/origin_[0-9a-f]{12}/g) ?? [])]
+  assert.deepEqual(tokens, [envelope.scope.workspaceAlias], 'no foreign origin alias survives')
+  for (const foreign of [workspaceAlias(f.w1), workspaceAlias(f.w2)]) assert.equal(text.includes(foreign), false, `the export never carries ${foreign}`)
+  assert.equal(envelope.integrity.value, exportChecksum(envelope), 'the redacted payload still verifies')
+})
+
+test('a foreign alias outside a source list becomes the other-workspace marker, and record ids stay', async t => {
+  const f = await publicMemoryFixture(t)
+  const ownAlias = workspaceAlias(f.w1)
+  const foreignAlias = workspaceAlias(f.w2)
+  const w1Case = await f.seedDecision({
+    workspaceKey: f.w1, rootSessionId: 'root1', key: 'alias-text',
+    question: `Which option matches ${foreignAlias} or ${ownAlias}?`, selected: 'A',
+  })
+  // A reviewed private snapshot whose source list mixes a record id and an alias.
+  insertLearningRun(f, 'lr_private_alias', 'candidate', { workspaceKey: f.w1 })
+  insertSnapshot(f, 'ms_private_alias', 1, 'published', {
+    workspaceKey: f.w1, learningRunId: 'lr_private_alias',
+    principles: [{ principleId: 'pr_private_alias', text: 'Prefer the reviewed wording', scope: { workspaces: [f.w1], paths: ['src'] }, sources: [w1Case.caseId, foreignAlias], state: 'active' }],
+  })
+
+  const exported = await f.broker.exportData({ sessionId: 'root1' })
+  const text = readFileSync(exported.file, 'utf8')
+  const envelope = JSON.parse(text)
+
+  // User content that names another workspace's alias keeps only the marker.
+  const question = String(envelope.cases[0].case.request.questions[0].question)
+  assert.equal(question.includes(foreignAlias), false, 'a foreign alias is never echoed back')
+  assert.ok(question.includes('<other-workspace>'), 'the marker stands in for the foreign workspace')
+  assert.ok(question.includes(ownAlias), 'the caller may read its own alias')
+
+  // A source list is provenance: the foreign alias is dropped, the record id stays.
+  const principle = envelope.learning.snapshots.find(snapshot => snapshot.snapshotId === 'ms_private_alias').principles[0]
+  assert.deepEqual(principle.sources, [w1Case.caseId])
+  assert.equal(text.includes(foreignAlias), false, 'no foreign origin alias survives anywhere')
+  assert.deepEqual([...new Set(text.match(/origin_[0-9a-f]{12}/g) ?? [])], [ownAlias])
 })

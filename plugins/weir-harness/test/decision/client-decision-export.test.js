@@ -188,10 +188,12 @@ test('the export model maps every state and rejects an incomplete result', async
   const harness = await createPageHarness({ actions: {} })
   const model = harness.model
   assert.deepEqual(model.exportView({}), {
-    phase: 'idle', busy: false, canStart: true, statusKey: null, statusVariant: 'idle', result: null, errorKey: null, canRetry: false, copied: false,
+    phase: 'idle', busy: false, statusKey: null, statusVariant: 'idle', result: null, errorKey: null, canRetry: false, copied: false,
   })
   assert.equal(model.exportView({ phase: 'pending' }).busy, true)
-  assert.equal(model.exportView({ phase: 'pending' }).canStart, false)
+  // The rendered action gates on `busy` alone: a successful export stays
+  // startable, because the user may write a fresh file at any time.
+  assert.equal(model.exportView({ phase: 'success', value: RESULT }).busy, false)
   const success = model.exportView({ phase: 'success', value: RESULT })
   assert.equal(success.result.file, RESULT.file)
   assert.equal(success.result.bytesText, '2.0 KB')

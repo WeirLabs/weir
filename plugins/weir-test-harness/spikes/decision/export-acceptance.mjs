@@ -77,6 +77,33 @@ async function main() {
     const started = await f.broker.learningStart({ sessionId: 'root1', agentId: f.profile.agentId, requestId: 'acceptance-private-run' })
     check('private learning run frozen for W1', started.outcome === 'candidate', started)
 
+    // A real Attempt that consumed the published public guidance: its pack
+    // manifest records the originating workspace aliases, which is exactly the
+    // Desktop shape the export must not copy. The consult carries the paths the
+    // published guidance covers, so the public principle really enters L2.
+    await f.broker.setSelector('root1', 'agent', f.profile.agentId)
+    f.respond((_options, pack) => {
+      const evidenceId = pack.L5[0]?.evidenceId
+      if (!evidenceId) return { outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'The current workspace has no eligible evidence for this question.' }
+      return {
+        outcome: 'answer',
+        claims: [{ text: 'The current workspace evidence decides this.', evidenceIds: [evidenceId] }],
+        answers: pack.L4.request.questions.map(item => ({ id: item.id, selected: [item.options?.[0]?.label ?? 'A'] })),
+      }
+    })
+    const consulted = await f.broker.consult({
+      agent: f.agents.root1,
+      args: {
+        question: 'Which option does the published guidance prefer?',
+        detail: 'Use the reviewed public guidance when it applies.',
+        authorization_class: 'A',
+        scope: { workspaces: [f.w1], paths: ['docs'] },
+      },
+    })
+    const publicAttempt = f.broker.attempts.forCase(consulted.caseId).at(-1)
+    const publicLineage = publicAttempt?.packManifest?.memory?.publicL2?.items?.[0]?.sources ?? []
+    check('a real Attempt recorded the public guidance lineage', publicLineage.includes(workspaceAlias(f.w1)) && publicLineage.includes(workspaceAlias(f.w2)), { publicLineage, caseId: consulted.caseId })
+
     // --- the export -----------------------------------------------------------
     const auditsBefore = f.audits.filter(entry => entry.kind === 'export').length
     const result = await f.broker.exportData({ sessionId: 'root1' })
@@ -103,6 +130,21 @@ async function main() {
       && counts.publishedPrinciples === envelope.public.principles.length
       && counts.attempts === envelope.cases.reduce((sum, entry) => sum + entry.attempts.length, 0), counts)
     check('the caller workspace case is present', envelope.cases.some(entry => entry.case.caseId === w1Case.caseId), envelope.cases.map(entry => entry.case.caseId))
+    // The exported Attempt keeps the public-zone identity and loses the lineage.
+    const exportedPublicAttempt = envelope.cases.find(entry => entry.case.caseId === consulted.caseId)?.attempts.at(-1)
+    const exportedPublicL2 = exportedPublicAttempt?.packManifest?.memory?.publicL2
+    check('the exported Attempt keeps its public-zone identity', exportedPublicL2?.zone === 'public'
+      && exportedPublicL2?.snapshotId === published.snapshotId
+      && exportedPublicL2?.snapshotRevision === published.revision
+      && /^[0-9a-f]{64}$/.test(String(exportedPublicL2?.snapshotHash))
+      && (exportedPublicL2?.principleIds ?? []).length === 1
+      && exportedPublicL2?.layerSize > 0, exportedPublicL2)
+    check('the exported Attempt carries no public-memory provenance', (exportedPublicL2?.items ?? []).length === 1
+      && exportedPublicL2.items.every(item => !('sources' in item)), exportedPublicL2)
+    const aliasTokens = [...new Set(text.match(/origin_[0-9a-f]{12}/g) ?? [])]
+    check('the only origin alias in the file is the exporting workspace', aliasTokens.length === 1
+      && aliasTokens[0] === workspaceAlias(f.w1) && aliasTokens[0] === envelope.scope.workspaceAlias, { aliasTokens, scope: envelope.scope })
+    check('no foreign workspace alias appears in the file', !text.includes(workspaceAlias(f.w2)), { foreignAlias: workspaceAlias(f.w2) })
     const exportedW1 = envelope.cases.find(entry => entry.case.caseId === w1Case.caseId)
     check('the Feedback partition carries the real user rating', counts.feedback > 0
       && exportedW1.feedback.length === counts.feedback
