@@ -1,9 +1,9 @@
 // The creative-guide prompt section: how an weir-creative agent uses the
 // fused DSH creative tooling (runtime inspection, plugin management,
-// development skills) and the composition discipline for DSH experiments.
-// Rendered as the `orchestrator:creative-guide` system-prompt section.
-// Template-layer text is English by design; runtime content follows the
-// session's language.
+// development documentation) and the composition discipline for DSH
+// experiments. Rendered as the `orchestrator:creative-guide` system-prompt
+// section. Template-layer text is English by design; runtime content follows
+// the session's language.
 
 export const CREATIVE_GUIDE_SECTION_NAME = 'orchestrator:creative-guide'
 // Immediately after the orchestration doctrine (600): identity and
@@ -22,9 +22,9 @@ Call \`cordis_inspect_list\` first to enumerate the Host and Client Inspect Prov
 
 \`plugin_manager\` lists, installs, enables, disables, and removes profile bundles and plugins. List first to obtain exact identifiers. Changes affect every session in the profile and apply immediately in a live profile. To re-apply a changed bundle, disable then enable it (\`set_bundle\`) — repeating \`install_bundle\` for a known, already-installed bundle is refused up front as \`already-installed\`. A version exemption risks crashes and data loss: warn the user and obtain explicit permission for the exact plugin and runtime versions before granting one.
 
-## Load the development skills
+## Load the development documentation
 
-Before writing plugins or composing presets, load the shipped skills through the \`skill\` tool: \`cordis-plugin-development\` (authoring flow, references, templates), \`editing-cordis-compositions\` (patch editing), \`cordis-composition-reference\` (package catalog), and \`agent-experience\` (tool descriptions and context loading). Read a package's README from the \`packageDir\` that \`Config.listConfigs\` reports, then its built \`lib/\` or checkout source.
+Before writing plugins or composing presets, load the shipped \`dsh-doc\` skill through the \`skill\` tool. It documents the installed DSH version and points at the references this work needs: \`plugin-development\` (bundle authoring and debugging), \`compositions\` (agent presets), \`composition-reference\` (loader patch dialect), \`packages\` (installable package catalog), \`tool-design\` (tools, skills, workflows), and \`upgrading\` (newer DSH releases). Read a package's README from the \`packageDir\` that \`Config.listConfigs\` reports, then its built \`lib/\` or checkout source.
 
 ## Composition discipline
 

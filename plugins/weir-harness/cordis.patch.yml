@@ -288,8 +288,9 @@
             disabled: true
     # Weir 创造模式 (weir-creative): the full `weir` composition above
     # fused with the DSH creative mode (cordis preset) deltas — runtime
-    # inspection tools, persistent plugin management, and the Cordis
-    # development skills. MAINTENANCE RULE: any change to the `weir`
+    # inspection tools, persistent plugin management, and the DSH
+    # development documentation skill shipped by the installed agent-preset
+    # package. MAINTENANCE RULE: any change to the `weir`
     # preset's plugin list MUST be mirrored here (guarded by
     # test/preset-creative.test.js); only the three documented deltas may
     # diverge.
@@ -298,7 +299,7 @@
       config:
         id: weir-creative
         name: Weir 创造模式
-        description: Weir creative mode — the full Weir harness fused with the DSH creative mode for debugging and experimenting with DSH itself — runtime inspection (cordis_inspect_*), persistent plugin management, and the Cordis plugin/preset development skills.
+        description: Weir creative mode — the full Weir harness fused with the DSH creative mode for debugging and experimenting with DSH itself — runtime inspection (cordis_inspect_*), persistent plugin management, and the installed DSH development documentation skill.
         order: 6
         plugins:
           - id: persona
@@ -342,9 +343,10 @@
               # Never inline output/results into completion notices (DSH 0.2.2).
               inlineOutputBytes: 0
           # Same capabilities group as `weir` (S11 realm structure), with
-          # the creative delta: customSkillDirs resolves the Cordis
-          # development skills shipped inside @deepseek-ai/dsh-agent-preset,
-          # and baselineScopes admits them into the first-session baseline.
+          # the creative delta: customSkillDirs resolves the DSH development
+          # documentation skill shipped inside @deepseek-ai/dsh-agent-preset
+          # (dsh-doc on 0.2.2-rc.1+), and baselineScopes admits it into the
+          # first-session baseline.
           - id: capabilities
             name: cordis:group
             group: true

@@ -41,8 +41,8 @@ describe('weir-creative-guide', () => {
       'cordis_inspect_list', 'cordis_inspect_query', 'read-only',
       // Plugin management discipline.
       'plugin_manager', 'set_bundle', 'install_bundle', 'version exemption',
-      // The four development skills.
-      'cordis-plugin-development', 'editing-cordis-compositions', 'cordis-composition-reference', 'agent-experience',
+      // The installed DSH documentation skill and the references it gates.
+      'dsh-doc', 'plugin-development', 'compositions', 'composition-reference', 'packages', 'tool-design', 'upgrading',
       // Composition discipline.
       '@deepseek-ai/*', "object-rooted", 'cordis:group', '!!js',
     ]
