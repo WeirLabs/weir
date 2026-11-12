@@ -84,6 +84,7 @@ EXPECTED_ORDER.push('decision-ui-remote')
 EXPECTED_ORDER.push('decision-memory')
 EXPECTED_ORDER.push('decision-learning')
 EXPECTED_ORDER.push('decision-auto-route')
+if (process.env.WEIR_IT_DECISION_CROSS_WORKSPACE === '1') EXPECTED_ORDER.push('decision-cross-workspace')
 if (process.env.WEIR_IT_DECISION_GUI === '1') EXPECTED_ORDER.push('decision-gui')
 
 describe('scenario registry', () => {
@@ -129,6 +130,9 @@ describe('scenario registry', () => {
       for (const id of ['decision-spike-order', 'decision-spike-delegated', 'decision-spike-json', 'decision-spike-multi-mount', 'decision-spike-cancel', 'decision-spike-slots', 'decision-spike-current']) files.splice(files.indexOf(id), 1)
     }
     if (process.env.WEIR_IT_DECISION_GUI !== '1') files.splice(files.indexOf('decision-gui'), 1)
+    if (process.env.WEIR_IT_DECISION_CROSS_WORKSPACE !== '1') {
+      files.splice(files.indexOf('decision-cross-workspace'), 1)
+    }
     assert.deepEqual(files.sort(), SCENARIOS.map((s) => s.id).sort())
   })
 
