@@ -1,16 +1,32 @@
 // Versioned, read-only memory projections for one Decision Attempt.
 import { DecisionContractError, parseAnswerItem } from '../contracts.js'
 import { caseOf } from '../store/cases.js'
-import { scopeCovers } from '../store/evidence.js'
+import { scopeCovers, scopeHintsCover } from '../scope.js'
 import { DecisionLearning } from '../store/learning.js'
+import { PUBLIC_ZONE, workspaceAlias } from '../learning/namespace.js'
 
 export const L2_MEMORY_VERSION = 1
 export const L3_MEMORY_VERSION = 1
 const L3_EXCERPT_LIMIT = 600
 
-/** Read only the current published Snapshot and expand every principle source into full eligible L5. */
-export function readL2Memory(store, input, L5 = []) {
-  const snapshot = new DecisionLearning(store).currentSnapshot(input.agentId, input.workspaceKey)
+/**
+ * A disabled or archived Agent has no usable memory in either zone: history is
+ * read-only, never guidance for a new Attempt.
+ * @param {'enabled'|'disabled'|'archived'|undefined} agentState
+ */
+function zoneUsableForNewUse(agentState) {
+  return agentState === undefined || agentState === 'enabled'
+}
+
+/**
+ * Read only the current published private Snapshot and expand every principle
+ * source into full eligible L5.
+ * @param {any} store @param {any} input @param {any[]} [L5] @param {{agentState?:string}} [options]
+ */
+export function readL2Memory(store, input, L5 = [], options = {}) {
+  const snapshot = zoneUsableForNewUse(options.agentState)
+    ? new DecisionLearning(store).currentSnapshot(input.agentId, input.workspaceKey)
+    : null
   if (!snapshot) return deepFreeze({
     schemaVersion: L2_MEMORY_VERSION, status: 'empty', snapshotId: null,
     snapshotRevision: null, snapshotHash: null, items: [], exclusions: [],
@@ -54,6 +70,77 @@ export function readL2Memory(store, input, L5 = []) {
     snapshotId: snapshot.snapshotId, snapshotRevision: snapshot.revision, snapshotHash: snapshot.contentHash,
     items, exclusions,
   })
+}
+
+/**
+ * Read only the current published public Snapshot. A public principle:
+ * - has a workspace-agnostic scope: hints only, no workspace membership;
+ * - may enter guidance without its sources being in the current workspace L5;
+ * - is omitted with a recorded reason when any source fails origin-workspace
+ *   revalidation at use time;
+ * - carries opaque source aliases and no Evidence Refs.
+ * @param {any} store
+ * @param {any} input
+ * @param {{agentState?:string, evidence?:any}} [options]
+ */
+export function readPublicL2Memory(store, input, options = {}) {
+  const empty = () => deepFreeze({
+    schemaVersion: L2_MEMORY_VERSION, zone: PUBLIC_ZONE, status: 'empty', snapshotId: null,
+    snapshotRevision: null, snapshotHash: null, items: [], exclusions: [],
+  })
+  if (!zoneUsableForNewUse(options.agentState)) return empty()
+  const learning = new DecisionLearning(store, { evidence: options.evidence })
+  const snapshot = learning.currentPublicSnapshot(input.agentId)
+  if (!snapshot) return empty()
+  let sourceWorkspaces = {}
+  try {
+    const run = learning.getRunById(snapshot.learningRunId)
+    sourceWorkspaces = run.inputFrozen.sourceWorkspaces ?? {}
+  } catch { sourceWorkspaces = {} }
+  const issues = learning.publicPrincipleIssues(snapshot)
+  const items = []
+  const exclusions = []
+  for (const principle of snapshot.principles) {
+    if (principle.state !== 'active') {
+      exclusions.push({ principleId: principle.principleId, reason: 'NOT_ACTIVE' })
+      continue
+    }
+    if (!scopeHintsCover(principle.scope, input.scope)) {
+      exclusions.push({ principleId: principle.principleId, reason: 'OUT_OF_SCOPE' })
+      continue
+    }
+    if (issues[principle.principleId] || !sourceAliases(principle, sourceWorkspaces).length) {
+      exclusions.push({ principleId: principle.principleId, reason: 'SOURCE_UNAVAILABLE' })
+      continue
+    }
+    items.push({
+      schemaVersion: L2_MEMORY_VERSION, kind: 'reviewed_principle', zone: PUBLIC_ZONE,
+      principleId: principle.principleId, text: principle.text, scope: cloneScope(principle.scope),
+      sources: sourceAliases(principle, sourceWorkspaces), evidenceIds: [],
+    })
+  }
+  return deepFreeze({
+    schemaVersion: L2_MEMORY_VERSION, zone: PUBLIC_ZONE, status: items.length ? 'populated' : 'empty',
+    snapshotId: snapshot.snapshotId, snapshotRevision: snapshot.revision, snapshotHash: snapshot.contentHash,
+    items, exclusions,
+  })
+}
+
+/** Opaque, deterministic source aliases; a public payload never names a record. */
+function sourceAliases(principle, sourceWorkspaces) {
+  const aliases = principle.sources
+    .map(sourceId => sourceWorkspaces[sourceId])
+    .filter(workspaceKey => typeof workspaceKey === 'string' && workspaceKey)
+    .map(workspaceKey => workspaceAlias(workspaceKey))
+  return [...new Set(aliases)].sort()
+}
+
+/** @param {any} scope */
+function cloneScope(scope) {
+  return {
+    ...(scope.paths?.length ? { paths: [...scope.paths] } : {}),
+    ...(scope.tags?.length ? { tags: [...scope.tags] } : {}),
+  }
 }
 
 /**

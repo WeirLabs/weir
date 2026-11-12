@@ -1,5 +1,5 @@
 // Broker-internal, synchronous and read-only retrieval for exactly one Attempt.
-import { readL2Memory, readL3Memory } from './memory.js'
+import { readL2Memory, readL3Memory, readPublicL2Memory } from './memory.js'
 
 export class DecisionContextRetriever {
   /** @param {import('../store/db.js').DecisionDatabase} store @param {import('../store/evidence.js').DecisionEvidence} evidence */
@@ -12,7 +12,7 @@ export class DecisionContextRetriever {
    * There is deliberately no cross-Agent or cross-workspace query shape. L5
    * conflict and freshness metadata are captured from the full eligible set,
    * before the pure context pack can trim anything.
-   * @param {{agentId:string,workspaceKey:string,scope:object,attemptStartedAt:number,excludeCaseId?:string}} input
+   * @param {{agentId:string,workspaceKey:string,scope:object,attemptStartedAt:number,excludeCaseId?:string,agentState?:string}} input
    */
   retrieve(input) {
     const L5 = this.evidence.candidates(input)
@@ -20,9 +20,13 @@ export class DecisionContextRetriever {
     const currentObservationHashes = Object.fromEntries(
       L5.filter(ref => ref.source === 'current_observation').map(ref => [ref.evidenceId, ref.hash]),
     )
-    const L2 = readL2Memory(this.store, input, L5)
+    // Two separate zones: the private Snapshot expands only into this
+    // workspace's L5; the public Snapshot is workspace-agnostic guidance whose
+    // sources are revalidated in their origin workspaces instead of being L5.
+    const L2 = readL2Memory(this.store, input, L5, { agentState: input.agentState })
+    const L2_PUBLIC = readPublicL2Memory(this.store, input, { agentState: input.agentState, evidence: this.evidence })
     const L3 = readL3Memory(this.store, input)
-    return deepFreeze({ schemaVersion: 1, L2, L3, L5, conflictPairs, currentObservationHashes })
+    return deepFreeze({ schemaVersion: 1, L2, L2_PUBLIC, L3, L5, conflictPairs, currentObservationHashes })
   }
 }
 
