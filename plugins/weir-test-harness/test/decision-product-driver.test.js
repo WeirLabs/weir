@@ -1291,6 +1291,17 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
+test('the driver imports every guard it calls', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
+  const imported = new Set((driver.match(/import \{([^}]+)\} from '\.\/gui-product-lib\.mjs'/) ?? [, ''])[1].split(',').map(name => name.trim()).filter(Boolean))
+  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems)\b/g)].map(match => match[1])
+  for (const name of new Set(called)) {
+    assert.ok(imported.has(name), `${name} is called by the driver and must be imported from the lib`)
+    assert.ok(lib.includes(`export function ${name}(`), `${name} is really exported by the lib`)
+  }
+})
+
 test('the P4 candidate fixtures do not rely on workspace-bound eligibility', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const created = driver.indexOf("const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE")
