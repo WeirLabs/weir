@@ -1628,3 +1628,119 @@ test('client manifest injects layout for render-time panel access', () => {
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-layout'))
   assert.ok(manifest.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-conversation'))
 })
+
+test('same-assistant Snapshot reload keeps the detail mounted and clamps the settled scroll to the new maximum', async () => {
+  // Real 7.3 run FuiXDF (uiux-acceptance.json, snapshotPublish-v1) measured
+  // main.weir-da-page at a 900px viewport height: scrollTop 811.5 with scrollHeight
+  // 4019 before and during the confirmation, then a composition frame at
+  // scrollHeight 900 (the whole assistant detail unmounted) that let the browser
+  // clamp scrollTop to 0, and 1093 once the publish removed the candidate review.
+  // The reload must keep the previous detail mounted so the only clamp is the
+  // intended 1093 - 900 = 193.
+  const VIEWPORT = 900
+  const REVIEW_CONTENT = 4019
+  const SETTLED_CONTENT = 1093
+  const candidateRun = { learningRunId: 'lr_candidate', outcome: 'candidate', revision: 4 }
+  const currentRun = { learningRunId: 'lr_current', outcome: 'published', revision: 5 }
+  const beforePublish = {
+    agentId: 'ag_a', name: 'Tone', state: 'enabled', workspaceKey: '/repo',
+    userDescription: { revision: 2, text: 'Prefer concise copy' }, generatedDescription: { revision: 0, text: '' },
+    scope: { workspaces: ['/repo'], paths: ['src'] }, modelRoute: { chain: [] },
+    currentSnapshotId: 'ms_current',
+    learningRuns: [candidateRun, currentRun],
+    snapshots: [
+      { snapshotId: 'ms_candidate', state: 'draft', version: 4, revision: 9, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' },
+      { snapshotId: 'ms_current', state: 'published', version: 3, revision: 11, learningRunId: 'lr_current', parentSnapshotId: null },
+    ],
+  }
+  const afterPublish = {
+    ...beforePublish,
+    currentSnapshotId: 'ms_candidate',
+    learningRuns: [{ ...candidateRun, outcome: 'published', revision: 6 }, currentRun],
+    snapshots: [
+      { ...beforePublish.snapshots[0], state: 'published', version: 4, revision: 10 },
+      beforePublish.snapshots[1],
+    ],
+  }
+  let currentAgent = beforePublish
+  let agentReads = 0
+  const reload = deferred()
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [beforePublish],
+    inbox: async () => [],
+    agent: async () => {
+      agentReads += 1
+      return agentReads === 1 ? beforePublish : reload.promise
+    },
+    learningRun: async id => {
+      const summary = currentAgent.learningRuns.find(run => run.learningRunId === id) ?? currentRun
+      return {
+        learningRunId: id, agentId: 'ag_a', outcome: summary.outcome, revision: summary.revision, operations: [],
+        inputFrozen: id === 'lr_candidate' ? { parentSnapshotId: 'ms_current', parentSnapshotRevision: 11 } : { parentSnapshotId: null },
+        replay: { passed: true },
+      }
+    },
+    memorySnapshot: async id => {
+      const summary = currentAgent.snapshots.find(snapshot => snapshot.snapshotId === id)
+      const principleId = id === 'ms_current' ? 'pr_old' : 'pr_new'
+      return { ...summary, agentId: 'ag_a', principles: [{ principleId, text: principleId, scope: {}, sources: [], state: 'active' }] }
+    },
+    snapshotPublish: async () => { currentAgent = afterPublish; return { snapshotId: 'ms_candidate' } },
+    publicMemoryRefresh: async () => null,
+    publicCandidate: async () => null,
+  } })
+  // The measured page is 4019px while the candidate review renders its diff and
+  // 1093px once the publish removes it. A pending same-assistant reload can only
+  // replace that diff with a loading placeholder, so the page height stays between
+  // those measurements; only an unmounted detail drops it to the 900px viewport of
+  // the collapse frame, which is what clamped scrollTop to 0.
+  const learningTree = tree => {
+    const detail = findAll(tree, node => node['data-agent-detail'] === 'ag_a')[0]
+    const element = detail ? findAll(detail, node => node.type === harness.learning.AgentLearning)[0] : null
+    return element ? harness.learning.AgentLearning(element) : null
+  }
+  const contentHeight = tree => {
+    if (findAll(tree, node => node['data-agent-detail'] === 'ag_a').length === 0) return VIEWPORT
+    const learning = learningTree(tree)
+    return learning && findAll(learning, node => node['data-principle-change']).length > 0 ? REVIEW_CONTENT : SETTLED_CONTENT
+  }
+  const clampScroll = (scrollTop, tree) => Math.min(scrollTop, Math.max(0, contentHeight(tree) - VIEWPORT))
+  const learningText = tree => textOf(learningTree(tree))
+
+  let tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node['data-agent-detail'] === 'ag_a').length, 1)
+  assert.equal(learningText(tree).includes('decisionPrincipleVersion 3'), true)
+  let scrollTop = clampScroll(811.5, tree)
+  assert.equal(scrollTop, 811.5)
+
+  await findAll(learningTree(tree), node => node.type === harness.ui.Button && node['data-action'] === 'learning-publish')[0].onClick()
+  tree = harness.render()
+  const dialog = findAll(tree, node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-learning-publish')[0]
+  assert.ok(dialog, 'the confirmed publish asks first')
+  const confirmation = dialog.onConfirm()
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(agentReads, 2, 'the confirmed publish rereads the same assistant')
+  assert.equal(findAll(tree, node => node['data-agent-detail'] === 'ag_a').length, 1, 'the pending reload keeps the detail mounted instead of a viewport-height LoadingState frame')
+  assert.equal(learningText(tree).includes('decisionPrincipleVersion 3'), true, 'the previous assistant stays rendered until the fresh value arrives')
+  const pendingPublish = findAll(learningTree(tree), node => node.type === harness.ui.Button && node['data-action'] === 'learning-publish')[0]
+  assert.ok(pendingPublish)
+  assert.equal(pendingPublish.disabled, true, 'the previous review cannot publish again while the reload is in flight')
+  scrollTop = clampScroll(scrollTop, tree)
+  assert.ok(scrollTop >= SETTLED_CONTENT - VIEWPORT, 'the pending reload keeps at least the settled maximum instead of clamping to 0')
+  assert.ok(scrollTop <= 811.5, 'the pending reload never moves the preserved position down')
+
+  reload.resolve(afterPublish)
+  await confirmation
+  await harness.flush()
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node['data-agent-detail'] === 'ag_a').length, 1)
+  assert.equal(findAll(tree, node => node['data-candidate-review'] === true).length, 0, 'the published candidate review is gone')
+  assert.equal(learningText(tree).includes('decisionPrincipleVersion 4'), true, 'the fresh authoritative value replaced the previous one')
+  scrollTop = clampScroll(scrollTop, tree)
+  assert.equal(scrollTop, 193, 'the settled content shrinks to the new maximum instead of staying at 0')
+  harness.unmount()
+})
