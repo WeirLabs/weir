@@ -989,6 +989,117 @@ export function publicCandidateWordingProblems(audit = {}) {
   return problems
 }
 
+// ---------------------------------------------------------------------------
+// Explicit decision data export: the records advanced action, its confirmation,
+// the real success surface and a failure that must never look like success.
+// ---------------------------------------------------------------------------
+
+/** The export confirmation must restate the scope and the local destination. */
+export function exportConfirmationProblems(audit = {}) {
+  const problems = []
+  const dialog = audit.dialog ?? {}
+  const ax = Array.isArray(audit.ax) ? audit.ax : []
+  if (dialog.present !== true) return ['no export confirmation dialog was rendered']
+  const title = readableText(dialog.title)
+  const body = readableText(dialog.body)
+  if (!title) problems.push('the export confirmation has no title')
+  if (!/导出本工作区的决策数据|Export this workspace/.test(title)) problems.push(`the export confirmation title does not name the workspace export: ${JSON.stringify(shortenedText(title))}`)
+  if (!readableText(body)) problems.push('the export confirmation has no body')
+  else {
+    if (!/导出不会改变或授权|changes? nothing|grants? nothing/i.test(body)) problems.push('the confirmation does not state that exporting changes and authorizes nothing')
+    if (!/不提供导入|no import/i.test(body)) problems.push('the confirmation does not state that there is no import')
+    if (!/本地|local/i.test(body)) problems.push('the confirmation does not name the local destination')
+  }
+  const buttons = (Array.isArray(dialog.buttons) ? dialog.buttons : []).map(button => readableText(button?.text))
+  if (buttons.length < 2) problems.push(`the confirmation renders ${buttons.length} actions instead of a confirm and a cancel`)
+  if (!buttons.some(text => /导出数据|Export data/.test(text))) problems.push('the confirmation has no export action')
+  if (!buttons.some(text => /取消|Cancel/.test(text))) problems.push('the confirmation has no cancel action')
+  if (!ax.some(node => node?.role === 'dialog' || node?.role === 'alertdialog')) problems.push('the confirmation is not an accessible dialog in the AX tree')
+  for (const node of ax) if (node?.role === 'button' && node?.ignored === true) problems.push('the confirmation exposes an ignored button in AX')
+  if (!ax.some(node => node?.role === 'button' && !node.ignored && /导出数据|Export data/.test(String(node?.name ?? '')))) problems.push('the export action is not a named button in AX')
+  return problems
+}
+
+/**
+ * Success is only success when the rendered surface, the wire and the file on
+ * disk agree: a fabricated path, a mismatched byte count or a bad checksum fails.
+ */
+export function exportSuccessSurfaceProblems(audit = {}) {
+  const problems = []
+  const dom = audit.dom ?? {}
+  const wire = audit.wire ?? {}
+  const file = audit.file ?? {}
+  if (dom.present !== true) problems.push('no export success surface was rendered')
+  if (dom.errorPresent === true) problems.push('a success and a failure surface were rendered at the same time')
+  const fileText = readableText(dom.file)
+  const bytesText = readableText(dom.bytesText)
+  const shaText = readableText(dom.sha256)
+  const path = String(wire.file ?? '')
+  if (!path) problems.push('the exportData response carried no file path')
+  if (path && !fileText.includes(path)) problems.push(`the success surface does not show the real path: ${JSON.stringify(shortenedText(fileText))} vs ${JSON.stringify(shortenedText(path))}`)
+  if (!Number.isInteger(wire.bytes) || wire.bytes <= 0) problems.push('the exportData response carried no byte count')
+  if (bytesText && !bytesText.includes(String(wire.bytes)) && !/[0-9.]+\s*(?:B|KB|MB)/.test(bytesText)) problems.push(`the success surface does not show the real size: ${JSON.stringify(shortenedText(bytesText))}`)
+  if (!/^[a-f0-9]{64}$/.test(String(wire.sha256 ?? ''))) problems.push('the exportData response carried no sha256 checksum')
+  if (shaText && !shaText.includes(String(wire.sha256 ?? ''))) problems.push(`the success surface does not show the real checksum: ${JSON.stringify(shortenedText(shaText))}`)
+  // The file itself must be the one the surface describes.
+  if (file.exists !== true) problems.push('the exported file does not exist on disk')
+  if (file.bytes !== wire.bytes) problems.push(`the file is ${file.bytes} bytes but the response reported ${wire.bytes}`)
+  if (file.sha256 !== wire.sha256) problems.push('the file content does not hash to the reported checksum')
+  if (file.mode !== '600') problems.push(`the exported file mode is ${file.mode}, not 600`)
+  if (file.directoryMode !== '700') problems.push(`the exports directory mode is ${file.directoryMode}, not 700`)
+  if (file.envelope?.kind !== 'weir-decision-export' || file.envelope?.formatVersion !== 1) problems.push('the file is not a versioned decision export envelope')
+  if (file.envelope?.integrity?.value !== wire.sha256) problems.push('the envelope integrity value is not the reported checksum')
+  if (file.envelope?.checksumValid !== true) problems.push('the envelope checksum does not verify from the file content')
+  if (!(Number(file.envelope?.counts?.cases) >= 1)) problems.push('the export did not carry the live workspace records')
+  if (file.containsWorkspaceKey === true) problems.push('the export file carries a real workspaceKey')
+  if (file.containsAbsolutePath !== false) problems.push('the export file carries an absolute path')
+  // Scope discipline on the wire: only the session is forwarded.
+  const wireArgs = audit.wireArgs ?? {}
+  const keys = Object.keys(wireArgs).sort()
+  if (keys.join(',') !== 'sessionId') problems.push(`the export request forwarded ${JSON.stringify(keys)} instead of only the session`)
+  if (audit.focus?.active !== true) problems.push('focus did not return to the export action after the confirmation')
+  return problems
+}
+
+/** A failed export shows an actionable reason and a retry, never a success. */
+export function exportFailureSurfaceProblems(audit = {}) {
+  const problems = []
+  const dom = audit.dom ?? {}
+  if (dom.present !== true) problems.push('no export failure surface was rendered')
+  if (dom.successPresent === true) problems.push('the failed export still renders a success surface')
+  const reason = readableText(dom.reason)
+  if (!reason) problems.push('the failure renders no ordinary-language reason')
+  if (!/无法写入|could not be written|unavailable|too large|超过|没有完成/i.test(reason)) problems.push(`the failure reason is not actionable: ${JSON.stringify(shortenedText(reason))}`)
+  if (dom.retry !== true) problems.push('the failure offers no retry action')
+  if (audit.filesAfter !== audit.filesBefore) problems.push(`the failed export left ${audit.filesAfter} files behind (before: ${audit.filesBefore})`)
+  if (audit.focus?.active !== true) problems.push('focus did not return to the export action after the failed attempt')
+  return problems
+}
+
+/**
+ * A refine review leg only discriminates when the refined wording differs from
+ * the wording still published: with identical text a stale render and a refined
+ * render are indistinguishable, so the review would show nothing new. The
+ * rendered refine row must show exactly the reviewed refined text, and the
+ * published version must still carry the older wording.
+ */
+export function publicRefinedWordingProblems(audit = {}) {
+  const problems = []
+  const changes = Array.isArray(audit.rpc?.changes) ? audit.rpc.changes : []
+  const refine = changes.find(change => String(change?.op ?? '') === 'refine')
+  if (!refine) return ['the reviewed candidate carries no refine operation to discriminate']
+  const refined = readableText(refine.text)
+  if (!refined) return ['the refine operation carries no reviewed wording']
+  const published = (Array.isArray(audit.published) ? audit.published : []).map(item => readableText(item?.text)).filter(Boolean)
+  if (published.length === 0) problems.push('the published version carries no wording to compare the refine against')
+  if (published.includes(refined)) problems.push('the refined wording is identical to the wording still published, so a stale render cannot be told apart')
+  if (audit.dom?.present !== true) problems.push('no public candidate was rendered for the refined wording review')
+  const rendered = (Array.isArray(audit.dom?.changes) ? audit.dom.changes : []).find(row => String(row?.op ?? '') === 'refine')
+  if (!rendered) problems.push('the rendered candidate lists no refine change')
+  else if (readableText(rendered.text) !== refined) problems.push(`the rendered refine change shows ${JSON.stringify(shortenedText(rendered.text))} instead of the refined wording ${JSON.stringify(shortenedText(refined))}`)
+  return problems
+}
+
 /**
  * After explicit adoption the public zone must render the published principles
  * read-only, with the wording the agent/refresh response reports, and with no

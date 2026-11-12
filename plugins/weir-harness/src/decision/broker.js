@@ -1,6 +1,6 @@
 // Decision Broker: sole authority for persistence, routing, evaluation and user actions.
 import { existsSync, realpathSync } from 'node:fs'
-import { isAbsolute, join, relative as relativePath } from 'node:path'
+import { dirname, isAbsolute, join, relative as relativePath } from 'node:path'
 import { createHash } from 'node:crypto'
 import { openDecisionDatabase } from './store/db.js'
 import { DecisionProfiles, parseScope } from './store/profiles.js'
@@ -20,6 +20,7 @@ import {
 import { PUBLIC_CONSOLIDATION_SYSTEM, publicContentIssues } from './learning/public.js'
 import { PRIVATE_ZONE, PUBLIC_ZONE, memoryNamespace, workspaceAlias } from './learning/namespace.js'
 import { DecisionLearning } from './store/learning.js'
+import { EXPORT_DIR_NAME, assembleExportEnvelope, writeExportFile } from './store/export.js'
 import { decisionOrigin, excludedRequest, excludedStockHookRequest, sessionModelRoute } from './route.js'
 import { autoAdmission, classifyAutoRequest, routeAuto } from './router.js'
 import { userTextMessage } from '../shared/user-message.js'
@@ -1168,17 +1169,20 @@ export class DecisionBroker {
    * The published version carries its reviewed wording read-only so an adopted
    * principle can be read afterwards; a principle row never carries a source, a
    * workspace key or a record origin, only its text and workspace-agnostic hints.
+   * Only active principles are published as current: a retired principle stays
+   * auditable in its Snapshot detail and the public count agrees with the list.
    */
   publicState(agentId) {
     const current = this.learning.currentPublicSnapshot(agentId)
     const currentRun = current ? this.learning.getRunById(current.learningRunId) : null
+    const active = current ? current.principles.filter(principle => principle.state === 'active') : []
     return {
       current: current ? {
         snapshotId: current.snapshotId, version: current.version, revision: current.revision,
-        contentHash: current.contentHash, principleCount: current.principles.length,
+        contentHash: current.contentHash, principleCount: active.length,
         workspaceCount: currentRun?.inputFrozen.workspaceAliases?.length ?? 0,
         sourceCount: (currentRun?.inputFrozen.caseIds?.length ?? 0) + (currentRun?.inputFrozen.feedbackIds?.length ?? 0),
-        principles: publicPrincipleRows(current.principles),
+        principles: publicPrincipleRows(active),
       } : null,
     }
   }
@@ -1533,6 +1537,59 @@ export class DecisionBroker {
     if (!this.store) return { window: input.window ?? 'all', casesOpened: 0, attemptsTotal: 0, autoAnswered: 0, routing: projectRoutingChains([]).summary, reassignments: 0, selectorOffBypasses: 0 }
     const context = await this.sessionContext(input.sessionId)
     return this.query.metrics({ ...input, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
+  }
+
+  /**
+   * Explicit user data export (OpenSpec decision-data-export D1/D5/D6).
+   * The caller names only its session: the root session, the workspace and the
+   * file location are Host-derived. Everything is read and serialized first, the
+   * file is written atomically next, and only then does one audit fact exist — a
+   * failed export leaves neither a file nor an audit line.
+   * @param {{sessionId:string}} input
+   */
+  async exportData(input) {
+    const status = this.status()
+    if (!status.enabled || status.reason === 'disabled') throw new DecisionContractError('EXPORT_UNAVAILABLE', 'disabled')
+    if (!status.available) throw new DecisionContractError('EXPORT_UNAVAILABLE', status.reason ?? 'unavailable')
+    try {
+      await this.ensureStore()
+    } catch (error) {
+      // A closed export surface never forwards a store path or an internal code.
+      if (error instanceof DecisionContractError && error.code === 'EXPORT_UNAVAILABLE') throw error
+      throw new DecisionContractError('EXPORT_UNAVAILABLE', typeof error?.code === 'string' ? error.code : 'store_unavailable')
+    }
+    const context = await this.sessionContext(input.sessionId)
+    if (typeof context.workspaceKey !== 'string' || !context.workspaceKey) throw new DecisionContractError('EXPORT_UNAVAILABLE', 'workspace_unavailable')
+    const exportedAt = this.now()
+    const publicPrinciples = this.exportPublishedPrinciples()
+    const envelope = assembleExportEnvelope({
+      rootSessionId: context.rootSessionId, workspaceKey: context.workspaceKey, exportedAt,
+      query: this.query, learning: this.learning, profiles: this.profiles, publicPrinciples,
+    })
+    const written = writeExportFile(this.exportsDirectory(), envelope)
+    this.audit('export', {
+      rootSessionId: context.rootSessionId, zone: 'workspace', counts: envelope.counts,
+      sha256: envelope.integrity.value, file: written.name, bytes: written.bytes,
+    })
+    return { file: written.file, bytes: written.bytes, sha256: envelope.integrity.value, counts: envelope.counts, exportedAt }
+  }
+
+  /** `<store dir>/exports` next to the authoritative database. */
+  exportsDirectory() {
+    return join(dirname(this.store?.path ?? this.databasePath()), EXPORT_DIR_NAME)
+  }
+
+  /**
+   * The published public zone as exportable rows: every Agent's current public
+   * Snapshot contributes its reviewed principle text and scope, nothing else.
+   */
+  exportPublishedPrinciples() {
+    const rows = []
+    for (const profile of this.profiles.listProfiles({ includeArchived: true })) {
+      const state = this.publicState(profile.agentId)
+      for (const row of state.current?.principles ?? []) rows.push(row)
+    }
+    return rows
   }
 }
 

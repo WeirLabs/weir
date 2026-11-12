@@ -629,6 +629,66 @@ window.__ModuleLoader__.load({
       return service?.ok === true ? service.value : service;
     }
 
+    // A data export only shows a success surface for a complete, verifiable
+    // result: a missing path, byte count or checksum is a failure, never a
+    // partial success. Closed Host codes map to ordinary language.
+    const EXPORT_ERROR_KEYS = {
+      EXPORT_UNAVAILABLE: "decisionExportUnavailable",
+      EXPORT_WRITE_FAILED: "decisionExportWriteFailed",
+      EXPORT_TOO_LARGE: "decisionExportTooLarge",
+    };
+
+    function exportBytes(bytes) {
+      const value = Number(bytes);
+      if (!Number.isFinite(value) || value < 0) return "\u2014";
+      if (value < 1024) return `${value} B`;
+      if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function exportResult(payload) {
+      const value = okValue(payload);
+      const file = text(value?.file);
+      const bytes = value?.bytes;
+      const sha256 = text(value?.sha256).toLowerCase();
+      const valid = file.length > 0
+        && typeof bytes === "number" && Number.isInteger(bytes) && bytes > 0
+        && /^[a-f0-9]{64}$/.test(sha256);
+      if (!valid) return { valid: false, result: null };
+      return {
+        valid: true,
+        result: {
+          file, bytes, bytesText: exportBytes(bytes), sha256,
+          counts: object(value?.counts) ?? {},
+          exportedAt: typeof value?.exportedAt === "number" ? value.exportedAt : null,
+        },
+      };
+    }
+
+    function exportView(state = {}) {
+      const input = object(state) ?? {};
+      const phase = ["idle", "pending", "success", "error"].includes(input.phase) ? input.phase : "idle";
+      const checked = exportResult(input.value);
+      // A success phase with an incomplete result is still a failure: the page
+      // must never invent a path, a size or a checksum.
+      const failed = phase === "error" || (phase === "success" && !checked.valid);
+      const code = text(input.error?.code);
+      const errorKey = failed
+        ? EXPORT_ERROR_KEYS[code] ?? (code === "" || code === "EXPORT_INVALID_RESULT" ? "decisionExportInvalidResult" : "decisionExportFailed")
+        : null;
+      return {
+        phase,
+        busy: phase === "pending",
+        canStart: phase === "idle" || phase === "error" || (phase === "success" && !checked.valid),
+        statusKey: failed ? "decisionExportFailed" : phase === "success" ? "decisionExportSucceeded" : phase === "pending" ? "decisionExporting" : null,
+        statusVariant: failed ? "error" : phase === "success" ? "success" : "idle",
+        result: checked.valid ? checked.result : null,
+        errorKey,
+        canRetry: failed,
+        copied: input.copied === true,
+      };
+    }
+
     const dictionaries = {
       en: {
         decisionPageDescription: "Let assistants handle repeatable decisions with evidence; important authority remains with you.", decisionPrimaryNavigation: "Decision assistant tasks", decisionInboxEmpty: "Nothing needs your decision right now.", decisionSelectRecord: "Choose a decision record to read its details.", decisionNoAnswer: "No answer is recorded.", decisionReasonSummary: "Why this decision was made", decisionCurrentEvidence: "Evidence for the current evaluation", decisionNoEvidence: "No verifiable evidence is attached to the current evaluation.", decisionEvidenceUnavailable: "The evidence exists, but no readable excerpt is available.", decisionEvidenceDeleted: "This supporting material was deleted.", decisionEvidenceSuperseded: "This supporting material has been superseded.", decisionRecoveryActions: "Recovery actions", decisionChooseAssistant: "Choose an assistant", decisionViewAssistant: "View assistant",
@@ -684,6 +744,10 @@ window.__ModuleLoader__.load({
         decisionScopeCurrentWorkspace: "this workspace", decisionAgentsShared: "These assistants are shared across every workspace of this profile.",
         decisionPublicMemory: "Public memory", decisionWorkspaceExperience: "Current workspace experience",
         decisionPublicGuidanceOnly: "Public memory is reviewed guidance, not evidence: automatic answers still need support from the current workspace.", decisionPrivateIsolation: "Private experience is readable only in the workspace where it was recorded.",
+        decisionExportAdvanced: "Data export", decisionExportHint: "Writes one JSON file of this workspace\u2019s decision records, private memory and the published public principle wording into the decision data directory\u2019s exports folder. Other workspaces, absolute paths and public-memory provenance are never included, and there is no import.", decisionExport: "Export decision data", decisionExporting: "Exporting\u2026",
+        decisionExportTitle: "Export this workspace\u2019s decision data?", decisionExportConfirmation: "The file contains this workspace\u2019s decision records, private memory and the published public principle wording. It is written to the local decision data directory with owner-only permissions. Exporting changes nothing, grants nothing and cannot be undone into the app: there is no import.", decisionExportConfirm: "Export data",
+        decisionExportSucceeded: "Export written", decisionExportFile: "File", decisionExportBytes: "Size", decisionExportChecksum: "Checksum", decisionExportCopyPath: "Copy path", decisionExportCopied: "Path copied", decisionExportRetry: "Retry export",
+        decisionExportFailed: "The export did not complete, so no file is shown.", decisionExportUnavailable: "Data export is unavailable because decision assistants are off or the decision store could not be opened. Enable decision assistants, then retry.", decisionExportWriteFailed: "The exports folder could not be written. Check that the decision data directory is writable, then retry.", decisionExportTooLarge: "This workspace\u2019s decision data exceeds the 32 MiB export limit.", decisionExportInvalidResult: "The export returned an incomplete result, so no success is shown. Retry the export.",
         decisionPublicCurrentVersion: "Current published public version", decisionPublicNoCurrent: "No public principles have been published yet.",
         decisionPublicRefresh: "Refresh public memory", decisionPublicRefreshing: "Refreshing public memory\u2026", decisionPublicReadFailed: "Public memory could not be read. Retry the read.",
         decisionPublicDisclosureTitle: "Before the first public review", decisionPublicDisclosureBody: "Opening or refreshing public memory sends bounded, redacted excerpts of eligible experience from all workspaces of this profile to the current model to draft a candidate. Nothing is published automatically.", decisionPublicDisclosureAcknowledge: "I understand, review now",
@@ -753,6 +817,10 @@ window.__ModuleLoader__.load({
         decisionScopeCurrentWorkspace: "当前工作区", decisionAgentsShared: "这些助手在本 profile 的所有工作区之间共享。",
         decisionPublicMemory: "公共记忆", decisionWorkspaceExperience: "当前工作区经验",
         decisionPublicGuidanceOnly: "公共记忆只是经审阅的指导，不是判断依据：自动回答仍需要当前工作区的依据。", decisionPrivateIsolation: "私有经验只在记录它的当前工作区可读。",
+        decisionExportAdvanced: "数据导出", decisionExportHint: "把本工作区的判断记录、私有记忆与已发布的公共原则文本写成一个 JSON 文件，放在决策数据目录的 exports 子目录。不含其他工作区、绝对路径或公共来源谱系，也不提供导入。", decisionExport: "导出决策数据", decisionExporting: "正在导出…",
+        decisionExportTitle: "导出本工作区的决策数据？", decisionExportConfirmation: "文件将包含本工作区的判断记录、私有记忆与已发布的公共原则文本，写入本地决策数据目录，且只对当前用户可读。导出不会改变或授权任何东西，也无法从应用内还原：本产品不提供导入。", decisionExportConfirm: "导出数据",
+        decisionExportSucceeded: "导出已完成", decisionExportFile: "文件", decisionExportBytes: "大小", decisionExportChecksum: "校验和", decisionExportCopyPath: "复制路径", decisionExportCopied: "路径已复制", decisionExportRetry: "重试导出",
+        decisionExportFailed: "导出没有完成，因此不显示任何文件。", decisionExportUnavailable: "决策助手已关闭或无法打开决策存储，暂时不能导出。请先启用决策助手再重试。", decisionExportWriteFailed: "exports 目录无法写入。请确认决策数据目录可写后重试。", decisionExportTooLarge: "本工作区的决策数据超过 32 MiB 导出上限。", decisionExportInvalidResult: "导出返回了不完整的结果，因此不显示成功。请重试导出。",
         decisionPublicCurrentVersion: "当前已发布的公共版本", decisionPublicNoCurrent: "还没有已发布的公共原则。",
         decisionPublicRefresh: "刷新公共记忆", decisionPublicRefreshing: "正在刷新公共记忆…", decisionPublicReadFailed: "公共记忆读取失败，请重试。",
         decisionPublicDisclosureTitle: "首次整理公共记忆前", decisionPublicDisclosureBody: "打开或刷新公共记忆会把本 profile 各工作区合格经验的有界、脱敏摘要发送给当前模型，用于生成候选；不会自动发布。", decisionPublicDisclosureAcknowledge: "我已了解，开始整理",
@@ -794,6 +862,9 @@ window.__ModuleLoader__.load({
     exports.scopeSummary = scopeSummary;
     exports.publicCandidateReadiness = publicCandidateReadiness;
     exports.publicMemoryView = publicMemoryView;
+    exports.exportResult = exportResult;
+    exports.exportView = exportView;
+    exports.exportBytes = exportBytes;
     exports.pageView = pageView;
     exports.decisionRpc = decisionRpc;
     return module.exports;

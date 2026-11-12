@@ -1125,6 +1125,22 @@ describe('decision-gui cross-workspace brain', () => {
     assert.equal(replayOperations(parentSnapshot.principles, operations, publicAuthority).passed, true)
   })
 
+  it('refines the published public principle with visibly distinct wording', () => {
+    const publishedText = 'Prefer the documented option both workspaces agreed on.'
+    const parentSnapshot = { snapshotId: 'ms_public_v1', revision: 1, principles: [{ principleId: 'pr_public_v1', text: publishedText, scope: {}, sources: ['dc_w1_source'], state: 'active' }] }
+    const operations = parseConsolidationCandidate(consolidate(parentSnapshot), parentSnapshot.principles, 'public')
+    assert.equal(operations.length, 1)
+    assert.equal(operations[0].op, 'refine')
+    const refined = operations[0].text
+    assert.equal(typeof refined, 'string')
+    assert.ok(refined.trim().length > 0, 'the refine carries wording of its own')
+    assert.notEqual(refined, publishedText, 'a refine whose wording equals the stale published text cannot be told apart from it')
+    assert.equal(replayOperations(parentSnapshot.principles, operations, publicAuthority).passed, true, 'the distinct wording still replays')
+    // The first extraction keeps its own wording; the refine leg must be distinguishable from it too.
+    const added = parseConsolidationCandidate(consolidate(null), [], 'public')[0].text
+    assert.notEqual(refined, added, 'the refine leg is distinguishable from the first extraction wording')
+  })
+
   it('returns no candidate when the public run froze no source', () => {
     const options = userOptions(JSON.stringify({ ...publicPacket(null), sources: [] }), { system: PUBLIC_CONSOLIDATION_SYSTEM })
     const [block] = blockEnds([...decisionGui.decide(options, extract(options))])

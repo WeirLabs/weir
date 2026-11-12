@@ -2,16 +2,16 @@
 // All product mutations are performed on the rendered NEW UI. Direct RPC is read-only.
 // Only exact owned main/Host PIDs are signalled; the current App is never addressed.
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { basename, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   LANE, writeJson, prepareProfile, startInstance, stopInstance,
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -2312,6 +2312,11 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const secondWordingProblems = publicCandidateWordingProblems(secondWording)
   writeJson(join(out, 'cross-public-second-candidate-wording.json'), { rpc: secondWording.rpc, dom: { changes: secondCandidateDom.changes, frozenInput: secondCandidateDom.frozenInput }, problems: secondWordingProblems })
   check('publicSecondCandidateRendersRefinedWording', secondWordingProblems.length === 0, { problems: secondWordingProblems, rendered: secondCandidateDom.changes, reviewed: secondWording.rpc.changes, frozenInput: secondCandidateDom.frozenInput })
+  // B3: the refined wording must differ from the wording that is still published,
+  // otherwise a stale render and a refined render would look the same.
+  const refinedWordingProblems = publicRefinedWordingProblems({ rpc: secondWording.rpc, dom: secondWording.dom, published: publishedPrinciples })
+  writeJson(join(out, 'cross-public-refined-wording.json'), { published: publishedPrinciples.map(principle => ({ principleId: principle.principleId, text: principle.text })), reviewed: secondWording.rpc.changes, rendered: secondCandidateDom.changes, problems: refinedWordingProblems })
+  check('publicSecondCandidateRefinesDistinctWording', refinedWordingProblems.length === 0, { problems: refinedWordingProblems, published: publishedPrinciples.map(principle => principle.text), reviewed: secondWording.rpc.changes, rendered: secondCandidateDom.changes })
 
   const beforeReject = await rpc(w4.sessionId, 'w4-before-public-reject', 'agent', { agentId: shared.agentId })
   const beforeCurrent = beforeReject.publicMemory?.current ?? null
@@ -2431,7 +2436,10 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   check('publicUiActionsCarryTheIntendedWorkspaceSession', wireProblems.length === 0, { problems: wireProblems, actions: publicWires, bindings: pageBindings })
   writeJson(join(out, 'cross-workspace-matrix.json'), { phase, sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, assistant: shared.agentId, cases: { w1: w1Case.caseId, w2: w2Case.caseId, w4: w4Case.caseId, auto: autoCase.caseId }, publicVersions, published: { snapshotId: published.snapshotId, version: published.version, revision: published.revision, contentHash: published.contentHash, principleId: publishedPrincipleId }, publicObservations, publicWires, pageBindings, publicGuidance: { case: { caseId: w4Case.caseId, state: w4Guidance.case.state, agentId: w4Guidance.case.agentId }, attempt: { attemptId: w4Attempt.attemptId, outcome: w4Attempt.outcome, citedEvidenceIds: w4Attempt.citedEvidenceIds, pins: w4Attempt.pins, publicL2: w4Attempt.packManifest?.memory?.publicL2 ?? null, evidenceIds: w4Attempt.packManifest?.evidenceIds ?? [] }, problems: guidanceProblems }, publicRecordDetail: { capture: recordCapture, problems: recordProblems }, publicRejection: { candidate: secondCandidate, problems: rejectionProblems, audit: rejectionAudit }, denials, gatedDom, candidateDom, secondCandidateDom, publishedDom, rolledBack: { w1: w1RolledBack, w2: w2Dom }, w3Dom, w4Dom, autoShare, refreshRpc, reviewRpc, privateMemory, problems: sharedProblems })
   check('crossWorkspaceSharedIdentityAndPrivateIsolation', sharedProblems.length === 0, sharedProblems)
-  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, agentId: shared.agentId, denials, problems: [...sharedProblems, ...wireProblems, ...guidanceProblems, ...recordProblems, ...rejectionProblems] }
+  // Gated real-Desktop export leg: W4 owns live cases in this profile, so its own
+  // session is the export scope.
+  const exportSurface = await runExportSurfaceAcceptance(w4.sessionId)
+  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, agentId: shared.agentId, denials, problems: [...sharedProblems, ...wireProblems, ...guidanceProblems, ...recordProblems, ...rejectionProblems], exportSurface }
 }
 
 function writeReport(verdict, error = null) {
@@ -3308,6 +3316,194 @@ async function runSelectorZoomMatrix(sessionId) {
   await instance.cdp.setViewport(1440, 900, false)
 }
 
+// Gated real-Desktop export leg (WEIR_DECISION_PRODUCT_EXPORT=1). The action is
+// only reachable through the records advanced area, the confirmation restates
+// scope and destination, a real success shows the path/bytes/checksum of a real
+// file (verified from the file itself), a read-only destination must show an
+// actionable failure with no success surface, and both paths return focus.
+async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-export') {
+  if (process.env.WEIR_DECISION_PRODUCT_EXPORT !== '1') return null
+  const evidence = { phase, sessionId }
+  // The export is scoped to one workspace, so bind the page to that workspace's
+  // own session first; a page without a session renders no records at all.
+  await openDecisionPageForSession(sessionId, 'export-surface', 'records')
+  await openDisclosure('weir-da-records-advanced')
+  const action = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const button=document.querySelector('[data-record-export] [data-action="export"]')
+    if(!button||button.disabled||button.offsetParent===null)return null
+    button.scrollIntoView({block:'center',inline:'nearest'})
+    const rect=button.getBoundingClientRect()
+    return {present:true,width:rect.width,height:rect.height,text:button.innerText.trim(),enabled:!button.disabled,hint:document.querySelector('[data-record-export] p')?.innerText??''}
+  })()`), 30_000)
+  await shot('export-action')
+  evidence.action = action
+  check('exportActionVisibleInRecordsAdvancedArea', action.present === true && action.width > 0 && action.height > 0 && action.enabled === true && /导出决策数据|Export decision data/i.test(action.text), action)
+  check('exportActionExplainsItsScope', /导出|export/i.test(action.text) && /JSON|exports|导入|import/i.test(action.hint), action)
+
+  // Confirmation: the existing dialog, restated scope, nothing written yet.
+  const confirmMark = networkRpc.length
+  await keyboardActivate('Request data export', '[data-record-export] [data-action="export"]')
+  const dialog = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const modal=document.querySelector('#weir-da-export')
+    if(!modal)return null
+    return {
+      present:true,
+      title:document.querySelector('#weir-da-export-title')?.innerText??'',
+      body:document.querySelector('#weir-da-export-body')?.innerText??'',
+      buttons:[...modal.querySelectorAll('.weir-da-actions button')].map(item=>({text:item.innerText.trim()})),
+    }
+  })()`), 30_000)
+  const dialogAx = await instance.cdp.accessibility('#weir-da-export')
+  const confirmationFocusInside = await instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-export")?.contains(document.activeElement))')
+  check('exportConfirmationTakesFocus', confirmationFocusInside === true, { confirmationFocusInside })
+  const confirmationProblems = exportConfirmationProblems({ dialog, ax: dialogAx })
+  writeJson(join(out, 'export-confirmation.json'), { dialog, ax: dialogAx, problems: confirmationProblems })
+  await shot('export-confirmation')
+  check('exportConfirmationStatesScopeAndDestination', confirmationProblems.length === 0, { problems: confirmationProblems, dialog })
+  await collectNetwork()
+  evidence.confirmationWroteNothing = networkRpc.slice(confirmMark).filter(entry => entry.method === 'exportData').length === 0
+  check('exportConfirmationWritesNothingBeforeConfirming', evidence.confirmationWroteNothing, { calls: networkRpc.slice(confirmMark).filter(entry => entry.method === 'exportData').length })
+
+  // The real success path.
+  const successMark = networkRpc.length
+  await keyboardActivate('Confirm data export', '#weir-da-export .weir-da-actions button:last-child', { expectFocus: '[data-record-export] [data-action="export"]' })
+  const successDom = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const section=document.querySelector('[data-export-result="success"]')
+    if(!section)return null
+    return {
+      present:true,
+      errorPresent:Boolean(document.querySelector('[data-export-result="error"]')),
+      file:section.querySelector('[data-export-file]')?.innerText??'',
+      bytesText:section.querySelector('[data-export-bytes]')?.innerText??'',
+      sha256:section.querySelector('[data-export-sha256]')?.innerText??'',
+      text:section.innerText,
+      copy:Boolean(section.querySelector('[data-action="export-copy"]')),
+    }
+  })()`), 60_000)
+  await collectNetwork()
+  const successWire = networkRpc.slice(successMark).filter(entry => entry.method === 'exportData')
+  requireEvidence(successWire.length === 1, `the export gesture ran exportData ${successWire.length} times instead of once`)
+  const successPayload = publicRpcPayload(successWire[0])
+  const successFocus = await measureFocus('[data-record-export] [data-action="export"]')
+  const successFile = inspectExportFile(successPayload)
+  const successProblems = exportSuccessSurfaceProblems({
+    dom: successDom, wire: successPayload ?? {}, wireArgs: successWire[0].args ?? {}, file: successFile, focus: successFocus,
+  })
+  writeJson(join(out, 'export-success.json'), { dom: successDom, wire: successPayload, wireArgs: successWire[0].args, file: successFile, focus: successFocus, problems: successProblems })
+  await shot('export-success')
+  check('exportSuccessShowsRealFileBytesAndChecksum', successProblems.length === 0, { problems: successProblems, dom: successDom, wire: successPayload, file: successFile, focus: successFocus })
+
+  // A read-only destination must fail closed on the real surface.
+  const exportsDir = dirname(String(successPayload?.file ?? ''))
+  requireEvidence(exportsDir && existsSync(exportsDir), `the exported file has a real directory: ${exportsDir}`)
+  const filesBefore = readdirSync(exportsDir).length
+  chmodSync(exportsDir, 0o500)
+  let failureDom = null
+  let failureWire = null
+  let failureFocus = null
+  try {
+    const failureMark = networkRpc.length
+    await keyboardActivate('Request data export again', '[data-record-export] [data-action="export"]')
+    await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-export"))'), 30_000)
+    await keyboardActivate('Confirm the failing data export', '#weir-da-export .weir-da-actions button:last-child', { expectFocus: '[data-record-export] [data-action="export"]' })
+    failureDom = await waitFor(() => instance.cdp.evaluate(`(() => {
+      const section=document.querySelector('[data-export-result="error"]')
+      if(!section)return null
+      return {
+        present:true,
+        successPresent:Boolean(document.querySelector('[data-export-result="success"]')),
+        reason:section.querySelector('[data-export-error]')?.innerText??'',
+        retry:Boolean(section.querySelector('[data-action="export-retry"]')),
+        text:section.innerText,
+      }
+    })()`), 60_000)
+    await collectNetwork()
+    const failureWireEntries = networkRpc.slice(failureMark).filter(entry => entry.method === 'exportData')
+    failureWire = failureWireEntries.at(-1) ? publicRpcPayload(failureWireEntries.at(-1)) : null
+    failureFocus = await measureFocus('[data-record-export] [data-action="export"]')
+  } finally {
+    chmodSync(exportsDir, 0o700)
+  }
+  const failureFilesAfter = readdirSync(exportsDir).length
+  const failureProblems = exportFailureSurfaceProblems({ dom: failureDom, filesBefore, filesAfter: failureFilesAfter, focus: failureFocus })
+  writeJson(join(out, 'export-failure.json'), { dom: failureDom, wire: failureWire, filesBefore, filesAfter: failureFilesAfter, focus: failureFocus, problems: failureProblems })
+  await shot('export-failure')
+  check('exportFailureShowsActionableReasonWithoutSuccess', failureProblems.length === 0, { problems: failureProblems, dom: failureDom, filesBefore, filesAfter: failureFilesAfter, focus: failureFocus })
+
+  // The retry recovers on the real surface once the directory is writable again.
+  const retryMark = networkRpc.length
+  await keyboardActivate('Retry the data export', '[data-export-result="error"] [data-action="export-retry"]', { expectFocus: '[data-export-result="success"] [data-action="export-copy"]' })
+  const retriedDom = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const section=document.querySelector('[data-export-result="success"]')
+    if(!section)return null
+    return {present:true,file:section.querySelector('[data-export-file]')?.innerText??'',errorPresent:Boolean(document.querySelector('[data-export-result="error"]'))}
+  })()`), 60_000)
+  await collectNetwork()
+  const retryWire = networkRpc.slice(retryMark).filter(entry => entry.method === 'exportData')
+  const retryPayload = retryWire.at(-1) ? publicRpcPayload(retryWire.at(-1)) : null
+  const retryFile = inspectExportFile(retryPayload)
+  const retryProblems = [
+    ...exportSuccessSurfaceProblems({
+      dom: { ...retriedDom, bytesText: '', sha256: '' }, wire: retryPayload ?? {}, wireArgs: retryWire.at(-1)?.args ?? {},
+      file: retryFile, focus: await measureFocus('[data-export-result="success"] [data-action="export-copy"]'),
+    }).filter(problem => !/does not show the real (size|checksum)/.test(problem)),
+  ]
+  writeJson(join(out, 'export-retry.json'), { dom: retriedDom, wire: retryPayload, file: retryFile, problems: retryProblems })
+  await shot('export-retry')
+  check('exportRetryRecoversOnTheRealSurface', retryProblems.length === 0 && retriedDom.present === true, { problems: retryProblems, dom: retriedDom })
+  evidence.success = { dom: successDom, wire: successPayload, file: successFile, focus: successFocus, problems: successProblems }
+  evidence.failure = { dom: failureDom, filesBefore, filesAfter: failureFilesAfter, focus: failureFocus, problems: failureProblems }
+  writeJson(join(out, 'export-surface.json'), evidence)
+  return evidence
+}
+
+/**
+ * Read the exported file the driver was told about and re-derive every fact the
+ * success surface claims: existence, byte count, mode, checksum and envelope.
+ */
+function inspectExportFile(payload) {
+  const path = String(payload?.file ?? '')
+  if (!path || !existsSync(path)) return { exists: false }
+  const content = readFileSync(path, 'utf8')
+  let envelope = null
+  try { envelope = JSON.parse(content) } catch { envelope = null }
+  const stat = statSync(path)
+  const directory = dirname(path)
+  // The product checksum is canonical-JSON integrity over the envelope, not a
+  // hash of the pretty file bytes: recompute exactly what the product promised.
+  const canonicalChecksum = envelope ? createHash('sha256').update(JSON.stringify(canonicalFileJson(withoutIntegrity(envelope)))).digest('hex') : ''
+  return {
+    exists: true,
+    bytes: stat.size,
+    mode: (stat.mode & 0o777).toString(8),
+    directoryMode: (statSync(directory).mode & 0o777).toString(8),
+    sha256: canonicalChecksum,
+    contentSha256: createHash('sha256').update(content).digest('hex'),
+    envelope: envelope ? { ...envelope, checksumValid: canonicalChecksum === envelope?.integrity?.value } : null,
+    containsWorkspaceKey: content.includes('workspaceKey'),
+    containsAbsolutePath: /(?:^|["'\s])(?:\/Users\/|\/home\/|\/private\/|\/var\/|[A-Za-z]:\\)/.test(content),
+  }
+}
+
+/** The envelope without its own integrity field, for checksum recomputation. */
+function withoutIntegrity(envelope) {
+  const rest = { ...envelope }
+  delete rest.integrity
+  return rest
+}
+
+/** Canonical JSON over the file envelope, to verify the checksum independently. */
+function canonicalFileJson(value) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number') return value
+  if (Array.isArray(value)) return value.map(canonicalFileJson)
+  if (value && typeof value === 'object') {
+    const result = {}
+    for (const key of Object.keys(value).sort()) if (value[key] !== undefined) result[key] = canonicalFileJson(value[key])
+    return result
+  }
+  return value
+}
+
 async function runProductMatrix() {
 try {
   process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT = 'auto'
@@ -3741,6 +3937,7 @@ try {
   result.artifacts.crossWorkspaceMatrix = join(out, 'cross-workspace-matrix.json')
   result.artifacts.crossWorkspaceLegacyProfile = join(out, 'cross-workspace-legacy-profile.json')
   result.artifacts.crossWorkspaceLegacySurface = join(out, 'cross-workspace-legacy-surface.json')
+  result.artifacts.exportSurface = join(out, 'export-surface.json')
   result.artifacts.decisionMigrated = join(out, 'decision-migrated.db')
   writeJson(join(out, 'result.json'), result)
   writeJson(join(GUI, 'result.json'), result)

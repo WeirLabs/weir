@@ -31,6 +31,9 @@ window.__ModuleLoader__.load({
           ...(options.retryFailedExtraction === true ? { retryFailedExtraction: true } : {}),
         }),
         publicCandidate: agentId => call("publicCandidate", { agentId }),
+        // A data export names no workspace, path or content: the Host derives the
+        // scope and the destination from this session alone.
+        exportData: () => call("exportData"),
       };
     }
     function errorBanner(reason, fallback = "Decision action failed; retry is available.") {

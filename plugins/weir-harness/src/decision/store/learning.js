@@ -337,6 +337,20 @@ export class DecisionLearning {
     return deepFreeze(rows.map(memorySnapshotOf))
   }
 
+  /**
+   * Agent ids that own private rows in exactly one namespace. An export scopes
+   * itself by namespace, so it needs the row owners — never a second content
+   * projection next to listRuns()/listSnapshots().
+   * @param {{zone:string,namespaceWorkspaceKey:string|null}} namespace
+   * @returns {string[]}
+   */
+  listNamespaceAgentIds(namespace) {
+    const rows = this.store.db.prepare(`SELECT agent_id FROM learning_runs WHERE zone=? AND namespace_workspace_key IS ?
+      UNION SELECT agent_id FROM memory_snapshots WHERE zone=? AND namespace_workspace_key IS ?
+      ORDER BY agent_id`).all(namespace.zone, namespace.namespaceWorkspaceKey, namespace.zone, namespace.namespaceWorkspaceKey)
+    return rows.map(row => String(row.agent_id))
+  }
+
   /** The only active public run/candidate for one Agent, if any. */
   activePublicRun(agentId) {
     const row = this.store.db.prepare(`SELECT * FROM learning_runs
