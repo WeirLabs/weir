@@ -681,3 +681,178 @@ export function stageMigratedLegacyProfile({ root, lane, execPath = process.exec
   if (existsSync(source)) copyFileSync(source, target)
   return { out, reportPath, report, target, exitCode: generated.status, stderr: String(generated.stderr ?? '').slice(-2000) }
 }
+
+// ---------------------------------------------------------------------------
+// Task 7.3 public-memory layers: pinned guidance, explicit rejection, real
+// per-workspace attribution and the candidate-body leak scan. They judge facts a
+// live isolated Desktop run recorded; nothing here fabricates a projection.
+// ---------------------------------------------------------------------------
+
+/**
+ * With a public version published, an Attempt from a workspace with no eligible
+ * private experience must pin that exact public Snapshot, receive its
+ * principles as guidance with no evidence mapping, and still refuse to answer.
+ * One drifted pin, one invented evidence link or one answer fails the guard.
+ */
+export function publicGuidancePinProblems(audit = {}) {
+  const problems = []
+  const published = audit.published ?? {}
+  const attempt = audit.attempt ?? null
+  if (!attempt) return ['no real Attempt was recorded while the public version was published']
+  if (published.snapshotId == null) problems.push('the current published public Snapshot is unknown')
+  const pins = attempt.pins ?? {}
+  const manifest = attempt.packManifest ?? {}
+  const memory = manifest.memory ?? {}
+  const publicL2 = memory.publicL2 ?? null
+  const privateL2 = memory.L2 ?? null
+  if (pins.publicMemorySnapshotId !== published.snapshotId) problems.push('the Attempt did not pin the current published public Snapshot')
+  if (published.revision != null && pins.publicMemorySnapshotRevision !== published.revision) problems.push('the Attempt did not pin the published public revision')
+  if (published.contentHash != null && pins.publicMemorySnapshotHash !== published.contentHash) problems.push('the Attempt did not pin the published public content hash')
+  if (!publicL2 || typeof publicL2 !== 'object') problems.push('the Attempt recorded no public L2 partition')
+  else {
+    if (publicL2.zone !== 'public') problems.push('the public L2 partition is not the public zone')
+    if (publicL2.snapshotId !== published.snapshotId) problems.push('the public L2 manifest drifted from the pin')
+    const principleIds = publicL2.principleIds
+    if (!Array.isArray(principleIds) || principleIds.length < 1) problems.push('the published public principle was not offered as guidance')
+    const items = publicL2.items
+    if (!Array.isArray(items) || items.length !== (principleIds ?? []).length) problems.push('the public L2 partition does not map every offered principle')
+    const citedIds = attempt.citedEvidenceIds ?? []
+    for (const item of Array.isArray(items) ? items : []) {
+      if (!Array.isArray(item?.evidenceIds)) problems.push(`public principle ${item?.principleId ?? '—'} carries no evidence mapping array`)
+      else if (item.evidenceIds.length > 0) problems.push(`public principle ${item?.principleId ?? '—'} claims evidence ids`)
+      for (const source of item?.sources ?? []) {
+        if (citedIds.includes(source)) problems.push(`public source ${source} was cited as evidence`)
+        if ((manifest.evidenceIds ?? []).includes(source)) problems.push(`public source ${source} joined the evidence pack`)
+      }
+    }
+    for (const id of Array.isArray(principleIds) ? principleIds : []) if (citedIds.includes(id)) problems.push(`public principle ${id} was cited as evidence`)
+  }
+  if (!privateL2 || !Array.isArray(privateL2.principleIds) || privateL2.principleIds.length > 0) problems.push('the workspace was supposed to have no eligible private principles')
+  if ((pins.memorySnapshotId ?? null) !== null) problems.push('the evidence-free workspace pinned a private Snapshot it does not have')
+  if ((manifest.evidenceIds ?? []).length > 0) problems.push('the evidence-free workspace supplied evidence ids')
+  if ((attempt.evidence ?? []).length > 0) problems.push('the evidence-free Attempt carries workspace evidence')
+  if (!['return', 'escalate'].includes(String(attempt.outcome))) problems.push('an evidence-free workspace must return or escalate, never answer')
+  const cited = attempt.citedEvidenceIds
+  if (cited != null && !Array.isArray(cited)) problems.push('the Attempt has a malformed cited-evidence record')
+  else if ((cited ?? []).length > 0) problems.push('the Attempt cited evidence ids it never validated')
+  return problems
+}
+
+/** Every UI gesture that can reach the public zone, and so must be attributed. */
+export const PUBLIC_UI_METHODS = Object.freeze(['publicMemoryRefresh', 'publicCandidate', 'snapshotPublish', 'snapshotReject', 'snapshotRollback'])
+
+/**
+ * A public action is only attributable if the Decision page that issued it was
+ * bound to the intended workspace and the wire carried that same session. Three
+ * DOM reads of one panel prove neither, so every gesture is a wire receipt.
+ */
+export function publicWireAttributionProblems(audit = {}) {
+  const problems = []
+  const actions = Array.isArray(audit.actions) ? audit.actions : []
+  const bindings = Array.isArray(audit.bindings) ? audit.bindings : []
+  if (actions.length === 0) problems.push('no UI-triggered public RPC was captured')
+  const covered = new Set(actions.map(action => String(action?.method ?? '')))
+  for (const method of PUBLIC_UI_METHODS) if (!covered.has(method)) problems.push(`no UI gesture exercised ${method}`)
+  for (const action of actions) {
+    const label = String(action?.label ?? action?.method ?? 'public action')
+    if (!action?.sessionId) problems.push(`${label}: no workspace session on the wire`)
+    else if (action.sessionId !== action.expectedSessionId) problems.push(`${label}: carried ${action.sessionId} instead of the intended workspace session`)
+    if (!action?.rpcId) problems.push(`${label}: no raw rpc id`)
+    if (action?.status !== 200) problems.push(`${label}: no successful response status`)
+    if ((action?.occurrences ?? 0) < 1) problems.push(`${label}: no captured occurrence`)
+  }
+  const sessions = new Set(actions.map(action => action?.sessionId).filter(Boolean))
+  if (sessions.size < 2) problems.push('public actions were proven in one workspace session only')
+  if (bindings.length < 2) problems.push('the Decision page was never re-opened per workspace')
+  for (const binding of bindings) {
+    const label = String(binding?.label ?? 'Decision page')
+    const attempts = Array.isArray(binding?.attempts) ? binding.attempts : []
+    const last = attempts.at(-1)
+    if (!binding?.sessionId) problems.push(`${label}: the intended workspace session is unknown`)
+    else if (!last || last.bound !== binding.sessionId) problems.push(`${label}: the Decision page never bound to its own workspace session`)
+  }
+  return problems
+}
+
+/**
+ * A rejected public candidate never becomes the current version: the published
+ * Snapshot, version and revision stay exactly as they were, the learning run is
+ * rejected, the rendered zone keeps the previous version and the workspace owns
+ * both audit lines.
+ */
+export function publicCandidateRejectionProblems(audit = {}) {
+  const problems = []
+  const candidate = audit.candidate ?? {}
+  const before = audit.beforeCurrent ?? null
+  const after = audit.afterCurrent ?? null
+  if (!candidate.snapshotId || !candidate.learningRunId) problems.push('the second public candidate was never identified')
+  if (!audit.sessionId) problems.push('the rejection workspace session is unknown')
+  else if (audit.wireSessionId !== audit.sessionId) problems.push('the rejection RPC did not carry the intended workspace session')
+  if (audit.auditSessionId && audit.auditSessionId !== audit.sessionId) problems.push('the rejection audit belongs to another workspace')
+  if (audit.runOutcome !== 'rejected') problems.push('the rejected public candidate kept a non-rejected learning run')
+  if (audit.runId && audit.runId !== candidate.learningRunId) problems.push('the rejected run is not the reviewed candidate run')
+  if (audit.snapshotState !== 'draft') problems.push('the rejected public Snapshot is no longer a draft')
+  if (!after || after.snapshotId == null) problems.push('the published public version disappeared when the candidate was rejected')
+  else {
+    if (before?.snapshotId == null) problems.push('the published public version was never read before the rejection')
+    else {
+      if (before.snapshotId !== after.snapshotId) problems.push('the rejection replaced the current public Snapshot')
+      if (before.version !== after.version) problems.push('the rejection changed the current public version')
+      if (before.revision !== after.revision) problems.push('the rejection changed the current public revision')
+    }
+    if (candidate.snapshotId && after.snapshotId === candidate.snapshotId) problems.push('the rejected candidate became the current public version')
+    if (Number(audit.domVersion) !== Number(after.version)) problems.push('the public zone no longer renders the previous published version')
+  }
+  if (audit.domCandidatePresent === true) problems.push('the rejected candidate is still offered for review')
+  const lines = Array.isArray(audit.audit) ? audit.audit : []
+  if (!lines.some(line => line?.kind === 'learning-run' && line?.outcome === 'rejected' && line?.learningRunId === candidate.learningRunId)) problems.push('the rejected learning run has no audit line')
+  if (!lines.some(line => line?.kind === 'snapshot' && line?.action === 'reject' && line?.snapshotId === candidate.snapshotId)) problems.push('the rejected Snapshot has no audit line')
+  return problems
+}
+
+/**
+ * The rendered candidate body stays opaque: no absolute or workspace path, no
+ * foreign record id, and only `origin_…` source labels.
+ */
+export function publicCandidateBodyProblems(audit = {}) {
+  const problems = []
+  const text = String(audit.text ?? '')
+  if (audit.present !== true) problems.push('no candidate body was rendered for the leak scan')
+  if (!text.trim()) problems.push('the candidate body was empty')
+  for (const path of audit.workspacePaths ?? []) if (path && text.includes(String(path))) problems.push(`the candidate body shows a workspace path: ${path}`)
+  for (const id of audit.foreignRecordIds ?? []) if (id && text.includes(String(id))) problems.push(`the candidate body shows a foreign record id: ${id}`)
+  if (/(?:^|[\s("'`])(?:\/Users\/|\/home\/|\/private\/|[A-Za-z]:\\)/.test(text)) problems.push('the candidate body shows an absolute path')
+  for (const alias of audit.aliases ?? []) if (!/^origin_[0-9a-f]{6,}$/.test(String(alias))) problems.push(`the candidate body shows a non-opaque source label: ${alias}`)
+  return problems
+}
+
+/**
+ * The record detail renders both memory partitions and the public one carries
+ * the real published pin, its principle, a guidance-only restatement and an
+ * empty evidence mapping. Only the public partition is path-scanned: the raw
+ * detail JSON is the diagnostics surface, not the default record body.
+ */
+export function publicRecordDetailProblems(capture = {}, expected = {}) {
+  const problems = []
+  if (!capture || capture.caseId == null) return ['the record detail page was never read']
+  if (!/公共记忆|Public memory/i.test(String(capture.publicTitle ?? ''))) problems.push('the record detail must title the public partition')
+  if (!/当前工作区经验|Current workspace experience/i.test(String(capture.privateTitle ?? ''))) problems.push('the record detail must title the current workspace partition')
+  if (capture.advancedOpen !== true) problems.push('the attempt context pack must be opened to read both partitions')
+  if (!String(capture.privateText ?? '').trim()) problems.push('the current workspace partition rendered nothing')
+  const pin = capture.publicPin ?? null
+  if (!pin || typeof pin !== 'object') problems.push('the public partition shows no Snapshot pin')
+  else {
+    if (expected.snapshotId == null || pin.snapshotId !== expected.snapshotId) problems.push('the public partition does not show the real published public pin')
+    if (expected.revision != null && pin.snapshotRevision !== expected.revision) problems.push('the public partition pin is not the published revision')
+  }
+  const publicPrincipleIds = capture.publicPrincipleIds ?? []
+  if (expected.principleId && !publicPrincipleIds.includes(expected.principleId)) problems.push('the public partition does not list the published principle')
+  const mapping = Array.isArray(capture.publicMapping) ? capture.publicMapping : []
+  if (mapping.length !== publicPrincipleIds.length) problems.push('the public partition does not map every listed principle')
+  for (const item of mapping) if ((item?.evidenceIds ?? []).length > 0) problems.push(`the public partition maps evidence ids for ${item?.principleId ?? '—'}`)
+  if (!/不是判断依据|not evidence/i.test(String(capture.guidance ?? ''))) problems.push('the public partition must restate that public memory is not evidence')
+  const publicText = String(capture.publicText ?? '')
+  for (const path of expected.workspacePaths ?? []) if (path && publicText.includes(String(path))) problems.push(`the public partition shows a workspace path: ${path}`)
+  for (const id of expected.foreignRecordIds ?? []) if (id && publicText.includes(String(id))) problems.push(`the public partition shows a foreign record id: ${id}`)
+  return problems
+}
