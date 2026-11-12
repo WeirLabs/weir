@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
@@ -288,6 +288,31 @@ test('delayed host welcome onboarding is resolved around native keyboard targeti
   assert.ok(focus.includes('step < 500'), 'the existing focus traversal bound is not expanded to conceal a trap')
   assert.ok(!/\.click\(|\.focus\(/.test(focus), 'product targeting remains native-keyboard only')
   assert.ok((driver.match(/result\.artifacts\.hostOnboarding = join\(out, 'host-onboarding\.json'\)/g) ?? []).length === 2, 'final and blocked result indexes include the dismissal evidence')
+})
+
+test('shrunk-content clamp accepts a sub-pixel browser clamp but never a real jump', () => {
+  const inline = Object.fromEntries(['overflow', 'overflowX', 'overflowY', 'overscrollBehavior', 'overscrollBehaviorX', 'overscrollBehaviorY', 'paddingRight', 'paddingBottom', 'overflowAnchor'].map(key => [key, '']))
+  const container = (scrollHeight, clientHeight, scrollTop, extra = {}) => ({
+    scrollHeight, clientHeight, scrollTop, scrollLeft: 0, scrollWidth: 900, clientWidth: 900, inline: { ...inline, ...extra },
+  })
+  const lockedInline = { overflow: 'hidden', overflowX: 'hidden', overflowY: 'hidden', overscrollBehavior: 'none', overscrollBehaviorX: 'none', overscrollBehaviorY: 'none', paddingRight: '5px', overflowAnchor: 'none' }
+  const mutation = { method: 'learningStart', args: {}, rpcId: 'r1', response: { rpcId: 'r1', result: { ok: true, value: { ok: true } } }, settled: true, authoritative: { confirmed: true } }
+  const base = {
+    before: { page: container(1452, 900, 552.5) },
+    during: { page: container(1452, 900, 552.5, lockedInline) },
+    attempts: [{ type: 'wheel', observed: true }, { type: 'touch', observed: true }, { type: 'PageDown', observed: true }],
+    contentMutation: mutation,
+  }
+  const required = ['page']
+  const attempts = ['wheel', 'touch', 'PageDown']
+  // A real browser clamps to a fractional maximum; scrollHeight only reports 1093.
+  assert.deepEqual(scrollLockProblems({ ...base, after: { page: container(1093, 900, 193.5) } }, required, attempts), [])
+  assert.deepEqual(scrollLockProblems({ ...base, after: { page: container(1093, 900, 193) } }, required, attempts), [])
+  assert.ok(scrollLockProblems({ ...base, after: { page: container(1093, 900, 195) } }, required, attempts).some(problem => /clamp\(552.5, 193\)/.test(problem)))
+  assert.ok(scrollLockProblems({ ...base, after: { page: container(1093, 900, 0) } }, required, attempts).some(problem => /clamp\(552.5, 193\)/.test(problem)))
+  // Without a shrink the restoration must still be exact.
+  assert.ok(scrollLockProblems({ ...base, after: { page: container(1452, 900, 550) } }, required, attempts).some(problem => /not restored exactly/.test(problem)))
+  assert.deepEqual(scrollLockProblems({ ...base, after: { page: container(1452, 900, 552.5) } }, required, attempts), [])
 })
 
 test('confirmation focus measurement retains original element identity across a state-dependent selector change', async () => {

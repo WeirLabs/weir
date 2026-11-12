@@ -374,11 +374,14 @@ export function scrollLockProblems({ before, during, after, attempts = [], conte
     const horizontalMaximum = horizontalClampRequired && mutationValid && locked.scrollWidth === initial.scrollWidth && locked.clientWidth === initial.clientWidth ? horizontalReduction : null
     const expectedTop = verticalMaximum === null ? initial.scrollTop : Math.min(Math.max(initial.scrollTop, 0), verticalMaximum)
     const expectedLeft = horizontalMaximum === null ? initial.scrollLeft : Math.min(Math.max(initial.scrollLeft, 0), horizontalMaximum)
-    if (restored.scrollTop !== expectedTop) {
+    // scrollHeight/clientHeight are integer-rounded, so the real maximum a browser
+    // clamps to can sit up to one pixel past the rounded maximum. An exact
+    // restoration still has to match the recorded fractional offset exactly.
+    if (verticalMaximum === null ? restored.scrollTop !== expectedTop : Math.abs(restored.scrollTop - expectedTop) > 1) {
       if (verticalMaximum === null) problems.push(`${name}: scroll position was not restored exactly`)
       else problems.push(`${name}: scrollTop ${restored.scrollTop} != clamp(${initial.scrollTop}, ${verticalMaximum}) after confirmed content shrink`)
     }
-    if (restored.scrollLeft !== expectedLeft) {
+    if (horizontalMaximum === null ? restored.scrollLeft !== expectedLeft : Math.abs(restored.scrollLeft - expectedLeft) > 1) {
       if (horizontalMaximum === null) problems.push(`${name}: scroll position was not restored exactly`)
       else problems.push(`${name}: scrollLeft ${restored.scrollLeft} != clamp(${initial.scrollLeft}, ${horizontalMaximum}) after confirmed content shrink`)
     }
