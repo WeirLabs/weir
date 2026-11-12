@@ -63,7 +63,7 @@ function seedV1(path) {
   db.prepare(`INSERT INTO attempts(
     attempt_id,case_id,attempt_no,agent_id,outcome,cited_evidence_ids_json,pins_json,
     context_pack_hash,pack_manifest_json,started_at,ended_at,schema_version,revision,created_at,updated_at
-  ) VALUES('at_w1','dc_w1',1,'ag_one_w1','answer','["ev_w1"]','{"memorySnapshotId":"ms_w1_public"}','legacy-hash','{"layerSizes":{"L5":1},"evidenceIds":["ev_w1"],"correctionIds":[],"omissions":[]}',10,11,1,1,10,11)`).run()
+  ) VALUES('at_w1','dc_w1',1,'ag_one_w1','answer','["ev_w1"]','{"memorySnapshotId":"ms_w1"}','legacy-hash','{"layerSizes":{"L5":1},"evidenceIds":["ev_w1"],"correctionIds":[],"omissions":[]}',10,11,1,1,10,11)`).run()
   db.prepare(`INSERT INTO evidence(
     evidence_id,agent_id,source,locator_json,excerpt,scope_json,status,schema_version,revision,created_at,updated_at
   ) VALUES('ev_w1','ag_one_w1','user_decision','{"kind":"case","caseId":"dc_w1"}','Legacy basis',?,'active',1,1,10,10)`).run(JSON.stringify({ workspaces: [W1] }))
@@ -185,7 +185,10 @@ test('schema v2 migrates workspace-owned profiles and private memory without row
   }
   // An old Attempt keeps its legacy single pin: no public pin is invented.
   const pins = JSON.parse(store.db.prepare("SELECT pins_json FROM attempts WHERE attempt_id='at_w1'").get().pins_json)
-  assert.deepEqual(pins, { memorySnapshotId: 'ms_w1_public' })
+  assert.deepEqual(pins, { memorySnapshotId: 'ms_w1' })
+  const pinned = store.db.prepare("SELECT zone,namespace_workspace_key FROM memory_snapshots WHERE snapshot_id=?").get(pins.memorySnapshotId)
+  assert.equal(pinned.zone, 'workspace')
+  assert.equal(pinned.namespace_workspace_key, W1)
   assert.equal('publicMemorySnapshotId' in pins, false)
 })
 
