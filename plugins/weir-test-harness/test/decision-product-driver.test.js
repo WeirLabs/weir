@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
+import decisionGui from '../src/scenarios/decision-gui.js'
+import { extract } from '../src/mock-kit.js'
+import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
 import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
@@ -1326,7 +1329,7 @@ test('the driver imports every guard it calls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   const imported = new Set((driver.match(/import \{([^}]+)\} from '\.\/gui-product-lib\.mjs'/) ?? [, ''])[1].split(',').map(name => name.trim()).filter(Boolean))
-  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicCandidateWordingProblems|publicPublishedPrinciplesProblems|publicRecordDetailProblems)\b/g)].map(match => match[1])
+  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicCandidateWordingProblems|publicPublishedPrinciplesProblems|publicRecordDetailProblems|publicRefinedWordingProblems)\b/g)].map(match => match[1])
   for (const name of new Set(called)) {
     assert.ok(imported.has(name), `${name} is called by the driver and must be imported from the lib`)
     assert.ok(lib.includes(`export function ${name}(`), `${name} is really exported by the lib`)
@@ -1681,6 +1684,70 @@ test('published principles guard requires read-only reviewed wording, not a stal
     expected: [{ principleId, text: wording, scope: { paths: ['/repo/cross-w1'] } }],
     dom: { ...clean.dom, published: { ...clean.dom.published, principles: [{ principleId, text: wording, scope: '适用范围: /repo/cross-w1' }] } },
   }).some(problem => /path or a record id/.test(problem)))
+})
+
+test('refined wording guard discriminates a refined candidate from the still-published text', () => {
+  const principleId = 'pr_public_v1'
+  const publishedWording = 'Prefer the documented option both workspaces agreed on.'
+  const refinedWording = 'Prefer the documented option both workspaces agreed on, and restate that agreed wording before acting on it.'
+  const clean = {
+    rpc: {
+      changes: [{ op: 'refine', principleId, text: refinedWording, scope: {} }],
+      principles: [{ principleId, text: refinedWording, scope: {} }],
+      current: [],
+    },
+    dom: { present: true, changes: [{ op: 'refine', label: `改写原则 · ${principleId}`, text: refinedWording, scope: '' }] },
+    published: [{ principleId, text: publishedWording, scope: {} }],
+  }
+  assert.deepEqual(publicRefinedWordingProblems(clean), [])
+  // The pre-fix fixture refined with the wording it was already publishing, so a
+  // stale render and a refined render were the same pixels.
+  const stale = {
+    ...clean,
+    rpc: { ...clean.rpc, changes: [{ op: 'refine', principleId, text: publishedWording, scope: {} }] },
+    dom: { ...clean.dom, changes: [{ ...clean.dom.changes[0], text: publishedWording }] },
+  }
+  assert.ok(publicRefinedWordingProblems(stale).some(problem => /identical to the wording still published/.test(problem)))
+  // A render that keeps the stale published wording fails even when the RPC refused it.
+  assert.ok(publicRefinedWordingProblems({ ...clean, dom: { ...clean.dom, changes: [{ ...clean.dom.changes[0], text: publishedWording }] } }).some(problem => /instead of the refined wording/.test(problem)))
+  // A candidate without a refine operation cannot prove the leg at all.
+  assert.ok(publicRefinedWordingProblems({ ...clean, rpc: { changes: [{ op: 'add', principleId, text: refinedWording, scope: {} }], principles: [], current: [] } }).some(problem => /carries no refine operation/.test(problem)))
+  // A refine without wording, a missing published version and an unrendered candidate all fail.
+  assert.ok(publicRefinedWordingProblems({ ...clean, rpc: { ...clean.rpc, changes: [{ op: 'refine', principleId, scope: {} }] } }).some(problem => /carries no reviewed wording/.test(problem)))
+  assert.ok(publicRefinedWordingProblems({ ...clean, published: [] }).some(problem => /carries no wording to compare/.test(problem)))
+  assert.ok(publicRefinedWordingProblems({ ...clean, dom: { present: false, changes: [] } }).some(problem => /no public candidate was rendered/.test(problem)))
+  assert.ok(publicRefinedWordingProblems({ ...clean, dom: { present: true, changes: [] } }).some(problem => /lists no refine change/.test(problem)))
+})
+
+test('the GUI public consolidation brain refines with wording the review leg can tell apart', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes('publicRefinedWordingProblems({ rpc: secondWording.rpc, dom: secondWording.dom, published: publishedPrinciples })'), 'the refine leg is judged against the wording that is still published')
+  assert.ok(driver.includes("check('publicSecondCandidateRefinesDistinctWording'"), 'the distinct refine wording is its own falsifiable check')
+  const publishedWording = 'Prefer the documented option both workspaces agreed on.'
+  const packet = {
+    zone: 'public', agentId: 'ag_shared',
+    sources: [
+      { sourceId: 'dc_w1_source', kind: 'case', alias: 'origin_aaaaaaaaaaaa', excerpt: 'Question cross-w1-source: choose the documented option' },
+      { sourceId: 'dc_w2_source', kind: 'case', alias: 'origin_bbbbbbbbbbbb', excerpt: 'Question cross-w2-source: choose the documented option' },
+    ],
+    parentSnapshot: { snapshotId: 'ms_public_v1', revision: 1, principles: [{ principleId: 'pr_public_v1', text: publishedWording, scope: {}, sources: ['dc_w1_source'], state: 'active' }] },
+  }
+  const options = { messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(packet) }] }], tools: [], system: PUBLIC_CONSOLIDATION_SYSTEM }
+  const block = [...decisionGui.decide(options, extract(options))].filter(chunk => chunk.type === 'block-end').map(chunk => chunk.block)[0]
+  const [operation] = JSON.parse(block.text).operations
+  assert.equal(operation.op, 'refine')
+  const published = packet.parentSnapshot.principles
+  assert.deepEqual(publicRefinedWordingProblems({
+    rpc: { changes: [operation], principles: [], current: [] },
+    dom: { present: true, changes: [{ op: 'refine', label: `改写原则 · ${operation.principleId}`, text: operation.text }] },
+    published,
+  }), [], 'the shipped fixture refines with distinct wording')
+  // The pre-fix brain refined with exactly the published wording; that leg must fail.
+  assert.ok(publicRefinedWordingProblems({
+    rpc: { changes: [{ op: 'refine', principleId: operation.principleId, text: publishedWording, sources: operation.sources }], principles: [], current: [] },
+    dom: { present: true, changes: [{ op: 'refine', label: `改写原则 · ${operation.principleId}`, text: publishedWording }] },
+    published,
+  }).some(problem => /identical to the wording still published/.test(problem)))
 })
 
 test('record detail guard requires both partitions and the real public pin', () => {

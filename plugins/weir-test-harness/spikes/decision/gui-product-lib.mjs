@@ -990,6 +990,30 @@ export function publicCandidateWordingProblems(audit = {}) {
 }
 
 /**
+ * A refine review leg only discriminates when the refined wording differs from
+ * the wording still published: with identical text a stale render and a refined
+ * render are indistinguishable, so the review would show nothing new. The
+ * rendered refine row must show exactly the reviewed refined text, and the
+ * published version must still carry the older wording.
+ */
+export function publicRefinedWordingProblems(audit = {}) {
+  const problems = []
+  const changes = Array.isArray(audit.rpc?.changes) ? audit.rpc.changes : []
+  const refine = changes.find(change => String(change?.op ?? '') === 'refine')
+  if (!refine) return ['the reviewed candidate carries no refine operation to discriminate']
+  const refined = readableText(refine.text)
+  if (!refined) return ['the refine operation carries no reviewed wording']
+  const published = (Array.isArray(audit.published) ? audit.published : []).map(item => readableText(item?.text)).filter(Boolean)
+  if (published.length === 0) problems.push('the published version carries no wording to compare the refine against')
+  if (published.includes(refined)) problems.push('the refined wording is identical to the wording still published, so a stale render cannot be told apart')
+  if (audit.dom?.present !== true) problems.push('no public candidate was rendered for the refined wording review')
+  const rendered = (Array.isArray(audit.dom?.changes) ? audit.dom.changes : []).find(row => String(row?.op ?? '') === 'refine')
+  if (!rendered) problems.push('the rendered candidate lists no refine change')
+  else if (readableText(rendered.text) !== refined) problems.push(`the rendered refine change shows ${JSON.stringify(shortenedText(rendered.text))} instead of the refined wording ${JSON.stringify(shortenedText(refined))}`)
+  return problems
+}
+
+/**
  * After explicit adoption the public zone must render the published principles
  * read-only, with the wording the agent/refresh response reports, and with no
  * publish/reject/rollback control, source alias, record id or path of its own.

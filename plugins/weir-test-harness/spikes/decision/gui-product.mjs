@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -2312,6 +2312,11 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const secondWordingProblems = publicCandidateWordingProblems(secondWording)
   writeJson(join(out, 'cross-public-second-candidate-wording.json'), { rpc: secondWording.rpc, dom: { changes: secondCandidateDom.changes, frozenInput: secondCandidateDom.frozenInput }, problems: secondWordingProblems })
   check('publicSecondCandidateRendersRefinedWording', secondWordingProblems.length === 0, { problems: secondWordingProblems, rendered: secondCandidateDom.changes, reviewed: secondWording.rpc.changes, frozenInput: secondCandidateDom.frozenInput })
+  // B3: the refined wording must differ from the wording that is still published,
+  // otherwise a stale render and a refined render would look the same.
+  const refinedWordingProblems = publicRefinedWordingProblems({ rpc: secondWording.rpc, dom: secondWording.dom, published: publishedPrinciples })
+  writeJson(join(out, 'cross-public-refined-wording.json'), { published: publishedPrinciples.map(principle => ({ principleId: principle.principleId, text: principle.text })), reviewed: secondWording.rpc.changes, rendered: secondCandidateDom.changes, problems: refinedWordingProblems })
+  check('publicSecondCandidateRefinesDistinctWording', refinedWordingProblems.length === 0, { problems: refinedWordingProblems, published: publishedPrinciples.map(principle => principle.text), reviewed: secondWording.rpc.changes, rendered: secondCandidateDom.changes })
 
   const beforeReject = await rpc(w4.sessionId, 'w4-before-public-reject', 'agent', { agentId: shared.agentId })
   const beforeCurrent = beforeReject.publicMemory?.current ?? null

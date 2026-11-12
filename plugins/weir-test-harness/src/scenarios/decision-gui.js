@@ -65,6 +65,10 @@ Object.assign(QUESTIONS, CROSS_QUESTIONS)
 // The public zone is workspace-agnostic, so one shared principle text is enough
 // to prove extraction, replay and adoption without naming a workspace.
 const PUBLIC_PRINCIPLE_TEXT = 'Prefer the documented option both workspaces agreed on.'
+// A refine must read differently from the wording it replaces: the Desktop review
+// leg compares the refined candidate against the still-published text, and an
+// identical wording would make a stale render indistinguishable from the refine.
+const PUBLIC_REFINED_PRINCIPLE_TEXT = 'Prefer the documented option both workspaces agreed on, and restate that agreed wording before acting on it.'
 const GUI_LEARNING_QUESTION_IDS = Object.values(QUESTIONS).map(question => question.id).filter(id => id.startsWith('gui-learning-'))
 
 function consultArgs(marker) {
@@ -85,7 +89,7 @@ function publicConsolidation(obs) {
   if (sources.length === 0) return textChunks(JSON.stringify({ operations: [] }))
   const parent = projection?.parentSnapshot?.principles?.find(principle => principle?.state === 'active') ?? projection?.parentSnapshot?.principles?.[0]
   if (parent?.principleId) {
-    return textChunks(JSON.stringify({ operations: [{ op: 'refine', principleId: parent.principleId, text: PUBLIC_PRINCIPLE_TEXT, sources }] }))
+    return textChunks(JSON.stringify({ operations: [{ op: 'refine', principleId: parent.principleId, text: PUBLIC_REFINED_PRINCIPLE_TEXT, sources }] }))
   }
   return textChunks(JSON.stringify({ operations: [{ op: 'add', principleId: 'public-principle', text: PUBLIC_PRINCIPLE_TEXT, scope: {}, sources }] }))
 }
