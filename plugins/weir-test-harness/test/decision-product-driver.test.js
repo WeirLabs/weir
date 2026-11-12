@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, recordProjectionProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
@@ -1108,4 +1108,119 @@ test('record route history compares authoritative count and immutable timestamps
   const numeric = { case: { caseId: 'dc_numeric' }, routeDecisions: [{ createdAt: 1794282129137 }] }
   assert.deepEqual(lib.routeHistoryProblems(numeric, { routeHistory: [{ text: 'Pinned', createdAt: '1794282129137' }] }), [], 'numeric RPC timestamps equal their DOM dateTime strings')
   assert.match(lib.routeHistoryProblems(numeric, { routeHistory: [{ text: 'Pinned', createdAt: '1794282129138' }] }).join('\n'), /timestamp/)
+})
+
+test('memory zone guard requires both zones, ordinary copy and no fabricated public hit', () => {
+  const good = {
+    zones: { public: true, workspace: true },
+    headings: ['公共记忆', '当前工作区经验'],
+    guidance: '公共记忆只是经审阅的指导，不是判断依据：自动回答仍需要当前工作区的依据。',
+    privateIsolation: '私有经验只在记录它的当前工作区可读。',
+    text: '公共记忆 当前工作区经验 当前已发布的公共版本',
+    navigation: ['inbox', 'records', 'agents'],
+    controls: [{ text: '采用公共原则' }, { text: '放弃候选' }, { text: '恢复前序公共版本' }],
+    status: { present: true, role: 'status', live: 'polite' },
+    disclosure: { required: false, acknowledge: false },
+    candidate: { present: true, aliases: ['origin_aaaaaaaaaaaa'], replay: 'passed', adopt: true, discard: true, readableLinks: 0, adoptOnRender: false },
+    current: { version: '1', rollback: true },
+  }
+  assert.deepEqual(memoryZoneProblems(good), [])
+  const leaking = { ...good, workspacePaths: ['/Users/young/Documents/Orrery'], text: '/Users/young/Documents/Orrery 公共记忆' }
+  assert.ok(memoryZoneProblems(leaking).some(problem => /workspace path/.test(problem)), 'a realpath must be rejected')
+  const fourNav = { ...good, navigation: ['inbox', 'records', 'agents', 'metrics'] }
+  assert.ok(memoryZoneProblems(fourNav).some(problem => /three primary navigation/.test(problem)))
+  const autoPublish = { ...good, controls: [{ text: '自动发布公共原则' }] }
+  assert.ok(memoryZoneProblems(autoPublish).some(problem => /automatic publication/.test(problem)))
+  const gatedWithCandidate = { ...good, disclosure: { required: true, acknowledge: true }, candidate: { present: true } }
+  assert.ok(memoryZoneProblems(gatedWithCandidate).some(problem => /before the disclosure/.test(problem)))
+  const foreignLink = { ...good, candidate: { ...good.candidate, readableLinks: 1 } }
+  assert.ok(memoryZoneProblems(foreignLink).some(problem => /never offer foreign record navigation/.test(problem)))
+  const missingGuidance = { ...good, guidance: '公共记忆' }
+  assert.ok(memoryZoneProblems(missingGuidance).some(problem => /not evidence/.test(problem)))
+})
+
+test('cross-workspace guard requires shared identity, private isolation and honest Auto', () => {
+  const good = {
+    workspaces: [
+      { label: 'W1', assistantNames: ['Shared'], publicVersion: 1, privateRecordIds: ['c1'], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
+      { label: 'W2', assistantNames: ['Shared'], publicVersion: 1, privateRecordIds: ['c2'], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
+      { label: 'W3', assistantNames: ['Shared'], publicVersion: 1, privateRecordIds: [], navigation: ['inbox', 'records', 'agents'], text: 'no path' },
+    ],
+    workspacePaths: ['/repo/one', '/repo/two'],
+    denials: [{ method: 'record', code: 'OUT_OF_SCOPE', bodyLeaked: false }],
+    autoShare: { selectorAccepted: true, answered: false, awaitingReason: 'authority' },
+  }
+  assert.deepEqual(crossWorkspaceShareProblems(good), [])
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0]] }).some(problem => /at least two/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], assistantNames: ['Other'] }, good.workspaces[2]] }).some(problem => /same assistant identities/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], privateRecordIds: ['c1'] }, good.workspaces[2]] }).some(problem => /never be readable across/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [] }).some(problem => /at least one cross-workspace/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, denials: [{ method: 'record', code: 'CASE_FOUND', bodyLeaked: true }] }).some(problem => /fail closed/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: true, attemptCount: 0, citedEvidenceCount: 0 } }).some(problem => /real current-workspace Attempt|current-workspace evidence/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], text: '/repo/one' }, good.workspaces[2]] }).some(problem => /workspace path/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: false, awaitingReason: 'answered' } }).some(problem => /fail closed/.test(problem)))
+})
+
+test('legacy migration guard keeps identity and private history and starts public-empty', () => {
+  const report = {
+    versions: { before: 1, after: 2 },
+    integrityCheck: 'ok',
+    rowCounts: { noRowLoss: true },
+    recordBytesUnchanged: { cases: true, attempts: true, evidence: true, feedback: true },
+    profilesAfterMigration: [{ agentId: 'ag_one_w1', scope: { paths: ['src'] }, legacyOriginAlias: 'origin_aaaaaaaaaaaa', hasWorkspaceKeyField: false }],
+    privateMemory: { snapshots: [{ snapshotId: 'ms_w1', zone: 'workspace', namespaceWorkspaceKey: '/repo/one' }], currentOtherWorkspace: null },
+    publicZone: { publishedSnapshots: 0, learningRuns: 0, currentPublicSnapshot: null },
+    attemptPins: { memorySnapshotId: 'ms_w1' },
+    attemptPinSnapshot: { zone: 'workspace' },
+    backups: [{ name: 'v1.db', userVersion: 1 }],
+  }
+  assert.deepEqual(legacyMigratedProfileProblems(report), [])
+  assert.ok(legacyMigratedProfileProblems({ ...report, versions: { after: 1 } }).some(problem => /user_version 2/.test(problem)))
+  assert.ok(legacyMigratedProfileProblems({ ...report, rowCounts: { noRowLoss: false } }).some(problem => /lose rows/.test(problem)))
+  assert.ok(legacyMigratedProfileProblems({ ...report, publicZone: { ...report.publicZone, publishedSnapshots: 1 } }).some(problem => /no published public Snapshot/.test(problem)))
+  assert.ok(legacyMigratedProfileProblems({ ...report, privateMemory: { snapshots: [{ snapshotId: 'ms_w1', zone: 'public' }], currentOtherWorkspace: null } }).some(problem => /workspace zone/.test(problem)))
+  assert.ok(legacyMigratedProfileProblems({ ...report, attemptPinSnapshot: { zone: 'public' } }).some(problem => /private Snapshot/.test(problem)))
+  assert.ok(legacyMigratedProfileProblems({ ...report, backups: [] }).some(problem => /v1 backup/.test(problem)))
+  assert.ok(legacyMigratedProfileProblems({ ...report, profilesAfterMigration: [{ agentId: 'ag', scope: { workspaces: ['/repo'] }, hasWorkspaceKeyField: true }] }).length >= 2)
+  assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
+})
+
+test('the driver keeps the cross-workspace matrix gated, isolated and lane-local', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(driver.includes("process.env.WEIR_DECISION_PRODUCT_CROSS_WORKSPACE === '1'"), 'the matrix needs an explicit opt-in flag')
+  const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(phase, 'runCrossWorkspaceMemoryMatrix exists')
+  assert.ok(phase.includes('if (!CROSS_WORKSPACE_MEMORY) return null'), 'the phase never runs in the default matrix')
+  assert.ok(phase.includes("stageMigratedLegacyProfile({ root: join(root, 'cross-legacy'), lane: LANE })"), 'the legacy profile is generated inside the isolated root')
+  assert.ok(phase.includes('legacyMigratedProfileProblems'), 'the legacy report is guarded')
+  assert.ok(phase.includes('memoryZoneProblems(candidateDom)') && phase.includes('memoryZoneProblems(gatedDom)') && phase.includes('memoryZoneProblems(publishedDom)'), 'every captured DOM passes the zone guard')
+  assert.ok(phase.includes('crossWorkspaceShareProblems'), 'the shared-identity facts are guarded')
+  assert.ok(phase.includes("join(root, 'cross-w1')") && phase.includes("join(root, 'cross-w2')") && phase.includes("join(root, 'cross-w3')"), 'two workspaces plus an evidence-free Auto workspace live inside the isolated root')
+  for (const action of ['public-acknowledge', 'public-publish', 'public-rollback']) {
+    assert.ok(phase.includes(`[data-action="${action}"]`), `the flow uses the real rendered ${action} control`)
+  }
+  // The discard and adopt affordances are captured by the shared DOM probe.
+  for (const action of ['public-publish', 'public-reject']) assert.ok(driver.includes(`[data-action="${action}"]`), `the DOM probe reads ${action}`)
+  assert.ok(phase.includes("networkRpc.filter(entry => entry.method === 'publicMemoryRefresh')"), 'the refresh evidence is the real wire, not a component prop')
+  assert.ok(driver.includes('p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State)'), 'the gated phase is wired into the matrix')
+  assert.equal(driver.includes('/Users/young'), false, 'the driver never hard-codes a user path')
+  assert.equal(phase.includes('startDesktop('), false, 'the phase reuses the running isolated instance and its owned cleanup')
+})
+
+test('reused drivers expect three primary destinations instead of the retired four-view contract', () => {
+  for (const [file, token] of [
+    ['gui-c.mjs', 'exactlyThreePrimaryDestinations'],
+    ['gui-memory.mjs', 'threePrimaryDestinationsAndNoFutureControls'],
+  ]) {
+    const source = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision', file), 'utf8')
+    assert.ok(source.includes(token), `${file} carries the repaired navigation contract`)
+    assert.equal(/main nav button"\)\.length === 4/.test(source), false, `${file} no longer expects four navigation buttons`)
+  }
+  for (const file of ['gui-learning.mjs', 'gui-qa.mjs']) {
+    const source = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision', file), 'utf8')
+    assert.equal(source.includes('nav.length === 4'), false, `${file} no longer expects four navigation actions`)
+    assert.equal(source.includes('length === 4'), false, `${file} no longer expects four navigation buttons`)
+  }
+  const learning = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-learning.mjs'), 'utf8')
+  assert.ok(learning.includes('nav.length === 3'), 'gui-learning pins the three-destination contract')
 })

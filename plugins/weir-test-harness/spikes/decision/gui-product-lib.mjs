@@ -1,5 +1,8 @@
 // Pure guards shared by the real Desktop product-UX driver and focused tests.
 // No DOM implementation lives here: layout/accessibility facts come from CDP.
+import { spawnSync } from 'node:child_process'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 export function parseDecisionRequest(url, postData) {
   if (!String(url).includes('/api/weirDecision/')) return null
@@ -457,4 +460,126 @@ export function masterDetailProblems({ desktop, narrowList, drillIn, returned, r
   if (returned?.readCount !== drillIn?.readCount) problems.push('Back caused an authority reread')
   if (restored?.readCount !== drillIn?.readCount) problems.push('same-target restoration caused an authority reread')
   return problems
+}
+
+// ---------------------------------------------------------------------------
+// Cross-workspace memory matrix guards (OpenSpec 6.7).
+//
+// The real Desktop matrix records DOM and RPC facts; these pure guards decide
+// whether those facts satisfy the shared-identity contract. They never inspect
+// a component tree: everything comes from a real isolated Electron run.
+// ---------------------------------------------------------------------------
+
+/** The assistant detail must show two memory zones and nothing fabricated. */
+export function memoryZoneProblems(audit = {}) {
+  const problems = []
+  const zones = audit.zones ?? {}
+  if (!zones.public || !zones.workspace) problems.push('assistant detail must render both memory zones')
+  const headings = (audit.headings ?? []).map(String)
+  if (!headings.some(text => /公共记忆|Public memory/i.test(text))) problems.push('missing the public memory heading')
+  if (!headings.some(text => /当前工作区经验|Current workspace experience/i.test(text))) problems.push('missing the current workspace experience heading')
+  if (!/不是判断依据|not evidence/i.test(String(audit.guidance ?? ''))) problems.push('public memory must say it is guidance, not evidence')
+  if (!/只在.{0,12}工作区|only .{0,16}workspace/i.test(String(audit.privateIsolation ?? ''))) problems.push('the private zone must say it is workspace-local')
+  const text = String(audit.text ?? '')
+  for (const path of audit.workspacePaths ?? []) if (path && text.includes(path)) problems.push(`default detail shows a workspace path: ${path}`)
+  for (const id of audit.foreignRecordIds ?? []) if (id && text.includes(id)) problems.push(`default detail shows a foreign record id: ${id}`)
+  if (!Array.isArray(audit.navigation) || audit.navigation.length !== 3) problems.push('assistant detail must keep exactly three primary navigation actions')
+  const controls = (audit.controls ?? []).map(item => String(item?.text ?? item))
+  if (controls.some(label => /自动发布|发布全部|publish automatically|auto[- ]?publish/i.test(label))) problems.push('no automatic publication control may exist')
+  const status = audit.status ?? {}
+  if (status.present === true && (status.role !== 'status' || status.live !== 'polite')) problems.push('the public zone status must be a polite live region')
+  const disclosure = audit.disclosure ?? {}
+  if (disclosure.required === true) {
+    if (disclosure.acknowledge !== true) problems.push('the first public review must offer an explicit acknowledgement control')
+    if (audit.candidate?.present === true) problems.push('no candidate may be reviewable before the disclosure acknowledgement')
+  }
+  const candidate = audit.candidate ?? {}
+  if (candidate.present === true) {
+    if (candidate.replay !== 'passed') problems.push('the candidate review must show its structural replay result')
+    const aliases = candidate.aliases ?? []
+    if (!aliases.length) problems.push('the candidate review must group sources by opaque workspace alias')
+    for (const alias of aliases) if (!/^origin_[0-9a-f]{6,}$/.test(String(alias))) problems.push(`public source alias is not opaque: ${alias}`)
+    if (candidate.readableLinks > 0) problems.push('public sources must never offer foreign record navigation')
+    if (!(candidate.adopt === true && candidate.discard === true)) problems.push('the candidate review must expose an explicit adopt and discard')
+    if (candidate.adoptOnRender === true) problems.push('adoption must never happen on render; it needs an explicit confirmation')
+  }
+  if (audit.current?.version != null && audit.current.rollback !== true) problems.push('a published public version must expose rollback')
+  return problems
+}
+
+/** Two workspaces of one profile share identity and public memory, never records. */
+export function crossWorkspaceShareProblems(audit = {}) {
+  const problems = []
+  const workspaces = audit.workspaces ?? []
+  if (workspaces.length < 2) return ['the cross-workspace matrix needs at least two real workspaces']
+  const identities = workspaces.map(item => (item.assistantNames ?? []).join('|'))
+  if (new Set(identities).size !== 1) problems.push('both workspaces must see the same assistant identities')
+  if (new Set(workspaces.map(item => item.publicVersion ?? null)).size !== 1) problems.push('both workspaces must see the same public version')
+  const sets = workspaces.map(item => new Set(item.privateRecordIds ?? []))
+  if (sets.some((set, index) => [...set].some(id => sets.some((other, at) => at !== index && other.has(id))))) problems.push('private records must never be readable across workspaces')
+  for (const item of workspaces) {
+    for (const path of audit.workspacePaths ?? []) if (path && String(item.text ?? '').includes(path)) problems.push(`${item.label ?? 'workspace'}: assistant detail shows a workspace path`)
+    if (!Array.isArray(item.navigation) || item.navigation.length !== 3) problems.push(`${item.label ?? 'workspace'}: navigation must stay three actions`)
+  }
+  const denials = audit.denials ?? []
+  if (!denials.length) problems.push('the matrix must prove at least one cross-workspace private record denial')
+  for (const denial of denials) {
+    if (!['OUT_OF_SCOPE', 'FORBIDDEN', 'PERMISSION_DENIED'].includes(denial.code)) problems.push(`private record denial ${denial.method ?? ''} did not fail closed`)
+    if (denial.bodyLeaked === true) problems.push(`private record denial ${denial.method ?? ''} leaked body text`)
+  }
+  const auto = audit.autoShare ?? {}
+  if (auto.selectorAccepted !== true) problems.push('the shared assistant must stay selectable from the other workspace Auto path')
+  if (auto.answered === true && (auto.attemptCount ?? 0) === 0) problems.push('an Auto answer must come from a real current-workspace Attempt')
+  if (auto.answered === true && (auto.citedEvidenceCount ?? 0) === 0) problems.push('an Auto answer must cite current-workspace evidence, never public memory alone')
+  if (auto.answered === false && !['no_route', 'route_ambiguous', 'authority'].includes(String(auto.awaitingReason ?? ''))) problems.push('an unanswered Auto request must fail closed with a real awaiting reason')
+  return problems
+}
+
+/** A migrated legacy profile keeps identity + private history and starts public-empty. */
+export function legacyMigratedProfileProblems(report = {}) {
+  const problems = []
+  if (report?.versions?.after !== 2) problems.push('the migrated legacy profile must report user_version 2')
+  if (!Array.isArray(report?.profilesAfterMigration) || report.profilesAfterMigration.length === 0) problems.push('migration must keep every legacy Agent identity')
+  for (const profile of report?.profilesAfterMigration ?? []) {
+    if (profile.hasWorkspaceKeyField === true) problems.push(`profile ${profile.agentId} still exposes a workspace identity field`)
+    if (Object.hasOwn(profile.scope ?? {}, 'workspaces')) problems.push(`profile ${profile.agentId} still scopes by workspace membership`)
+  }
+  if (report?.rowCounts?.noRowLoss !== true) problems.push('migration must not lose rows')
+  for (const [table, unchanged] of Object.entries(report?.recordBytesUnchanged ?? {})) if (unchanged !== true) problems.push(`${table} bytes changed during migration`)
+  if (report?.integrityCheck !== 'ok') problems.push('the migrated database must pass integrity_check')
+  if ((report?.publicZone?.publishedSnapshots ?? -1) !== 0) problems.push('a migrated legacy profile must start with no published public Snapshot')
+  if ((report?.publicZone?.learningRuns ?? -1) !== 0) problems.push('a migrated legacy profile must start with no public Learning Run')
+  if (report?.publicZone?.currentPublicSnapshot != null) problems.push('a migrated legacy profile must start with an empty public zone')
+  const snapshots = report?.privateMemory?.snapshots ?? []
+  if (!snapshots.length) problems.push('existing private Snapshots must survive migration')
+  for (const snapshot of snapshots) if (snapshot.zone !== 'workspace' || !snapshot.namespaceWorkspaceKey) problems.push(`Snapshot ${snapshot.snapshotId} did not migrate to its own workspace zone`)
+  if (report?.privateMemory?.currentOtherWorkspace != null) problems.push('private memory must not be readable from another workspace after migration')
+  if (report?.attemptPins?.memorySnapshotId && report?.attemptPinSnapshot?.zone !== 'workspace') problems.push('an old Attempt pin must still resolve to a private Snapshot')
+  const backups = report?.backups ?? []
+  if (!backups.length) problems.push('migration must keep a v1 backup available for rollback')
+  for (const backup of backups) if (backup.userVersion !== 1) problems.push(`backup ${backup.name} is not the pre-migration v1 database`)
+  if (report?.walSidecarsLeft === true) problems.push('migration must not leave stale WAL/SHM sidecars')
+  if (report?.currentAppTouched === true) problems.push('migration must never touch the current App data')
+  return problems
+}
+
+/**
+ * Stage a migrated legacy profile into an isolated Electron root before boot.
+ * The generator uses production migration code on a genuine v1 database; the
+ * result is copied into the isolated profile's own decisions directory only.
+ */
+export function stageMigratedLegacyProfile({ root, lane, execPath = process.execPath }) {
+  const out = join(root, 'legacy-profile')
+  mkdirSync(out, { recursive: true })
+  const generated = spawnSync(execPath, [join(lane, 'plugins/weir-test-harness/spikes/decision/migration-fixture.mjs'), out], {
+    cwd: lane, encoding: 'utf8', timeout: 180_000,
+  })
+  const reportPath = join(out, 'fixture-report.json')
+  const report = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8')) : null
+  const source = join(out, 'fixture-v1-migrated.db')
+  const target = join(root, 'home', 'weir', 'profiles', 'desktop', 'decisions', 'decision.db')
+  mkdirSync(dirname(target), { recursive: true })
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${target}${suffix}`, { force: true })
+  if (existsSync(source)) copyFileSync(source, target)
+  return { out, reportPath, report, target, exitCode: generated.status, stderr: String(generated.stderr ?? '').slice(-2000) }
 }

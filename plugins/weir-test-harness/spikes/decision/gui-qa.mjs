@@ -313,7 +313,7 @@ async function clickButton(instance, labels, scope = 'main') {
 
 async function selectDecisionTab(instance, index) {
   await instance.cdp.evaluate('window.__decisionQA.selectDecisions()')
-  await waitFor(() => instance.cdp.evaluate('document.querySelectorAll("main nav button").length === 4'), 30_000)
+  await waitFor(() => instance.cdp.evaluate('document.querySelectorAll("main nav button").length === 3'), 30_000)
   await instance.cdp.evaluate(`document.querySelectorAll("main nav button")[${index}].click()`)
 }
 
