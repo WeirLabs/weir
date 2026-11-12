@@ -278,7 +278,7 @@ test('domain G2 receives the actual Auto request class instead of defaulting it 
     agentId: f.a.agentId, workspaceKey: f.workspace,
     scope: { workspaces: [f.workspace], authorizationClasses: ['A'] },
   })
-  const ref = await f.broker.ensureProfileEvidence(narrowed)
+  const ref = await f.broker.ensureProfileEvidence(narrowed, f.workspace)
   f.respond({
     outcome: 'answer', claims: [{ text: 'This answer must still pass through G2', evidenceIds: [ref.evidenceId] }],
     answers: [{ id: 'question', selected: ['A'] }],
@@ -303,7 +303,7 @@ test('domain G6 receives persisted approval intent instead of an empty default',
   })).case
   await f.broker.cases.recordRoute({ caseId: current.caseId, rootSessionId: 'root', mode: 'pinned', chosen: f.a.agentId, reason: 'Pinned gate fixture' })
   current = await f.broker.cases.transition({ caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision, state: 'awaiting_user', awaitingReason: 'consult_escalate' })
-  const ref = await f.broker.ensureProfileEvidence(f.a)
+  const ref = await f.broker.ensureProfileEvidence(f.a, f.workspace)
   f.respond({
     outcome: 'answer', claims: [{ text: 'This answer must still pass through G6', evidenceIds: [ref.evidenceId] }],
     answers: [{ id: 'question', selected: ['A'] }],

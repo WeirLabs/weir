@@ -129,15 +129,17 @@ test('transitionWithRoute rolls back the appended route when the guarded Case up
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions WHERE case_id=?').get(current.caseId).n, 0)
 })
 
-test('transitionWithRoute revalidates enabled, workspace, scope, and final classes before selection', async t => {
+test('transitionWithRoute revalidates enabled, scope hints, and final classes before selection', async t => {
   const { store, cases, profiles } = fixture(t)
-  const scenarios = [
+  // Workspace membership is not an identity field any more, so the only reasons
+  // a re-read may reject the candidate are disabled state, expertise hints and
+  // the final authorization classes.
+  const rejected = [
     { key: 'disabled', workspaceKey: '/repo', disable: true },
-    { key: 'foreign', workspaceKey: '/other' },
-    { key: 'narrow', workspaceKey: '/repo', scope: { workspaces: ['/repo'], paths: ['src'], authorizationClasses: ['A'] } },
-    { key: 'wrong-class', workspaceKey: '/repo', scope: { workspaces: ['/repo'], authorizationClasses: ['B'] } },
+    { key: 'narrow', workspaceKey: '/repo', scope: { paths: ['src'], authorizationClasses: ['A'] } },
+    { key: 'wrong-class', workspaceKey: '/repo', scope: { authorizationClasses: ['B'] } },
   ]
-  for (const scenario of scenarios) {
+  for (const scenario of rejected) {
     const profile = await profiles.createProfile({ workspaceKey: scenario.workspaceKey, name: scenario.key, ...(scenario.scope ? { scope: scenario.scope } : {}) })
     if (scenario.disable) await profiles.setProfileState(profile.agentId, 'disabled')
     const current = (await cases.createCase({ ...input(`revalidate-${scenario.key}`), agentId: null })).case
@@ -151,6 +153,13 @@ test('transitionWithRoute revalidates enabled, workspace, scope, and final class
     assert.equal(persistedRoute.chosen, null, scenario.key)
     assert.equal(persistedRoute.reason, 'none:no_candidates', scenario.key)
   }
+  // An assistant created in another workspace is NOT rejected: identity is shared.
+  const shared = await profiles.createProfile({ workspaceKey: '/other', name: 'shared-identity' })
+  const current = (await cases.createCase({ ...input('revalidate-shared'), agentId: null })).case
+  const selection = autoSelection(current, shared.agentId)
+  const committed = await cases.transitionWithRoute(selection.change, selection.route)
+  assert.equal(committed.state, 'evaluating')
+  assert.equal(committed.agentId, shared.agentId)
   assert.equal(store.db.prepare('SELECT COUNT(*) AS n FROM attempts').get().n, 0)
 })
 

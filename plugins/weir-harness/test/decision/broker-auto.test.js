@@ -215,7 +215,7 @@ test('zero candidates avoid models and one stock-Hook candidate uses classificat
   assert.equal(attemptCount(f), 1)
 })
 
-test('multiple eligible candidates come only from the current workspace and selected Agent owns the domain Attempt', async t => {
+test('multiple eligible candidates come from the whole profile and the selected Agent owns the domain Attempt', async t => {
   const f = await fixture(t)
   const a = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'A' })
   const b = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'B' })
@@ -225,6 +225,8 @@ test('multiple eligible candidates come only from the current workspace and sele
   const wrongClass = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Wrong class', scope: { workspaces: [f.workspace], authorizationClasses: ['B'] } })
   const archived = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Archived' })
   await f.broker.profileSetState(archived.agentId, 'archived')
+  // Identity is profile-global: an assistant created elsewhere is a real
+  // candidate here, unlike archived/disabled/scope-rejected ones.
   const foreign = await f.broker.profileUpsert({ workspaceKey: '/other-workspace', name: 'Foreign' })
   f.routeWith({ contract: 'router-contract/1', outcome: 'selected', agentId: b.agentId, reason: 'B owns this judgment' })
 
@@ -234,9 +236,13 @@ test('multiple eligible candidates come only from the current workspace and sele
   const routerCalls = callsOf(f, 'router-contract/1')
   assert.equal(routerCalls.length, 1)
   const pack = JSON.parse(routerCalls[0].messages[0].content[0].text)
-  assert.deepEqual(pack.candidates.map(candidate => candidate.agentId), [a.agentId, b.agentId].sort())
+  assert.deepEqual(pack.candidates.map(candidate => candidate.agentId), [a.agentId, b.agentId, foreign.agentId].sort())
   const stored = JSON.parse(route.candidates_json)
-  assert.equal(stored.some(candidate => [foreign.agentId, archived.agentId].includes(candidate.agentId)), false)
+  assert.equal(stored.some(candidate => candidate.agentId === archived.agentId), false)
+  assert.equal(stored.find(candidate => candidate.agentId === foreign.agentId).rejectedBecause, undefined)
+  // The Router pack carries identity metadata only: no workspace, memory or records.
+  assert.deepEqual(Object.keys(pack.candidates[0]).sort(), ['agentId', 'name', 'scope', 'userDescription'])
+  assert.deepEqual(Object.keys(pack.candidates[0].scope).sort(), ['authorizationClasses'])
   assert.equal(stored.find(candidate => candidate.agentId === disabled.agentId).rejectedBecause, 'disabled')
   assert.equal(stored.find(candidate => candidate.agentId === narrow.agentId).rejectedBecause, 'scope')
   assert.equal(stored.find(candidate => candidate.agentId === wrongClass.agentId).rejectedBecause, 'authorization')

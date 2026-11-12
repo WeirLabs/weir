@@ -1,8 +1,14 @@
-// Versioned Learning Run and Memory Snapshot persistence on Decision schema v1.
+// Versioned Learning Run and Memory Snapshot persistence on Decision schema v2.
+//
+// Both records live in an explicit namespace: `zone='workspace'` plus the
+// workspace that owns them, or `zone='public'` with no workspace at all. Version
+// sequences, current snapshots and active-run exclusivity are per namespace, so a
+// public candidate and a private run never block each other.
 import { createHash, randomUUID } from 'node:crypto'
 import {
   assertClosedObject, assertObject, assertSupportedSchemaVersion, canonicalJson, DecisionContractError,
 } from '../contracts.js'
+import { ZONES } from './schema.js'
 import { LEARNING_LIMITS, validateLearningScope } from '../learning/constraints.js'
 export { LEARNING_LIMITS, validateLearningScope } from '../learning/constraints.js'
 import { caseOf } from './cases.js'
@@ -73,6 +79,27 @@ function hash(value, label) {
   return value
 }
 
+
+/**
+ * Reads the explicit namespace off a persisted row. A workspace-zone row must
+ * name exactly one workspace and a public-zone row must name none: that pair is
+ * the whole reason SQLite NULL-distinct semantics cannot be used as the key.
+ * @param {any} row @param {string} label
+ * @returns {{zone:string, namespaceWorkspaceKey:string|null}}
+ */
+function namespaceOf(row, label) {
+  const zone = row.zone
+  if (!ZONES.includes(zone)) throw new DecisionContractError('INVALID_NAMESPACE', `${label}.zone ${String(zone)} is not supported`)
+  const namespaceWorkspaceKey = row.namespace_workspace_key ?? null
+  if (zone === 'workspace') {
+    if (typeof namespaceWorkspaceKey !== 'string' || !namespaceWorkspaceKey) {
+      throw new DecisionContractError('INVALID_NAMESPACE', `${label} workspace zone requires a namespace workspace key`)
+    }
+  } else if (namespaceWorkspaceKey !== null) {
+    throw new DecisionContractError('INVALID_NAMESPACE', `${label} public zone must not name a workspace`)
+  }
+  return { zone, namespaceWorkspaceKey }
+}
 
 /** @param {unknown} value */
 export function validatePrinciple(value) {
@@ -168,10 +195,12 @@ export function learningRunOf(row) {
   if (!Array.isArray(operations) || operations.length > LEARNING_LIMITS.operations) throw new DecisionContractError('INVALID_RECORD', 'LearningRun.operations must be a bounded array')
   operations.forEach(validateOperation)
   const replay = row.replay_json == null ? undefined : validateReplay(parseJson(row.replay_json, 'LearningRun.replay'))
+  const namespace = namespaceOf(row, 'LearningRun')
   return deepFreeze({
     schemaVersion: row.schema_version,
     learningRunId: requiredId(row.learning_run_id, 'LearningRun.learningRunId'),
     agentId: requiredId(row.agent_id, 'LearningRun.agentId'), trigger: row.trigger,
+    zone: namespace.zone, namespaceWorkspaceKey: namespace.namespaceWorkspaceKey,
     inputFrozen, operations, ...(replay === undefined ? {} : { replay }), outcome: row.outcome,
     revision: positiveInteger(row.revision, 'LearningRun.revision'),
     createdAt: timestamp(row.created_at, 'LearningRun.createdAt'), updatedAt: timestamp(row.updated_at, 'LearningRun.updatedAt'),
@@ -191,10 +220,13 @@ export function memorySnapshotOf(row) {
   if (generatedDescription.revision !== 0 || generatedDescription.text !== '') {
     throw new DecisionContractError('GENERATED_DESCRIPTION_READONLY', 'P3 generatedDescription must remain empty and read-only')
   }
+  const namespace = namespaceOf(row, 'MemorySnapshot')
   const value = {
     schemaVersion: row.schema_version,
     snapshotId: requiredId(row.snapshot_id, 'MemorySnapshot.snapshotId'),
-    agentId: requiredId(row.agent_id, 'MemorySnapshot.agentId'), version: positiveInteger(row.version, 'MemorySnapshot.version'),
+    agentId: requiredId(row.agent_id, 'MemorySnapshot.agentId'),
+    zone: namespace.zone, namespaceWorkspaceKey: namespace.namespaceWorkspaceKey,
+    version: positiveInteger(row.version, 'MemorySnapshot.version'),
     parentSnapshotId: row.parent_snapshot_id ?? null, state: row.state, principles,
     generatedDescription, learningRunId: requiredId(row.learning_run_id, 'MemorySnapshot.learningRunId'),
     revision: positiveInteger(row.revision, 'MemorySnapshot.revision'),
@@ -245,9 +277,13 @@ export class DecisionLearning {
     return deepFreeze(rows.map(memorySnapshotOf))
   }
 
-  /** @param {string} agentId @param {string} workspaceKey */
-  currentSnapshot(agentId, workspaceKey) {
-    const rows = currentSnapshotRows(this.store.db, agentId, workspaceKey)
+  /**
+   * The current published Snapshot of one namespace. Attempts read the private
+   * `(agentId, workspace)` namespace only; the public zone is a separate read.
+   * @param {string} agentId @param {string|null} namespaceWorkspaceKey @param {'workspace'|'public'} [zone]
+   */
+  currentSnapshot(agentId, namespaceWorkspaceKey, zone = 'workspace') {
+    const rows = currentSnapshotRows(this.store.db, agentId, zone, namespaceWorkspaceKey)
     if (!rows.length) return null
     return memorySnapshotOf(rows[0])
   }
@@ -296,8 +332,9 @@ export class DecisionLearning {
       const runs = db.prepare('SELECT * FROM learning_runs WHERE agent_id=?').all(input.agentId).map(learningRunOf)
       const duplicate = runs.find(run => run.inputFrozen.requestId === input.requestId)
       if (duplicate) { result = { created: false, run: duplicate }; return }
-      if (runs.some(run => run.outcome === 'running' || run.outcome === 'candidate')) {
-        throw new DecisionContractError('LEARNING_RUN_ACTIVE', 'An active Learning Run or candidate already exists for this Agent')
+      if (runs.some(run => run.zone === 'workspace' && run.namespaceWorkspaceKey === input.workspaceKey
+        && (run.outcome === 'running' || run.outcome === 'candidate'))) {
+        throw new DecisionContractError('LEARNING_RUN_ACTIVE', 'An active Learning Run or candidate already exists for this Agent and workspace')
       }
       const caseRows = db.prepare(`SELECT * FROM cases
         WHERE agent_id=? AND workspace_key=? AND state='closed' AND closing IN ('answered','escalated')
@@ -312,7 +349,7 @@ export class DecisionLearning {
         .filter(row => caseIds.has(row.case_id))
       if (feedbackRows.length > LEARNING_LIMITS.feedback) throw new DecisionContractError('LEARNING_INPUT_TOO_LARGE', 'At most 256 Feedback records can be learned at once')
       const feedback = feedbackRows.map(feedbackRecord)
-      const parentRows = currentSnapshotRows(db, input.agentId, input.workspaceKey)
+      const parentRows = currentSnapshotRows(db, input.agentId, 'workspace', input.workspaceKey)
       if (parentRows[0]) {
         const rawPrinciples = parseJson(parentRows[0].principles_json, 'MemorySnapshot.principles')
         if (Array.isArray(rawPrinciples) && rawPrinciples.length > LEARNING_LIMITS.principles) throw new DecisionContractError('LEARNING_INPUT_TOO_LARGE', 'At most 128 parent principles can be learned at once')
@@ -338,10 +375,10 @@ export class DecisionLearning {
       const learningRunId = `lr_${randomUUID()}`
       const now = input.startedAt
       db.prepare(`INSERT INTO learning_runs(
-        learning_run_id,agent_id,trigger,input_frozen_json,operations_json,replay_json,outcome,
-        created_at,updated_at,revision,schema_version
-      ) VALUES(?,?,'manual',?,?,NULL,'running',?,?,1,1)`).run(
-        learningRunId, input.agentId, JSON.stringify(inputFrozen), '[]', now, now,
+        learning_run_id,agent_id,zone,namespace_workspace_key,trigger,input_frozen_json,operations_json,
+        replay_json,outcome,created_at,updated_at,revision,schema_version
+      ) VALUES(?,?,'workspace',?,'manual',?,?,NULL,'running',?,?,1,1)`).run(
+        learningRunId, input.agentId, input.workspaceKey, JSON.stringify(inputFrozen), '[]', now, now,
       )
       result = {
         created: true, run: learningRunOf(db.prepare('SELECT * FROM learning_runs WHERE learning_run_id=?').get(learningRunId)),
@@ -359,7 +396,8 @@ export class DecisionLearning {
       const row = db.prepare('SELECT * FROM learning_runs WHERE learning_run_id=?').get(input.learningRunId)
       const run = learningRunOf(row)
       if (run.outcome !== 'running' || run.revision !== input.expectedRevision) throw new DecisionContractError('STALE_LEARNING_RUN', run.learningRunId)
-      const version = db.prepare('SELECT COALESCE(MAX(version),0)+1 AS version FROM memory_snapshots WHERE agent_id=?').get(run.agentId).version
+      const version = db.prepare(`SELECT COALESCE(MAX(version),0)+1 AS version FROM memory_snapshots
+        WHERE agent_id=? AND zone=? AND namespace_workspace_key IS ?`).get(run.agentId, run.zone, run.namespaceWorkspaceKey).version
       const snapshotId = `ms_${randomUUID()}`
       const now = this.now()
       const update = db.prepare(`UPDATE learning_runs SET operations_json=?,replay_json=?,outcome='candidate',revision=revision+1,updated_at=?
@@ -368,11 +406,11 @@ export class DecisionLearning {
       )
       if (update.changes !== 1) throw new DecisionContractError('STALE_LEARNING_RUN', run.learningRunId)
       db.prepare(`INSERT INTO memory_snapshots(
-        snapshot_id,agent_id,version,parent_snapshot_id,state,principles_json,generated_description_json,
-        learning_run_id,created_at,updated_at,revision,schema_version
-      ) VALUES(?,?,?,?,'draft',?,?,?, ?,?,1,1)`).run(
-        snapshotId, run.agentId, version, run.inputFrozen.parentSnapshotId, JSON.stringify(input.principles),
-        JSON.stringify({ revision: 0, text: '' }), run.learningRunId, now, now,
+        snapshot_id,agent_id,zone,namespace_workspace_key,version,parent_snapshot_id,state,principles_json,
+        generated_description_json,learning_run_id,created_at,updated_at,revision,schema_version
+      ) VALUES(?,?,?,?,?,?,'draft',?,?,?, ?,?,1,1)`).run(
+        snapshotId, run.agentId, run.zone, run.namespaceWorkspaceKey, version, run.inputFrozen.parentSnapshotId,
+        JSON.stringify(input.principles), JSON.stringify({ revision: 0, text: '' }), run.learningRunId, now, now,
       )
       result = {
         run: learningRunOf(db.prepare('SELECT * FROM learning_runs WHERE learning_run_id=?').get(run.learningRunId)),
@@ -406,7 +444,7 @@ export class DecisionLearning {
       if (snapshot.state === 'published' && run.outcome === 'published') { result = { snapshot, run }; return }
       if (snapshot.state !== 'draft' || run.outcome !== 'candidate') throw new DecisionContractError('SNAPSHOT_STATE_CONFLICT', `${snapshot.state}/${run.outcome}`)
       if (snapshot.revision !== expectedRevision) throw new DecisionContractError('REVISION_CONFLICT', snapshot.snapshotId)
-      const currentRows = currentSnapshotRows(db, snapshot.agentId, run.inputFrozen.workspaceKey)
+      const currentRows = currentSnapshotRows(db, snapshot.agentId, snapshot.zone, snapshot.namespaceWorkspaceKey)
       const currentId = currentRows[0]?.snapshot_id ?? null
       if (currentId !== snapshot.parentSnapshotId) {
         result = { error: 'STALE_PARENT_SNAPSHOT', run: failCandidate(db, run, 'STALE_PARENT_SNAPSHOT', this.now()) }
@@ -456,7 +494,7 @@ export class DecisionLearning {
       if (snapshot.state === 'rolled_back' && run.outcome === 'rolled_back') { result = { snapshot, run }; return }
       if (snapshot.state !== 'published' || run.outcome !== 'published') throw new DecisionContractError('SNAPSHOT_STATE_CONFLICT', `${snapshot.state}/${run.outcome}`)
       if (snapshot.revision !== expectedRevision) throw new DecisionContractError('REVISION_CONFLICT', snapshot.snapshotId)
-      const current = currentSnapshotRows(db, snapshot.agentId, run.inputFrozen.workspaceKey)[0]
+      const current = currentSnapshotRows(db, snapshot.agentId, snapshot.zone, snapshot.namespaceWorkspaceKey)[0]
       if (current?.snapshot_id !== snapshot.snapshotId) throw new DecisionContractError('SNAPSHOT_NOT_CURRENT', snapshot.snapshotId)
       const now = this.now()
       const changed = db.prepare(`UPDATE memory_snapshots SET state='rolled_back',revision=revision+1,updated_at=?
@@ -558,12 +596,11 @@ function sourcePublishIssue(db, run, snapshot, evidence) {
 /** @template T @param {T} value @returns {T} */
 function clone(value) { return JSON.parse(JSON.stringify(value)) }
 
-/** @param {any} db @param {string} agentId @param {string} workspaceKey */
-function currentSnapshotRows(db, agentId, workspaceKey) {
-  const rows = db.prepare(`SELECT memory_snapshots.* FROM memory_snapshots
-    JOIN agent_profiles ON agent_profiles.agent_id=memory_snapshots.agent_id
-    WHERE memory_snapshots.agent_id=? AND agent_profiles.workspace_key=?
-    ORDER BY memory_snapshots.version DESC,memory_snapshots.snapshot_id DESC`).all(agentId, workspaceKey)
+/** @param {any} db @param {string} agentId @param {string} zone @param {string|null} namespaceWorkspaceKey */
+function currentSnapshotRows(db, agentId, zone, namespaceWorkspaceKey) {
+  const rows = db.prepare(`SELECT * FROM memory_snapshots
+    WHERE agent_id=? AND zone=? AND namespace_workspace_key IS ?
+    ORDER BY version DESC,snapshot_id DESC`).all(agentId, zone, namespaceWorkspaceKey)
   assertUniqueSnapshotVersions(rows, agentId)
   return rows.filter(row => row.state === 'published')
 }

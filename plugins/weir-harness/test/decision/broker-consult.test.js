@@ -85,7 +85,7 @@ test('revision honors a new explicit Agent and records the new route', async t =
   f.respond({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Add scope.' })
   const initial = { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }], agent_id: f.a.agentId, request_id: 'revise-agent' }
   const first = await f.broker.consult({ agent: f.agent, args: initial })
-  const ref = await f.broker.ensureProfileEvidence(f.b)
+  const ref = await f.broker.ensureProfileEvidence(f.b, f.workspace)
   f.respond({ outcome: 'answer', claims: [{ text: 'Use B after reassignment', evidenceIds: [ref.evidenceId] }], answers: [{ id: 'question', selected: ['B'] }] })
   const revised = await f.broker.consult({ agent: f.agent, args: { ...initial, question: 'Which revised?', agent_id: f.b.agentId } })
   assert.equal(revised.outcome, 'answered')
@@ -174,14 +174,20 @@ test('Off, globally disabled and explicit unavailable Agent fail before creating
   await f.broker.profileSetState(f.b.agentId, 'disabled')
   await assert.rejects(f.broker.consult({ agent: f.agent, args: { question: 'Q', agent_id: f.b.agentId } }), error => error.code === 'AGENT_UNAVAILABLE')
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, before)
+  // A shared identity created elsewhere is available here; an archived one is not.
   const foreign = await f.broker.profileUpsert({ workspaceKey: '/other', name: 'Foreign' })
+  const shared = await f.broker.consult({ agent: f.agent, args: { question: 'Q', agent_id: foreign.agentId, request_id: 'shared-identity' } })
+  assert.equal(f.broker.cases.getCase(shared.caseId).agentId, foreign.agentId)
+  await f.broker.cases.transition({ caseId: shared.caseId, expectedState: 'awaiting_user', expectedRevision: f.broker.cases.getCase(shared.caseId).revision, state: 'closed', closing: 'cancelled', decision: { kind: 'cancelled', at: 1 } })
+  const afterShared = f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n
+  await f.broker.profileSetState(foreign.agentId, 'archived')
   await assert.rejects(f.broker.consult({ agent: f.agent, args: { question: 'Q', agent_id: foreign.agentId } }), error => error.code === 'AGENT_UNAVAILABLE')
-  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, before)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, afterShared, 'an unavailable shared identity opens no Case')
   assert.ok(f.audits.some(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.agentId === foreign.agentId))
 
   f.config.decisionAgentsEnabled = false
   await assert.rejects(f.broker.consult({ agent: f.agent, args: { question: 'Q' } }), error => error.code === 'DECISION_OFF')
-  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, before)
+  assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, afterShared)
 })
 
 test('Auto consult preserves explicit precedence, caller class, unavailable failure, and Off bypass', async t => {

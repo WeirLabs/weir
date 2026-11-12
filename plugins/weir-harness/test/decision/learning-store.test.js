@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { canonicalJson } from '../../src/decision/contracts.js'
+import { CURRENT_SCHEMA_VERSION } from '../../src/decision/store/schema.js'
 import { brokerFixture, frozenInput, insertLearningRun, insertSnapshot } from './p3-fixtures.js'
 
 test('P3 strict readers reject high-version, corrupt, and unknown records without rewriting v1 rows', async t => {
@@ -23,7 +24,7 @@ test('P3 strict readers reject high-version, corrupt, and unknown records withou
   await assert.rejects(f.broker.learningRun({ sessionId: 'root', learningRunId: 'lr_unknown' }))
   insertSnapshot(f, 'ms_unknown', 1, 'archived')
   await assert.rejects(f.broker.memorySnapshot({ sessionId: 'root', snapshotId: 'ms_unknown' }))
-  assert.equal(f.broker.store.db.prepare('PRAGMA user_version').get().user_version, 1)
+  assert.equal(f.broker.store.db.prepare('PRAGMA user_version').get().user_version, CURRENT_SCHEMA_VERSION)
 })
 
 test('current Snapshot is the unambiguous highest published version, never draft or rolled_back', async t => {
@@ -34,6 +35,10 @@ test('current Snapshot is the unambiguous highest published version, never draft
   insertSnapshot(f, 'ms_v4_rolled', 4, 'rolled_back')
   assert.equal((await f.broker.agent({ sessionId: 'root', agentId: f.profile.agentId })).currentSnapshotId, 'ms_v2')
 
+  // The v2 schema makes a duplicate namespace version impossible. A corrupt or
+  // pre-v2 database can still present one, so the strict reader must stay the
+  // final guard: drop the constraint, then prove the reader fails closed.
+  f.broker.store.db.exec('DROP INDEX memory_snapshots_namespace_version')
   insertSnapshot(f, 'ms_v2_duplicate', 2, 'published')
   await assert.rejects(f.broker.agent({ sessionId: 'root', agentId: f.profile.agentId }))
 })
@@ -75,6 +80,10 @@ test('P3 strict readers close JSON envelopes, operations, principles, and scopes
 
 test('any duplicate Agent/version is ambiguous, even outside the published set', async t => {
   const f = await brokerFixture(t)
+  // Same reasoning as above: the constraint is dropped only to simulate the
+  // corrupt state the reader must still reject.
+  f.broker.store.db.exec('DROP INDEX memory_snapshots_namespace_version')
+  f.broker.store.db.exec('DROP INDEX learning_runs_active_workspace')
   insertSnapshot(f, 'ms_draft_a', 1, 'draft')
   insertSnapshot(f, 'ms_draft_b', 1, 'draft')
   await assert.rejects(

@@ -107,11 +107,15 @@ export function frozenInput(f, overrides = {}) {
 }
 
 export function insertLearningRun(f, learningRunId, outcome = 'candidate', overrides = {}) {
+  // Every persisted run carries its explicit namespace: a workspace zone names
+  // exactly one workspace, the public zone names none.
+  const zone = overrides.zone ?? 'workspace'
+  const namespaceWorkspaceKey = zone === 'public' ? null : (overrides.workspaceKey ?? f.workspace)
   f.broker.store.db.prepare(`INSERT INTO learning_runs(
-    learning_run_id,agent_id,trigger,input_frozen_json,operations_json,replay_json,outcome,
-    created_at,updated_at,revision,schema_version
-  ) VALUES(?,?,?,?,?,?,?,1,1,?,?)`).run(
-    learningRunId, overrides.agentId ?? f.profile.agentId, 'manual',
+    learning_run_id,agent_id,zone,namespace_workspace_key,trigger,input_frozen_json,operations_json,
+    replay_json,outcome,created_at,updated_at,revision,schema_version
+  ) VALUES(?,?,?,?,?,?,?,?,?,1,1,?,?)`).run(
+    learningRunId, overrides.agentId ?? f.profile.agentId, zone, namespaceWorkspaceKey, 'manual',
     JSON.stringify(overrides.inputFrozen ?? frozenInput(f)), JSON.stringify(overrides.operations ?? []),
     overrides.replay === undefined ? null : JSON.stringify(overrides.replay), outcome,
     overrides.revision ?? 1, overrides.schemaVersion ?? 1,
@@ -123,11 +127,14 @@ export function insertSnapshot(f, snapshotId, version, state = 'draft', override
   const learningRunId = overrides.learningRunId ?? `lr_${snapshotId}`
   const exists = f.broker.store.db.prepare('SELECT 1 FROM learning_runs WHERE learning_run_id=?').get(learningRunId)
   if (!exists) insertLearningRun(f, learningRunId, state === 'draft' ? 'candidate' : state)
+  const zone = overrides.zone ?? 'workspace'
+  const namespaceWorkspaceKey = zone === 'public' ? null : (overrides.workspaceKey ?? f.workspace)
   f.broker.store.db.prepare(`INSERT INTO memory_snapshots(
-    snapshot_id,agent_id,version,parent_snapshot_id,state,principles_json,generated_description_json,
-    learning_run_id,created_at,updated_at,revision,schema_version
-  ) VALUES(?,?,?,?,?,?,?,?,1,1,?,?)`).run(
-    snapshotId, overrides.agentId ?? f.profile.agentId, version, overrides.parentSnapshotId ?? null, state,
+    snapshot_id,agent_id,zone,namespace_workspace_key,version,parent_snapshot_id,state,principles_json,
+    generated_description_json,learning_run_id,created_at,updated_at,revision,schema_version
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,1,1,?,?)`).run(
+    snapshotId, overrides.agentId ?? f.profile.agentId, zone, namespaceWorkspaceKey, version,
+    overrides.parentSnapshotId ?? null, state,
     JSON.stringify(overrides.principles ?? []),
     JSON.stringify(overrides.generatedDescription ?? { revision: 0, text: '' }), learningRunId,
     overrides.revision ?? 1, overrides.schemaVersion ?? 1,

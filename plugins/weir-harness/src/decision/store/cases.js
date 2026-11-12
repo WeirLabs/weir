@@ -4,7 +4,7 @@ import { assertSupportedSchemaVersion, CASE_CLOSINGS, CASE_STATES, ROUTE_MODES, 
 import { insertEvidence } from './evidence.js'
 import { DecisionStoreError } from './db.js'
 import { DecisionProfiles } from './profiles.js'
-import { scopeCovers } from '../scope.js'
+import { scopeCovers, profileScopeCovers } from '../scope.js'
 
 export class IllegalTransition extends DecisionStoreError {
   /** @param {string} detail */ constructor(detail) { super('ILLEGAL_TRANSITION', detail) }
@@ -212,16 +212,20 @@ function insertRoute(db, input, now, id) {
   )
 }
 
-/** Re-read Auto selection authority against the final normalized request. */
+/**
+ * Re-read Auto selection authority against the final normalized request. The
+ * candidate identity is profile-global; the Case still belongs to one workspace
+ * and the evidence gates still require that workspace's own material.
+ */
 function autoTargetEligible(profile, current, change, chosen) {
-  if (!profile || change.agentId !== chosen || profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) return false
+  if (!profile || change.agentId !== chosen || profile.state !== 'enabled') return false
   const request = change.request ?? current.request
   const scope = change.scope ?? current.scope
   const questions = Array.isArray(request?.questions) ? request.questions : []
   const classes = questions.map(question => question?.authorizationClass)
   return questions.length > 0
     && classes.every(value => ['A', 'B', 'C'].includes(value))
-    && scopeCovers(profile.scope, scope, current.workspaceKey)
+    && profileScopeCovers(profile.scope, scope)
     && classes.every(value => profile.scope?.authorizationClasses?.includes(value))
 }
 
