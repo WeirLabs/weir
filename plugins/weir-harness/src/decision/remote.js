@@ -6,11 +6,14 @@ export const DECISION_REMOTE_METHODS = Object.freeze([
   'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'routingReview', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
   'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'profileUpsert', 'profileSetState',
   'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
-  'publicMemoryRefresh', 'publicCandidate',
+  'publicMemoryRefresh', 'publicCandidate', 'exportData',
 ])
 const CASE_MUTATIONS = new Set(['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction'])
 const LEARNING_MUTATIONS = new Set(['learningStart', 'snapshotPublish', 'snapshotReject', 'snapshotRollback'])
 const PUBLIC_MEMORY_METHODS = new Set(['publicMemoryRefresh', 'publicCandidate'])
+// The export forwards one caller value, its session: the Host derives the root
+// session, the workspace and the file location, so no field can widen the scope.
+const EXPORT_METHODS = new Set(['exportData'])
 
 /**
  * Public-memory calls cross workspaces, so a caller may name only its own
@@ -41,7 +44,7 @@ export function createDecisionRemoteService(dependencies) {
       const status = broker?.status()
       if (!broker || (status.available !== true && !(method === 'overview' && status.reason === 'disabled'))) return { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: status?.reason ?? 'Decision Broker is unavailable' } }
       let value
-      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)
+      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method) || EXPORT_METHODS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
       // Identity calls take no workspace: the caller cannot name one, and the
       // profile-global identity must not depend on where the call came from.
@@ -51,6 +54,7 @@ export function createDecisionRemoteService(dependencies) {
       else if (method === 'routingReview') value = await broker.routingReview({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (PUBLIC_MEMORY_METHODS.has(method)) value = await broker[method](publicMemoryArgs(args))
+      else if (EXPORT_METHODS.has(method)) value = await broker[method]({ sessionId: context.rootSessionId })
       else if (method === 'waitForToolCall') value = await broker[method](args, signal)
       else value = await broker[method](args)
       return { ok: true, value: value === undefined ? null : value }
