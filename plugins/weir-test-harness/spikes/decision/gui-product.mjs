@@ -67,6 +67,7 @@ const hostOnboardingDismissals = []
 const publicWires = []
 const pageBindings = []
 const shellReloads = []
+const pageReadWitnesses = []
 writeJson(join(out, 'host-onboarding.json'), hostOnboardingDismissals)
 let instance = null
 let instanceNumber = 0
@@ -2015,6 +2016,23 @@ async function assertUiRpc({ label, method, args, mark, exactly = null }) {
 }
 
 /**
+ * A page that is reused across tabs keeps its captured session: record this
+ * page's own next read so the record view is attributed, not assumed.
+ */
+async function assertPageSession(mark, sessionId, label, methods = ['records', 'record']) {
+  const read = await waitFor(async () => {
+    await collectNetwork()
+    const reads = networkRpc.slice(mark).filter(item => methods.includes(item.method))
+    return reads.length ? reads.at(-1) : null
+  }, 30_000)
+  requireEvidence(read.args?.sessionId === sessionId, `${label}: the page read ${read.method} under another workspace session`)
+  const receipt = { label, method: read.method, expectedSessionId: sessionId, sessionId: read.args?.sessionId ?? null, rpcId: read.rpcId ?? null, args: read.args, responded: read.response != null }
+  pageReadWitnesses.push(receipt)
+  writeJson(join(out, 'cross-page-workspace-reads.json'), pageReadWitnesses)
+  return receipt
+}
+
+/**
  * Explicit public adoption, rejection, rollback and the two per-workspace
  * observations all reuse one gesture path: open the page bound to the intended
  * workspace, act, and prove the exact args (including the session) on the wire.
@@ -2186,7 +2204,7 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   await openDecisionPageForSession(w4.sessionId, 'w4-public-record')
   const recordMark = networkRpc.length
   await openRecord(w4.sessionId, w4Case.caseId)
-  await assertUiRpc({ label: 'W4 record list', method: 'records', args: { sessionId: w4.sessionId }, mark: recordMark })
+  await assertPageSession(recordMark, w4.sessionId, 'W4 record list')
   await openDisclosure(`weir-da-record-advanced-${w4Case.caseId}`)
   // The attempt context pack is one native <details>; reveal it with a real
   // pointer click on its summary (the same gesture a user makes), never by
