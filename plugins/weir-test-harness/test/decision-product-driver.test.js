@@ -1260,6 +1260,17 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
+test('SQLite snapshots accept only the v2 store whose row envelopes stay v1', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const snapshot = driver.match(/function sqliteSnapshot\(phase\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(snapshot, 'sqliteSnapshot exists')
+  assert.ok(snapshot.includes("db.prepare('PRAGMA integrity_check')"), 'the snapshot reads the real integrity check')
+  assert.ok(snapshot.includes('raw.schemaVersion === 2'), 'the store gate follows the schema-v2 store this change introduces')
+  assert.equal(snapshot.includes('raw.schemaVersion === 1'), false, 'a v1 store gate would reject every store the product now opens')
+  assert.ok(snapshot.includes('envelopeVersions.every(version => version === 1)'), 'row envelopes must stay schema_version 1')
+  assert.ok(driver.includes("const ENVELOPE_TABLES = ['agent_profiles'"), 'the envelope tables are declared once')
+})
+
 test('the driver keeps the cross-workspace matrix gated, isolated and lane-local', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')

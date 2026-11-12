@@ -842,7 +842,11 @@ function sqliteSnapshot(phase) {
   try {
     const tables = ['agent_profiles', 'agent_profile_revisions', 'cases', 'attempts', 'evidence', 'attempt_evidence', 'feedback', 'corrections', 'learning_runs', 'memory_snapshots', 'selectors', 'route_decisions']
     const raw = { phase, path: databasePath, schemaVersion: db.prepare('PRAGMA user_version').get().user_version, integrity: db.prepare('PRAGMA integrity_check').get().integrity_check, rows: Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])) }
-    requireEvidence(raw.schemaVersion === 1 && raw.integrity === 'ok', `${phase} SQLite v1 integrity`)
+    // The store is schema v2 (zone/namespace columns); every row envelope it
+    // writes stays schema_version 1, so both facts are required together.
+    const envelopeVersions = [...new Set(ENVELOPE_TABLES.flatMap(table => (raw.rows[table] ?? []).map(row => row.schema_version)))]
+    raw.envelopeVersions = envelopeVersions
+    requireEvidence(raw.schemaVersion === 2 && raw.integrity === 'ok' && envelopeVersions.every(version => version === 1), `${phase} SQLite v2 store with v1 row envelopes`)
     sqlitePhases.push(raw)
     writeJson(join(out, `sqlite-${phase}.json`), raw)
     return raw
@@ -1658,6 +1662,8 @@ const DENIAL_AUDIT_FIELDS = new Set([
   'contentHash', 'inputHash', 'feedbackDigest', 'finalHash',
 ])
 const LEGACY_HISTORY_TABLES = ['agent_profiles', 'agent_profile_revisions', 'cases', 'attempts', 'evidence', 'feedback', 'route_decisions', 'learning_runs', 'memory_snapshots']
+// Tables that carry the schema-versioned row envelope.
+const ENVELOPE_TABLES = ['agent_profiles', 'cases', 'attempts', 'evidence', 'feedback', 'route_decisions', 'learning_runs', 'memory_snapshots']
 
 function legacyDatabasePath() {
   return join(root, 'home', 'weir', 'profiles', 'desktop', 'decisions', 'decision.db')
