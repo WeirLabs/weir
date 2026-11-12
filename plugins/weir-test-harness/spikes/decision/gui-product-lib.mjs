@@ -560,7 +560,14 @@ export function crossWorkspaceShareProblems(audit = {}) {
   if (auto.selectorAccepted !== true) problems.push('the shared assistant must stay selectable from the other workspace Auto path')
   if (auto.answered === true && (auto.attemptCount ?? 0) === 0) problems.push('an Auto answer must come from a real current-workspace Attempt')
   if (auto.answered === true && (auto.citedEvidenceCount ?? 0) === 0) problems.push('an Auto answer must cite current-workspace evidence, never public memory alone')
-  if (auto.answered === false && !['no_route', 'route_ambiguous', 'authority'].includes(String(auto.awaitingReason ?? ''))) problems.push('an unanswered Auto request must fail closed with a real awaiting reason')
+  if (auto.answered !== true) {
+    // With no current-workspace L5 the only legal non-answer is an escalated,
+    // evidence-free Attempt that waits for the user — never a public-memory answer.
+    const escalated = (auto.attemptCount ?? 0) >= 1 && auto.lastAttemptOutcome === 'escalate' && (auto.citedEvidenceCount ?? 0) === 0
+    const reasons = ['no_route', 'route_ambiguous', 'authority', 'exhausted', 'partial_batch', 'interrupted']
+    if (!escalated && !reasons.includes(String(auto.awaitingReason ?? ''))) problems.push('an unanswered Auto request must fail closed by escalating with no cited evidence or a real awaiting reason')
+    if ((auto.citedEvidenceCount ?? 0) > 0) problems.push('an unanswered Auto request must not carry cited evidence it never validated')
+  }
   return problems
 }
 

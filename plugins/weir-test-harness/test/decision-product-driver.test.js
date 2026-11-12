@@ -1174,6 +1174,11 @@ test('cross-workspace guard requires shared identity, private isolation and hone
   assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: true, attemptCount: 0, citedEvidenceCount: 0 } }).some(problem => /real current-workspace Attempt|current-workspace evidence/.test(problem)))
   assert.ok(crossWorkspaceShareProblems({ ...good, workspaces: [good.workspaces[0], { ...good.workspaces[1], text: '/repo/one' }, good.workspaces[2]] }).some(problem => /workspace path/.test(problem)))
   assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: false, awaitingReason: 'answered' } }).some(problem => /fail closed/.test(problem)))
+  // An evidence-free workspace escalates: the product's real exhausted shape is legal.
+  assert.deepEqual(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: false, attemptCount: 1, citedEvidenceCount: 0, lastAttemptOutcome: 'escalate', awaitingReason: 'exhausted' } }), [])
+  assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: false, attemptCount: 1, citedEvidenceCount: 2, lastAttemptOutcome: 'escalate', awaitingReason: 'exhausted' } }).some(problem => /must not carry cited evidence/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: true, answered: false, attemptCount: 1, citedEvidenceCount: 0, lastAttemptOutcome: 'answer', awaitingReason: null } }).some(problem => /fail closed/.test(problem)))
+  assert.ok(crossWorkspaceShareProblems({ ...good, autoShare: { selectorAccepted: false, answered: true, attemptCount: 1, citedEvidenceCount: 1, lastAttemptOutcome: 'answer' } }).some(problem => /Auto path/.test(problem)))
 })
 
 test('legacy live surface guard requires identity, private ownership, an empty public zone and no history rewrite', () => {

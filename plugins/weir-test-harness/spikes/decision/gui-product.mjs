@@ -603,6 +603,7 @@ async function agentState(sessionId, agentId, state) {
   await keyboardActivate(`Confirm assistant ${state}`, `#weir-da-agent-state .weir-da-actions button${state === 'enabled' ? '[data-variant="primary"]' : ':last-child'}`)
   await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
   const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await startScrollTimeline(`assistant-${state}-${agentId}`)
   await releaseDecision(controlId)
   const agent = await waitFor(async () => { const value = await rpc(sessionId, 'agent-state', 'agent', { agentId }); return value.state === state ? value : null }, 30_000)
   const mutation = await expectMutation('profileSetState', { sessionId, agentId, state })
@@ -903,6 +904,7 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   await keyboardActivate(`Confirm ${kind}`, `#${dialog} .weir-da-actions button:last-child`)
   await waitFor(async () => (await decisionControl(controlId)).started, 30_000)
   const beforeFocus = await measureConfirmationFocus(originSelector, controlId)
+  await startScrollTimeline(kind)
   await releaseDecision(controlId)
   const agent = await waitAgent(sessionId, candidate.agent.agentId, value => {
     if (kind === 'snapshotPublish') return value.currentSnapshotId === snapshotId
@@ -1996,11 +1998,15 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const autoCase = await waitCase(w3.sessionId, 'CROSS_AUTO_Q')
   const autoRecord = await record(w3.sessionId, `${phase}-auto`, autoCase.caseId)
   const autoShare = {
-    selectorAccepted: true,
+    selectorAccepted: autoRecord.case.agentId === shared.agentId,
     answered: autoRecord.case.state === 'closed' && autoRecord.case.closing === 'answered',
     attemptCount: autoRecord.attempts.length,
     citedEvidenceCount: autoRecord.attempts.reduce((sum, attempt) => sum + (attempt.citedEvidenceIds?.length ?? 0), 0),
+    attemptOutcomes: autoRecord.attempts.map(attempt => attempt.outcome),
+    lastAttemptOutcome: autoRecord.attempts.at(-1)?.outcome ?? null,
+    citedSources: [...new Set(autoRecord.attempts.flatMap(attempt => (attempt.evidence ?? []).map(ref => ref.source)))],
     awaitingReason: autoRecord.case.awaitingReason ?? null,
+    caseState: autoRecord.case.state,
   }
   await shot('cross-w3-auto-shared-assistant')
   await openIsolatedSession(w3.sessionId)
@@ -2306,6 +2312,37 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false, longSt
   return evidence
 }
 
+/**
+ * Sample the Decision page scroller on every frame around a confirmed mutation.
+ * It records the page height, the live `overflow-anchor` value and whether the
+ * stamped audit node survived, so a post-mutation jump can be attributed to the
+ * real cause instead of being guessed.
+ */
+async function startScrollTimeline(kind) {
+  return instance.cdp.evaluate(`(() => {
+    const samples = []
+    const started = performance.now()
+    window.__weirUiuxScrollSamples = samples
+    const tick = () => {
+      const el = document.querySelector('main.weir-da-page')
+      samples.push({
+        t: Math.round(performance.now() - started),
+        top: el ? Math.round(el.scrollTop * 100) / 100 : null,
+        height: el ? el.scrollHeight : null,
+        anchor: el ? getComputedStyle(el).overflowAnchor : null,
+        stamped: Boolean(el && el.getAttribute('data-weir-uiux-audit') === ${JSON.stringify(kind)}),
+      })
+      if (performance.now() - started < 4000) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+    return true
+  })()`)
+}
+
+async function readScrollTimeline() {
+  return instance.cdp.evaluate('window.__weirUiuxScrollSamples ?? []')
+}
+
 async function beginModalAudit(kind, selector, originSelector, options = {}) {
   const before = options.before
   requireEvidence(before?.root && before?.body, `${kind} has root and body scroll measurements captured after native focus and before activation`)
@@ -2314,6 +2351,9 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
   const native = await measureNativeModal(selector, originSelector)
   const sessionIdentity = await measureSessionScrollerIdentity(originSelector)
   requireEvidence(native, `${kind} native dialog exists`)
+  // Best effort: a selector or composer modal can open with no Decision page on
+  // screen, so a missing page is recorded, never fatal.
+  await instance.cdp.evaluate(`(() => { const page=document.querySelector('main.weir-da-page'); if(!page) return false; page.setAttribute('data-weir-uiux-audit', ${JSON.stringify(kind)}); return true })()`).catch(() => false)
   const point = await instance.cdp.evaluate(`(() => {const origin=document.querySelector(${JSON.stringify(originSelector)});const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};const rect=origin?.getBoundingClientRect();return {x:Math.max(visual.offsetLeft+4,Math.min(visual.offsetLeft+visual.width-4,rect?rect.left+rect.width/2:visual.offsetLeft+visual.width/2)),y:Math.max(visual.offsetTop+4,Math.min(visual.offsetTop+visual.height-4,rect?rect.top+rect.height/2:visual.offsetTop+visual.height/2))}})()`)
   const attempts = []
   await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseWheel', x: point.x, y: point.y, deltaX: 0, deltaY: 240 })
@@ -2335,12 +2375,16 @@ async function beginModalAudit(kind, selector, originSelector, options = {}) {
 async function finishModalAudit(audit, { focus = null, focusProblems = [], contentMutation = null } = {}) {
   audit.contentMutation = contentMutation
   audit.after = await measureScrollContainers({}, audit.originSelector)
+  const timeline = await readScrollTimeline().catch(() => [])
+  audit.scrollTimeline = timeline
+  audit.stampSurvived = await instance.cdp.evaluate(`(() => { const page=document.querySelector('main.weir-da-page'); return Boolean(page && page.getAttribute('data-weir-uiux-audit') === ${JSON.stringify(audit.kind)}) })()`).catch(() => null)
+  audit.scrollTrace = timeline.filter((sample, index) => index === 0 || index === timeline.length - 1 || sample.top !== timeline[index - 1]?.top || sample.height !== timeline[index - 1]?.height || sample.anchor !== timeline[index - 1]?.anchor).slice(0, 60)
   const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
   audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...sessionScrollerProblems(audit), ...focusProblems]
   if (focus) audit.focus = focus
   saveUiuxEvidence()
   await instance.cdp.evaluate(`(() => {for(const el of document.querySelectorAll('[data-weir-uiux-scroll]'))el.removeAttribute('data-weir-uiux-scroll');return true})()`)
-  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), sessionIdentity: audit.sessionIdentity, focus: focus ?? null })
+  check(`uiuxModal:${audit.kind}`, audit.problems.length === 0, { problems: audit.problems, containers: Object.keys(audit.before), sessionIdentity: audit.sessionIdentity, focus: focus ?? null, stampSurvived: audit.stampSurvived, scrollTrace: audit.scrollTrace })
   return audit
 }
 
