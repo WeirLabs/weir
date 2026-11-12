@@ -679,7 +679,6 @@ window.__ModuleLoader__.load({
       return {
         phase,
         busy: phase === "pending",
-        canStart: phase === "idle" || phase === "error" || (phase === "success" && !checked.valid),
         statusKey: failed ? "decisionExportFailed" : phase === "success" ? "decisionExportSucceeded" : phase === "pending" ? "decisionExporting" : null,
         statusVariant: failed ? "error" : phase === "success" ? "success" : "idle",
         result: checked.valid ? checked.result : null,
