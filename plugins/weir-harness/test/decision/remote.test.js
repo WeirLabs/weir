@@ -34,10 +34,12 @@ test('every remote method reaches the Broker and wraps its value', async () => {
     assert.equal(result.ok, true)
   }
   assert.deepEqual(calls.map(call => call[0]), [...DECISION_REMOTE_METHODS])
-  assert.deepEqual(calls.find(call => call[0] === 'setSelector')[1], ['child', 'agent', 'ag', '/repo'])
-  assert.deepEqual(calls.find(call => call[0] === 'profileSetState')[1], ['ag', 'disabled', '/repo'])
+  // Identity calls never receive a caller-named workspace; record-level calls
+  // still receive the authenticated root workspace.
+  assert.deepEqual(calls.find(call => call[0] === 'setSelector')[1], ['child', 'agent', 'ag'])
+  assert.deepEqual(calls.find(call => call[0] === 'profileSetState')[1], ['ag', 'disabled'])
   assert.equal(calls.find(call => call[0] === 'decide')[1][0].workspaceKey, '/repo')
-  assert.equal(calls.find(call => call[0] === 'profileUpsert')[1][0].workspaceKey, '/repo')
+  assert.deepEqual(calls.find(call => call[0] === 'profileUpsert')[1], [{ sessionId: 'child', agentId: 'ag', mode: 'agent', state: 'disabled' }])
 })
 
 test('Broker errors become bounded envelopes without stacks', async () => {

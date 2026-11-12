@@ -100,8 +100,8 @@ test('P3 with no current Snapshot returns a versioned empty L2 without reading L
   const profile = await f.profiles.createProfile({ workspaceKey: '/repo', name: 'A', userDescription: 'User owned' })
   f.store.db.prepare(`INSERT INTO learning_runs(learning_run_id,agent_id,trigger,input_frozen_json,operations_json,outcome,created_at,updated_at)
     VALUES('lr_external','agent-a','external','{}','[]','done',1,1)`).run()
-  f.store.db.prepare(`INSERT INTO memory_snapshots(snapshot_id,agent_id,version,state,principles_json,generated_description_json,learning_run_id,created_at,updated_at)
-    VALUES('ms_external','agent-a',1,'draft','[]','{"revision":0,"text":""}','lr_external',1,1)`).run()
+  f.store.db.prepare(`INSERT INTO memory_snapshots(snapshot_id,agent_id,zone,namespace_workspace_key,version,state,principles_json,generated_description_json,learning_run_id,created_at,updated_at)
+    VALUES('ms_external','agent-a','workspace','/repo',1,'draft','[]','{"revision":0,"text":""}','lr_external',1,1)`).run()
   const before = f.profiles.getProfile(profile.agentId)
   const queries = []
   const prepare = f.store.db.prepare.bind(f.store.db)

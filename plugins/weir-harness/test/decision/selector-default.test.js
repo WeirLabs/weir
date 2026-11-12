@@ -119,14 +119,17 @@ test('default initialization never overwrites explicit Off, Auto, Agent or unkno
   assert.deepEqual(f.broker.store.db.prepare('SELECT root_session_id,mode,agent_id,revision FROM selectors ORDER BY root_session_id').all().map(row => ({ ...row })), before)
 })
 
-test('selector writes enforce workspace boundaries without changing an open Case', async t => {
+test('selector writes accept every enabled shared identity without changing an open Case', async t => {
   const f = fixture(t)
   await f.broker.start()
   const a = await f.broker.profileUpsert({ workspaceKey: f.dir, name: 'A' })
   const b = await f.broker.profileUpsert({ workspaceKey: f.dir, name: 'B' })
+  // Created elsewhere in the same profile: still selectable here.
   const foreign = await f.broker.profileUpsert({ workspaceKey: '/other', name: 'Foreign' })
   await f.broker.setSelector('root', 'agent', a.agentId, f.dir)
-  await assert.rejects(f.broker.setSelector('root', 'agent', foreign.agentId, f.dir), error => error.code === 'OUT_OF_SCOPE')
+  await f.broker.setSelector('root', 'agent', foreign.agentId, f.dir)
+  assert.deepEqual(f.broker.selector('root'), { mode: 'agent', agentId: foreign.agentId })
+  await f.broker.setSelector('root', 'agent', a.agentId, f.dir)
   assert.deepEqual(f.broker.selector('root'), { mode: 'agent', agentId: a.agentId })
 
   const opened = await f.broker.cases.createCase({

@@ -25,7 +25,7 @@ function scope(extra = {}) {
 
 function profile(agentId, extra = {}) {
   return {
-    agentId, workspaceKey: WORKSPACE, name: `Agent ${agentId}`, state: 'enabled',
+    agentId, name: `Agent ${agentId}`, state: 'enabled',
     scope: scope(), userDescription: { revision: 1, text: `Current user-written preference for ${agentId}` },
     generatedDescription: { revision: 99, text: `FORBIDDEN_GENERATED_${agentId}` },
     modelRoute: { chain: [{ provider: 'candidate-provider', model: 'candidate-model' }] },
@@ -112,58 +112,60 @@ describe('Auto deterministic admission and candidate planning', () => {
     assert.deepEqual(userPayload(llm.calls[0]).questions.map(item => item.id), ['missing-a', 'missing-c'])
   })
 
-  it('keeps enabled/workspace/scope/paths/tags/class filtering deterministic', () => {
+  it('keeps enabled/scope-hints/class filtering deterministic across the whole profile', () => {
     const eligibleA = profile('agent-a')
     const eligibleB = profile('agent-b', { userDescription: { revision: 4, text: 'Current revision four' } })
     const disabled = profile('agent-disabled', { state: 'disabled' })
     const archived = profile('agent-archived', { state: 'archived' })
-    const foreign = profile('agent-foreign', { workspaceKey: '/workspace-two' })
+    // Created elsewhere in the profile: identity is shared, so it is eligible.
+    const foreign = profile('agent-foreign')
     const wrongPath = profile('agent-path', { scope: scope({ paths: ['src'] }) })
     const wrongTag = profile('agent-tag', { scope: scope({ tags: ['backend'] }) })
     const wrongClass = profile('agent-class', { scope: scope({ authorizationClasses: ['A'] }) })
     const plan = planAutoRoute({
       request: request([question('q1', 'A'), question('q2', 'B')]),
-      scope: scope({ paths: ['docs'], tags: ['product'] }), workspaceKey: WORKSPACE,
+      scope: scope({ paths: ['docs'], tags: ['product'] }),
       profiles: [wrongTag, eligibleB, foreign, disabled, wrongClass, archived, eligibleA, wrongPath],
     })
-    assert.deepEqual(plan.eligible.map(item => item.agentId), ['agent-a', 'agent-b'])
+    assert.deepEqual(plan.eligible.map(item => item.agentId), ['agent-a', 'agent-b', 'agent-foreign'])
     assert.deepEqual(plan.candidates, [
       { agentId: 'agent-a', enabled: true },
       { agentId: 'agent-b', enabled: true },
       { agentId: 'agent-class', enabled: true, rejectedBecause: 'authorization' },
       { agentId: 'agent-disabled', enabled: false, rejectedBecause: 'disabled' },
+      { agentId: 'agent-foreign', enabled: true },
       { agentId: 'agent-path', enabled: true, rejectedBecause: 'scope' },
       { agentId: 'agent-tag', enabled: true, rejectedBecause: 'scope' },
     ])
-    assert.equal(plan.candidates.some(item => item.agentId === 'agent-foreign' || item.agentId === 'agent-archived'), false)
+    assert.equal(plan.candidates.some(item => item.agentId === 'agent-archived'), false)
   })
 
   it('handles zero, one, multiple, and more than 32 eligible candidates without guessing', async () => {
     const req = request([question('q1', 'A')])
     const noModel = unusedLlm()
-    assert.deepEqual(await routeAuto({ request: req, scope: scope(), workspaceKey: WORKSPACE, profiles: [], ...input(noModel) }), {
+    assert.deepEqual(await routeAuto({ request: req, scope: scope(), profiles: [], ...input(noModel) }), {
       kind: 'none', candidates: [], reason: 'none:no_candidates',
     })
-    assert.deepEqual(await routeAuto({ request: req, scope: scope(), workspaceKey: WORKSPACE, profiles: [profile('only')], ...input(noModel) }), {
+    assert.deepEqual(await routeAuto({ request: req, scope: scope(), profiles: [profile('only')], ...input(noModel) }), {
       kind: 'selected', candidates: [{ agentId: 'only', enabled: true }], chosen: 'only', reason: 'deterministic:single_candidate',
     })
     assert.equal(noModel.calls.length, 0)
 
     const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Matches the current preference' })
     const selected = await routeAuto({
-      request: req, scope: scope(), workspaceKey: WORKSPACE,
-      profiles: [profile('agent-a'), profile('agent-b'), profile('foreign', { workspaceKey: '/workspace-two' })],
+      request: req, scope: scope(),
+      profiles: [profile('agent-a'), profile('agent-b'), profile('foreign')],
       ...input(llm),
     })
     assert.equal(selected.kind, 'selected')
     assert.equal(selected.chosen, 'agent-b')
     assert.equal(llm.calls.length, 1)
-    assert.deepEqual(userPayload(llm.calls[0]).candidates.map(item => item.agentId), ['agent-a', 'agent-b'])
+    assert.deepEqual(userPayload(llm.calls[0]).candidates.map(item => item.agentId), ['agent-a', 'agent-b', 'foreign'])
     assert.equal(JSON.stringify(llm.calls[0]).includes('FORBIDDEN_GENERATED'), false)
     assert.equal(JSON.stringify(llm.calls[0]).includes('candidate-provider'), false)
 
     const tooMany = Array.from({ length: 33 }, (_, index) => profile(`agent-${String(index).padStart(2, '0')}`))
-    const limited = await routeAuto({ request: req, scope: scope(), workspaceKey: WORKSPACE, profiles: tooMany, ...input(noModel) })
+    const limited = await routeAuto({ request: req, scope: scope(), profiles: tooMany, ...input(noModel) })
     assert.equal(limited.kind, 'failed')
     assert.equal(limited.reason, 'failure:candidate_limit')
     assert.equal(limited.candidates.length, 33)
@@ -188,7 +190,7 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
   async function routeOutput(output, options = {}) {
     const llm = fakeLlm(output, options)
     const result = await routeAuto({
-      request: request([question('q', 'A')]), scope: scope(), workspaceKey: WORKSPACE,
+      request: request([question('q', 'A')]), scope: scope(),
       profiles: [profile('agent-a'), profile('agent-b')], ...input(llm, options),
     })
     return { result, llm }
@@ -340,7 +342,7 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
       profile('agent-a', { name: long, userDescription: { revision: 2, text: long } }),
       profile('agent-b', { name: long, userDescription: { revision: 3, text: long } }),
     ]
-    const result = await routeAuto({ request: req, scope: scope(), workspaceKey: WORKSPACE, profiles, ...input(llm, { contextBudgetTokens: 8000 }) })
+    const result = await routeAuto({ request: req, scope: scope(), profiles, ...input(llm, { contextBudgetTokens: 8000 }) })
     assert.equal(result.kind, 'none')
     const call = llm.calls[0]
     const raw = call.messages[0].content[0].text
@@ -367,15 +369,17 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
     })
     const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
     await routeAuto({
-      request: req, scope: scope(), workspaceKey: WORKSPACE,
+      request: req, scope: scope(),
       profiles: [
         profile('agent-a', { memorySnapshot: 'FORBIDDEN_SNAPSHOT', L2: 'FORBIDDEN_L2', L3: 'FORBIDDEN_L3' }),
-        profile('agent-b'), profile('foreign', { workspaceKey: '/workspace-two', name: 'FORBIDDEN_FOREIGN_NAME' }),
+        profile('agent-b'), profile('agent-foreign'),
       ],
       ...input(llm),
     })
     const wire = JSON.stringify(llm.calls[0])
-    for (const forbidden of ['FORBIDDEN_', 'generatedDescription', 'L2', 'L3', 'Snapshot', 'history', 'sessionLog', 'foreign']) {
+    // No workspace identity, memory, evidence hints, history or generated text
+    // ever reaches the Router wire — a shared identity adds no such field.
+    for (const forbidden of ['FORBIDDEN_', 'generatedDescription', 'L2', 'L3', 'Snapshot', 'history', 'sessionLog', 'workspace']) {
       assert.equal(wire.includes(forbidden), false, `${forbidden} leaked into router pack`)
     }
     const classification = await classifyOutput(validClassification())
@@ -392,7 +396,7 @@ describe('Auto shared sidecar routing and failure mapping', () => {
 
   function routeCall(llm, extra = {}) {
     return routeAuto({
-      request: request([question('q', 'A')]), scope: scope(), workspaceKey: WORKSPACE,
+      request: request([question('q', 'A')]), scope: scope(),
       profiles: [profile('agent-a'), profile('agent-b')], ...input(llm, extra),
     })
   }
@@ -493,7 +497,7 @@ describe('Auto shared sidecar routing and failure mapping', () => {
     }
     const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Current user preference' })
     const result = await routeAuto({
-      request: req, scope: scope(), workspaceKey: WORKSPACE,
+      request: req, scope: scope(),
       profiles: [guarded('agent-a'), guarded('agent-b')], ...input(llm),
     })
     assert.equal(result.kind, 'selected')

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { openDecisionDatabase, DecisionDatabase } from '../../src/decision/store/db.js'
 import { migrateDecisionDatabase } from '../../src/decision/store/migrate.js'
-import { EXPECTED_TABLES } from '../../src/decision/store/schema.js'
+import { CURRENT_SCHEMA_VERSION, EXPECTED_TABLES } from '../../src/decision/store/schema.js'
 
 /** @param {import('node:test').TestContext} t */
 function root(t) {
@@ -20,7 +20,7 @@ test('fresh database creates all authoritative tables and indexes', t => {
   const store = openDecisionDatabase(join(dir, 'decision.db'))
   const tables = store.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name)
   for (const table of EXPECTED_TABLES) assert.ok(tables.includes(table), table)
-  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 1)
+  assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, CURRENT_SCHEMA_VERSION)
   assert.equal(store.db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal')
   store.close()
 })
@@ -40,7 +40,7 @@ test('higher schema version is rejected without changing data', t => {
   check.close()
 })
 
-test('nonzero migration writes a backup before advancing', t => {
+test('nonzero migration writes a consistent backup before advancing', t => {
   const dir = root(t)
   const path = join(dir, 'decision.db')
   const store = new DecisionDatabase(path)
@@ -50,12 +50,20 @@ test('nonzero migration writes a backup before advancing', t => {
   ]
   migrateDecisionDatabase(store, { migrations })
   store.close()
+  // A freshly created database leaves nothing to roll back to.
+  assert.equal(existsSync(join(dir, 'backups')), false)
   const reopened = new DecisionDatabase(path)
   migrateDecisionDatabase(reopened, { migrations: [...migrations, ['CREATE TABLE three(id TEXT)']] })
   const backups = readdirSync(join(dir, 'backups'))
-  assert.equal(backups.length, 2)
-  assert.match(backups.sort()[0], /^decision-v1-/)
-  assert.match(backups[1], /^decision-v2-/)
+  assert.equal(backups.length, 1)
+  assert.match(backups[0], /^decision-v2-/)
+  // The backup is a consistent, independently openable database, not a raw copy
+  // of a live WAL file.
+  const restored = new DatabaseSync(join(dir, 'backups', backups[0]))
+  assert.equal(restored.prepare('PRAGMA user_version').get().user_version, 2)
+  assert.equal(restored.prepare("SELECT name FROM sqlite_master WHERE name='three'").get(), undefined)
+  assert.equal(restored.prepare('PRAGMA integrity_check').get().integrity_check, 'ok')
+  restored.close()
   assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 3)
   reopened.close()
 })

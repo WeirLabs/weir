@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DecisionBroker } from '../../src/decision/broker.js'
+import { CURRENT_SCHEMA_VERSION } from '../../src/decision/store/schema.js'
 import { brokerFixture, insertSnapshot, seedUserDecision, snapshotForRun, validAdd } from './p3-fixtures.js'
 
 function deferred() {
@@ -269,7 +270,7 @@ test('real SQLite reopen preserves committed states and legacy Case Attempt Answ
   assert.equal((await rolledBroker.agent({ sessionId: 'root', agentId: f.profile.agentId })).currentSnapshotId, null)
   assert.equal(f.requests.length, 1)
   assert.deepEqual(rows(rolledBroker.store.db), before)
-  assert.equal(rolledBroker.store.db.prepare('PRAGMA user_version').get().user_version, 1)
+  assert.equal(rolledBroker.store.db.prepare('PRAGMA user_version').get().user_version, CURRENT_SCHEMA_VERSION)
   assert.equal(rolled.contentHash, published.contentHash)
 })
 

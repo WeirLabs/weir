@@ -83,17 +83,26 @@ test('every remote Case mutation rejects a foreign root and workspace without ch
   }
 })
 
-test('remote profile state changes cannot cross workspace boundaries', async t => {
+test('remote profile state changes reach a shared identity from any workspace without leaking paths', async t => {
   const f = await fixture(t)
+  // The assistant was created in another workspace; its identity is global, so
+  // management from this workspace succeeds and never exposes the raw path.
   const result = await f.remote.profileSetState({ sessionId: 'root', agentId: f.foreign.agentId, state: 'disabled' })
-  assert.equal(result.ok, false)
-  assert.equal(result.error.code, 'OUT_OF_SCOPE')
-  assert.equal(f.broker.profiles.getProfile(f.foreign.agentId).state, 'enabled')
-  assert.ok(f.audits.some(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.agentId === f.foreign.agentId))
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(f.broker.profiles.getProfile(f.foreign.agentId).state, 'disabled')
+  assert.equal(JSON.stringify(result.value).includes(f.otherWorkspace), false)
   const read = await f.remote.agent({ sessionId: 'root', agentId: f.foreign.agentId })
-  assert.equal(read.ok, false)
-  assert.equal(read.error.code, 'OUT_OF_SCOPE')
-  assert.ok(f.audits.filter(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.agentId === f.foreign.agentId).length >= 2)
+  assert.equal(read.ok, true, JSON.stringify(read))
+  assert.equal(read.value.agentId, f.foreign.agentId)
+  assert.equal(JSON.stringify(read.value).includes(f.otherWorkspace), false)
+
+  // Record-level authorization is unchanged: a foreign root session still cannot
+  // mutate this workspace's Case, and every rejection is audited.
+  const current = await f.open()
+  const rejected = await f.remote.cancel({ sessionId: 'other', caseId: current.caseId })
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.error.code, 'OUT_OF_SCOPE')
+  assert.ok(f.audits.some(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.caseId === current.caseId))
 })
 
 test('learning reads and lifecycle writes reject foreign workspaces and Agent spoofing with metadata audit', async t => {
@@ -123,9 +132,19 @@ test('learning reads and lifecycle writes reject foreign workspaces and Agent sp
     assert.equal(result.ok, false, method)
     assert.equal(result.error.code, 'OUT_OF_SCOPE', method)
   }
-  const foreignStart = await f.remote.learningStart({ sessionId: 'root', agentId: f.foreign.agentId, requestId: 'foreign-start' })
-  assert.equal(foreignStart.ok, false)
-  assert.equal(foreignStart.error.code, 'OUT_OF_SCOPE')
+  // A shared identity may start a private run from any workspace: the run freezes
+  // THIS workspace's sources, so the other workspace's records stay unreadable.
+  const sharedStart = await f.remote.learningStart({ sessionId: 'root', agentId: f.foreign.agentId, requestId: 'shared-start' })
+  assert.equal(sharedStart.ok, true, JSON.stringify(sharedStart))
+  const sharedRun = f.broker.learning.getRunById(sharedStart.value.learningRunId)
+  assert.equal(sharedRun.namespaceWorkspaceKey, f.workspace)
+  assert.deepEqual(sharedRun.inputFrozen.caseIds, [])
+  const sharedSnapshotRow = f.broker.store.db.prepare('SELECT snapshot_id FROM memory_snapshots WHERE learning_run_id=?').get(sharedRun.learningRunId)
+  if (sharedSnapshotRow) {
+    const foreignRead = await f.remote.memorySnapshot({ sessionId: 'other', snapshotId: sharedSnapshotRow.snapshot_id })
+    assert.equal(foreignRead.ok, false)
+    assert.equal(foreignRead.error.code, 'OUT_OF_SCOPE')
+  }
   assert.equal((await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })).state, 'draft')
   assert.ok(f.audits.some(event => event.kind === 'learning-run' && event.value.action === 'boundary-reject'))
   assert.ok(f.audits.some(event => event.kind === 'snapshot' && event.value.action === 'boundary-reject'))

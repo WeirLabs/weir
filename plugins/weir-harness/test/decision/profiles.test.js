@@ -15,13 +15,30 @@ function fixture(t) {
   return { dir, store, profiles }
 }
 
-test('profile creation validates scope and rejects case-insensitive duplicate names', async t => {
+test('profile scope is workspace-agnostic, keeps hints, and names stay case-insensitively unique', async t => {
   const { profiles } = fixture(t)
   const created = await profiles.createProfile({ workspaceKey: '/repo', name: 'Taste', userDescription: 'Prefer concise output' })
   assert.equal(created.state, 'enabled')
-  assert.equal(created.scope.workspaces[0], '/repo')
-  await assert.rejects(profiles.createProfile({ workspaceKey: '/repo', name: 'taste' }))
-  await assert.rejects(profiles.createProfile({ workspaceKey: '/repo', name: 'other', scope: { workspaces: ['/other'] } }), error => error.code === 'SCOPE_WORKSPACE_MISMATCH')
+  // A profile never carries workspace membership — not even as an echo.
+  assert.equal('workspaces' in created.scope, false)
+  assert.deepEqual(created.scope, { authorizationClasses: ['A', 'B', 'C'] })
+  assert.equal('workspaceKey' in created, false)
+  assert.equal('legacyOriginAlias' in created, false)
+
+  await assert.rejects(profiles.createProfile({ workspaceKey: '/repo', name: 'taste' }), error => error.code === 'PROFILE_NAME_TAKEN')
+  // The same name is refused from any other workspace too, and a legacy
+  // `workspaces` array is normalized away instead of becoming a workspace lock.
+  await assert.rejects(profiles.createProfile({ workspaceKey: '/other', name: 'TASTE' }), error => error.code === 'PROFILE_NAME_TAKEN')
+  const hinted = await profiles.createProfile({
+    workspaceKey: '/repo', name: 'other',
+    scope: { workspaces: ['/other'], paths: ['src'], tags: ['copy'], authorizationClasses: ['A'] },
+  })
+  assert.deepEqual(hinted.scope, { paths: ['src'], tags: ['copy'], authorizationClasses: ['A'] })
+
+  // A rename can never take another identity's name: both identities survive.
+  await assert.rejects(profiles.updateProfile(hinted.agentId, { name: 'Taste' }), error => error.code === 'PROFILE_NAME_TAKEN')
+  assert.equal(profiles.getProfile(hinted.agentId).name, 'other')
+  assert.equal(profiles.getProfile(created.agentId).name, 'Taste')
 })
 
 test('user description edits append revisions and retain old text', async t => {
@@ -39,9 +56,9 @@ test('disabled and archived profiles leave the selectable list without deleting 
   const { profiles } = fixture(t)
   const profile = await profiles.createProfile({ workspaceKey: '/repo', name: 'Taste' })
   await profiles.setProfileState(profile.agentId, 'disabled')
-  assert.equal(profiles.listProfiles('/repo')[0].state, 'disabled')
+  assert.equal(profiles.listProfiles()[0].state, 'disabled')
   await profiles.setProfileState(profile.agentId, 'archived')
-  assert.equal(profiles.listProfiles('/repo').length, 0)
+  assert.equal(profiles.listProfiles().length, 0)
   const archived = profiles.getProfile(profile.agentId)
   assert.equal(archived.state, 'archived')
   assert.ok(archived.archivedAt)

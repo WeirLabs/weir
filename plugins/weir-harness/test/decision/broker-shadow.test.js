@@ -77,7 +77,7 @@ test('a new classless pinned Hook appends one non-authoritative Shadow after the
   Object.defineProperty(f.config, 'decisionAgentAutoAnswerClasses', { get() { throw new Error('Shadow must not read the Active whitelist') } })
   const request = hookRequest('shadow-hook')
   const snapshot = structuredClone(request)
-  const evidence = await f.broker.ensureProfileEvidence(f.pinned)
+  const evidence = await f.broker.ensureProfileEvidence(f.pinned, f.workspace)
   f.respond({ outcome: 'answer', claims: [{ text: 'The pinned evidence supports A', evidenceIds: [evidence.evidenceId] }], answers: [{ id: 'shadow-hook', selected: ['A'] }] })
 
   const verdict = await f.broker.hook({ agent: f.agent, request })
