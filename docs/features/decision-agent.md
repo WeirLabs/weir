@@ -6,15 +6,15 @@
 
 Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一个已启用且被会话明确选择的 Agent，只有在证据、范围、当前状态、权限和答案形状都通过结构闸门时，才用原问题的选项直接回答；不能回答时交还原生提问，而不是凭印象补答案。
 
-当前交付覆盖 P0 契约、P1 可用核心、P2 独立受限检索/L2/L3 接口、P3 手动语义整合/MemorySnapshot 生命周期，以及完整的产品化 UIUX：多个本地 Agent、独立证据命名空间、自动 Hook、显式咨询、原生升级、持久历史、轻量反馈、中性情节、候选审阅和四个逻辑管理视图。普通用户默认看到“决策助手 / 待你决定 / 判断记录 / 判断依据 / 原则版本”等任务语言，技术实体与原始 JSON 收进高级诊断。本批新增 Broker 私有 Auto Router、两个版本化 sidecar 契约、保守设置、根会话 Off/Auto/Agent 持久化、fresh-root 默认初始化，以及 Active Auto 的咨询类别字段、Hook/consult 分类与候选编排、原子 RouteDecision/Case 提交、失败关闭待办、single-flight、固定 Agent 修订/重试和取消/flush 生命周期；另交付 pinned-only Auto Shadow、原子 `manual_reassign`、无归属用户裁决、`received + agentId=null` 重启恢复、纯派生路由复盘与只读远端，以及现有 Client 的三态选择器、高级复盘和无归属投影。P4 的真实 headless 与真实隔离 Desktop 端到端验收均已交付（9.2–9.3 run `JJFXjr`，164/164 PASS）。P5 跨工作区共享及数据导出也未交付。自动定时/阈值整合、自动发布和 `generatedDescription` 学习同样未启用。
+当前交付覆盖 P0 契约、P1 可用核心、P2 独立受限检索/L2/L3 接口、P3 手动语义整合/MemorySnapshot 生命周期，以及完整的产品化 UIUX：多个本地 Agent、独立证据命名空间、自动 Hook、显式咨询、原生升级、持久历史、轻量反馈、中性情节、候选审阅和四个逻辑管理视图。普通用户默认看到“决策助手 / 待你决定 / 判断记录 / 判断依据 / 原则版本”等任务语言，技术实体与原始 JSON 收进高级诊断。本批新增 Broker 私有 Auto Router、两个版本化 sidecar 契约、保守设置、根会话 Off/Auto/Agent 持久化、fresh-root 默认初始化，以及 Active Auto 的咨询类别字段、Hook/consult 分类与候选编排、原子 RouteDecision/Case 提交、失败关闭待办、single-flight、固定 Agent 修订/重试和取消/flush 生命周期；另交付 pinned-only Auto Shadow、原子 `manual_reassign`、无归属用户裁决、`received + agentId=null` 重启恢复、纯派生路由复盘与只读远端，以及现有 Client 的三态选择器、高级复盘和无归属投影。P4 的真实 headless 与真实隔离 Desktop 端到端验收均已交付（9.2–9.3 run `JJFXjr`，164/164 PASS）。跨工作区共享身份与公共/私有记忆（P5，schema v2）已实现：助手是 profile 级共享身份，Agent 详情分为“公共记忆”与“当前工作区经验”，公共候选只在用户打开/刷新公共记忆时自动提炼、且必须由用户显式采用。数据导出仍未交付；自动发布、自动定时/阈值整合和 `generatedDescription` 学习同样未启用。
 
 ## 用户可见行为
 
 ### Agent 与选择器
 
-- 管理页可创建、编辑、停用和归档 Agent。默认表单只需名称与可选的普通语言判断偏好，创建沿用当前 workspace 的默认 scope 并继承会话模型；完整 scope、授权类、模型路由和 `userDescription` 版本历史在高级设置/诊断中维护。同一工作区内名称大小写不敏感唯一。
+- 管理页可创建、编辑、停用和归档 Agent。默认表单只需名称与可选的普通语言判断偏好，创建继承会话模型；完整 paths/tags 专长提示、授权类、模型路由和 `userDescription` 版本历史在高级设置/诊断中维护。助手身份对整个 DSH profile 唯一：名称大小写不敏感全 profile 唯一，没有工作区归属设置；在任一工作区创建后，同一 profile 的其它工作区都看到并可选到同一助手。
 - `generatedDescription` 在当前 P0–P3 恒为 `{revision: 0, text: ''}`，只读且没有生成或写入入口；它为空不妨碍决策。P3 只把用户裁决、有效纠正和已赞回答整合为可审阅原则，不生成画像。
-- 会话输入框右侧使用紧凑触发器与专用选择面板，不再是原生下拉框。默认文案为“不启用助手”“自动选择助手”和当前工作区已启用的具体 Agent，选择即保存并关闭，没有额外确认；底层 `off|auto|agent` 三态仍按根会话持久化，子会话解析到同一根会话。自动选择根据只读 `overview.auto` 用普通语言说明真实允许类别数量、空范围、未知状态与“选择对比”状态，A/B/C、Shadow 和原始值只留在高级诊断。面板分为固定头部、独立滚动内容区和固定底部管理入口；宽度不超过 360 CSS px，并按真实动态/可视视口限制高度和位置，长名称与长状态自然换行。读取中不会伪装成未启用，保存失败保留先前有效选择，重复提交受 pending guard 约束，成功后焦点返回已启用的触发器。
+- 会话输入框右侧使用紧凑触发器与专用选择面板，不再是原生下拉框。默认文案为“不启用助手”“自动选择助手”和该 profile 中全部已启用的具体 Agent（不按工作区过滤），选择即保存并关闭，没有额外确认；底层 `off|auto|agent` 三态仍按根会话持久化，子会话解析到同一根会话。自动选择根据只读 `overview.auto` 用普通语言说明真实允许类别数量、空范围、未知状态与“选择对比”状态，A/B/C、Shadow 和原始值只留在高级诊断。面板分为固定头部、独立滚动内容区和固定底部管理入口；宽度不超过 360 CSS px，并按真实动态/可视视口限制高度和位置，长名称与长状态自然换行。读取中不会伪装成未启用，保存失败保留先前有效选择，重复提交受 pending guard 约束，成功后焦点返回已启用的触发器。
 - 总开关 `decisionAgentsEnabled` 默认关闭。全局关闭或会话 `Off` 时，Hook 不拦截、咨询明确失败，不创建 Case、路由样本或数据库文件。
 - 钉选 Agent 不可用时，选择面板保留其名称并明确标为不可用，不静默改派或显示为正常可选；显式咨询指定其他 Agent 只影响该次调用。修订会重新校验目标 Agent 并记录新路由。
 
@@ -24,7 +24,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - `approval`、`plan-review`、不可逆/高风险操作和执行授权请求在语义评估前完全走原生确认，不创建 Case，也不会把其答案变成可复用证据。Decision 回答永远不是执行、合并、发布、删除或其他权限。
 - 根选择器为 Auto 时，`decision_consult` 仍优先使用本次显式 `agent_id`；显式目标不可用会明确失败，不回退到 Auto 或钉选 Agent。Hook 的 approval/plan-review/D/E/F/高风险排除仍在建 Case 前旁路；consult 则保留建 Case 后进入 `authority` 待办的既有不对称语义。
 - `decision_consult` 新增可选 `authorization_class`，只复制到该次标准化问题。Active Auto 要求每题最终都有白名单允许的 A/B/C；空白名单直接形成 `authority` 待办，不读取候选、不调用分类器/Router 或领域评估。stock Hook 缺类时只调用有界分类器，非法/unknown/D/E/F/未允许类别整批失败关闭；派生字段标为 `authorizationClassSource='auto_classifier'`，原始 Hook request 不变。
-- Auto 候选只来自当前 workspace，经 enabled、scope 和类别过滤；零候选不调用模型，唯一候选确定性选择，多候选才进入受限 Router。RouteDecision、规范化 request、Case 归属与状态经 `transitionWithRoute()` 原子提交，选中目标在事务内重新校验；提交失败或目标失效不会进入领域 Attempt。无匹配、歧义、准入拒绝和分类/Router 失败分别持久化为 `no_route`、`route_ambiguous` 或 `authority` 待办，Hook 只在持久提交后交还原生 `next()`。路由提交前同键 Hook/consult 加入同一 `autoFlights` Promise，不提前发布或交还；已结算重放也不增加 RouteDecision 或 Attempt。
+- Auto 候选来自当前 profile 内全部 enabled、未归档助手（身份不按工作区过滤），经 paths/tags 与类别过滤；Case、证据与授权检查仍只使用当前工作区；零候选不调用模型，唯一候选确定性选择，多候选才进入受限 Router。RouteDecision、规范化 request、Case 归属与状态经 `transitionWithRoute()` 原子提交，选中目标在事务内重新校验；提交失败或目标失效不会进入领域 Attempt。无匹配、歧义、准入拒绝和分类/Router 失败分别持久化为 `no_route`、`route_ambiguous` 或 `authority` 待办，Hook 只在持久提交后交还原生 `next()`。路由提交前同键 Hook/consult 加入同一 `autoFlights` Promise，不提前发布或交还；已结算重放也不增加 RouteDecision 或 Attempt。
 - `decision_consult` 支持 `answered`、`returned`、`awaiting_user`：带 `caseId` 的答案与出处、封闭原因码与修复提示，或持久用户待办。`awaiting_revision` 中只有内容实际改变的咨询才产生新 Attempt，未修订重放保持幂等。Auto 使用 `callerRevisionFingerprint`，仅剥离成对的 `auto_classifier` 派生类别与来源标记；题面、选项、context、evidence、scope 或调用方类别变化仍是真修订。未显式传 `agent_id` 的 Auto 修订和 retry 固定当前 Agent，选择器或 Router 结果变化只影响新请求。
 - 新判断升级后，用户在原生问题或收件箱作出的选择成为带 scope 的权威 `user_decision`。有归属 Case 的同一 Agent、同 scope 后续问题可直接引用该记录，不需要语义整合；裁决后的咨询凭 `caseId` 重读可取得真实用户答案与出处。无归属 Auto 待办也可直接回答并如实关闭，但最终 `agentId=null`，不创建 Evidence；同一咨询重读返回真实选择与空 `evidence`，该记录不会进入任何 Agent 的后续 L3/L5 检索。
 
@@ -44,6 +44,15 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - P3 的 L2 只读取当前 Agent 已发布且未回滚的 Snapshot；没有当前版本时 `memorySnapshotId` 为 `null`，draft 与 rolled_back 不参与新 Attempt。只有 scope 匹配且全部来源都能展开为本次合格 L5 的 active 原则才进入 L2；来源失效时整条省略并记录原因。
 - L2 是经用户审阅的非权威语义记忆，不产生新的 Evidence Ref，也不能独立满足 G1、扩大 scope、消除冲突、替代新鲜复核或授予权限。模型只能引用实际 L5 evidence id。
 - 预算不足依次整条裁减 L3、L2，再执行既有 L5 裁剪；保留的 L2 来源不得被 L5 裁剪遗落。Attempt pins/manifest 记录 Snapshot id/revision/hash、实际原则与 L5 映射、层大小和省略项，上下文 hash 覆盖实际 L2/L3 内容，旧 Attempt 不回写。
+
+### 共享身份、公共记忆与当前工作区经验
+
+- 助手是 profile 级共享身份：同一 DSH profile 的两个真实工作区看到同一组助手、同一名称与同一个公共记忆区；工作区私有 Case、Evidence、Feedback、纠正、L3 与私有 Snapshot 仍严格只在该工作区可读。
+- Agent 详情把学习治理分成两个普通语言分区，页面主导航仍只有“待你决定 / 判断记录 / 助手管理”三项：
+  - **公共记忆**：跨工作区提炼的经审阅原则。用户打开或刷新该分区时，只有存在晚于上次冻结输入的合格来源才会自动生成一个候选；首次自动提炼前必须先确认披露（会把本 profile 各工作区合格经验的有界、脱敏摘要发送给当前模型）。候选保持草稿，必须由用户显式“采用公共原则”，也可“放弃候选”或“恢复前序公共版本”；失败状态显示真实原因并只由用户的“重试整理”再发起一次。公共来源只显示 opaque 工作区别名、数量与脱敏概览，不提供外来原始记录或路径。
+  - **当前工作区经验**：既有私有整合、候选审阅、来源记录导航、发布/拒绝/回滚与草稿全部保留，只展示当前工作区的记录与私有 Snapshot，并说明私有经验只在记录它的工作区可读。
+- 公共记忆不能独立授权：它不生成 Evidence Ref、不单独满足 G1/G2、不证明 scope、不消除 G4 冲突、不替代 G5 当前复核。只有公共记忆而没有当前工作区合格 L5 时，结果仍是 return/escalate。
+- Attempt 清单分别固定私有与公共 Snapshot pin。记录详情默认用普通语言区分“公共记忆”和“当前工作区经验”，高级诊断分别展示两区的 Snapshot id/revision/hash、实际原则、来源映射（公共来源是 opaque 别名）、层大小、排除项和省略项；只有私有 pin 的旧 Attempt 仍真实渲染，不伪造公共命中。默认视图不出现绝对工作区路径。
 
 ### 管理页与恢复
 
@@ -75,7 +84,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 | `decisionAgentRetentionDays` | `0` | 仅启动时清理无裁决/反馈的旧关闭记录；0 表示永久保留 |
 | `decisionAgentStorePath` | `''` | 绝对路径覆盖目录；留空使用 profile 私有存储 |
 
-`decisionAgentSelectorDefault` 已接入上述 fresh-root 初始化，`decisionAgentAutoAnswerClasses` 已接入 Active Auto 准入；`decisionAgentAutoShadow` 已接入 pinned-only 非权威观察，Shadow 不读取 Active 白名单。只读 `overview.auto` 暴露实际清理后的 `{answerClasses,shadow}`，全局可用性仍由 `overview.status` 单独表达，不虚构 readiness；选择器只把该投影用于真实白名单/Shadow 说明，不把 Auto 伪装成 Agent。不存在整合计划、跨工作区共享或自动画像学习设置键。
+`decisionAgentSelectorDefault` 已接入上述 fresh-root 初始化，`decisionAgentAutoAnswerClasses` 已接入 Active Auto 准入；`decisionAgentAutoShadow` 已接入 pinned-only 非权威观察，Shadow 不读取 Active 白名单。只读 `overview.auto` 暴露实际清理后的 `{answerClasses,shadow}`，全局可用性仍由 `overview.status` 单独表达，不虚构 readiness；选择器只把该投影用于真实白名单/Shadow 说明，不把 Auto 伪装成 Agent。不存在整合计划、公共记忆专用或自动画像学习设置键：公共记忆随助手身份共享，没有工作区归属或公共/私有开关。
 
 ## 设计细节
 
@@ -83,11 +92,11 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 - 权威存储使用 `node:sqlite`、WAL、`BEGIN IMMEDIATE`、串行写与迁移备份。默认路径为 `<profileContext.home>/weir/profiles/<profileContext.name>/decisions/decision.db`；更高数据库或记录 schema 版本明确拒绝且不改写。
 - 有归属用户裁决与 `user_decision` Evidence Ref 同事务写入；最终 Agent 不是非空字符串时只关闭 Case 并保存真实决定，绝不写 Evidence。点赞与 `agent_record` 同反馈事务写入。并发首次送达在事务内重读幂等键，返回已提交 Case。
-- `selectors` 沿用 SQLite schema v1，不新增迁移或回填。无行与未知模式读取为 Off；显式 Off/Auto/Agent 都保留行，Auto 的 `agent_id` 恒为 null。fresh-root 初始化在事务内重查“无行”再插入 Auto，已有 Off/Auto/Agent 或未知行均不被覆盖；`CURRENT_SCHEMA_VERSION` 与 `PRAGMA user_version` 均保持 1。
+- `selectors` 仍是根会话状态，不携带工作区。无行与未知模式读取为 Off；显式 Off/Auto/Agent 都保留行，Auto 的 `agent_id` 恒为 null。fresh-root 初始化在事务内重查“无行”再插入 Auto，已有 Off/Auto/Agent 或未知行均不被覆盖。决策库 `PRAGMA user_version` 升到 2（`agent_profiles` 去掉工作区身份列，`learning_runs`/`memory_snapshots` 增加 `zone` 与 `namespace_workspace_key`）；既有记录 envelope 保持 v1。
 - 既有 `decision` 预设行监听 `agent/created`，仅在全局 enabled、default=auto、`source=startup` 且 `origin` 不是 subagent、`delegationDepth` 小于 1 时调用 Broker 初始化。监听捕获全部错误且不否决创建，初始化失败保持 Off；resume、clear、compact 与 startup child 均不写默认行。
 - `DecisionContextRetriever` 是 Broker 内部同步只读接缝，返回深冻结的 L2/L3/L5、裁剪前完整冲突对与当前观测 hash。L3 是现有 Case 的可重建投影，不新增权威表或数据库迁移。
-- P3 的 `DecisionLearning` 复用 schema v1 的 `learning_runs`/`memory_snapshots` 表，无迁移或回填。Learning Run 在模型前持久冻结输入并防止重复/并发运行；候选操作严格限于 add/refine/merge/narrow/retire，结构重放只验证目标、来源、scope、冲突与最终 hash，不冒充回答质量分数。
-- Snapshot 保存完整不可变原则内容和来源 lineage，状态修订只能经显式发布、拒绝或回滚。发布重查父版本与来源当前资格；回滚恢复最高版本的合格前序 published，无前序则 L2 为空，不回写历史。
+- `DecisionLearning` 使用 `learning_runs`/`memory_snapshots` 的 `(agent, zone, workspace)` 命名空间：私有区按当前工作区隔离，公共区不隶属任何工作区并用 partial unique index 保证每个 Agent 至多一个 active 公共候选；两区版本序列独立。Learning Run 在模型前持久冻结输入并防止重复/并发运行；候选操作严格限于 add/refine/merge/narrow/retire，结构重放只验证目标、来源、scope、冲突与最终 hash，不冒充回答质量分数。公共提炼经 Host 内部受限端口读取各工作区白名单字段，发布时逐来源在原工作区重验，任一来源失效即失败关闭。
+- Snapshot 保存完整不可变原则内容和来源 lineage，状态修订只能经显式发布、拒绝或回滚。发布重查父版本与来源当前资格；回滚恢复最高版本的合格前序 published，无前序则 L2 为空，不回写历史。公共 Snapshot 与私有 Snapshot 各自独立版本化，公共生命周期动作不改写任何私有 Snapshot 或旧 Attempt。
 - 整合器使用独立英文 `consolidation-contract/1`，评估器使用 `evaluator-contract/3`；二者均为无状态、无工具的受限调用，省略 `temperature`，模型调用不进入 SQLite 写事务。
 - 评估器直接调用 `ctx.llm.stream`，使用严格文本 JSON、有限上下文包和 G1–G7；不使用工具、会话历史或自评置信度。所有路由都省略显式 `temperature`，沿用 DSH 与供应商的兼容默认值，避免固定采样参数模型被拒绝。意外异常持久化为通用失败 Attempt，不泄漏异常正文。
 - `src/decision/router.js` 是 Broker 私有的普通模块，不是服务、Agent 或新组合行；公开给 Broker 的四个接缝是 `autoAdmission()`、`classifyAutoRequest()`、`planAutoRoute()`、`routeAuto()`。准入逐题要求完整且已授权的 A/B/C，候选先按当前 workspace、enabled/未归档、scope paths/tags 与全部授权类确定性过滤。零候选不调用模型，唯一候选直接选择，2–32 个候选至多判决一次，超过 32 个返回 `failure:candidate_limit`，不得截断候选或创建通用兜底。
@@ -99,7 +108,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - Shadow 只追加诊断路由，不改变 Case 归属/状态/答案/证据/反馈/投递，不创建另一个 Case、Attempt、Evidence、Feedback、Correction、Snapshot 或画像写，不读取领域 retriever/`generatedDescription`，也不消耗 Attempt 预算。分类、路由和影子写入失败均被隔离，不重试、不进入 `recoverUnexpected()`；进程在 pinned 提交后崩溃时也不补写 Shadow。
 - Broker 以 `rootSessionId + 既有 Hook/consult 幂等键` 登记 `autoFlights`，在容量检查和 Case intake 前合并同键调用，flight 覆盖 intake、分类、路由、原子提交和领域评估，settle 后在 `finally` 清理。Auto 从获取许可到评估结束只获取/释放一次 `decisionAgentMaxConcurrentAttempts` 槽位，不在 Router 与评估之间重新竞争。每个 flight 的自有 AbortController 与调用方 signal 串联，并经 `routingControllers`/`routingJobs` 跟踪；Case 取消会中止路由，`flush()` 先 abort 且等待路由与评估任务，再关闭 store，不新增定时器或迟到写入。
 - Auto consult 的 `callerRevisionFingerprint` 只归一化 Broker 自己添加且成对出现的 `authorizationClass`/`authorizationClassSource='auto_classifier'`；其他 source、调用方类别和所有请求内容仍参与 canonical JSON。pinned/explicit 继续使用原 `consultFingerprint`。Auto 修订在无显式 `agent_id` 时只重验并沿用 Case 当前 Agent，不运行分类器或 Router；已有 Case 不受之后的 selector 变化影响。
-- 浏览器只通过 `/api` 的 `weirDecision/<method>` 读写；P3 新增 learningStart/learningRun/snapshotPublish/snapshotReject/snapshotRollback/memorySnapshot 六个 bare-args 方法，P4 复用同一 bare-args seam 增加只读 `routingReview({sessionId,window,cursor})`，Client 不自行构造调用身份。产品化竞态修复另增加只读、可取消的 `waitForToolCall`，仅在最终咨询状态已持久化后按根会话与调用身份唤醒一次，再由 Client 权威重读；不携带题面或证据正文。全局关闭时只允许 `overview` 只读降级以解释状态，其余远程方法仍失败关闭。所有 Case/Profile/学习/Snapshot 动作都解析调用方根会话/workspace 并检查目标归属；越界拒绝写审计。审计镜像不含原则、评论、题面或证据正文。
+- 浏览器只通过 `/api` 的 `weirDecision/<method>` 读写；P3 新增 learningStart/learningRun/snapshotPublish/snapshotReject/snapshotRollback/memorySnapshot 六个 bare-args 方法，P4 复用同一 bare-args seam 增加只读 `routingReview({sessionId,window,cursor})`，P5 再增加 `publicMemoryRefresh({sessionId,agentId,acknowledgedDisclosure?,retryFailedExtraction?})` 与只读 `publicCandidate({sessionId,agentId,learningRunId?})`；公共记忆调用只接受调用方自己的会话、助手与显式用户手势，根会话与工作区一律由 Broker 从 `sessionContext` 推导，调用方提供的工作区/zone/归属字段在进入 Broker 前被丢弃。Client 不自行构造调用身份。产品化竞态修复另增加只读、可取消的 `waitForToolCall`，仅在最终咨询状态已持久化后按根会话与调用身份唤醒一次，再由 Client 权威重读；不携带题面或证据正文。全局关闭时只允许 `overview` 只读降级以解释状态，其余远程方法仍失败关闭。所有 Case/Profile/学习/Snapshot 动作都解析调用方根会话/workspace 并检查目标归属；越界拒绝写审计。审计镜像不含原则、评论、题面或证据正文。
 - `projectRoutingChains()` 是同一 Case 不可变 RouteDecision 链的纯投影，输出及嵌套值深冻结且不冻结或改写调用方输入。只有先于 Shadow 且带 `chosen` 的 pinned 事实可作比较基线；双方都有选择时按 id 得出 `agreement|disagreement`，无选择则按封闭 `ROUTE_FAILURE_REASONS` 和结构化 `ambiguity` 区分 none/ambiguous/failure，绝不解析自然语言理由。`manual_reassign` 的 `reassignment.from` 由前序 `pinned|explicit|auto|manual_reassign` 的最近选择派生，`to` 取当前选择；explicit 可以参与权威 from 链，但不冒充人工标签或 pinned 基线。
 - `DecisionQuery.routingReview({sessionId,workspaceKey,window,cursor})` 只读 SQL 内连接要求 RouteDecision 与 Case 的 `case_id` 和根会话同时匹配，并在 Broker 传入时继续限定授权 workspace；孤行、跨根关联和越界 workspace 不进入投影，也不解析 Profile 名称。`summary` 固定含 `agreement`、`disagreement`、`shadowNone`、`shadowAmbiguous`、`shadowFailure`、`autoNone`、`autoAmbiguous`、`autoFailure`、`manualReassign`、`uncomparable`；每项含 `caseId`、`routeDecisionId`、`mode`、`candidates`、`chosen`、`reason`、`ambiguity`、`createdAt`、当前 `agentId`、`outcome`、至多 240 个 Unicode 字符的 `questionSummary` 与 `record:{caseId}`，Shadow 比较另含 `baselineAgentId`，改派另含 `reassignment`。
 - 复盘窗口为 `24h|7d|30d|all`，按 `createdAt DESC, routeDecisionId DESC` 稳定排序并固定每页 20 条；opaque cursor 绑定根会话、窗口和最后一条的位置，重复翻页不重复，非法窗口/游标分别抛 `INVALID_ROUTING_WINDOW`/`INVALID_ROUTING_CURSOR`。`summary` 覆盖整个窗口而非当前页。`metrics.routing` 与复盘 summary 来自同一次纯投影规则，`reassignments` 复用 `routing.manualReassign`，`selectorOffBypasses` 仍是诚实常量 0。Broker 与 `/api/weirDecision/routingReview` 都先经 `sessionContext` 解析真实根/workspace，记录导航继续调用既有授权 `record`；全局关闭仍只有 `overview` 获得只读降级，空存储读不会为复盘创建数据库。
@@ -113,7 +122,12 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - 修订/重试产生新 Attempt，旧 Attempt 和已关闭答案不可改写。显式恢复每次只增加一次 Attempt，不会借同一幂等键复活取消终局；无显式 `agent_id` 的 Auto 修订/重试不会切换 Agent。无归属待办可直接回答或取消，也可原子改派到当前 workspace 的 enabled Agent；直接回答没有 Evidence 或后续检索资格，retry 在归属前明确拒绝且无副作用。改派样本仅供后续只读复盘，不成为 Evidence、Feedback、原则、Snapshot、画像或训练输入。
 - 没有合格 pinned 基线的 Shadow、只有 explicit 的咨询、无 Shadow 的旧 pinned 和未知旧模式均显示 `uncomparable`，不得猜成一致、分歧或人工改派。复盘和一致率只作诊断，不是回答质量、权限或晋升指标；样本数量、比例、时间和模型建议都不会切换选择器、扩大白名单或训练 Router。复盘没有采纳/忽略、历史改写、自动学习或自动晋升入口，需要纠正时仍走既有明确改派。
 - 语义反义不由文本猜测：G4 只把同 scope、同题面但不同选择的源记录视为结构冲突。
-- P3 只交付手动语义整合、候选审阅与 Snapshot 发布/拒绝/回滚，以及受 L5 来源约束的非权威 L2。自动定时/阈值整合、自动发布、`generatedDescription` 学习、跨 workspace 共享和用户导出仍未交付；本批已覆盖 Active Auto 原子初始路由、失败关闭、before-commit single-flight、调用方修订指纹、固定 Agent 恢复、Shadow、无归属裁决、原子改派、received-null 恢复、Host 端路由复盘/同源指标/只读远端，以及现有 Client 的三态选择器、高级复盘和无归属安全投影，并已完成下述真实 headless 与 Desktop 端到端验收。Router、Shadow 与三态选择器不读取或学习任何领域记忆，L3 同样不具有独立授权能力。Auto 选择只决定由谁评估，永远不是执行授权，也不绕过 G1–G7 或原生权限。
+- 手动语义整合、候选审阅与 Snapshot 发布/拒绝/回滚、受 L5 来源约束的非权威 L2，以及跨工作区共享身份与公共/私有记忆已交付。自动定时/阈值整合、自动发布、`generatedDescription` 学习和用户导出仍未交付；本批已覆盖 Active Auto 原子初始路由、失败关闭、before-commit single-flight、调用方修订指纹、固定 Agent 恢复、Shadow、无归属裁决、原子改派、received-null 恢复、Host 端路由复盘/同源指标/只读远端，以及现有 Client 的三态选择器、高级复盘和无归属安全投影，并已完成下述真实 headless 与 Desktop 端到端验收。Router、Shadow 与三态选择器不读取或学习任何领域记忆，L3 同样不具有独立授权能力。Auto 选择只决定由谁评估，永远不是执行授权，也不绕过 G1–G7 或原生权限。
+
+### 迁移边界（v1 → v2）
+
+- 首次打开旧库时先 checkpoint 再走 SQLite 一致性备份（VACUUM/backup 路径）后迁移：既有 Agent 保持原 `agent_id` 与私有归属，重复显示名按大小写不敏感规则加可见后缀且不合并任何身份；既有 LearningRun/MemorySnapshot 全部迁为私有区并继承原工作区，公共区初始为空（首次刷新最多生成 draft）。迁移或校验失败时事务回滚，原库仍可打开；更高 `user_version` 明确拒绝（`SCHEMA_TOO_NEW`）。
+- **恢复备份会丢失迁移之后的所有写入**：不仅是公共数据，迁移成功后新增的私有 Case/Attempt/Evidence/Feedback 以及公共候选都会回到备份时点。界面与迁移说明必须按此数据丢失边界表述，不得暗示只丢公共数据。
 
 ### 已观察但独立后续处理的 UX 输入
 
@@ -123,6 +137,8 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 ## 测试
 
 - 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。本轮新增版本化 Router 枚举、不可变 `auto`/`auto_shadow` RouteDecision、Broker 保守配置解析与 `router.test.js` 的受限路由契约；`selector-default.test.js` 和 `legacy-v1.test.js` 覆盖三态、fresh-root/legacy 恢复与 v1 不变。`broker-auto.test.js`/`broker-auto-flight.test.js` 覆盖 Active Auto 准入、严格路由、原子提交、single-flight、修订指纹、并发许可和取消/flush；`broker-shadow.test.js` 覆盖 pinned Hook/consult、Shadow-off 对照、none/ambiguous/failure、全部排除入口、幂等/恢复和领域副作用计数；`cases.test.js`、`broker-actions.test.js`、`broker-consult.test.js` 与 `broker-lifecycle.test.js` 覆盖无 Evidence 的无归属回答/重读/检索、取消/拒绝 retry、原子改派回滚与不可变链，以及 received-null 中断恢复。`routing-review.test.js` 与 `remote.test.js` 覆盖纯链分类、历史不回写、完整链窗口化、20 条稳定游标分页、root/workspace 隔离、同源 metrics、Broker 授权和 bare-args remote/endpointsLive。P4 Client 公共契约另覆盖 Auto 白名单/Shadow 说明、保存/失败/焦点与 root/child 恢复、复盘 summary/普通语言 outcome、20 条追加与 RouteDecision 去重、迟到会话/窗口响应、授权记录导航，以及无归属卡/收件箱/记录的反馈和 retry 边界。最终聚焦 Client **109/109**、完整 Decision **503/503**、测试装置 **453/453**、Client/settings **100/100**、preset/composition **97/97** 与 checkJs 全部通过，33 个 Client chunks 已重建 digest；Weir 全包最终 **3614 PASS / 0 FAIL / 1 既有平台跳过**（共 3615 项）。新增真实 headless 与 Desktop 证据见下。
+- 跨工作区共享身份与公共/私有记忆（P5，schema v2）的实施证据：`test/decision/remote-public-memory.test.js` 覆盖 bare-args 公共刷新/候选读取、调用方工作区/归属字段被丢弃、只返回 opaque 别名、披露门、公共生命周期与越权审计；`public-retry.test.js` 覆盖失败后仅由显式用户动作重试一次、助手读模型按工作区隔离私有区；`client-decision-public-memory.test.js` 覆盖两个分区、精确“公共记忆/当前工作区经验”标签、每次打开恰好一次自动读取、披露确认、显式采用/放弃/回滚、pending/失败重试、焦点返回与 200% 视口；`client-decision-memory-partitions.test.js` 覆盖记录详情默认普通语言、高级诊断双分区 pin/原则/来源映射/层大小/省略项、旧 Attempt 仅私有 pin 的兼容，以及公共区无外来记录导航。门禁结果：完整 Decision **606/606**、驱动单测 **59/59**、Client digest 契约 **28/28**、测试装置单测 **494/494**、checkJs PASS、Weir 全包 **3717 PASS / 0 FAIL / 1 既有平台跳过**（共 3718 项）。公共记忆契约的 5 个变异点（remote 白名单、失败重试门、公共 L2 分区、两分区标签、驱动分区守卫）均取得 RED→字节恢复→GREEN 证据。
+- 真实 Desktop 的跨工作区矩阵（同一隔离 profile 的 W1/W2/W3、迁移旧 profile、公共候选取源/采用/回滚、私有记录拒绝与 Auto 无依据不回答）已在驱动中以 `WEIR_DECISION_PRODUCT_CROSS_WORKSPACE=1` 实现并由驱动单测钉住结构；该真实 Desktop 运行属于 7.3 验收，本轮未执行，因此不作为已通过的 Desktop 证据。
 - headless 集成：本轮最终从仓库根运行完整 integration 矩阵 **958/958 PASS**，共 77 个场景，日志为 `.weir/decision-auto-router-final-integration.log`；其中 `decision-auto-route` **31/31**，并包含既有 `decision-hook`、`decision-consult`、`decision-batch`、`decision-route`、`decision-recovery`、`decision-feedback`、`decision-isolation`、`decision-ui-remote`、`decision-memory` 与 `decision-learning`，无回归。learning 场景的真实进程阶段（含一次 exact-PID SIGKILL）继续检查生命周期、DB/wire、对抗输入、恢复、预算、历史不可变和 P1/P2/schema-v1 兼容。
 - 真实隔离 Desktop GUI：保留既有 A/B/C 与 P2 memory 验收；P3 主生命周期 run `8wkaN8` **18/18**，整改 run `Tc4Mks` **10/10**，覆盖手动整合、候选 diff/来源/结构重放、发布、只读 Attempt L2、回滚/拒绝、重启、>20 历史、correction/cross-root 来源及 exact-PID/端口清理。测试只启动独立临时 profile/进程，不操作用户当前 App 或其存储。
 - 产品化 UIUX 整改的真实隔离 Desktop 验收 run `ykeSTg` **230/230 PASS**：147 张真实截图、2195 条原始网络 RPC、26 项视觉审计、29 组模态量测、20 个确认动作、17 类可见焦点转场、9 组 session 滚动量测、2 个冷加载展开与 3 组主从/钻取证据。覆盖中英文长状态/错误、light/dark、360/768/1440 CSS px、真实 `Emulation.setPageScaleFactor(2)`、键盘-only、AX/状态播报、全部确认类型、学习现场恢复、重启、设置/选择器/语言恢复与临时 Agent 归档。普通窄屏另以主区几何和命中测试验证宿主返回入口可用；运行时异常、console/Slot/Log/import 错误均为零，关闭期 socket stderr 单独保留分类。三次 owned main/Host 启动均精确停止并释放端口 9468。详见下节；早期 `TtHwww`、`SpbYkp` 与其他失败 run 仅作历史/非最终诊断。
