@@ -8,6 +8,11 @@ export const name = 'weir-it-decision-remote-probe'
 export const inject = ['tools']
 
 const CHILD_QUESTION = 'REMOTE_CHILD: escalate a delegated consultation'
+// Cross-workspace matrix wire: one label-keyed record per gesture. It carries the
+// raw remote payloads (`result`) and the gesture's local observations (`detail`),
+// plus a workspace LABEL, never a path, so the matrix driver can compare the wire
+// with the authoritative SQLite store.
+const CROSS_WIRE = 'decision-cross-workspace-wire.json'
 
 function writeReport(name, value) {
   const path = join(process.env.WEIR_IT_ROOT, 'ws', name)
@@ -147,6 +152,220 @@ async function learningFlow(remote, broker, agent, args) {
   return { ...value, path }
 }
 
+// ---------------------------------------------------------------------------
+// Cross-workspace matrix gestures (additive ops; the ops above are unchanged).
+//
+// Wire entry shape: { op, action, label, workspace (a LABEL, never a path),
+// sessionId, args, result (the raw remote result), detail (gesture-local facts) }
+// ---------------------------------------------------------------------------
+
+/** The agent a gesture names, falling back to the profile-global name lookup. */
+function resolveAgentId(broker, args) {
+  if (typeof args.agentId === 'string' && args.agentId) return args.agentId
+  if (typeof args.name === 'string' && args.name) {
+    const row = broker.store?.db.prepare('SELECT agent_id FROM agent_profiles WHERE name = ? COLLATE NOCASE').get(args.name)
+    if (row?.agent_id) return row.agent_id
+  }
+  return undefined
+}
+
+function crossWire(label, entry) {
+  if (typeof label !== 'string' || !label) return null
+  const path = join(process.env.WEIR_IT_ROOT, 'ws', CROSS_WIRE)
+  const report = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
+  report[label] = entry
+  return writeReport(CROSS_WIRE, report)
+}
+
+function crossBase(op, action, label, agent) {
+  return {
+    op, action, label: label ?? null,
+    workspace: process.env.WEIR_IT_XWS_LABEL ?? null,
+    sessionId: agent.id,
+  }
+}
+
+function wireArgs(args) {
+  const copy = { ...args }
+  delete copy.label
+  delete copy.op
+  return copy
+}
+
+function profileSummary(profile) {
+  return {
+    agentId: profile?.agentId ?? null, name: profile?.name ?? null, revision: profile?.revision ?? null,
+    state: profile?.state ?? null, scope: profile?.scope ?? null,
+    userDescriptionRevision: profile?.userDescription?.revision ?? null,
+    hasWorkspaceField: profile ? Object.keys(profile).some(key => /workspace/i.test(key)) : null,
+  }
+}
+
+function wireFinish(args, op, agent, result, detail, summary) {
+  const path = crossWire(args.label, { ...crossBase(op, args.action, args.label, agent), args: wireArgs(args), result, detail })
+  return { ...summary, completed: summary.completed ?? true, op, action: args.action, label: args.label ?? null, ...(path ? { path } : {}) }
+}
+
+async function identityFlow(remote, broker, agent, args) {
+  const sessionId = agent.id
+  if (args.action === 'create') {
+    const name = args.variant === 'upper' ? String(args.name ?? '').toUpperCase() : args.name
+    const result = await remote.profileUpsert({
+      sessionId, name, userDescription: args.userDescription ?? '',
+      scope: { authorizationClasses: ['A', 'B', 'C'] }, modelRoute: { chain: [] },
+    })
+    const expectedFailure = args.variant !== undefined
+    return wireFinish(args, 'identity', agent, result, { name, variant: args.variant ?? null, profile: profileSummary(result.value) }, {
+      completed: expectedFailure ? true : result.ok === true,
+      ok: result.ok === true, agentId: result.value?.agentId ?? null,
+      errorCode: result.error?.code ?? null, name,
+    })
+  }
+  if (args.action === 'list') {
+    const result = await remote.agents({ sessionId })
+    const overview = await remote.overview({ sessionId })
+    const agents = result.ok === true ? result.value : []
+    return wireFinish(args, 'identity', agent, result, { overview }, {
+      completed: result.ok === true && overview.ok === true,
+      count: agents.length,
+      agents: agents.map(profile => profileSummary(profile)),
+      keys: [...new Set(agents.flatMap(profile => Object.keys(profile)))].sort(),
+      selector: overview.ok === true ? overview.value.selector : null,
+    })
+  }
+  if (args.action === 'selector-set') {
+    const agentId = args.mode === 'agent' ? resolveAgentId(broker, args) : undefined
+    const result = await remote.setSelector({ sessionId, mode: args.mode ?? 'agent', agentId })
+    const row = broker.store ? broker.store.db.prepare('SELECT * FROM selectors WHERE root_session_id=?').get(sessionId) ?? null : null
+    return wireFinish(args, 'identity', agent, result, { row, agentId: agentId ?? null }, {
+      completed: result.ok === true, selector: result.value, errorCode: result.error?.code ?? null,
+    })
+  }
+  if (args.action === 'selector-get') {
+    const result = await remote.overview({ sessionId })
+    const row = broker.store ? broker.store.db.prepare('SELECT * FROM selectors WHERE root_session_id=?').get(sessionId) ?? null : null
+    return wireFinish(args, 'identity', agent, result, { row, selector: broker.selector(sessionId) }, {
+      completed: result.ok === true,
+      selector: result.ok === true ? result.value.selector : null,
+      row,
+    })
+  }
+  throw new Error(`Unsupported identity action: ${args.action}`)
+}
+
+async function caseFlow(remote, broker, agent, args) {
+  const sessionId = agent.id
+  if (args.action === 'by-question') {
+    const row = broker.store?.db.prepare("SELECT case_id FROM cases WHERE json_extract(request_json,'$.questions[0].id')=? ORDER BY created_at DESC,case_id DESC LIMIT 1").get(args.questionId)
+    const result = row ? await remote.record({ sessionId, caseId: row.case_id }) : { ok: true, value: null }
+    const record = result.ok === true ? result.value : null
+    const attempts = record?.attempts ?? []
+    return wireFinish(args, 'caseQuery', agent, result, { questionId: args.questionId }, {
+      completed: true, found: Boolean(record), caseId: record?.case?.caseId ?? null,
+      state: record?.case?.state ?? null, closing: record?.case?.closing ?? null,
+      decisionKind: record?.case?.decision?.kind ?? null, awaitingReason: record?.case?.awaitingReason ?? null,
+      attemptCount: attempts.length,
+      attempts: attempts.map(attempt => ({
+        attemptId: attempt.attemptId, attemptNo: attempt.attemptNo, agentId: attempt.agentId, outcome: attempt.outcome,
+        pins: attempt.pins, evidenceIds: attempt.packManifest?.evidenceIds ?? [],
+        publicPrincipleIds: attempt.packManifest?.memory?.publicL2?.principleIds ?? [],
+        publicSnapshotId: attempt.packManifest?.memory?.publicL2?.snapshotId ?? null,
+        privateSnapshotId: attempt.packManifest?.memory?.L2?.snapshotId ?? null,
+      })),
+      routes: (record?.routeDecisions ?? []).map(route => ({ mode: route.mode, chosen: route.chosen ?? null, reason: route.reason })),
+    })
+  }
+  if (args.action === 'records') {
+    const result = await remote.records({ sessionId, filter: {}, cursor: { limit: 100 } })
+    const records = result.ok === true ? result.value.records : []
+    return wireFinish(args, 'caseQuery', agent, result, {}, {
+      completed: result.ok === true, count: records.length,
+      caseIds: records.map(item => item.caseId),
+    })
+  }
+  if (args.action === 'read') {
+    const result = await remote.record({ sessionId, caseId: args.caseId })
+    const record = result.ok === true ? result.value : null
+    return wireFinish(args, 'caseQuery', agent, result, { caseId: args.caseId }, {
+      completed: true, caseId: args.caseId, found: Boolean(record),
+      state: record?.case?.state ?? null, closing: record?.case?.closing ?? null,
+      attemptCount: record?.attempts?.length ?? 0,
+    })
+  }
+  if (args.action === 'comment') {
+    const before = broker.cases.getCase(args.caseId)
+    const result = await remote.feedback({ sessionId, caseId: args.caseId, verb: args.verb ?? 'comment', ...(args.text === undefined ? {} : { payload: { text: args.text } }) })
+    const after = broker.cases.getCase(args.caseId)
+    return wireFinish(args, 'caseQuery', agent, result, {
+      caseId: args.caseId, revisionBefore: before?.revision ?? null, revisionAfter: after?.revision ?? null,
+      feedbackStateBefore: before?.feedbackState ?? null, feedbackStateAfter: after?.feedbackState ?? null,
+    }, {
+      completed: result.ok === true,
+      feedbackId: result.value?.feedbackId ?? null, errorCode: result.error?.code ?? null,
+    })
+  }
+  throw new Error(`Unsupported caseQuery action: ${args.action}`)
+}
+
+async function publicFlow(remote, broker, agent, args) {
+  const sessionId = agent.id
+  const agentId = resolveAgentId(broker, args)
+  if (args.action === 'refresh') {
+    const result = await remote.publicMemoryRefresh({
+      sessionId, agentId,
+      ...(args.acknowledgedDisclosure === true ? { acknowledgedDisclosure: true } : {}),
+      ...(args.retryFailedExtraction === true ? { retryFailedExtraction: true } : {}),
+    })
+    const value = result.ok === true ? result.value : null
+    return wireFinish(args, 'public', agent, result, {}, {
+      completed: true, ok: result.ok === true, errorCode: result.error?.code ?? null,
+      status: value?.status ?? null, candidateSnapshotId: value?.candidate?.snapshotId ?? null,
+      currentSnapshotId: value?.current?.snapshotId ?? null,
+      workspaceCount: value?.workspaceCount ?? null, sourceCount: value?.sourceCount ?? null,
+    })
+  }
+  if (args.action === 'candidate') {
+    const result = await remote.publicCandidate({ sessionId, agentId, ...(args.learningRunId ? { learningRunId: args.learningRunId } : {}) })
+    const value = result.ok === true ? result.value : null
+    return wireFinish(args, 'public', agent, result, {}, {
+      completed: true, ok: result.ok === true, errorCode: result.error?.code ?? null,
+      present: Boolean(value), learningRunId: value?.learningRunId ?? null,
+      snapshotId: value?.candidate?.snapshotId ?? null, revision: value?.candidate?.revision ?? null,
+      sourceCount: value?.sourceCount ?? null, workspaceCount: value?.workspaceCount ?? null,
+    })
+  }
+  if (args.action === 'publish' || args.action === 'reject' || args.action === 'rollback') {
+    const method = args.action === 'publish' ? 'snapshotPublish' : args.action === 'reject' ? 'snapshotReject' : 'snapshotRollback'
+    const result = await remote[method]({ sessionId, agentId, snapshotId: args.snapshotId, expectedRevision: args.expectedRevision })
+    return wireFinish(args, 'public', agent, result, {}, {
+      completed: true, ok: result.ok === true, errorCode: result.error?.code ?? null,
+      snapshotId: result.value?.snapshotId ?? null, state: result.value?.state ?? null,
+    })
+  }
+  if (args.action === 'state') {
+    const result = await remote.agent({ sessionId, agentId })
+    const overview = await remote.overview({ sessionId })
+    const value = result.ok === true ? result.value : null
+    return wireFinish(args, 'public', agent, result, {
+      selector: overview.ok === true ? overview.value.selector : null,
+      privateSnapshotId: value?.currentSnapshotId ?? null,
+      publicCurrent: value?.publicMemory?.current ?? null,
+      publicRun: value?.publicMemory?.run ?? null,
+      privateSnapshots: (value?.snapshots ?? []).map(snapshot => ({ snapshotId: snapshot.snapshotId, version: snapshot.version, revision: snapshot.revision, contentHash: snapshot.contentHash, state: snapshot.state })),
+    }, {
+      completed: result.ok === true,
+      errorCode: result.error?.code ?? null,
+      agentId: value?.agentId ?? null,
+      selector: overview.ok === true ? overview.value.selector : null,
+      publicSnapshotId: value?.publicMemory?.current?.snapshotId ?? null,
+      publicVersion: value?.publicMemory?.current?.version ?? null,
+      candidateRunOutcome: value?.publicMemory?.run?.outcome ?? null,
+      privateSnapshotId: value?.currentSnapshotId ?? null,
+    })
+  }
+  throw new Error(`Unsupported public action: ${args.action}`)
+}
+
 export function apply(ctx, config = {}) {
   if (config.enabled !== true) return
   ctx.tools.register({
@@ -155,10 +374,14 @@ export function apply(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['root', 'child-read', 'learning'] }, caseId: { type: 'string' },
+        op: { type: 'string', enum: ['root', 'child-read', 'learning', 'identity', 'caseQuery', 'public'] }, caseId: { type: 'string' },
         action: { type: 'string' }, label: { type: 'string' }, agentId: { type: 'string' }, requestId: { type: 'string' },
         learningRunId: { type: 'string' }, snapshotId: { type: 'string' }, expectedRevision: { type: 'integer' },
         otherWorkspace: { type: 'string' }, concurrent: { type: 'boolean' },
+        // Cross-workspace matrix gestures (additive).
+        name: { type: 'string' }, variant: { type: 'string' }, mode: { type: 'string' }, questionId: { type: 'string' },
+        text: { type: 'string' }, verb: { type: 'string' },
+        acknowledgedDisclosure: { type: 'boolean' }, retryFailedExtraction: { type: 'boolean' },
       },
       required: ['op'],
     },
@@ -172,6 +395,9 @@ export function apply(ctx, config = {}) {
         const agent = exec.agent
         if (!broker || !agent?.id) throw new Error('Decision Broker and execution Agent are required')
         const remote = createDecisionRemoteService({ broker: () => broker })
+        if (args.op === 'identity') return await identityFlow(remote, broker, agent, args)
+        if (args.op === 'caseQuery') return await caseFlow(remote, broker, agent, args)
+        if (args.op === 'public') return await publicFlow(remote, broker, agent, args)
         if (args.op === 'learning') return await learningFlow(remote, broker, agent, args)
         const report = args.op === 'root' ? await rootFlow(remote, broker, agent) : await childFlow(remote, agent, args.caseId)
         const contribution = decisionRemoteContribution()

@@ -79,6 +79,10 @@ import decisionUiRemote from './decision-ui-remote.js'
 import decisionMemory from './decision-memory.js'
 import decisionLearning from './decision-learning.js'
 import decisionAutoRoute from './decision-auto-route.js'
+// Opt-in real two-workspace cross-workspace memory matrix: the module is
+// booted one phase at a time by spikes/decision/headless-cross-workspace.mjs, so
+// the default run list and its order stay byte-for-byte unchanged.
+import decisionCrossWorkspace from './decision-cross-workspace.js'
 import decisionGui from './decision-gui.js'
 
 import editlockLspRename from './editlock-lsp-rename.js'
@@ -164,6 +168,7 @@ SCENARIOS.push(decisionUiRemote)
 SCENARIOS.push(decisionMemory)
 SCENARIOS.push(decisionLearning)
 SCENARIOS.push(decisionAutoRoute)
+if (process.env.WEIR_IT_DECISION_CROSS_WORKSPACE === '1') SCENARIOS.push(decisionCrossWorkspace)
 if (process.env.WEIR_IT_DECISION_GUI === '1') SCENARIOS.push(decisionGui)
 
 /**
