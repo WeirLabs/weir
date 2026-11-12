@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicGuidancePinProblems, publicRecordDetailProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -1776,6 +1776,9 @@ async function crossWorkspaceMemoryDom(agentId) {
     const disclosure=publicZone?.querySelector('[data-public-disclosure]')
     const candidate=publicZone?.querySelector('[data-public-candidate]')
     const current=publicZone?.querySelector('[data-public-current]')
+    const publishedSection=publicZone?.querySelector('[data-public-published-principles]')
+    const changesSection=publicZone?.querySelector('[data-public-changes]')
+    const frozenInput=publicZone?.querySelector('[data-public-frozen-input]')
     return {
       zones:{public:Boolean(publicZone),workspace:Boolean(privateZone)},
       headings:[...detail.querySelectorAll('h3')].map(el=>el.textContent.trim()),
@@ -1798,6 +1801,9 @@ async function crossWorkspaceMemoryDom(agentId) {
         text:candidate.innerText,
         aliasesText:[...candidate.querySelectorAll('[data-public-source]')].map(el=>el.innerText).join('\\n'),
       }:{present:false},
+      published:publishedSection?{present:true,text:publishedSection.innerText,principles:[...publishedSection.querySelectorAll('[data-public-published-principle]')].map(item=>({principleId:item.getAttribute('data-public-published-principle'),text:item.querySelector('[data-public-published-text]')?.textContent??'',scope:item.querySelector('p:not([data-public-published-text])')?.textContent??''})),controls:[...publishedSection.querySelectorAll('button,input,textarea,select,[contenteditable="true"]')].filter(visible).map(item=>({tag:item.tagName,text:(item.textContent??'').trim(),action:item.getAttribute('data-action'),editable:item.isContentEditable===true}))}:{present:false},
+      changes:changesSection?[...changesSection.querySelectorAll('[data-public-change]')].map(item=>({op:item.getAttribute('data-public-change'),label:item.querySelector('strong')?.textContent?.trim()??'',text:item.querySelector('[data-public-change-text]')?.textContent?.trim()??'',scope:item.querySelector('[data-public-change-scope]')?.textContent?.trim()??''})):[],
+      frozenInput:frozenInput?.textContent?.trim()??'',
       current:current?{version:current.getAttribute('data-public-current'),rollback:Boolean(publicZone.querySelector('[data-action="public-rollback"]'))}:null,
     }
   })()`)
@@ -2123,6 +2129,16 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   // Minor 1: the rendered candidate body itself must carry no path and no foreign id.
   const candidateBodyProblems = publicCandidateBodyProblems({ present: candidateDom.candidate.present, text: candidateDom.candidate.text, workspacePaths, foreignRecordIds: foreignForW1, aliases: candidateDom.candidate.aliases })
   check('publicCandidateBodyHidesPathsAndForeignRecordIds', candidateBodyProblems.length === 0, candidateBodyProblems)
+  // B3: the review must let a user read the reviewed wording, in ordinary language,
+  // before adopting or discarding it — never an operation/id pair.
+  const candidateWording = {
+    rpc: { changes: candidateAuthority.changes ?? [], principles: candidateAuthority.principles ?? [], current: candidateAuthority.currentPublished?.principles ?? [] },
+    dom: { present: candidateDom.candidate.present, text: candidateDom.candidate.text, changes: candidateDom.changes, frozenInput: candidateDom.frozenInput },
+    expectedOps: ['add'], workspacePaths, foreignRecordIds: foreignForW1, aliases: candidateDom.candidate.aliases,
+  }
+  const candidateWordingProblems = publicCandidateWordingProblems(candidateWording)
+  writeJson(join(out, 'cross-public-candidate-wording.json'), { rpc: candidateWording.rpc, dom: { changes: candidateDom.changes, frozenInput: candidateDom.frozenInput }, problems: candidateWordingProblems })
+  check('publicCandidateReviewRendersProposedWording', candidateWordingProblems.length === 0, { problems: candidateWordingProblems, rendered: candidateDom.changes, reviewed: candidateWording.rpc.changes, frozenInput: candidateDom.frozenInput })
 
   // Explicit adoption, proved on the wire under the workspace that adopted it.
   const candidateSnapshotId = candidateAuthority.candidate.snapshotId
@@ -2143,6 +2159,13 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   await shot('cross-public-published')
   const publishedProblems = memoryZoneProblems({ ...publishedDom, workspacePaths, foreignRecordIds: foreignForW1 })
   check('publicAdoptionIsExplicitAndPublishesOnce', publishedDom.current != null && publishedDom.current.rollback === true && publishedProblems.length === 0, { current: publishedDom.current, problems: publishedProblems })
+  // B3: the adopted wording must stay readable afterwards, read-only, and match
+  // the `current.principles` the product's own agent read reports.
+  const publishedAuthority = await rpc(w1.sessionId, 'w1-published-principles', 'agent', { agentId: shared.agentId })
+  const publishedPrinciples = publishedAuthority.publicMemory?.current?.principles ?? []
+  const publishedWordingProblems = publicPublishedPrinciplesProblems({ expected: publishedPrinciples, dom: publishedDom, workspacePaths, foreignRecordIds: foreignForW1 })
+  writeJson(join(out, 'cross-public-published-principles.json'), { expected: publishedPrinciples, dom: { published: publishedDom.published, current: publishedDom.current }, problems: publishedWordingProblems })
+  check('publicPublishedPrinciplesRenderReadOnlyWording', publishedPrinciples.length > 0 && publishedPrinciples.every(principle => typeof principle.text === 'string' && principle.text.trim()) && publishedWordingProblems.length === 0, { problems: publishedWordingProblems, expected: publishedPrinciples, rendered: publishedDom.published })
 
   // The published version is profile-global: each workspace session must read the
   // same Snapshot on the wire and render that same version from its own page.
@@ -2161,9 +2184,13 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
       wire: authority.publicMemory?.current ?? null,
       privateSnapshotId: authority.currentSnapshotId ?? null,
       problems: memoryZoneProblems({ ...dom, workspacePaths, foreignRecordIds }),
+      publishedProblems: publicPublishedPrinciplesProblems({ expected: authority.publicMemory?.current?.principles ?? [], dom, workspacePaths, foreignRecordIds }),
     }
     await shot(`cross-${label}-shared-public-memory`)
   }
+  // The same read-only published wording must render from every workspace page.
+  const sharedPublishedProblems = Object.entries(publicObservations).flatMap(([label, value]) => value.publishedProblems.map(problem => `${label}: ${problem}`))
+  check('publicPublishedPrinciplesShareAcrossWorkspaces', sharedPublishedProblems.length === 0, { problems: sharedPublishedProblems, principles: Object.fromEntries(Object.entries(publicObservations).map(([label, value]) => [label, (value.wire?.principles ?? []).map(principle => principle.principleId)])) })
   const publicVersions = { w1: Number(publishedDom.current?.version), w2: Number(publicObservations.w2.dom.current?.version), w3: Number(publicObservations.w3.dom.current?.version), w4: Number(publicObservations.w4.dom.current?.version) }
   const wireSnapshots = Object.fromEntries(Object.entries(publicObservations).map(([label, value]) => [label, value.wire?.snapshotId ?? null]))
   const versionProblems = [
@@ -2276,6 +2303,15 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const secondCandidateProblems = memoryZoneProblems({ ...secondCandidateDom, workspacePaths, foreignRecordIds: foreignForW4 })
   const secondBodyProblems = publicCandidateBodyProblems({ present: secondCandidateDom.candidate.present, text: secondCandidateDom.candidate.text, workspacePaths, foreignRecordIds: foreignForW4, aliases: secondCandidateDom.candidate.aliases })
   check('publicSecondCandidateStaysOpaqueAndGuarded', secondCandidateProblems.length === 0 && secondBodyProblems.length === 0, { zone: secondCandidateProblems, body: secondBodyProblems, aliases: secondCandidateDom.candidate.aliases })
+  // B3: the refine candidate must render the refined wording, not `refine · id`.
+  const secondWording = {
+    rpc: { changes: secondReview.payload?.changes ?? [], principles: secondReview.payload?.principles ?? [], current: secondRefresh.payload?.current?.principles ?? [] },
+    dom: { present: secondCandidateDom.candidate.present, text: secondCandidateDom.candidate.text, changes: secondCandidateDom.changes, frozenInput: secondCandidateDom.frozenInput },
+    expectedOps: ['refine'], workspacePaths, foreignRecordIds: foreignForW4, aliases: secondCandidateDom.candidate.aliases,
+  }
+  const secondWordingProblems = publicCandidateWordingProblems(secondWording)
+  writeJson(join(out, 'cross-public-second-candidate-wording.json'), { rpc: secondWording.rpc, dom: { changes: secondCandidateDom.changes, frozenInput: secondCandidateDom.frozenInput }, problems: secondWordingProblems })
+  check('publicSecondCandidateRendersRefinedWording', secondWordingProblems.length === 0, { problems: secondWordingProblems, rendered: secondCandidateDom.changes, reviewed: secondWording.rpc.changes, frozenInput: secondCandidateDom.frozenInput })
 
   const beforeReject = await rpc(w4.sessionId, 'w4-before-public-reject', 'agent', { agentId: shared.agentId })
   const beforeCurrent = beforeReject.publicMemory?.current ?? null

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicGuidancePinProblems, publicRecordDetailProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { appEnvironment, decisionTriggerExpression } from '../spikes/decision/gui-qa.mjs'
 import { connectCdp } from '../spikes/decision/cdp.mjs'
 
@@ -1326,7 +1326,7 @@ test('the driver imports every guard it calls', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   const imported = new Set((driver.match(/import \{([^}]+)\} from '\.\/gui-product-lib\.mjs'/) ?? [, ''])[1].split(',').map(name => name.trim()).filter(Boolean))
-  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicRecordDetailProblems)\b/g)].map(match => match[1])
+  const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicCandidateWordingProblems|publicPublishedPrinciplesProblems|publicRecordDetailProblems)\b/g)].map(match => match[1])
   for (const name of new Set(called)) {
     assert.ok(imported.has(name), `${name} is called by the driver and must be imported from the lib`)
     assert.ok(lib.includes(`export function ${name}(`), `${name} is really exported by the lib`)
@@ -1557,6 +1557,130 @@ test('candidate body guard rejects workspace paths and foreign record ids', () =
   assert.ok(publicCandidateBodyProblems({ ...clean, text: `${clean.text}\ndc_feebc83f-20e3-4eb3-96b4-95a987acc293` }).some(problem => /foreign record id/.test(problem)))
   assert.ok(publicCandidateBodyProblems({ ...clean, text: `${clean.text}\n/Users/young/secret` }).some(problem => /absolute path/.test(problem)))
   assert.ok(publicCandidateBodyProblems({ ...clean, aliases: ['workspace-one'] }).some(problem => /non-opaque source label/.test(problem)))
+})
+
+test('public candidate wording guard requires the reviewed text in ordinary language', () => {
+  const principleId = 'pr_reviewed_1'
+  const wording = 'Prefer the documented option both workspaces agreed on.'
+  const frozenInput = '本次审阅的冻结输入: 涉及的工作区数 2 · 来源条数 2'
+  const clean = {
+    rpc: {
+      changes: [{ op: 'add', principleId, text: wording, scope: { tags: ['release'] } }],
+      principles: [{ principleId, text: wording, scope: { tags: ['release'] } }],
+      current: [],
+    },
+    dom: {
+      present: true,
+      text: `待你审阅的候选\n新增原则 · ${principleId}\n拟定原则文本: ${wording}\n适用范围: release\n${frozenInput}\n采用公共原则\n放弃候选`,
+      changes: [{ op: 'add', label: `新增原则 · ${principleId}`, text: wording, scope: '适用范围: release' }],
+      frozenInput,
+    },
+    expectedOps: ['add'],
+    workspacePaths: ['/repo/cross-w1'],
+    foreignRecordIds: ['dc_foreign'],
+    aliases: ['origin_abcdef123456'],
+  }
+  const failing = (domPatch = {}, rpcPatch = {}, auditPatch = {}) => publicCandidateWordingProblems({
+    ...clean, ...auditPatch,
+    rpc: { ...clean.rpc, ...rpcPatch },
+    dom: { ...clean.dom, ...domPatch },
+  })
+  assert.deepEqual(publicCandidateWordingProblems(clean), [])
+  // The reviewed wording itself must be rendered exactly, after whitespace collapse.
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], text: 'A different wording.' }] }).some(problem => /instead of the reviewed wording/.test(problem)))
+  // A raw id instead of the wording is not a review.
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], text: principleId }] }).some(problem => /instead of the reviewed wording/.test(problem)))
+  // The operation is labelled in ordinary language, never `add · id`.
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], label: `add · ${principleId}` }] }).some(problem => /not labelled in ordinary language/.test(problem)))
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], label: principleId }] }).some(problem => /not labelled in ordinary language/.test(problem)))
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], label: '新增原则' }] }).some(problem => /does not identify the reviewed principle/.test(problem)))
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], label: '' }] }).some(problem => /renders no operation label/.test(problem)))
+  // A scope hint the change really carries must be rendered; an invented one fails.
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], scope: '' }] }).some(problem => /omits the scope hint/.test(problem)))
+  assert.ok(failing({ changes: [{ ...clean.dom.changes[0], scope: '适用范围: release' }] }, { changes: [{ op: 'add', principleId, text: wording, scope: {} }], principles: [{ principleId, text: wording, scope: {} }] }).some(problem => /does not carry/.test(problem)))
+  // The wording falls back to the candidate principle (narrow) and to the
+  // published principle a retire removes, exactly as the product does.
+  assert.deepEqual(publicCandidateWordingProblems({
+    ...clean,
+    rpc: { changes: [{ op: 'narrow', principleId, scope: {} }], principles: [{ principleId, text: wording, scope: {} }], current: [] },
+    dom: { ...clean.dom, changes: [{ op: 'narrow', label: `收窄原则 · ${principleId}`, text: wording, scope: '' }] },
+    expectedOps: ['narrow'],
+  }), [])
+  assert.deepEqual(publicCandidateWordingProblems({
+    ...clean,
+    rpc: { changes: [{ op: 'retire', principleId, scope: {} }], principles: [], current: [{ principleId, text: wording, scope: {} }] },
+    dom: { ...clean.dom, changes: [{ op: 'retire', label: `废止原则 · ${principleId}`, text: wording, scope: '' }] },
+    expectedOps: ['retire'],
+  }), [])
+  // With no readable wording anywhere the candidate cannot be reviewed.
+  assert.ok(publicCandidateWordingProblems({ ...clean, rpc: { changes: [{ op: 'add', principleId, scope: {} }], principles: [], current: [] } }).some(problem => /carries no readable wording/.test(problem)))
+  // A change count or operation drift is never silently accepted.
+  assert.ok(failing({ changes: [] }).some(problem => /lists 0 changes instead of the reviewed 1/.test(problem)))
+  assert.ok(failing({}, { changes: [{ op: 'refine', principleId, text: wording, scope: { tags: ['release'] } }] }).some(problem => /renders operation add instead of refine/.test(problem)))
+  assert.ok(publicCandidateWordingProblems({ ...clean, expectedOps: ['refine'] }).some(problem => /carries no refine operation/.test(problem)))
+  // B3 leak scan: no frozen input, source id, path or raw JSON in the review.
+  assert.ok(failing({ text: `${clean.dom.text}\n/repo/cross-w1` }).some(problem => /workspace path/.test(problem)))
+  assert.ok(failing({ text: `${clean.dom.text}\ndc_foreign` }).some(problem => /foreign record id/.test(problem)))
+  assert.ok(failing({ text: `${clean.dom.text}\nms_1f3e801b0ff6` }).some(problem => /source record id/.test(problem)))
+  assert.ok(failing({ text: `${clean.dom.text}\n/Users/young/secret` }).some(problem => /absolute path/.test(problem)))
+  assert.ok(failing({ text: `${clean.dom.text}\n{"inputFrozen":{"caseIds":[]}}` }).some(problem => /raw frozen input/.test(problem)))
+  assert.ok(failing({ text: `${clean.dom.text}\n{"changes":[{"op":"add"}]}` }).some(problem => /raw JSON/.test(problem)))
+  assert.ok(failing({ frozenInput: '' }).some(problem => /renders no frozen-input summary/.test(problem)))
+  assert.ok(failing({ frozenInput: '{"workspaceAliases":["a"]}' }).some(problem => /raw input instead of counts/.test(problem)))
+  assert.ok(failing({}, {}, { aliases: ['workspace-one'] }).some(problem => /non-opaque source label/.test(problem)))
+  assert.ok(failing({ present: false }).some(problem => /no public candidate was rendered/.test(problem)))
+})
+
+test('published principles guard requires read-only reviewed wording, not a stale or editable copy', () => {
+  const principleId = 'pr_reviewed_1'
+  const wording = 'Prefer the documented option both workspaces agreed on.'
+  const clean = {
+    expected: [{ principleId, text: wording, scope: { tags: ['release'] } }],
+    dom: {
+      current: { version: '1', rollback: true },
+      published: {
+        present: true,
+        text: `已发布的公共原则\n${wording}\n适用范围: release`,
+        principles: [{ principleId, text: wording, scope: '适用范围: release' }],
+        controls: [],
+      },
+    },
+    workspacePaths: ['/repo/cross-w1'],
+    foreignRecordIds: ['dc_foreign'],
+  }
+  const failing = (patch = {}) => publicPublishedPrinciplesProblems({ ...clean, ...patch })
+  const section = patch => ({ dom: { ...clean.dom, published: { ...clean.dom.published, ...patch } } })
+  assert.deepEqual(publicPublishedPrinciplesProblems(clean), [])
+  // The published version must carry readable wording at all.
+  assert.ok(failing({ expected: [] }).some(problem => /carries no reviewed wording/.test(problem)))
+  assert.ok(failing({ expected: [{ principleId, text: '  ', scope: {} }] }).some(problem => /carries no reviewed wording/.test(problem)))
+  assert.ok(failing(section({ present: false })).some(problem => /renders no published-principles section/.test(problem)))
+  // A stale (superseded) wording or an extra superseded principle fails.
+  assert.ok(failing(section({ principles: [{ principleId, text: 'Superseded wording.', scope: '适用范围: release' }] })).some(problem => /instead of its reviewed wording/.test(problem)))
+  assert.ok(failing(section({ principles: [...clean.dom.published.principles, { principleId: 'pr_superseded', text: 'Old wording.', scope: '' }] })).some(problem => /does not carry/.test(problem)))
+  assert.ok(failing(section({ principles: [] })).some(problem => /does not render principle/.test(problem)))
+  // The section is read-only: no publish/reject/rollback control of its own.
+  assert.ok(failing(section({ controls: [{ tag: 'BUTTON', text: '采用公共原则', action: 'public-publish' }] })).some(problem => /not read-only/.test(problem)))
+  assert.ok(failing(section({ controls: [{ tag: 'BUTTON', text: '放弃候选', action: 'public-reject' }] })).some(problem => /not read-only/.test(problem)))
+  assert.ok(failing(section({ controls: [{ tag: 'INPUT', text: '', action: null, editable: true }] })).some(problem => /not read-only/.test(problem)))
+  // The zone still renders the version it published.
+  assert.ok(failing({ dom: { ...clean.dom, current: null } }).some(problem => /no longer renders its published version/.test(problem)))
+  // The published section is not a provenance surface.
+  assert.ok(failing(section({ text: `${clean.dom.published.text}\n/repo/cross-w1` })).some(problem => /workspace path/.test(problem)))
+  assert.ok(failing(section({ text: `${clean.dom.published.text}\ndc_foreign` })).some(problem => /foreign record id/.test(problem)))
+  assert.ok(failing(section({ text: `${clean.dom.published.text}\nms_1f3e801b0ff6` })).some(problem => /source record id/.test(problem)))
+  assert.ok(failing(section({ text: `${clean.dom.published.text}\norigin_abcdef123456` })).some(problem => /source alias/.test(problem)))
+  assert.ok(failing(section({ text: `${clean.dom.published.text}\n/Users/young/secret` })).some(problem => /absolute path/.test(problem)))
+  assert.ok(failing(section({ text: `${clean.dom.published.text}\n{"snapshotId":"ms_1"}` })).some(problem => /raw JSON/.test(problem)))
+  assert.ok(failing(section({ text: '' })).some(problem => /rendered nothing/.test(problem)))
+  // A scope hint the published version carries must stay readable; an unsafe
+  // hint must never be rendered.
+  assert.ok(failing(section({ principles: [{ principleId, text: wording, scope: '' }] })).some(problem => /omits the scope hint/.test(problem)))
+  assert.ok(publicPublishedPrinciplesProblems({
+    ...clean,
+    expected: [{ principleId, text: wording, scope: { paths: ['/repo/cross-w1'] } }],
+    dom: { ...clean.dom, published: { ...clean.dom.published, principles: [{ principleId, text: wording, scope: '适用范围: /repo/cross-w1' }] } },
+  }).some(problem => /path or a record id/.test(problem)))
 })
 
 test('record detail guard requires both partitions and the real public pin', () => {
