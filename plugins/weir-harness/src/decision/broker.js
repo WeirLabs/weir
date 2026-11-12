@@ -17,6 +17,8 @@ import { resolveDecisionModelRoute, streamDecision } from './evaluator/sidecar.j
 import {
   applyConsolidationOperations, buildConsolidationPack, parseConsolidationCandidate, replayOperations,
 } from './learning/consolidator.js'
+import { PUBLIC_CONSOLIDATION_SYSTEM, publicContentIssues } from './learning/public.js'
+import { PUBLIC_ZONE, workspaceAlias } from './learning/namespace.js'
 import { DecisionLearning } from './store/learning.js'
 import { decisionOrigin, excludedRequest, excludedStockHookRequest, sessionModelRoute } from './route.js'
 import { autoAdmission, classifyAutoRequest, routeAuto } from './router.js'
@@ -40,6 +42,7 @@ export class DecisionBroker {
     this.learningControllers = new Map()
     this.learningJobs = new Set()
     this.learningJobKeys = new Map()
+    this.publicRefreshJobs = new Map()
     this.consultWaiters = new Set()
     this.autoFlights = new Map()
     this.routingControllers = new Map()
@@ -78,6 +81,8 @@ export class DecisionBroker {
     for (const controller of this.learningControllers.values()) controller.abort(new Error('Decision Broker flushed'))
     for (const controller of this.routingControllers.values()) controller.abort(new Error('Decision Broker flushed'))
     await Promise.allSettled([...this.evaluationJobs, ...this.learningJobs, ...this.routingJobs])
+    this.publicRefreshJobs.clear()
+    this.learningJobKeys.clear()
     this.store?.close()
     this.store = undefined
     this.cases = undefined
@@ -613,9 +618,18 @@ export class DecisionBroker {
       await this.ensureProfileEvidence(profile, current.workspaceKey)
       const attemptStartedAt = this.now()
       await this.refreshEvidenceHints(current, signal)
-      const retrieval = this.retriever.retrieve({ agentId: profile.agentId, workspaceKey: current.workspaceKey, scope: current.scope, attemptStartedAt, excludeCaseId: current.caseId })
+      const retrieval = this.retriever.retrieve({
+        agentId: profile.agentId, workspaceKey: current.workspaceKey, scope: current.scope,
+        attemptStartedAt, excludeCaseId: current.caseId, agentState: profile.state,
+      })
       const candidates = retrieval.L5
-      const packed = buildContextPack({ profile, request: current.request, evidence: candidates, memory: { L2: retrieval.L2, L3: retrieval.L3 }, modelRoute, budgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000 })
+      // Two reviewed partitions enter the Attempt as separate pins and separate
+      // manifests; public guidance is never part of the eligible L5 set.
+      const packed = buildContextPack({
+        profile, request: current.request, evidence: candidates,
+        memory: { L2: retrieval.L2, publicL2: retrieval.L2_PUBLIC, L3: retrieval.L3 },
+        modelRoute, budgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
+      })
       const beforeAttempt = this.cases.getCase(current.caseId)
       if (beforeAttempt.state === 'closed' && beforeAttempt.closing === 'cancelled') return this.persistedVerdict(beforeAttempt)
       const attempt = await this.attempts.start({ caseId: current.caseId, agentId: profile.agentId, pins: packed.pins, contextPackHash: packed.contextPackHash, packManifest: packed.packManifest })
@@ -1086,7 +1100,17 @@ export class DecisionBroker {
 
   async snapshotAction(action, input) {
     const context = await this.sessionContext(input.sessionId)
-    const snapshot = await this.memorySnapshot(input)
+    const snapshot = await this.readableSnapshot(input, context)
+    if (action === 'publish') {
+      // Publishing would create new usable memory; an archived or disabled
+      // Agent keeps read-only history and cannot publish either zone.
+      const profile = this.profiles.getProfile(snapshot.agentId)
+      if (profile.state !== 'enabled') {
+        this.rejectLearningBoundary('snapshot', {
+          snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId, code: 'AGENT_UNAVAILABLE',
+        })
+      }
+    }
     const result = await this.learning[action](snapshot.snapshotId, input.expectedRevision)
     if (result.error) {
       this.audit('learning-run', {
@@ -1106,6 +1130,290 @@ export class DecisionBroker {
       revision: result.snapshot.revision, contentHash: result.snapshot.contentHash,
     })
     return result.snapshot
+  }
+
+  /**
+   * Authorize a Snapshot for lifecycle actions. A private Snapshot is readable
+   * only from its own workspace; the public zone is profile-global, so any root
+   * session of this profile may review it.
+   * @param {{snapshotId:string,agentId?:string}} input @param {any} context
+   */
+  async readableSnapshot(input, context) {
+    await this.ensureStore()
+    const snapshot = this.learning.getSnapshotById(input.snapshotId)
+    if (input.agentId && input.agentId !== snapshot.agentId) {
+      this.rejectLearningBoundary('snapshot', { snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId })
+    }
+    if (snapshot.zone === 'workspace' && snapshot.namespaceWorkspaceKey !== context.workspaceKey) {
+      this.rejectLearningBoundary('snapshot', { snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId })
+    }
+    return snapshot
+  }
+
+  publicDisclosure() {
+    return { required: true, version: 1, key: 'public-memory-first-extraction' }
+  }
+
+  /** Compact public state shared by the refresh response and the review page. */
+  publicState(agentId) {
+    const current = this.learning.currentPublicSnapshot(agentId)
+    const currentRun = current ? this.learning.getRunById(current.learningRunId) : null
+    return {
+      current: current ? {
+        snapshotId: current.snapshotId, version: current.version, revision: current.revision,
+        contentHash: current.contentHash, principleCount: current.principles.length,
+        workspaceCount: currentRun?.inputFrozen.workspaceAliases?.length ?? 0,
+        sourceCount: (currentRun?.inputFrozen.caseIds?.length ?? 0) + (currentRun?.inputFrozen.feedbackIds?.length ?? 0),
+      } : null,
+    }
+  }
+
+  /** @param {any} run */
+  publicCandidateSummary(run) {
+    if (!run) return null
+    const row = this.store.db.prepare('SELECT * FROM memory_snapshots WHERE learning_run_id=?').get(run.learningRunId)
+    if (!row) return null
+    const snapshot = this.learning.getSnapshotById(row.snapshot_id)
+    return {
+      learningRunId: run.learningRunId, snapshotId: snapshot.snapshotId, version: snapshot.version,
+      state: snapshot.state, revision: snapshot.revision, contentHash: snapshot.contentHash,
+      principleCount: snapshot.principles.length,
+      workspaceCount: run.inputFrozen.workspaceAliases?.length ?? 0,
+      sourceCount: run.inputFrozen.caseIds.length + run.inputFrozen.feedbackIds.length,
+      createdAt: snapshot.createdAt,
+    }
+  }
+
+  /** @param {string} agentId @param {string} status @param {any} run @param {any} [sourceSet] */
+  publicRefreshResult(agentId, status, run, sourceSet) {
+    const disclosure = { ...this.publicDisclosure(), required: !this.learning.hasPublicRun(agentId) }
+    const workspaceCount = run?.inputFrozen.workspaceAliases?.length ?? sourceSet?.workspaces?.length ?? 0
+    const sourceCount = run
+      ? run.inputFrozen.caseIds.length + run.inputFrozen.feedbackIds.length
+      : sourceSet?.sources?.length ?? 0
+    return {
+      status, agentId, zone: PUBLIC_ZONE, disclosure,
+      highWater: run?.inputFrozen.sourceHighWater ?? sourceSet?.highWater ?? null,
+      workspaceCount, sourceCount,
+      ...this.publicState(agentId),
+      run: run ? { learningRunId: run.learningRunId, outcome: run.outcome, revision: run.revision, createdAt: run.createdAt } : null,
+      candidate: run?.outcome === 'candidate' ? this.publicCandidateSummary(run) : null,
+    }
+  }
+
+  /**
+   * Open/refresh public memory. Automatic extraction happens only when the
+   * eligible-source high-water mark is newer than the last frozen public input;
+   * a stable high-water mark never calls the model, and nothing is published.
+   * @param {{sessionId:string,agentId:string,acknowledgedDisclosure?:boolean}} input
+   */
+  async publicMemoryRefresh(input) {
+    const status = this.status()
+    if (!status.enabled || status.reason === 'disabled') throw new DecisionContractError('DECISION_OFF', 'Decision Agents are globally disabled')
+    if (!status.available) throw new DecisionContractError('DECISION_UNAVAILABLE', status.reason ?? 'Decision Broker is unavailable')
+    await this.ensureStore()
+    const context = await this.sessionContext(input.sessionId)
+    const profile = this.profiles.getProfile(input.agentId)
+    if (profile.state !== 'enabled') {
+      this.rejectLearningBoundary('learning-run', { agentId: profile.agentId, rootSessionId: context.rootSessionId, code: 'AGENT_UNAVAILABLE' })
+    }
+    const jobKey = `${profile.agentId}\u0000public`
+    const existing = this.publicRefreshJobs.get(jobKey)
+    if (existing) return existing
+    const job = this.executePublicRefresh({ input, context, profile })
+    this.publicRefreshJobs.set(jobKey, job)
+    this.learningJobs.add(job)
+    const cleanup = () => {
+      this.publicRefreshJobs.delete(jobKey)
+      this.learningJobs.delete(job)
+    }
+    job.then(cleanup, cleanup)
+    return job
+  }
+
+  async executePublicRefresh({ input, context, profile }) {
+    const agentId = profile.agentId
+    const active = this.learning.activePublicRun(agentId)
+    if (active) return this.publicRefreshResult(agentId, active.outcome === 'running' ? 'running' : active.outcome, active)
+    const sourceSet = this.learning.publicSourceSet(agentId)
+    if (sourceSet.sources.length === 0) return this.publicRefreshResult(agentId, 'empty-sources', null, sourceSet)
+    const last = this.learning.lastPublicHighWater(agentId)
+    if (last === sourceSet.highWater) {
+      const previous = this.learning.lastPublicRun(agentId)
+      return this.publicRefreshResult(agentId, previous?.outcome === 'failed' ? 'failed' : 'up-to-date', previous, sourceSet)
+    }
+    if (!this.learning.hasPublicRun(agentId) && input.acknowledgedDisclosure !== true) {
+      return this.publicRefreshResult(agentId, 'disclosure-required', null, sourceSet)
+    }
+    return this.executePublicLearning({ context, profile, requestId: `public:${agentId}:${sourceSet.highWater}` })
+  }
+
+  async executePublicLearning({ context, profile, requestId }) {
+    let modelRoute
+    try {
+      const agent = await this.rootAgent(context.rootSessionId)
+      const configuredChains = this.config().decisionAgentChains
+      modelRoute = await resolveDecisionModelRoute({
+        llm: this.ctx.llm, chain: configuredChains?.[profile.agentId] ?? profile.modelRoute.chain,
+        sessionRoute: sessionModelRoute(agent),
+      })
+    } catch {
+      modelRoute = { kind: 'unavailable', reason: 'route_resolution_failed' }
+    }
+    const started = await this.learning.beginPublicRun({
+      agentId: profile.agentId, requestId, startedAt: this.now(),
+      agentProfileRevision: profile.revision, modelRoute,
+    })
+    if (!started.created) {
+      return this.publicRefreshResult(profile.agentId, started.run.outcome === 'running' ? 'running' : started.run.outcome, started.run)
+    }
+    const run = started.run
+    const sourceCount = run.inputFrozen.caseIds.length + run.inputFrozen.feedbackIds.length
+    this.audit('learning-run', {
+      learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId, zone: 'public',
+      action: 'start', outcome: 'running', sourceCount, workspaceCount: run.inputFrozen.workspaceAliases.length,
+    })
+    const controller = new AbortController()
+    this.learningControllers.set(run.learningRunId, controller)
+    const failed = async detail => {
+      await this.finishFailedLearning(run, detail, context.rootSessionId)
+      return this.publicRefreshResult(profile.agentId, 'failed', this.learning.getRunById(run.learningRunId))
+    }
+    try {
+      const pack = buildConsolidationPack(started.projection, PUBLIC_CONSOLIDATION_SYSTEM)
+      const budgetCharacters = (this.config().decisionAgentContextBudgetTokens ?? 24000) * 4
+      if (pack.system.length + pack.messages[0].content.length > budgetCharacters) {
+        return failed('LEARNING_INPUT_TOO_LARGE')
+      }
+      const streamed = await streamDecision({
+        llm: this.ctx.llm, route: modelRoute, pack,
+        maxOutputTokens: this.config().decisionAgentLearningMaxOutputTokens ?? 4000,
+        timeoutMs: this.config().decisionAgentLearningTimeoutMs ?? 60000,
+        signal: controller.signal,
+      })
+      if (controller.signal.aborted) return failed('INTERRUPTED')
+      if (streamed.finishReason !== 'stop') {
+        const detail = ({
+          timeout: 'MODEL_TIMEOUT', route_unavailable: 'ROUTE_UNAVAILABLE', aborted: 'INTERRUPTED',
+          'max-tokens': 'CANDIDATE_TOO_LARGE',
+        })[streamed.finishReason] ?? 'MODEL_ERROR'
+        return failed(detail)
+      }
+      let operations
+      try {
+        operations = parseConsolidationCandidate(streamed.text, started.authority.parentPrinciples, PUBLIC_ZONE)
+      } catch (error) {
+        return failed(typeof error?.code === 'string' ? error.code : 'INVALID_CANDIDATE')
+      }
+      const replay = replayOperations(started.authority.parentPrinciples, operations, started.authority)
+      if (!replay.passed) return failed(replay)
+      const principles = applyConsolidationOperations(started.authority.parentPrinciples, operations, started.authority)
+      const allowedSources = [...run.inputFrozen.caseIds, ...run.inputFrozen.feedbackIds]
+      const rejected = principles.filter(principle => principle.state === 'active')
+        .some(principle => publicContentIssues(principle.text, allowedSources).length > 0)
+      if (rejected) {
+        this.audit('learning-run', {
+          learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId,
+          zone: 'public', outcome: 'failed', code: 'PUBLIC_CONTENT_REJECTED',
+        })
+        return failed('PUBLIC_CONTENT_REJECTED')
+      }
+      try {
+        const committed = await this.learning.commitCandidate({
+          learningRunId: run.learningRunId, expectedRevision: run.revision, operations, replay, principles,
+        })
+        this.audit('learning-run', {
+          learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId, zone: 'public',
+          outcome: 'candidate', revision: committed.run.revision, operationCount: operations.length, sourceCount,
+        })
+        this.audit('snapshot', {
+          snapshotId: committed.snapshot.snapshotId, learningRunId: run.learningRunId, agentId: run.agentId,
+          rootSessionId: context.rootSessionId, zone: 'public', state: 'draft',
+          version: committed.snapshot.version, revision: committed.snapshot.revision, contentHash: committed.snapshot.contentHash,
+        })
+        return this.publicRefreshResult(profile.agentId, 'candidate', committed.run)
+      } catch (error) {
+        if (error?.code === 'STALE_LEARNING_RUN') return this.publicRefreshResult(profile.agentId, 'running', this.learning.getRunById(run.learningRunId))
+        throw error
+      }
+    } catch (error) {
+      return failed(typeof error?.code === 'string' ? error.code : 'CONSOLIDATION_ERROR')
+    } finally {
+      this.learningControllers.delete(run.learningRunId)
+    }
+  }
+
+  /**
+   * Safe public candidate review projection: principle diff, opaque alias
+   * groups with counts and a bounded redacted preview, and the structural
+   * replay. No realpath, raw foreign record, full question or record id.
+   * @param {{sessionId:string,agentId:string,learningRunId?:string}} input
+   */
+  async publicCandidate(input) {
+    await this.ensureStore()
+    const context = await this.sessionContext(input.sessionId)
+    const profile = this.profiles.getProfile(input.agentId)
+    let run = null
+    if (input.learningRunId) {
+      run = this.learning.getRunById(input.learningRunId)
+      if (run.zone !== PUBLIC_ZONE || run.agentId !== profile.agentId) {
+        this.rejectLearningBoundary('learning-run', { learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId })
+      }
+    } else {
+      run = this.learning.activePublicRun(profile.agentId)
+    }
+    if (!run || run.outcome !== 'candidate') return null
+    const candidate = this.publicCandidateSummary(run)
+    if (!candidate) return null
+    const snapshot = this.learning.getSnapshotById(candidate.snapshotId)
+    const allowedSources = [...run.inputFrozen.caseIds, ...run.inputFrozen.feedbackIds]
+    for (const principle of snapshot.principles) {
+      if (publicContentIssues(principle.text, allowedSources).length) {
+        this.audit('snapshot', {
+          snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId,
+          zone: 'public', action: 'review', code: 'PUBLIC_CONTENT_REJECTED',
+        })
+        throw new DecisionContractError('PUBLIC_CONTENT_REJECTED', snapshot.snapshotId)
+      }
+    }
+    const current = this.learning.currentPublicSnapshot(profile.agentId)
+    return {
+      agentId: profile.agentId, zone: PUBLIC_ZONE,
+      learningRunId: run.learningRunId, outcome: run.outcome, runRevision: run.revision,
+      startedAt: run.inputFrozen.startedAt,
+      candidate: {
+        snapshotId: candidate.snapshotId, version: candidate.version, state: candidate.state,
+        revision: candidate.revision, contentHash: candidate.contentHash,
+        principleCount: candidate.principleCount, parentSnapshotId: snapshot.parentSnapshotId,
+        createdAt: candidate.createdAt,
+      },
+      currentPublished: current ? { snapshotId: current.snapshotId, version: current.version, revision: current.revision } : null,
+      changes: run.operations.map(operation => ({
+        op: operation.op, principleId: operation.principleId,
+        ...(operation.targetPrincipleIds ? { targetPrincipleIds: [...operation.targetPrincipleIds] } : {}),
+        ...(operation.text === undefined ? {} : { text: operation.text }),
+        ...(operation.scope === undefined ? {} : { scope: cloneJson(operation.scope) }),
+      })),
+      principles: snapshot.principles.map(principle => ({
+        principleId: principle.principleId, text: principle.text, scope: cloneJson(principle.scope),
+        state: principle.state, sourceCount: principle.sources.length,
+      })),
+      sources: (run.inputFrozen.workspaceAliases ?? []).map(group => ({
+        alias: group.alias, count: group.count,
+        kinds: { case: group.kinds?.case ?? 0, correction: group.kinds?.correction ?? 0 },
+        preview: String(group.preview ?? '').slice(0, 240),
+        readableInCurrentWorkspace: group.alias === workspaceAlias(context.workspaceKey),
+      })),
+      workspaceCount: run.inputFrozen.workspaceAliases?.length ?? 0,
+      sourceCount: run.inputFrozen.caseIds.length + run.inputFrozen.feedbackIds.length,
+      replay: {
+        passed: run.replay?.passed === true,
+        metrics: cloneJson(run.replay?.metrics ?? {}),
+        ...(run.replay?.detail === undefined ? {} : { detail: run.replay.detail }),
+        ...(run.replay?.finalHash === undefined ? {} : { finalHash: run.replay.finalHash }),
+      },
+      disclosure: { ...this.publicDisclosure(), required: false },
+    }
   }
 
   async learningRun(input) {
@@ -1173,6 +1481,9 @@ export class DecisionBroker {
     return this.query.metrics({ ...input, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
   }
 }
+/** @template T @param {T} value @returns {T} */
+function cloneJson(value) { return JSON.parse(JSON.stringify(value)) }
+
 function consultFingerprint(request, scope) {
   return canonicalJson({ questions: request.questions, context: request.context, taskSummary: request.taskSummary, evidence: request.evidence, scope })
 }
