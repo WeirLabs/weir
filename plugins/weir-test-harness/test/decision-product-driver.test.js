@@ -1179,8 +1179,8 @@ test('cross-workspace guard requires shared identity, private isolation and hone
 test('legacy live surface guard requires identity, private ownership, an empty public zone and no history rewrite', () => {
   const expected = {
     agentIds: ['ag_one_w1', 'ag_one_w2', 'ag_suffixed', 'ag_archived'],
-    names: { ag_one_w1: 'copy-tone', ag_one_w2: 'copy-tone', ag_suffixed: 'copy-tone · 2', ag_archived: 'Retired' },
-    duplicateName: 'copy-tone', privateWorkspaceKey: '/repo/one', privateSnapshotId: 'ms_w1',
+    names: { ag_one_w1: 'copy-tone', ag_one_w2: 'copy-tone · 3', ag_suffixed: 'copy-tone · 2', ag_archived: 'Retired' },
+    privateWorkspaceKey: '/repo/one', privateSnapshotId: 'ms_w1',
     privateLearningRunId: 'lr_w1', attemptPinSnapshotId: 'ms_w1', ownerAgentId: 'ag_one_w1',
   }
   const auditReceipt = { recorded: true, action: 'boundary-reject', code: 'OUT_OF_SCOPE', idsOnly: true }
@@ -1190,7 +1190,7 @@ test('legacy live surface guard requires identity, private ownership, an empty p
   ]
   const agents = [
     { agentId: 'ag_one_w1', name: 'copy-tone', state: 'enabled', revision: 3, hasWorkspaces: false },
-    { agentId: 'ag_one_w2', name: 'copy-tone', state: 'enabled', revision: 3, hasWorkspaces: false },
+    { agentId: 'ag_one_w2', name: 'copy-tone · 3', state: 'enabled', revision: 3, hasWorkspaces: false },
     { agentId: 'ag_suffixed', name: 'copy-tone · 2', state: 'enabled', revision: 3, hasWorkspaces: false },
     { agentId: 'ag_archived', name: 'Retired', state: 'archived', revision: 3, hasWorkspaces: false },
   ]
@@ -1216,7 +1216,8 @@ test('legacy live surface guard requires identity, private ownership, an empty p
   assert.ok(legacyLiveSurfaceProblems({ ...good, expected: { ...expected, names: { ...expected.names, ag_one_w1: 'renamed' } } }).some(problem => /lost its name/.test(problem)))
   assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, renderedIds: ['ag_one_w1'] } }).some(problem => /does not list migrated assistant/.test(problem)))
   assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, agents: [{ ...agents[0], hasWorkspaces: true }, ...agents.slice(1)] } }).some(problem => /scopes by workspace membership/.test(problem)))
-  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, agents: [agents[0], { ...agents[1], agentId: 'ag_one_w1' }, ...agents.slice(2)] } }).some(problem => /distinct identities/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, agents: [agents[0], { ...agents[1], name: 'copy-tone' }, ...agents.slice(2)] } }).some(problem => /distinct display names/.test(problem)))
+  assert.ok(legacyLiveSurfaceProblems({ ...good, expected: { ...expected, agentIds: ['ag_one_w1', 'ag_one_w2'] } }).some(problem => /exactly the migrated assistants/.test(problem)))
   assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, pageText: 'copy-tone /repo/one' } }).some(problem => /exposes a legacy workspace path/.test(problem)))
   assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, public: { ...capture.public, currentVersion: '1' } } }).some(problem => /must not show a public version/.test(problem)))
   assert.ok(legacyLiveSurfaceProblems({ ...good, boot: { ...capture, public: { ...capture.public, publishedSnapshots: 1 } } }).some(problem => /empty public zone/.test(problem)))

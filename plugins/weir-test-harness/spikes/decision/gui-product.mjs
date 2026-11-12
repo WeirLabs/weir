@@ -1796,7 +1796,6 @@ function legacyExpectations(report) {
   return {
     agentIds: profiles.map(profile => profile.agentId),
     names: Object.fromEntries(profiles.map(profile => [profile.agentId, profile.name])),
-    duplicateName: profiles.find((profile, index) => profiles.findIndex(other => other.name === profile.name) !== index)?.name ?? null,
     privateWorkspaceKey: snapshots[0]?.namespaceWorkspaceKey ?? null,
     privateSnapshotId: snapshots[0]?.snapshotId ?? null,
     privateLearningRunId: report?.privateMemory?.run?.learningRunId ?? null,

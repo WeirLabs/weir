@@ -586,10 +586,10 @@ export function legacyLiveSurfaceProblems(audit = {}) {
   }
   if (!Array.isArray(boot.renderedIds)) problems.push('the rendered management page was never read')
   else for (const id of expected.agentIds ?? []) if (!boot.renderedIds.includes(id)) problems.push(`the rendered management page does not list migrated assistant ${id}`)
-  if (expected.duplicateName) {
-    const sameName = boot.agents.filter(agent => agent.name === expected.duplicateName)
-    if (sameName.length < 2 || new Set(sameName.map(agent => agent.agentId)).size !== sameName.length) problems.push('two assistants that shared a display name must stay distinct identities')
-  }
+  // Workspace-local rows that shared one display name must survive as distinct,
+  // listable identities: no row is merged and no name stays ambiguous.
+  if (new Set(boot.agents.map(agent => agent.name)).size !== boot.agents.length) problems.push('the migrated assistants must keep distinct display names after their workspace-local names collapsed into one shared identity')
+  if (Array.isArray(expected.agentIds) && boot.agents.length !== expected.agentIds.length) problems.push('the live profile must list exactly the migrated assistants, with no identity merged or copied')
   for (const path of audit.legacyWorkspacePaths ?? []) if (path && String(boot.pageText ?? '').includes(path)) problems.push(`the rendered page exposes a legacy workspace path: ${path}`)
   if (boot.public?.currentVersion != null) problems.push('a migrated legacy profile must not show a public version')
   if (boot.public?.candidate === true) problems.push('a migrated legacy profile must not resurrect a public candidate')
