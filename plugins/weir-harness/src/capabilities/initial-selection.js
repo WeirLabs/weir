@@ -105,8 +105,9 @@ export function bindDefaultSkillNames(entries, candidates, options = {}) {
  * strings (a name with two parsed candidates would otherwise be refused by
  * the read side's unique-name binding forever). An entry that ALREADY parses
  * as a SkillIdentity (an identity-shaped draft entry) passes through VERBATIM
- * — it is an already-resolved set member; an injected unresolvable identity
- * still fails closed later at session init. A name string with exactly ONE
+ * — it is an already-resolved set member; session init reconciles it against
+ * a complete inventory and reports it per entry when the host retired it. A
+ * name string with exactly ONE
  * parsed inventory candidate binds to that candidate's identity; a name
  * with MULTIPLE candidates binds only when the session's effective
  * (applied) selection contains exactly ONE identity of that name — the
