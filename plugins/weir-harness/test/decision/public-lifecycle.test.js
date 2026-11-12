@@ -209,3 +209,65 @@ test('a scope hint that carries a path or a record id never reaches the publishe
   assert.equal(serialized.includes('/Users/'), false)
   assert.equal(serialized.includes('dc_'), false)
 })
+
+test('a retired public principle leaves the published read-only list and the count agrees with it', async t => {
+  const f = await publicMemoryFixture(t)
+  const w1 = await f.seedDecision({ workspaceKey: f.w1, rootSessionId: 'root1', key: 'retire-keep' })
+  const w2 = await f.seedDecision({ workspaceKey: f.w2, rootSessionId: 'root2', key: 'retire-drop' })
+  const keepText = 'Keep the documented option both workspaces agreed on'
+  const dropText = 'Drop the superseded option one workspace still repeats'
+  f.respond((_options, pack) => {
+    const sources = pack.sources.map(source => source.sourceId)
+    return {
+      operations: [
+        publicAdd(sources.slice(0, 1), { principleId: 'temporary-keep', text: keepText, scope: {} }),
+        publicAdd(sources.slice(1, 2), { principleId: 'temporary-drop', text: dropText, scope: {} }),
+      ],
+    }
+  })
+  const first = await createCandidate(f)
+  const v1 = await publishCandidate(f, first)
+  assert.equal(v1.version, 1)
+  const keepId = v1.principles.find(principle => principle.text === keepText).principleId
+  const dropId = v1.principles.find(principle => principle.text === dropText).principleId
+  assert.equal(v1.principles.filter(principle => principle.state === 'active').length, 2, 'both added principles start active')
+  assert.deepEqual(f.broker.publicState(f.profile.agentId).current.principles.map(row => row.principleId).sort(), [dropId, keepId].sort())
+
+  // A genuinely newer source starts the second extraction, which retires one of
+  // the two published principles and leaves the other one active.
+  await f.seedDecision({ workspaceKey: f.w2, rootSessionId: 'root2', key: 'retire-trigger' })
+  f.respond(() => ({ operations: [{ op: 'retire', principleId: dropId }] }))
+  const second = await createCandidate(f, 'root2')
+  // The candidate review still carries the retirement and the wording it retires.
+  const review = await f.broker.publicCandidate({ sessionId: 'root2', agentId: f.profile.agentId })
+  assert.deepEqual(review.changes.map(change => ({ op: change.op, principleId: change.principleId })), [{ op: 'retire', principleId: dropId }])
+  assert.equal(review.principles.find(principle => principle.principleId === dropId).state, 'retired')
+  assert.equal(review.principles.find(principle => principle.principleId === dropId).text, dropText, 'the retired wording stays readable where it is reviewed')
+  const v2 = await publishCandidate(f, second, 'root2')
+  assert.equal(v2.version, 2)
+  assert.equal(f.broker.learning.getSnapshotById(v2.snapshotId).principles.find(principle => principle.principleId === dropId).state, 'retired')
+  const state = f.broker.publicState(f.profile.agentId)
+  assert.deepEqual(state.current.principles, [{ principleId: keepId, text: keepText, scope: {} }], 'the published read-only list carries only active principles')
+  assert.equal(state.current.principleCount, state.current.principles.length, 'the published count agrees with the published list')
+  assert.equal(state.current.principleCount, 1)
+  const summary = f.broker.publicMemorySummary(f.profile.agentId)
+  assert.deepEqual(summary.current, state.current, 'the assistant detail publishes the same read-only projection')
+  // A second refresh replays the published high-water mark without another model call.
+  const requestsBefore = f.requests.length
+  const refreshed = await f.broker.publicMemoryRefresh({ sessionId: 'root1', agentId: f.profile.agentId })
+  assert.equal(f.requests.length, requestsBefore, 'a published high-water mark never calls the model again')
+  assert.deepEqual(refreshed.current, state.current)
+
+  // Host-side snapshot detail keeps the retired principle auditable at full fidelity.
+  const detail = f.broker.learning.getSnapshotById(v2.snapshotId)
+  assert.equal(detail.principles.find(principle => principle.principleId === dropId).state, 'retired')
+  assert.equal(detail.principles.find(principle => principle.principleId === keepId).state, 'active')
+  assert.equal(detail.principles.find(principle => principle.principleId === dropId).text, dropText)
+
+  // The published read-only projection carries no source id, workspace key or origin label.
+  const serialized = JSON.stringify([state, summary, refreshed])
+  for (const workspace of [f.w1, f.w2]) assert.equal(serialized.includes(workspace), false, 'no workspace key')
+  for (const recordId of [w1.caseId, w2.caseId]) assert.equal(serialized.includes(recordId), false, 'no source record id')
+  assert.equal(serialized.includes(dropText), false, 'the retired wording is not published as current')
+  assert.equal(serialized.includes('origin_'), false, 'no source alias either')
+})

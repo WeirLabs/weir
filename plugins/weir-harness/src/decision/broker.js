@@ -1168,17 +1168,20 @@ export class DecisionBroker {
    * The published version carries its reviewed wording read-only so an adopted
    * principle can be read afterwards; a principle row never carries a source, a
    * workspace key or a record origin, only its text and workspace-agnostic hints.
+   * Only active principles are published as current: a retired principle stays
+   * auditable in its Snapshot detail and the public count agrees with the list.
    */
   publicState(agentId) {
     const current = this.learning.currentPublicSnapshot(agentId)
     const currentRun = current ? this.learning.getRunById(current.learningRunId) : null
+    const active = current ? current.principles.filter(principle => principle.state === 'active') : []
     return {
       current: current ? {
         snapshotId: current.snapshotId, version: current.version, revision: current.revision,
-        contentHash: current.contentHash, principleCount: current.principles.length,
+        contentHash: current.contentHash, principleCount: active.length,
         workspaceCount: currentRun?.inputFrozen.workspaceAliases?.length ?? 0,
         sourceCount: (currentRun?.inputFrozen.caseIds?.length ?? 0) + (currentRun?.inputFrozen.feedbackIds?.length ?? 0),
-        principles: publicPrincipleRows(current.principles),
+        principles: publicPrincipleRows(active),
       } : null,
     }
   }
