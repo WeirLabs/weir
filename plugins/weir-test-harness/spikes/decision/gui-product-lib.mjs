@@ -863,3 +863,169 @@ export function publicRecordDetailProblems(capture = {}, expected = {}) {
   for (const id of expected.foreignRecordIds ?? []) if (id && publicText.includes(String(id))) problems.push(`the public partition shows a foreign record id: ${id}`)
   return problems
 }
+
+// ---------------------------------------------------------------------------
+// B3 public review wording: a user must be able to read the reviewed principle
+// text before adopting or discarding it, and the published principles must stay
+// readable afterwards without becoming an editor or a provenance surface.
+// ---------------------------------------------------------------------------
+
+// A public surface is ordinary language, never provenance, so a hint that would
+// carry an absolute path or a record id must never reach a rendered scope.
+const PUBLIC_RECORD_ID = new RegExp('(?:^|[^A-Za-z0-9])(?:dc|ev|fb|lr|ms)_[A-Za-z0-9][A-Za-z0-9_-]{4,}')
+const PUBLIC_ALIAS = new RegExp('(?:^|[^A-Za-z0-9])origin_[0-9a-z]{6,}', 'i')
+
+const PUBLIC_OPERATION_LABELS = Object.freeze({
+  add: [/新增原则/, /Adds a principle/i],
+  refine: [/改写原则/, /Rewords a principle/i],
+  merge: [/合并原则/, /Merges principles/i],
+  narrow: [/收窄原则/, /Narrows a principle/i],
+  retire: [/废止原则/, /Retires a principle/i],
+})
+
+/** Whitespace-collapsed text: rendered line wrapping is not a wording difference. */
+function readableText(value) { return String(value ?? '').replace(/\s+/g, ' ').trim() }
+
+function shortenedText(value, limit = 120) {
+  const text = readableText(value)
+  return text.length > limit ? `${text.slice(0, limit)}…` : text
+}
+
+function ordinaryOperationLabel(op, label) {
+  const patterns = PUBLIC_OPERATION_LABELS[String(op ?? '')]
+  return Boolean(patterns) && patterns.some(pattern => pattern.test(String(label ?? '')))
+}
+
+function unsafePublicHint(value) {
+  const text = String(value ?? '')
+  if (!text) return false
+  if (text.startsWith('/') || text.startsWith('~') || text.startsWith('file:')) return true
+  if (text.length > 1 && text[1] === ':' && /[A-Za-z]/.test(text[0])) return true
+  return PUBLIC_RECORD_ID.test(text)
+}
+
+function scopeHints(scope) {
+  const value = scope && typeof scope === 'object' ? scope : {}
+  const hints = []
+  for (const key of ['paths', 'tags']) for (const entry of Array.isArray(value[key]) ? value[key] : []) if (typeof entry === 'string' && entry) hints.push(entry)
+  for (const entry of Array.isArray(value.authorizationClasses) ? value.authorizationClasses : []) if (typeof entry === 'string' && entry) hints.push(entry)
+  return hints
+}
+
+function reviewedChangeWording(change, principles, current) {
+  const own = principles.find(item => item?.principleId === change?.principleId)
+  const published = current.find(item => item?.principleId === change?.principleId)
+  return [change?.text, own?.text, published?.text].find(value => typeof value === 'string' && value.trim()) ?? ''
+}
+
+function publicLeakProblems(text, label, extra = {}) {
+  const problems = []
+  const body = String(text ?? '')
+  if (body.includes('inputFrozen')) problems.push(`${label} shows the raw frozen input`)
+  if (PUBLIC_RECORD_ID.test(body)) problems.push(`${label} shows a source record id`)
+  if (body.includes('/Users/') || body.includes('/home/') || body.includes('/private/') || body.includes('file:')) problems.push(`${label} shows an absolute path`)
+  if (body.includes('{') && body.includes('}') && body.includes('":')) problems.push(`${label} shows raw JSON`)
+  for (const path of extra.workspacePaths ?? []) if (path && body.includes(String(path))) problems.push(`${label} shows a workspace path: ${path}`)
+  for (const id of extra.foreignRecordIds ?? []) if (id && body.includes(String(id))) problems.push(`${label} shows a foreign record id: ${id}`)
+  return problems
+}
+
+/**
+ * The public candidate review must render the reviewed wording itself, in
+ * ordinary language, with the scope hint it really carries — never an
+ * operation/id pair, the frozen input, a source record id, an absolute path or
+ * raw JSON. Wording comes from the candidate RPC: `changes[].text`, else the
+ * candidate principle's own text (narrow), else the published principle a
+ * retire removes. A rendered id can never stand in for the reviewed text.
+ */
+export function publicCandidateWordingProblems(audit = {}) {
+  const problems = []
+  const rpc = audit.rpc ?? {}
+  const dom = audit.dom ?? {}
+  const changes = Array.isArray(rpc.changes) ? rpc.changes : []
+  const principles = Array.isArray(rpc.principles) ? rpc.principles : []
+  const current = Array.isArray(rpc.current) ? rpc.current : []
+  const rendered = Array.isArray(dom.changes) ? dom.changes : []
+  if (dom.present !== true) problems.push('no public candidate was rendered for the wording review')
+  if (changes.length === 0) problems.push('the public candidate RPC carried no reviewed change')
+  if (Array.isArray(audit.expectedOps) && audit.expectedOps.length) {
+    const ops = changes.map(change => String(change?.op ?? ''))
+    for (const op of audit.expectedOps) if (!ops.includes(op)) problems.push(`the reviewed candidate carries no ${op} operation`)
+    for (const op of ops) if (!audit.expectedOps.includes(op)) problems.push(`the reviewed candidate carries an unexpected ${op} operation`)
+  }
+  if (changes.length !== rendered.length) problems.push(`the rendered candidate lists ${rendered.length} changes instead of the reviewed ${changes.length}`)
+  for (let index = 0; index < Math.min(changes.length, rendered.length); index += 1) {
+    const change = changes[index] ?? {}
+    const row = rendered[index] ?? {}
+    const label = readableText(row.label)
+    const wording = reviewedChangeWording(change, principles, current)
+    if (String(row.op ?? '') !== String(change.op ?? '')) problems.push(`change ${index + 1} renders operation ${shortenedText(row.op) || '—'} instead of ${shortenedText(change.op) || '—'}`)
+    if (!wording) problems.push(`change ${index + 1} (${shortenedText(change.op)}) carries no readable wording in the candidate RPC`)
+    else if (readableText(row.text) !== readableText(wording)) problems.push(`change ${index + 1} (${shortenedText(change.op)}) renders ${JSON.stringify(shortenedText(row.text))} instead of the reviewed wording ${JSON.stringify(shortenedText(wording))}`)
+    if (!label) problems.push(`change ${index + 1} renders no operation label`)
+    else {
+      if (!ordinaryOperationLabel(change.op, label)) problems.push(`change ${index + 1} is not labelled in ordinary language: ${JSON.stringify(shortenedText(label))}`)
+      if (change.principleId && !label.includes(change.principleId)) problems.push(`change ${index + 1} does not identify the reviewed principle ${change.principleId}`)
+    }
+    const hints = scopeHints(change.scope ?? principles.find(item => item?.principleId === change.principleId)?.scope)
+    const renderedScope = readableText(row.scope)
+    for (const hint of hints) {
+      if (unsafePublicHint(hint)) {
+        if (renderedScope.includes(hint)) problems.push(`change ${index + 1} renders a scope hint that is a path or a record id`)
+        continue
+      }
+      if (!renderedScope) problems.push(`change ${index + 1} omits the scope hint ${JSON.stringify(hint)} it really carries`)
+      else if (!renderedScope.includes(hint)) problems.push(`change ${index + 1} omits the scope hint ${JSON.stringify(hint)}`)
+    }
+    if (hints.every(unsafePublicHint) && renderedScope) problems.push(`change ${index + 1} renders a scope hint the reviewed change does not carry`)
+  }
+  if (changes.length === 0 && rendered.length > 0) problems.push('the rendered candidate lists changes the candidate RPC never reviewed')
+  const frozen = readableText(dom.frozenInput)
+  if (!frozen) problems.push('the candidate review renders no frozen-input summary')
+  else if (frozen.includes('{') || frozen.includes('inputFrozen')) problems.push('the frozen-input summary shows raw input instead of counts')
+  if (!/工作区|workspace/i.test(frozen) || !/来源|source/i.test(frozen)) problems.push('the frozen-input summary does not state its workspace and source counts')
+  problems.push(...publicLeakProblems(dom.text, 'the candidate body', audit))
+  for (const alias of audit.aliases ?? []) if (!/^origin_[0-9a-f]{6,}$/.test(String(alias))) problems.push(`the candidate body shows a non-opaque source label: ${alias}`)
+  return problems
+}
+
+/**
+ * After explicit adoption the public zone must render the published principles
+ * read-only, with the wording the agent/refresh response reports, and with no
+ * publish/reject/rollback control, source alias, record id or path of its own.
+ */
+export function publicPublishedPrinciplesProblems(audit = {}) {
+  const problems = []
+  const expected = (Array.isArray(audit.expected) ? audit.expected : []).filter(item => item && typeof item.principleId === 'string')
+  const dom = audit.dom ?? {}
+  const section = dom.published ?? {}
+  if (expected.length === 0) problems.push('the published public version carries no reviewed wording to render')
+  if (section.present !== true) return [...problems, 'the public zone renders no published-principles section']
+  const rows = Array.isArray(section.principles) ? section.principles : []
+  if (rows.length !== expected.length) problems.push(`the published section lists ${rows.length} principles instead of the published ${expected.length}`)
+  for (const principle of expected) {
+    const row = rows.find(item => item?.principleId === principle.principleId)
+    if (!row) { problems.push(`the published section does not render principle ${principle.principleId}`); continue }
+    const wording = readableText(principle.text)
+    if (!wording) problems.push(`the published principle ${principle.principleId} carries no reviewed wording`)
+    else if (readableText(row.text) !== wording) problems.push(`published principle ${principle.principleId} renders ${JSON.stringify(shortenedText(row.text))} instead of its reviewed wording ${JSON.stringify(shortenedText(wording))}`)
+    const hints = scopeHints(principle.scope)
+    const renderedScope = readableText(row.scope)
+    for (const hint of hints) {
+      if (unsafePublicHint(hint)) {
+        if (renderedScope.includes(hint)) problems.push(`published principle ${principle.principleId} renders a scope hint that is a path or a record id`)
+        continue
+      }
+      if (!renderedScope.includes(hint)) problems.push(`published principle ${principle.principleId} omits the scope hint ${JSON.stringify(hint)}`)
+    }
+    if (hints.every(unsafePublicHint) && renderedScope) problems.push(`published principle ${principle.principleId} renders a scope hint the published version does not carry`)
+  }
+  for (const row of rows) if (!expected.some(item => item.principleId === row?.principleId)) problems.push(`the published section renders ${shortenedText(row?.principleId)} which the current published version does not carry`)
+  const controls = Array.isArray(section.controls) ? section.controls : []
+  if (controls.length) problems.push(`the published principles section is not read-only: ${shortenedText(controls.map(item => `${item?.tag ?? 'control'}${item?.action ? `[${item.action}]` : ''}`).join(', '))}`)
+  if (!Number.isInteger(Number(dom.current?.version)) || Number(dom.current?.version) < 1) problems.push('the public zone no longer renders its published version')
+  problems.push(...publicLeakProblems(section.text, 'the published section', audit))
+  if (PUBLIC_ALIAS.test(String(section.text ?? ''))) problems.push('the published section shows a source alias')
+  if (!readableText(section.text)) problems.push('the published-principles section rendered nothing')
+  return problems
+}
