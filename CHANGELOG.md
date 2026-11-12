@@ -25,6 +25,7 @@
 
 ### Fixed
 
+- **DSH 0.2.2 技能收编后 Capabilities 失效**：宿主把四项 Creator 技能（`agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`）替换为 `dsh-doc` 后，工作区默认值与预设里记录的旧 identity 让每个 Weir 会话的技能 provider 整批 fail closed（Badge 显示「技能 ? · MCP ?」、回执 `selection-unavailable`、Apply 逐项报这四个名称无法解析）。工作区默认读取现在按完整库存核对 identity 条目，逐项报告并排除宿主已移除的条目（默认记录逐字不改写，库存不完整时不排除）；Apply 把「宿主 bundle 技能根下、当前宿主已不再提供」的 identity 分类为 `skipped`（`no longer provided by this host version`），其余可解析条目照常提交；`weir-creative` 的提示词改为加载 `dsh-doc` 及其按需引用。详见 [会话能力管理器](docs/features/session-capability-manager.md) 与 [预设打包](docs/features/preset-packaging.md)。
 - **Decision 边界与恢复加固**：跨 root/workspace 动作和纠正目标均校验归属并写审计；窄 scope 不可授权更宽请求，证据展开到真实用户答案，文件证据当次只读复核，冲突任一侧被引用都阻止回答。用户裁决与证据原子写入，高版本记录明确拒绝，并发首次送达保持幂等，意外失败进入可恢复待办，耗尽后的显式恢复每次只追加一个 Attempt。
 - **Decision 公共记忆只展示当前生效原则**：公共记忆里已发布原则的只读列表与计数现在只包含 `active` 原则；被 retire 的原则仍保留在 Snapshot 详情与高级诊断中，可审计且不冒充当前指导。
 - **Decision Agent 模型采样参数兼容**：评估器不再固定发送 `temperature: 0`，所有模型路由统一沿用 DSH 与供应商默认值；修复 Kimi K3 路由因固定温度约束反复 `INVALID_REQUEST` 的问题。严格 JSON、证据资格、G1–G7、权限边界与失败分类保持不变。
