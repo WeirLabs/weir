@@ -22,6 +22,15 @@ export function profileScopeCovers(profileScope, requestedScope) {
   return hintsCover(profileScope, requestedScope)
 }
 
+/**
+ * Hints-only coverage, shared by private evidence scopes and workspace-agnostic
+ * public principle scopes. The covering scope must be at least as broad.
+ * @param {any} evidenceScope @param {any} requestedScope
+ */
+export function scopeHintsCover(evidenceScope, requestedScope) {
+  return hintsCover(evidenceScope, requestedScope)
+}
+
 /** @param {any} evidenceScope @param {any} requestedScope */
 function hintsCover(evidenceScope, requestedScope) {
   const paths = evidenceScope.paths ?? []
