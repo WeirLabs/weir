@@ -98,13 +98,17 @@ Weir 会话只显示**已启用**的技能与 MCP server，由右侧栏 **Capabi
 1. 点击**添加插件**按钮；
 2. 输入包名 `weir-harness@2.1.5`，点击**安装**。
 
-安装器会从 npm registry 拉取，无需克隆仓库。习惯终端的话也可以直接执行 `dsh plugin --profile <profile> add weir-harness@2.1.5`；开发者克隆本仓库后对 `plugins/weir-harness` 做 link 安装（随源码更新，改动经「禁用 → 启用」重应用）。
+安装器会从 npm registry 拉取，无需克隆仓库。习惯终端的话也可以直接执行 `dsh plugin --profile <profile> add weir-harness@2.1.5`；升级时安装 `weir-harness@latest`，profile 只会保留一个已安装版本。
 
 安装成功后：
 
 1. 打开 Web GUI 预设选择器，应能看到 **Weir**；用它新建会话即完成启用。
 2. 开发或调试 DeepSeek Harness 本身时选 **Weir 创造模式**，额外带上运行时检查工具与开发技能。→ [预设打包](docs/features/preset-packaging.md)
 3. 其他预设不受影响。Weir 只在自己的会话内生效，唯一例外是系统通知（作用于 profile 层）。
+
+### 开发者：link 安装
+
+克隆本仓库后，对 `plugins/weir-harness` 做 link 安装（`dsh plugin --profile <profile> add <repo>/plugins/weir-harness`），改动随源码更新；重应用走「禁用 → 启用」，宿主层行可能要求重启 App。开发、测试与提交纪律见 [development.md](docs/contributing/development.md)。
 
 ## 快速配置
 
