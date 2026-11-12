@@ -16,6 +16,7 @@
 - **Decision Agent P3 手动语义整合与 Snapshot 生命周期**：用户可在 Agent 档案中手动冻结同命名空间记录并启动 Learning Run，审阅严格的候选操作、原则 diff、来源和结构重放，再显式发布、拒绝或回滚。已发布 Snapshot 以非权威 L2 进入后续 Attempt，全部来源仍须展开为合格 L5，不能独立回答或授权。新增 L3→L2→L5 裁剪、实际 pins/manifest/hash、六个授权 RPC、跨根 Case/correction 只读来源审阅及当前版本长历史可回滚；复用 SQLite schema v1，无自动整合/发布、自动画像学习、Auto、跨工作区共享或导出。
 - **Decision Agent P4 Auto Router 与路由复盘**：根会话选择器新增持久 `Auto`，保留 `Off` 与指定 Agent；仅在用户配置的授权类白名单内，经有界、无工具且不读取领域记忆的 Router 选择当前工作区助手，随后仍完整执行 G1–G7 与原生权限路径。新增默认关闭的 Shadow 非权威观察、原子路由/改派、并发重放合并、无归属用户裁决、高级只读复盘及三个保守设置；无匹配、歧义和失败均失败关闭。自动晋升/学习、跨工作区共享与导出仍未启用。
 - **Decision Agent 跨工作区共享身份与公共记忆（P5，schema v2）**：助手档案改为 DSH profile 全局共享——同一 profile 的所有工作区看到同一助手身份，创建/编辑它的工作区不再决定其可见性与选择资格；名称仍按 profile 大小写不敏感唯一，旧库重名保留为不同身份而非自动合并。每个助手新增独立的公共记忆区：用户打开或刷新时，仅当存在晚于上次冻结输入的跨工作区合格来源，才自动提炼一个候选；首次提炼前必须确认披露（会把各工作区合格经验的有界、脱敏摘要发送给当前模型），候选只有在用户显式采用后才成为当前公共版本。公共原则以非权威 L2 进入后续 Attempt，不能充当 Evidence Ref 或独立满足证据/权限门槛，自动回答的决定性主张仍必须引用当前工作区合格 L5；Case、Evidence、Feedback、纠正、L3 与私有 Snapshot 继续按真实 workspace 严格隔离。存储升级到 schema v2 并保留一致性备份；从该备份恢复会丢失迁移成功后的全部写入（不止公共数据），旧 Case/Attempt/私有 Snapshot 与旧 Attempt 的 `memorySnapshotId` pin 保持只读不变。无自动发布、自动晋升/学习、导出、跨 profile 共享。详见 [Decision Agent](docs/features/decision-agent.md)。
+- **Decision 数据导出**：判断记录的既有高级区新增一次性显式“导出数据”动作，生成版本化 JSON 文件（`kind:weir-decision-export`、计数、SHA-256 校验和）。导出仅限调用方根会话的当前工作区私有记录（Case/Attempt/Evidence/Feedback/纠正/RouteDecision、私有 LearningRun/MemorySnapshot）与当前已发布公共原则的文本/scope；其他工作区原始记录、绝对工作区路径、真实 `workspaceKey` 与原始模型请求不进入文件。文件写入决策存储目录下的 `exports/`（目录 0700、文件 0600、临时文件 + 原子重命名、32 MiB 上限），失败不留半成品；每次成功只写一条含计数/哈希/文件名的审计。不提供导入或恢复，也不改变任何记录或授权。
 
 ### Changed
 
@@ -25,6 +26,7 @@
 ### Fixed
 
 - **Decision 边界与恢复加固**：跨 root/workspace 动作和纠正目标均校验归属并写审计；窄 scope 不可授权更宽请求，证据展开到真实用户答案，文件证据当次只读复核，冲突任一侧被引用都阻止回答。用户裁决与证据原子写入，高版本记录明确拒绝，并发首次送达保持幂等，意外失败进入可恢复待办，耗尽后的显式恢复每次只追加一个 Attempt。
+- **Decision 公共记忆只展示当前生效原则**：公共记忆里已发布原则的只读列表与计数现在只包含 `active` 原则；被 retire 的原则仍保留在 Snapshot 详情与高级诊断中，可审计且不冒充当前指导。
 - **Decision Agent 模型采样参数兼容**：评估器不再固定发送 `temperature: 0`，所有模型路由统一沿用 DSH 与供应商默认值；修复 Kimi K3 路由因固定温度约束反复 `INVALID_REQUEST` 的问题。严格 JSON、证据资格、G1–G7、权限边界与失败分类保持不变。
 - **Decision L2 精确预算边界**：L2 被裁空后，后续 L5 预算判断统一按最终发送的空层长度计量，避免剩余 Pack 恰好可容纳时多裁 excerpt；真实集成预算构造固定覆盖 L5 excerpt 与整条证据裁剪，既有 L3→L2→L5 顺序、Snapshot pin、证据资格和 manifest/hash 语义不变。
 - **Decision 发布后的焦点与位置保持**：确认采用/发布、放弃或恢复后，焦点返回不再把决策页面滚到顶部，页面按内容收缩后的真实上限保留原位置；同一助手的权威刷新期间详情保持挂载，不再出现整页塌到视口的一帧。既有焦点目标、键盘/读屏语义、权限与不可变历史不变。
