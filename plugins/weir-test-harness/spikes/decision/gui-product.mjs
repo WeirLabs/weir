@@ -2245,7 +2245,6 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
       publicPin: pin,
       publicMapping: readMapping(publicSection),
       publicPrincipleIds: [...(publicSection?.querySelectorAll('[data-partition="public"] li code')??[])].map(el=>el.textContent),
-      guidance: detail.querySelector('[data-memory-zone="public"] [data-public-guidance-only]')?.textContent??'',
       summary: detail.querySelector('[data-current-evidence]')?.innerText??'',
       text: detail.innerText,
     }

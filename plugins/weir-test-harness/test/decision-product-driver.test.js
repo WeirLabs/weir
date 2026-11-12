@@ -1568,7 +1568,7 @@ test('record detail guard requires both partitions and the real public pin', () 
     publicPin: { snapshotId: 'ms_public_v1', snapshotRevision: 2, snapshotHash: 'a'.repeat(64) },
     publicMapping: [{ principleId: 'pr_public_1', evidenceIds: [] }],
     publicPrincipleIds: ['pr_public_1'],
-    guidance: '公共记忆只是经审阅的指导，不是判断依据：自动回答仍需要当前工作区的依据。',
+    summary: '本次处理的判断依据\n当前工作区经验: 本次处理未使用经审阅原则。\n公共记忆: 本次处理包含经审阅的公共指导 (1)',
   }
   const expected = { snapshotId: 'ms_public_v1', revision: 2, principleId: 'pr_public_1', workspacePaths: ['/repo/cross-w4'], foreignRecordIds: ['dc_w1'] }
   assert.deepEqual(publicRecordDetailProblems(capture, expected), [])
@@ -1583,7 +1583,7 @@ test('record detail guard requires both partitions and the real public pin', () 
   assert.ok(publicRecordDetailProblems({ ...capture, publicPrincipleIds: ['pr_other'] }, expected).some(problem => /does not list the published principle/.test(problem)))
   assert.ok(publicRecordDetailProblems({ ...capture, publicMapping: [{ principleId: 'pr_public_1', evidenceIds: ['ev_1'] }] }, expected).some(problem => /maps evidence ids/.test(problem)))
   assert.ok(publicRecordDetailProblems({ ...capture, publicMapping: [] }, expected).some(problem => /does not map every listed principle/.test(problem)))
-  assert.ok(publicRecordDetailProblems({ ...capture, guidance: '公共记忆' }, expected).some(problem => /not evidence/.test(problem)))
+  assert.ok(publicRecordDetailProblems({ ...capture, summary: '本次处理的判断依据' }, expected).some(problem => /included as guidance/.test(problem)))
   assert.ok(publicRecordDetailProblems({ ...capture, publicText: `${capture.publicText} /repo/cross-w4` }, expected).some(problem => /workspace path/.test(problem)))
   assert.ok(publicRecordDetailProblems({ ...capture, publicText: `${capture.publicText} dc_w1` }, expected).some(problem => /foreign record id/.test(problem)))
 })

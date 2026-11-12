@@ -855,7 +855,9 @@ export function publicRecordDetailProblems(capture = {}, expected = {}) {
   const mapping = Array.isArray(capture.publicMapping) ? capture.publicMapping : []
   if (mapping.length !== publicPrincipleIds.length) problems.push('the public partition does not map every listed principle')
   for (const item of mapping) if ((item?.evidenceIds ?? []).length > 0) problems.push(`the public partition maps evidence ids for ${item?.principleId ?? '—'}`)
-  if (!/不是判断依据|not evidence/i.test(String(capture.guidance ?? ''))) problems.push('the public partition must restate that public memory is not evidence')
+  // The record view restates the same contract in its memory summary: the public
+  // partition was included as reviewed guidance, never as a judgment basis.
+  if (!/公共记忆[^\n]*(指导|guidance)|Public memory[^\n]*(guidance)/i.test(String(capture.summary ?? ''))) problems.push('the record detail must show the public partition was included as guidance')
   const publicText = String(capture.publicText ?? '')
   for (const path of expected.workspacePaths ?? []) if (path && publicText.includes(String(path))) problems.push(`the public partition shows a workspace path: ${path}`)
   for (const id of expected.foreignRecordIds ?? []) if (id && publicText.includes(String(id))) problems.push(`the public partition shows a foreign record id: ${id}`)
