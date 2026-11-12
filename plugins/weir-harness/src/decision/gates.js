@@ -1,6 +1,6 @@
 // Structural G1–G7 gates. No confidence scores or threshold-based admission.
 import { canonicalJson } from './contracts.js'
-import { scopeCovers } from './store/evidence.js'
+import { scopeCovers, profileScopeCovers } from './scope.js'
 
 /**
  * @param {{claims?:any[],answers?:any[],questions?:any[],evidence?:any[],packEvidenceIds?:string[],profile:any,workspaceKey:string,scope:object,authorizationClass?:string,intentKind?:string,attemptStartedAt:number,attemptEndedAt?:number,recheckEvidence?:(evidenceId:string)=>any,conflictPairs?:[string,string][],currentObservationHashes?:Record<string,string>}} input
@@ -25,9 +25,11 @@ export function evaluateGates(input) {
   })
 
   // G2: Agent authority and evidence scope must cover the exact request workspace/scope.
+  // The Agent identity is profile-global: only its authorization classes and its
+  // optional paths/tags hints participate here, never a workspace membership.
   const authorizationClass = input.authorizationClass ?? 'A'
   const allowed = input.profile.scope?.authorizationClasses ?? []
-  if (!input.profile.scope?.workspaces?.includes(input.workspaceKey) || !allowed.includes(authorizationClass) || !scopeCovers(input.profile.scope, input.scope, input.workspaceKey)) {
+  if (!allowed.includes(authorizationClass) || !profileScopeCovers(input.profile.scope, input.scope)) {
     gap(gaps, 'G2', 'OUT_OF_SCOPE', { claim: 'profile', scope: scopeText, evidenceId: 'none' }, `Agent profile does not cover ${authorizationClass} request scope ${scopeText}`)
   }
   for (const item of evidence) {

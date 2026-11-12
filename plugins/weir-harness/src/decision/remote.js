@@ -1,4 +1,5 @@
-// JSON-only remote face. Every method takes one bare args object; no agent lookup.
+// JSON-only remote face. Every method takes one bare args object; no agent lookup
+// and no caller-supplied workspace or Agent ownership override.
 export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
 export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
@@ -21,9 +22,11 @@ export function createDecisionRemoteService(dependencies) {
       let value
       const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
-      if (method === 'setSelector') value = await broker.setSelector(context.rootSessionId, args.mode, args.agentId, context.workspaceKey)
-      else if (method === 'profileSetState') value = await broker.profileSetState(args.agentId, args.state, context.workspaceKey)
-      else if (method === 'profileUpsert') value = await broker.profileUpsert({ ...args, workspaceKey: context.workspaceKey })
+      // Identity calls take no workspace: the caller cannot name one, and the
+      // profile-global identity must not depend on where the call came from.
+      if (method === 'setSelector') value = await broker.setSelector(context.rootSessionId, args.mode, args.agentId)
+      else if (method === 'profileSetState') value = await broker.profileSetState(args.agentId, args.state)
+      else if (method === 'profileUpsert') value = await broker.profileUpsert(args)
       else if (method === 'routingReview') value = await broker.routingReview({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (method === 'waitForToolCall') value = await broker[method](args, signal)

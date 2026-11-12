@@ -172,16 +172,16 @@ export class DecisionBroker {
     return this.profiles.selector(rootSessionId)
   }
 
-  async setSelector(rootSessionId, mode, agentId, workspaceKey) {
+  /**
+   * A selector is root-session state. It never carries a workspace: the same
+   * assistant is selectable from every workspace in the profile.
+   */
+  async setSelector(rootSessionId, mode, agentId) {
     if (mode === 'off' && !this.store && this.config().decisionAgentsEnabled !== true) {
       this.audit('selector', { rootSessionId, mode: 'off' })
       return { mode: 'off' }
     }
     await this.ensureStore()
-    if (workspaceKey && mode === 'agent') {
-      const profile = this.profiles.getProfile(agentId)
-      if (profile.workspaceKey !== workspaceKey) this.rejectBoundary({ agentId, rootSessionId })
-    }
     const value = await this.profiles.setSelector(rootSessionId, { mode, agentId })
     this.audit('selector', { rootSessionId, mode, ...(agentId ? { agentId } : {}) })
     return value
@@ -189,10 +189,6 @@ export class DecisionBroker {
 
   async profileUpsert(input) {
     await this.ensureStore()
-    if (input.agentId && input.workspaceKey) {
-      const existing = this.profiles.getProfile(input.agentId)
-      if (existing.workspaceKey !== input.workspaceKey) this.rejectBoundary({ agentId: input.agentId, rootSessionId: input.rootSessionId })
-    }
     const profile = input.agentId
       ? await this.profiles.updateProfile(input.agentId, input)
       : await this.profiles.createProfile(input)
@@ -200,10 +196,8 @@ export class DecisionBroker {
     return profile
   }
 
-  async profileSetState(agentId, state, workspaceKey) {
+  async profileSetState(agentId, state) {
     await this.ensureStore()
-    const existing = this.profiles.getProfile(agentId)
-    if (workspaceKey && existing.workspaceKey !== workspaceKey) this.rejectBoundary({ agentId })
     const profile = await this.profiles.setProfileState(agentId, state)
     this.audit('agent-profile', { agentId, state, revision: profile.revision, action: 'state' })
     return profile
@@ -238,7 +232,7 @@ export class DecisionBroker {
     if (!automatic) await this.ensureStore()
     let profile
     if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Explicit failure / persisted no_route below. */ }
-    if (explicit && (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey)) {
+    if (explicit && profile?.state !== 'enabled') {
       this.rejectBoundary({ agentId: selected, rootSessionId: origin.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
     }
     const openAndConsult = async flightSignal => {
@@ -253,7 +247,7 @@ export class DecisionBroker {
         if (automatic) return this.consultResult(current)
         if (current.state === 'awaiting_revision' && consultFingerprint(current.request, current.scope) !== consultFingerprint(request, scope)) {
           const revisionProfile = this.profiles.getProfile(selected)
-          if (revisionProfile.state !== 'enabled' || revisionProfile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
+          if (revisionProfile.state !== 'enabled') this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable` })
           if (selected !== current.agentId) await this.cases.recordRoute({ caseId: current.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: explicit ? 'Explicit agent_id for a revised consultation' : 'Pinned by root session selector for a revised consultation' })
           const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'evaluating', agentId: selected, request, scope })
           const revised = await this.evaluateCase(evaluating, agent, flightSignal)
@@ -265,7 +259,7 @@ export class DecisionBroker {
       try {
         await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: profile?.state === 'enabled' }], chosen: profile?.state === 'enabled' ? selected : undefined, reason: explicit ? 'Explicit agent_id for one consultation' : 'Pinned by root session selector' })
         if (explicit) this.audit('case-open', { caseId: opened.case.caseId, entry: 'consult', agentId: selected, explicit: true })
-        if (profile?.state !== 'enabled' || profile.workspaceKey !== origin.workspaceKey) {
+        if (profile?.state !== 'enabled') {
           const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable'] } })
           return this.consultResult(waiting)
         }
@@ -311,8 +305,8 @@ export class DecisionBroker {
       const selected = current.agentId
       if (typeof selected !== 'string' || !selected) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Auto Case requires explicit reassignment')
       const profile = this.profiles.getProfile(selected)
-      if (profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) {
-        this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable for this workspace` })
+      if (profile.state !== 'enabled') {
+        this.rejectBoundary({ caseId: current.caseId, agentId: selected, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: `Decision Agent ${selected} is unavailable` })
       }
       const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'evaluating', agentId: selected, request, scope })
       const revised = await this.evaluateCase(evaluating, agent, signal, { heldSlot })
@@ -370,7 +364,7 @@ export class DecisionBroker {
     const selected = selector.agentId
     let profile
     if (!automatic) try { profile = this.profiles.getProfile(selected) } catch { /* Persist no_route below. */ }
-    const usable = profile?.state === 'enabled' && profile.workspaceKey === origin.workspaceKey
+    const usable = profile?.state === 'enabled'
     const openAndHook = async flightSignal => {
       if (automatic) await this.ensureStore()
       const opened = await this.cases.createCase({
@@ -467,7 +461,7 @@ export class DecisionBroker {
     }
     try {
       const pinned = this.profiles.getProfile(current.agentId)
-      if (pinned.state !== 'enabled' || pinned.workspaceKey !== current.workspaceKey) return
+      if (pinned.state !== 'enabled') return
       const classified = await classifyAutoRequest({ request, ...sidecar })
       let route
       if (classified.kind === 'failed') {
@@ -475,9 +469,9 @@ export class DecisionBroker {
       } else if (classified.kind === 'authority') {
         route = { kind: 'none', candidates: [], reason: 'admission:authority' }
       } else {
-        const profiles = this.profiles.listProfiles(origin.workspaceKey)
+        const profiles = this.profiles.listProfiles()
         route = await routeAuto({
-          request: classified.request, scope, workspaceKey: origin.workspaceKey, profiles, ...sidecar,
+          request: classified.request, scope, profiles, ...sidecar,
         })
       }
       await this.cases.recordRoute({
@@ -523,9 +517,9 @@ export class DecisionBroker {
     }
     if (!autoAdmission(normalized, allowedClasses).ok) return authority(normalized)
 
-    const profiles = this.profiles.listProfiles(origin.workspaceKey)
+    const profiles = this.profiles.listProfiles()
     const route = await routeAuto({
-      request: normalized, scope, workspaceKey: origin.workspaceKey, profiles, ...sidecar,
+      request: normalized, scope, profiles, ...sidecar,
     })
     return this.commitAutoRoute({
       current, request: normalized, scope, route,
@@ -616,7 +610,7 @@ export class DecisionBroker {
       const profile = this.profiles.getProfile(current.agentId)
       const configuredChains = this.config().decisionAgentChains
       const modelRoute = await resolveDecisionModelRoute({ llm: this.ctx.llm, chain: configuredChains?.[profile.agentId] ?? profile.modelRoute.chain, sessionRoute: sessionModelRoute(agent) })
-      await this.ensureProfileEvidence(profile)
+      await this.ensureProfileEvidence(profile, current.workspaceKey)
       const attemptStartedAt = this.now()
       await this.refreshEvidenceHints(current, signal)
       const retrieval = this.retriever.retrieve({ agentId: profile.agentId, workspaceKey: current.workspaceKey, scope: current.scope, attemptStartedAt, excludeCaseId: current.caseId })
@@ -722,10 +716,28 @@ export class DecisionBroker {
     }
   }
 
-  async ensureProfileEvidence(profile) {
-    const row = this.store.db.prepare("SELECT evidence_id FROM evidence WHERE agent_id=? AND source='user_profile' AND json_extract(locator_json,'$.revision')=? AND status='active'").get(profile.agentId, profile.userDescription.revision)
+  /**
+   * The profile identity is shared, but an Evidence Ref is still workspace-bound:
+   * each workspace gets its own `user_profile` ref for the current description
+   * revision instead of one row that would have to claim every workspace.
+   */
+  async ensureProfileEvidence(profile, workspaceKey) {
+    const scope = { workspaces: [workspaceKey], ...(profile.scope.paths ? { paths: [...profile.scope.paths] } : {}), ...(profile.scope.tags ? { tags: [...profile.scope.tags] } : {}) }
+    const row = this.store.db.prepare(`SELECT evidence_id FROM evidence
+      WHERE agent_id=? AND source='user_profile' AND json_extract(locator_json,'$.revision')=?
+        AND json_extract(scope_json,'$.workspaces[0]')=? AND status='active'`)
+      .get(profile.agentId, profile.userDescription.revision, workspaceKey)
     if (row) return this.evidence.get(row.evidence_id)
-    return this.evidence.add({ agentId: profile.agentId, source: 'user_profile', locator: { kind: 'profile', descriptionKind: 'user', revision: profile.userDescription.revision }, scope: profile.scope, status: 'active' })
+    return this.evidence.add({ agentId: profile.agentId, source: 'user_profile', locator: { kind: 'profile', descriptionKind: 'user', revision: profile.userDescription.revision }, scope, status: 'active' })
+  }
+
+  /**
+   * Private zones stay readable only from their own workspace. The public zone is
+   * profile-global; Phase A has no public writer yet, so it is never readable here.
+   * @param {{zone:string, namespaceWorkspaceKey:string|null}} record @param {string} workspaceKey
+   */
+  readableNamespace(record, workspaceKey) {
+    return record.zone === 'workspace' && record.namespaceWorkspaceKey === workspaceKey
   }
 
   rejectBoundary({ caseId, agentId, rootSessionId, code = 'OUT_OF_SCOPE', detail }) {
@@ -750,7 +762,7 @@ export class DecisionBroker {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be reassigned')
         if (this.hasAutoRoute(current)) this.assertAutoAttemptAuthority(current.request)
         const target = this.profiles.getProfile(input.agentId)
-        if (target.state !== 'enabled' || target.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: target.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: input.agentId })
+        if (target.state !== 'enabled') this.rejectBoundary({ caseId: current.caseId, agentId: target.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: input.agentId })
         const evaluating = await this.cases.transitionWithRoute({
           caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision,
           state: 'evaluating', agentId: target.agentId,
@@ -767,7 +779,7 @@ export class DecisionBroker {
         if (typeof current.agentId !== 'string' || !current.agentId) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Case requires reassignment before retry')
         if (this.hasAutoRoute(current)) this.assertAutoAttemptAuthority(current.request)
         const profile = this.profiles.getProfile(current.agentId)
-        if (profile.state !== 'enabled' || profile.workspaceKey !== current.workspaceKey) this.rejectBoundary({ caseId: current.caseId, agentId: current.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: current.agentId })
+        if (profile.state !== 'enabled') this.rejectBoundary({ caseId: current.caseId, agentId: current.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: current.agentId })
         const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })
         this.audit('outcome', { caseId: current.caseId, action: 'retry', attemptCount: current.attemptCount + 1 })
         return evaluating
@@ -858,7 +870,7 @@ export class DecisionBroker {
     return {
       status: this.status(),
       selector: this.store ? this.profiles.selector(context.rootSessionId) : { mode: 'off' },
-      agents: this.store && context.workspaceKey ? this.profiles.listProfiles(context.workspaceKey, { includeArchived: true }) : [],
+      agents: this.store ? this.profiles.listProfiles({ includeArchived: true }) : [],
       auto: { answerClasses, shadow: config.decisionAgentAutoShadow === true },
     }
   }
@@ -866,7 +878,7 @@ export class DecisionBroker {
   async agents(input) {
     if (!this.store) return []
     const context = await this.sessionContext(input.sessionId)
-    return this.profiles.listProfiles(context.workspaceKey, { includeArchived: true }).map(profile => {
+    return this.profiles.listProfiles({ includeArchived: true }).map(profile => {
       const currentSnapshot = this.learning.currentSnapshot(profile.agentId, context.workspaceKey)
       return {
         ...profile,
@@ -881,7 +893,6 @@ export class DecisionBroker {
     if (!this.store) return null
     const context = await this.sessionContext(input.sessionId)
     const profile = this.profiles.getProfile(input.agentId)
-    if (profile.workspaceKey !== context.workspaceKey) this.rejectBoundary({ agentId: input.agentId, rootSessionId: context.rootSessionId })
     const currentSnapshot = this.learning.currentSnapshot(profile.agentId, context.workspaceKey)
     const snapshotHistory = this.learning.listSnapshots(profile.agentId).slice(0, 20)
     if (currentSnapshot && !snapshotHistory.some(snapshot => snapshot.snapshotId === currentSnapshot.snapshotId)) snapshotHistory.push(currentSnapshot)
@@ -967,8 +978,9 @@ export class DecisionBroker {
     }
     const context = await this.sessionContext(input.sessionId)
     const profile = this.profiles.getProfile(input.agentId)
-    const workspaceMismatch = profile.workspaceKey !== context.workspaceKey
-      || (input.workspaceKey !== undefined && input.workspaceKey !== context.workspaceKey)
+    // A private run freezes exactly the caller's workspace: the shared identity
+    // does not widen which private records this run may read.
+    const workspaceMismatch = input.workspaceKey !== undefined && input.workspaceKey !== context.workspaceKey
     if (profile.state !== 'enabled' || workspaceMismatch) {
       this.rejectLearningBoundary('learning-run', {
         agentId: input.agentId, rootSessionId: context.rootSessionId,
@@ -1100,8 +1112,7 @@ export class DecisionBroker {
     await this.ensureStore()
     const context = await this.sessionContext(input.sessionId)
     const run = this.learning.getRunById(input.learningRunId)
-    const profile = this.profiles.getProfile(run.agentId)
-    if (profile.workspaceKey !== context.workspaceKey || (input.agentId && input.agentId !== run.agentId)) {
+    if (!this.readableNamespace(run, context.workspaceKey) || (input.agentId && input.agentId !== run.agentId)) {
       this.rejectLearningBoundary('learning-run', { learningRunId: run.learningRunId, agentId: run.agentId, rootSessionId: context.rootSessionId })
     }
     return {
@@ -1117,8 +1128,7 @@ export class DecisionBroker {
     await this.ensureStore()
     const context = await this.sessionContext(input.sessionId)
     const snapshot = this.learning.getSnapshotById(input.snapshotId)
-    const profile = this.profiles.getProfile(snapshot.agentId)
-    if (profile.workspaceKey !== context.workspaceKey || (input.agentId && input.agentId !== snapshot.agentId)) {
+    if (!this.readableNamespace(snapshot, context.workspaceKey) || (input.agentId && input.agentId !== snapshot.agentId)) {
       this.rejectLearningBoundary('snapshot', { snapshotId: snapshot.snapshotId, agentId: snapshot.agentId, rootSessionId: context.rootSessionId })
     }
     const run = this.learning.getRunById(snapshot.learningRunId)

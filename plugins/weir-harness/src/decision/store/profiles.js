@@ -1,11 +1,20 @@
 // Agent Profile lifecycle, user-owned description revisions, and root selectors.
+//
+// An Agent Profile is a profile-global Decision identity: no workspace owns,
+// hides, ranks or authorizes it. The workspace it was originally created in, if
+// any, survives only as an opaque legacy-origin alias for advanced provenance.
 import { randomUUID } from 'node:crypto'
 import { assertSupportedSchemaVersion, DecisionContractError } from '../contracts.js'
 
 /** @typedef {{ workspaces: string[], paths?: string[], tags?: string[], authorizationClasses?: ('A'|'B'|'C')[] }} CaseScope */
+/** @typedef {{ paths?: string[], tags?: string[], authorizationClasses?: ('A'|'B'|'C')[] }} ProfileScope */
 /** @typedef {{ provider: string, model: string, reasoningEffort?: string }} ModelRung */
 
-/** @param {unknown} workspaceKey @param {unknown} scope @returns {CaseScope} */
+/**
+ * Request/Case scope: always bound to exactly the current workspace. Raw records
+ * stay private to the workspace that produced them.
+ * @param {unknown} workspaceKey @param {unknown} scope @returns {CaseScope}
+ */
 export function parseScope(workspaceKey, scope) {
   if (typeof workspaceKey !== 'string' || workspaceKey.length === 0) throw new DecisionContractError('INVALID_WORKSPACE', 'workspaceKey is required')
   const value = scope === undefined ? { workspaces: [workspaceKey] } : scope
@@ -21,6 +30,32 @@ export function parseScope(workspaceKey, scope) {
       throw new DecisionContractError('INVALID_SCOPE', `scope.${key} must be a string array`)
     }
     if (Array.isArray(entries)) result[key] = [...entries]
+  }
+  const classes = input.authorizationClasses ?? ['A', 'B', 'C']
+  if (!Array.isArray(classes) || !classes.every(entry => ['A', 'B', 'C'].includes(entry))) {
+    throw new DecisionContractError('INVALID_AUTHORITY', 'authorizationClasses must contain only A/B/C')
+  }
+  result.authorizationClasses = [...new Set(classes)]
+  return result
+}
+
+/**
+ * Profile scope: optional paths/tags expertise hints plus global authorization
+ * classes. It deliberately has no workspace membership — an empty hint list means
+ * "no extra restriction", never "any workspace".
+ * @param {unknown} scope @returns {ProfileScope}
+ */
+export function parseProfileScope(scope) {
+  const value = scope === undefined ? {} : scope
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new DecisionContractError('INVALID_SCOPE', 'scope must be an object')
+  const input = /** @type {Record<string, unknown>} */ (value)
+  const result = /** @type {ProfileScope} */ ({})
+  for (const key of ['paths', 'tags']) {
+    const entries = input[key]
+    if (entries !== undefined && (!Array.isArray(entries) || !entries.every(entry => typeof entry === 'string'))) {
+      throw new DecisionContractError('INVALID_SCOPE', `scope.${key} must be a string array`)
+    }
+    if (Array.isArray(entries) && entries.length) result[key] = [...entries]
   }
   const classes = input.authorizationClasses ?? ['A', 'B', 'C']
   if (!Array.isArray(classes) || !classes.every(entry => ['A', 'B', 'C'].includes(entry))) {
@@ -49,26 +84,31 @@ export class DecisionProfiles {
     this.now = options.now ?? Date.now
   }
 
-  /** @param {{ workspaceKey: string, name: string, userDescription?: string, scope?: unknown, modelRoute?: { chain: unknown } }} input */
+  /**
+   * `workspaceKey` is accepted for compatibility with pre-v2 callers and never
+   * becomes part of the identity.
+   * @param {{ workspaceKey?: string, name: string, userDescription?: string, scope?: unknown, modelRoute?: { chain: unknown } }} input
+   */
   async createProfile(input) {
     const name = input.name?.trim()
     if (!name) throw new DecisionContractError('INVALID_PROFILE_NAME', 'name is required')
-    const scope = parseScope(input.workspaceKey, input.scope)
+    const scope = parseProfileScope(input.scope)
     const chain = parseChain(input.modelRoute?.chain)
     const now = this.now()
     const profile = {
-      schemaVersion: 1, agentId: `ag_${randomUUID()}`, workspaceKey: input.workspaceKey,
+      schemaVersion: 1, agentId: `ag_${randomUUID()}`,
       name, state: 'enabled', scope,
       userDescription: { revision: 1, text: input.userDescription ?? '' },
       generatedDescription: { revision: 0, text: '' }, modelRoute: { chain },
       revision: 1, createdAt: now, updatedAt: now,
     }
     await this.store.write(db => {
+      this.assertNameAvailable(db, name)
       db.prepare(`INSERT INTO agent_profiles(
-        agent_id,workspace_key,name,state,scope_json,user_desc_rev,generated_desc_rev,
+        agent_id,name,legacy_origin_alias,state,scope_json,user_desc_rev,generated_desc_rev,
         chain_json,revision,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
-        profile.agentId, profile.workspaceKey, profile.name, profile.state, JSON.stringify(scope),
+      ) VALUES(?,?,NULL,?,?,?,?,?,?,?,?)`).run(
+        profile.agentId, profile.name, profile.state, JSON.stringify(scope),
         1, 0, JSON.stringify(profile.modelRoute), 1, now, now,
       )
       db.prepare('INSERT INTO agent_profile_revisions(agent_id,kind,revision,text,created_at) VALUES(?,?,?,?,?)')
@@ -82,13 +122,14 @@ export class DecisionProfiles {
     const current = this.getProfile(agentId)
     const name = patch.name?.trim() ?? current.name
     if (!name) throw new DecisionContractError('INVALID_PROFILE_NAME', 'name is required')
-    const scope = patch.scope === undefined ? current.scope : parseScope(current.workspaceKey, patch.scope)
+    const scope = patch.scope === undefined ? current.scope : parseProfileScope(patch.scope)
     const chain = patch.modelRoute === undefined ? current.modelRoute.chain : parseChain(patch.modelRoute.chain)
     const description = patch.userDescription === undefined ? current.userDescription : {
       revision: current.userDescription.revision + 1, text: patch.userDescription,
     }
     const now = this.now()
     await this.store.write(db => {
+      if (name !== current.name) this.assertNameAvailable(db, name, agentId)
       const result = db.prepare(`UPDATE agent_profiles SET name=?,scope_json=?,chain_json=?,user_desc_rev=?,revision=revision+1,updated_at=? WHERE agent_id=?`)
         .run(name, JSON.stringify(scope), JSON.stringify({ chain }), description.revision, now, agentId)
       if (result.changes !== 1) throw new DecisionContractError('PROFILE_NOT_FOUND', agentId)
@@ -98,6 +139,17 @@ export class DecisionProfiles {
       }
     })
     return this.getProfile(agentId)
+  }
+
+  /**
+   * Name uniqueness is case-insensitive and profile-global: any workspace must be
+   * rejected when the same assistant name already exists.
+   * @param {import('node:sqlite').DatabaseSync} db @param {string} name @param {string} [agentId]
+   */
+  assertNameAvailable(db, name, agentId) {
+    const row = db.prepare('SELECT agent_id FROM agent_profiles WHERE name=? COLLATE NOCASE AND (? IS NULL OR agent_id<>?) LIMIT 1')
+      .get(name, agentId ?? null, agentId ?? null)
+    if (row) throw new DecisionContractError('PROFILE_NAME_TAKEN', name)
   }
 
   /** @param {string} agentId @param {'enabled'|'disabled'|'archived'} state */
@@ -118,9 +170,9 @@ export class DecisionProfiles {
     return profileOf(row, this.descriptionRevision(agentId, 'user', row.user_desc_rev))
   }
 
-  /** @param {string} workspaceKey @param {{includeArchived?: boolean}} [options] */
-  listProfiles(workspaceKey, options = {}) {
-    const rows = this.store.db.prepare(`SELECT * FROM agent_profiles WHERE workspace_key=? ${options.includeArchived ? '' : "AND state!='archived'"} ORDER BY name COLLATE NOCASE`).all(workspaceKey)
+  /** @param {{includeArchived?: boolean}} [options] */
+  listProfiles(options = {}) {
+    const rows = this.store.db.prepare(`SELECT * FROM agent_profiles WHERE 1=1 ${options.includeArchived ? '' : "AND state!='archived'"} ORDER BY name COLLATE NOCASE, agent_id`).all()
     return rows.map(row => profileOf(row, this.descriptionRevision(row.agent_id, 'user', row.user_desc_rev)))
   }
 
@@ -189,8 +241,9 @@ export class DecisionProfiles {
 function profileOf(row, description) {
   assertSupportedSchemaVersion(row.schema_version, 'AgentProfile')
   return {
-    schemaVersion: row.schema_version, agentId: row.agent_id, workspaceKey: row.workspace_key,
+    schemaVersion: row.schema_version, agentId: row.agent_id,
     name: row.name, state: row.state, scope: JSON.parse(row.scope_json),
+    ...(row.legacy_origin_alias ? { legacyOriginAlias: row.legacy_origin_alias } : {}),
     userDescription: { revision: row.user_desc_rev, text: description },
     generatedDescription: { revision: 0, text: '' }, modelRoute: JSON.parse(row.chain_json),
     revision: row.revision, createdAt: row.created_at, updatedAt: row.updated_at,

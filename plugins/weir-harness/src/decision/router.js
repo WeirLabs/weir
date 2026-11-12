@@ -3,7 +3,7 @@
 import {
   ROUTER_CLASSIFICATION_CONTRACT, ROUTER_CONTRACT,
 } from './contracts.js'
-import { scopeCovers } from './scope.js'
+import { profileScopeCovers } from './scope.js'
 import { resolveDecisionModelRoute, streamDecision } from './evaluator/sidecar.js'
 
 const CLASSES = ['A', 'B', 'C', 'D', 'E', 'F', 'unknown']
@@ -34,21 +34,26 @@ export function autoAdmission(request, allowedClasses) {
   return { ok: true, classes: [...new Set(supplied)] }
 }
 
-/** @param {{request:any,scope:any,workspaceKey:string,profiles:any[]}} input */
+/**
+ * Deterministic Auto prefilter over the whole profile: every enabled,
+ * non-archived assistant whose authorization classes and optional paths/tags
+ * hints admit the request. Workspace membership is not part of an identity, so
+ * it never filters this list.
+ * @param {{request:any,scope:any,profiles:any[]}} input
+ */
 export function planAutoRoute(input) {
   const admission = autoAdmission(input.request, ANSWER_CLASSES)
   const classes = admission.ok ? admission.classes : []
   const eligible = []
   const candidates = []
   const profiles = (Array.isArray(input.profiles) ? input.profiles : [])
-    .filter(profile => typeof profile?.agentId === 'string' && profile.agentId
-      && profile.workspaceKey === input.workspaceKey && profile.state !== 'archived')
+    .filter(profile => typeof profile?.agentId === 'string' && profile.agentId && profile.state !== 'archived')
     .sort((left, right) => left.agentId.localeCompare(right.agentId))
   for (const profile of profiles) {
     const enabled = profile.state === 'enabled'
     let rejectedBecause
     if (!enabled) rejectedBecause = 'disabled'
-    else if (!admission.ok || !scopeCovers(profile.scope, input.scope, input.workspaceKey)) rejectedBecause = 'scope'
+    else if (!admission.ok || !profileScopeCovers(profile.scope, input.scope)) rejectedBecause = 'scope'
     else if (!classes.every(value => profile.scope?.authorizationClasses?.includes(value))) rejectedBecause = 'authorization'
     candidates.push({ agentId: profile.agentId, enabled, ...(rejectedBecause ? { rejectedBecause } : {}) })
     if (!rejectedBecause) eligible.push(profile)
@@ -87,7 +92,7 @@ export async function classifyAutoRequest(input) {
   return { kind: 'classified', request: normalized }
 }
 
-/** @param {{request:any,scope:any,workspaceKey:string,profiles:any[],sessionRoute?:any,signal?:AbortSignal,llm:any,contextBudgetTokens:number,timeoutMs:number,maxOutputTokens:number}} input */
+/** @param {{request:any,scope:any,profiles:any[],sessionRoute?:any,signal?:AbortSignal,llm:any,contextBudgetTokens:number,timeoutMs:number,maxOutputTokens:number}} input */
 export async function routeAuto(input) {
   if (!autoAdmission(input.request, ANSWER_CLASSES).ok) {
     return { kind: 'none', candidates: [], reason: 'admission:authority' }
@@ -142,7 +147,6 @@ function projectQuestion(question, includeClass) {
 
 function projectScope(scope) {
   return {
-    workspaces: [...(scope?.workspaces ?? [])],
     ...(scope?.paths === undefined ? {} : { paths: [...scope.paths] }),
     ...(scope?.tags === undefined ? {} : { tags: [...scope.tags] }),
     authorizationClasses: [...(scope?.authorizationClasses ?? [])],
