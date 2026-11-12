@@ -2482,6 +2482,22 @@ describe('weir settings client half', () => {
     'decisionRoutingBaseline', 'decisionRoutingDiagnostic', 'decisionRoutingDirection', 'decisionRoutingDisagreement', 'decisionRoutingManualReassign',
     'decisionRoutingNoData', 'decisionRoutingOpenRecord', 'decisionRoutingReview', 'decisionRoutingShadowAmbiguous', 'decisionRoutingShadowFailure',
     'decisionRoutingShadowNone', 'decisionRoutingShown', 'decisionRoutingUncomparable',
+    // Public and private memory zones for shared assistants.
+    'decisionAgentsShared', 'decisionLayerSize', 'decisionNoPublicGuidance', 'decisionPartitionEmpty',
+    'decisionPartitionLegacy', 'decisionPartitionNoPrinciples', 'decisionPartitionPinnedNotUsed', 'decisionPartitionSources',
+    'decisionPartitionState', 'decisionPartitionUsed', 'decisionPrivateIsolation', 'decisionPublicApplyConfirmation',
+    'decisionPublicApplyTitle', 'decisionPublicCandidate', 'decisionPublicChanges', 'decisionPublicCurrentVersion',
+    'decisionPublicDiscardConfirmation', 'decisionPublicDisclosureAcknowledge', 'decisionPublicDisclosureBody', 'decisionPublicDisclosureTitle',
+    'decisionPublicFromOtherWorkspace', 'decisionPublicFromThisWorkspace', 'decisionPublicGuidanceOnly', 'decisionPublicGuidanceUsed',
+    'decisionPublicLegacy', 'decisionPublicMemory', 'decisionPublicNeedReview', 'decisionPublicNoChanges',
+    'decisionPublicNoCurrent', 'decisionPublicNoCurrentParent', 'decisionPublicParents', 'decisionPublicPinnedEmpty',
+    'decisionPublicPublish', 'decisionPublicReadFailed', 'decisionPublicRefresh', 'decisionPublicRefreshing',
+    'decisionPublicReplay', 'decisionPublicRetry', 'decisionPublicReviewMismatch', 'decisionPublicRollback',
+    'decisionPublicRollbackConfirmation', 'decisionPublicRollbackTitle', 'decisionPublicSourceCount', 'decisionPublicSources',
+    'decisionPublicStatusCandidate', 'decisionPublicStatusDisclosureRequired', 'decisionPublicStatusEmptySources', 'decisionPublicStatusError',
+    'decisionPublicStatusFailed', 'decisionPublicStatusIdle', 'decisionPublicStatusLoading', 'decisionPublicStatusPublished',
+    'decisionPublicStatusRejected', 'decisionPublicStatusRolledBack', 'decisionPublicStatusRunning', 'decisionPublicStatusUpToDate',
+    'decisionPublicWorkspaces', 'decisionScopeCurrentWorkspace', 'decisionWorkspaceExperience',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

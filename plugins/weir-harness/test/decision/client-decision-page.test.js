@@ -600,7 +600,9 @@ test('Attempt Context Pack details show actual neutral sources and truthful lega
   assert.equal(actual.includes('dc-neutral'), true);
   assert.equal(actual.includes('L3_EPISODE_OMITTED'), true);
   const legacy = JSON.stringify(render({ attemptId: 'da-p1', packManifest: { layerSizes: { L2: 0, L3: 0 }, omissions: [] } }));
-  assert.equal(legacy.includes('decisionNoMemory'), true);
+  assert.equal(actual.includes('decisionPartitionEmpty'), true);
+  assert.equal(actual.includes('decisionPartitionLegacy'), true);
+  assert.equal(legacy.includes('decisionPartitionLegacy'), true);
   assert.equal(legacy.includes('dc-neutral'), false);
 })
 test('Context Pack is an accessible read-only disclosure with ordered sources and exact manifest values', async () => {
@@ -623,8 +625,9 @@ test('Context Pack is an accessible read-only disclosure with ordered sources an
   assert.deepEqual(findAll(rendered, node => node.type === 'dt').map(node => node.children), ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']);
   assert.deepEqual(findAll(rendered, node => node.type === 'dd').map(node => node.children), ['10', '20', '0', '240', '30', '300']);
   const text = JSON.stringify(rendered);
-  assert.equal(text.includes('decisionL2Memory'), true);
-  assert.equal(text.includes('decisionMemoryEmpty'), true);
+  assert.equal(text.includes('decisionWorkspaceExperience'), true);
+  assert.equal(text.includes('decisionPublicMemory'), true);
+  assert.equal(text.includes('decisionPartitionEmpty'), true);
   assert.equal(text.includes('decisionNeutralEpisodes'), true);
   assert.equal(text.includes('decisionLayerSizes'), true);
   assert.equal(text.includes('decisionOmissions'), true);
@@ -651,9 +654,9 @@ test('Context Pack renders truthful no-L3, P1 legacy, and missing-manifest empty
     const rendered = exports.AttemptContextPack({ attempt, t: key => key });
     const text = JSON.stringify(rendered);
     assert.equal(rendered.type, 'details');
-    assert.equal(text.includes('decisionNoMemory'), true, attempt.attemptId);
     assert.equal(text.includes('decisionNeutralEpisodes'), true, attempt.attemptId);
-    assert.equal(text.includes('decisionMemoryEmpty'), true, attempt.attemptId);
+    assert.equal(text.includes(attempt.attemptId === 'da-empty' ? 'decisionPartitionEmpty' : 'decisionPartitionLegacy'), true, attempt.attemptId);
+    assert.equal(text.includes('decisionNoMemory'), false, attempt.attemptId);
     assert.equal(text.includes('dc-invented'), false, attempt.attemptId);
     assert.deepEqual(findAll(rendered, node => node.type === 'ol'), [], attempt.attemptId);
   }
