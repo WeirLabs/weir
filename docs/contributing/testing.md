@@ -45,3 +45,4 @@ node --test --test-reporter=spec "test/**/*.test.js" > /tmp/unit.log 2>&1 && tai
 - **场景**：权威来源是 `src/scenarios/index.js` 的有序 `SCENARIOS`；新增场景 = 新增场景模块 + 索引登记一处。未知场景 id 是响亮失败，不是静默跳过。
 - **镜像**：装置生成的 profile 名为 `weir-it`，只存在于测试根目录；它镜像生产预设的组合与 realm 结构，生产 `cordis.patch.yml` 与测试 patch 必须同步演进。
 - 完整机制、场景清单与断言口径见 [integration-test-harness](../features/integration-test-harness.md)。
+- **Decision 产品驱动（export leg 需显式开启）**：`plugins/weir-test-harness/spikes/decision/gui-product.mjs` 默认**跳过**导出验收；必须设置 `WEIR_DECISION_PRODUCT_EXPORT=1`，跨工作区矩阵另需 `WEIR_DECISION_PRODUCT_CROSS_WORKSPACE=1`，并显式指定 `WEIR_DECISION_PRODUCT_PORT=<空闲端口>` 与 `WEIR_DECISION_PRODUCT_EVIDENCE_ROOT=<新目录>`。未设 flag 的 PASS 不代表导出被覆盖；`exportFileCarriesNoForeignWorkspaceAlias`、真实文件校验和/权限与失败路径检查只在 export leg 内执行。
