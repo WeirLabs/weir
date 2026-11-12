@@ -894,7 +894,16 @@ window.__ModuleLoader__.load({
         const epoch = epochRef.current;
         const token = ++requestsRef.current.agent;
         requestsRef.current.learning += 1;
-        setSelectedAgentId(agentId); patchResource("agent", { status: "loading", value: null, error: null }); setLearningDetail(null); setLearningError(null); setLearningLoading(false);
+        const previous = resources.agent.value;
+        const sameAgent = previous?.agentId === agentId;
+        setSelectedAgentId(agentId);
+        // A learning/snapshot action reloads the assistant it just changed. Keep that
+        // previous detail mounted while the authoritative read is in flight: resetting
+        // to the loading state unmounts the whole detail for one frame, the page
+        // collapses to the viewport height, and the browser clamps its scrollTop to 0
+        // before the fresh content can shrink to the new maximum.
+        patchResource("agent", sameAgent ? { status: "ready", value: previous, error: null } : { status: "loading", value: null, error: null });
+        setLearningDetail(null); setLearningError(null); setLearningLoading(false);
         publicLoadRef.current = null;
         publicCandidateRef.current += 1;
         setPublicMemory(emptyPublicMemory());
@@ -907,7 +916,7 @@ window.__ModuleLoader__.load({
           }
           await readLearning(value);
           await loadPublicMemory(agentId, { sessionId: requestSession, epoch });
-        } catch (reason) { if (valid("agent", token, epoch, requestSession)) patchResource("agent", { status: "error", error: asError(reason) }); }
+        } catch (reason) { if (valid("agent", token, epoch, requestSession)) patchResource("agent", { status: "error", value: null, error: asError(reason) }); }
       };
       const run = async (method, ...args) => {
         if (pendingRef.current) return;
