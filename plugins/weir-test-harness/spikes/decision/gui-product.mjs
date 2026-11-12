@@ -3236,7 +3236,12 @@ try {
   p4State.crossWorkspaceLegacy = await runMigratedLegacyProfileSurface()
   instance = await startDesktop(true)
   await installUiuxInstrumentation()
-  p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State, { learningRunId: candidateV1.run.learningRunId, snapshotId: candidateV1.snapshot.snapshotId })
+  // The denial probe must use private rows that exist in the live (migrated)
+  // store, not ids from the store this run replaced.
+  p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State, {
+    learningRunId: p4State.crossWorkspaceLegacy.expected.privateLearningRunId,
+    snapshotId: p4State.crossWorkspaceLegacy.expected.privateSnapshotId,
+  })
   await stopOwned('cross-workspace-final')
   copyFileSync(legacyDatabasePath(), join(out, 'decision-migrated.db'))
   const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')

@@ -1311,7 +1311,7 @@ test('the driver keeps the cross-workspace matrix gated, isolated and lane-local
   assert.ok(legacy.includes('legacyLiveSurfaceProblems'), 'the live legacy surface facts are guarded')
   assert.ok(driver.includes('p4State.crossWorkspaceLegacy = await runMigratedLegacyProfileSurface()'), 'the migrated boot is wired into the matrix')
   assert.ok(driver.indexOf('auditP4RawEvidence(p4State, primary, secondary)') < driver.indexOf('p4State.crossWorkspaceLegacy = await runMigratedLegacyProfileSurface()'), 'the migration swap runs after every pre-migration assertion')
-  assert.ok(driver.includes('p4State.crossWorkspace = await runCrossWorkspaceMemoryMatrix(p4State, { learningRunId: candidateV1.run.learningRunId, snapshotId: candidateV1.snapshot.snapshotId })'), 'the gated phase is wired into the matrix with real private ids')
+  assert.ok(driver.includes('learningRunId: p4State.crossWorkspaceLegacy.expected.privateLearningRunId') && driver.includes('snapshotId: p4State.crossWorkspaceLegacy.expected.privateSnapshotId'), 'the gated phase is wired with private ids that exist in the live migrated store')
   assert.ok(driver.includes('cleanups.length === 6'), 'the matrix now signs off six exact owned process pairs')
   assert.equal(driver.includes('/Users/young'), false, 'the driver never hard-codes a user path')
   assert.equal(phase.includes('startDesktop('), false, 'the sharing phase reuses the live isolated instance and its owned cleanup')
