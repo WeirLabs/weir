@@ -178,7 +178,13 @@ test('the public memory zone is never the private snapshot, never L5, and cannot
   })
   assert.equal(retrieval.L2.status, 'empty')
   assert.deepEqual(retrieval.L5, [])
-  assert.equal(JSON.stringify(retrieval).includes(principleId), false)
+  // Phase B reads the public zone as reviewed guidance only: this principle is
+  // path-scoped, so a workspace-level request omits it with a recorded reason and
+  // it never appears in the private partition or the eligible L5 set.
+  assert.equal(retrieval.L2_PUBLIC.status, 'empty')
+  assert.deepEqual(retrieval.L2_PUBLIC.exclusions, [{ principleId, reason: 'OUT_OF_SCOPE' }])
+  assert.equal(retrieval.L2.items.some(item => item.principleId === principleId), false)
+  assert.equal(JSON.stringify(retrieval.L5).includes(principleId), false)
 
   // Citing the public principle as a decision basis fails G1: guidance is not evidence.
   const gates = evaluateGates({
