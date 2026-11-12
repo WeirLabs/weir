@@ -1440,13 +1440,13 @@ test('public guidance guard accepts a real pinned guidance-only Attempt and reje
   const attempt = {
     outcome: 'escalate',
     citedEvidenceIds: null,
-    evidence: [],
+    evidence: [{ source: 'user_profile', evidenceId: 'ev_profile' }],
     pins: {
       memorySnapshotId: null, memorySnapshotRevision: null, memorySnapshotHash: null,
       publicMemorySnapshotId: 'ms_public_1', publicMemorySnapshotRevision: 2, publicMemorySnapshotHash: 'a'.repeat(64),
     },
     packManifest: {
-      evidenceIds: [],
+      evidenceIds: ['ev_profile'],
       memory: {
         L2: { zone: 'workspace', principleIds: [], items: [] },
         publicL2: {
@@ -1482,10 +1482,12 @@ test('public guidance guard accepts a real pinned guidance-only Attempt and reje
   assert.ok(publicGuidancePinProblems({ published, attempt: privatePin }).some(problem => /pinned a private Snapshot/.test(problem)))
   const privateL2 = { ...attempt, packManifest: { ...attempt.packManifest, memory: { ...attempt.packManifest.memory, L2: { zone: 'workspace', principleIds: ['pr_private_1'], items: [] } } } }
   assert.ok(publicGuidancePinProblems({ published, attempt: privateL2 }).some(problem => /no eligible private principles/.test(problem)))
-  const evidence = { ...attempt, evidence: [{ evidenceId: 'ev_1' }] }
-  assert.ok(publicGuidancePinProblems({ published, attempt: evidence }).some(problem => /carries workspace evidence/.test(problem)))
-  const packEvidence = { ...attempt, packManifest: { ...attempt.packManifest, evidenceIds: ['ev_1'] } }
-  assert.ok(publicGuidancePinProblems({ published, attempt: packEvidence }).some(problem => /supplied evidence ids/.test(problem)))
+  const learnedEvidence = { ...attempt, evidence: [...attempt.evidence, { source: 'user_decision', evidenceId: 'ev_learned' }] }
+  assert.ok(publicGuidancePinProblems({ published, attempt: learnedEvidence }).some(problem => /beyond the authored assistant profile/.test(problem)))
+  const packEvidence = { ...attempt, packManifest: { ...attempt.packManifest, evidenceIds: [...attempt.packManifest.evidenceIds, 'ev_foreign'] } }
+  assert.ok(publicGuidancePinProblems({ published, attempt: packEvidence }).some(problem => /outside the authored profile/.test(problem)))
+  const noEvidence = { ...attempt, evidence: [], packManifest: { ...attempt.packManifest, evidenceIds: [] } }
+  assert.deepEqual(publicGuidancePinProblems({ published, attempt: noEvidence }), [])
 })
 
 test('public wire attribution guard requires every gesture under its own workspace session', () => {

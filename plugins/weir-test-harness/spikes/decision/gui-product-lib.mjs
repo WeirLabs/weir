@@ -728,9 +728,14 @@ export function publicGuidancePinProblems(audit = {}) {
     for (const id of Array.isArray(principleIds) ? principleIds : []) if (citedIds.includes(id)) problems.push(`public principle ${id} was cited as evidence`)
   }
   if (!privateL2 || !Array.isArray(privateL2.principleIds) || privateL2.principleIds.length > 0) problems.push('the workspace was supposed to have no eligible private principles')
-  if ((pins.memorySnapshotId ?? null) !== null) problems.push('the evidence-free workspace pinned a private Snapshot it does not have')
-  if ((manifest.evidenceIds ?? []).length > 0) problems.push('the evidence-free workspace supplied evidence ids')
-  if ((attempt.evidence ?? []).length > 0) problems.push('the evidence-free Attempt carries workspace evidence')
+  if ((pins.memorySnapshotId ?? null) !== null) problems.push('the workspace without private experience pinned a private Snapshot')
+  // The only evidence a workspace without reviewed memory can offer is the
+  // assistant's own authored profile, never a learned or foreign workspace record.
+  const evidence = Array.isArray(attempt.evidence) ? attempt.evidence : []
+  const sources = evidence.map(ref => String(ref?.source ?? ''))
+  if (sources.some(source => source !== 'user_profile')) problems.push('the workspace supplied reviewable experience beyond the authored assistant profile')
+  const profileEvidenceIds = new Set(evidence.filter(ref => ref?.source === 'user_profile').map(ref => ref.evidenceId))
+  for (const id of manifest.evidenceIds ?? []) if (!profileEvidenceIds.has(id)) problems.push(`the pack supplied evidence ${id} outside the authored profile`)
   if (!['return', 'escalate'].includes(String(attempt.outcome))) problems.push('an evidence-free workspace must return or escalate, never answer')
   const cited = attempt.citedEvidenceIds
   if (cited != null && !Array.isArray(cited)) problems.push('the Attempt has a malformed cited-evidence record')
