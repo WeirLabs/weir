@@ -1291,6 +1291,16 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
+test('the cross-workspace Auto fixture opens the real answer-class whitelist first', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  const settings = phase.indexOf("await setAutoSettings(`${phase}-auto`, { shadow: false, answerClasses: ['A'], answerTimeoutMs: 150 })")
+  const marker = phase.indexOf("await submitMarker(instance, 'CROSS_AUTO_Q')")
+  assert.ok(settings > 0 && marker > settings, 'the whitelist is opened through the real settings surface before the Auto request')
+  assert.ok(phase.includes('autoRecord.case.agentId === shared.agentId'), 'the Auto evidence proves the shared assistant really received the route')
+  assert.ok(phase.includes('lastAttemptOutcome'), 'the Auto evidence records the attempt outcome')
+})
+
 test('cross-workspace waits return plain data across the CDP boundary', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''

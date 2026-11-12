@@ -2001,7 +2001,9 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   check('publicRollbackRestoresEmptyPublicZone', w1RolledBack.current === null && w2Dom.current === null && memoryZoneProblems(w1RolledBack).length === 0 && memoryZoneProblems(w2Dom).length === 0, { w1: w1RolledBack.current, w2: w2Dom.current })
 
   // W3 has no private experience at all: Auto may select the shared assistant,
-  // but it can never answer from public memory alone.
+  // but it can never answer from public memory alone. The P4 restore leaves the
+  // answer-class whitelist empty, so Auto admits nothing until it is opened again.
+  await setAutoSettings(`${phase}-auto`, { shadow: false, answerClasses: ['A'], answerTimeoutMs: 150 })
   await openIsolatedSession(w3.sessionId)
   await submitMarker(instance, 'CROSS_AUTO_Q')
   const autoCase = await waitCase(w3.sessionId, 'CROSS_AUTO_Q')
