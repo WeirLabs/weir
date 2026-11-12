@@ -1938,9 +1938,10 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   // W1 opens the public zone: disclosure first, then exactly one automatic candidate.
   await openIsolatedSession(w1.sessionId)
   await openAgent(w1.sessionId, shared.agentId)
+  // Evaluate may only return plain data: a DOM node cannot cross the CDP boundary.
   const gated = await waitFor(() => instance.cdp.evaluate(`(() => {
     const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
-    return zone?.querySelector('[data-public-disclosure]')?zone:null
+    return Boolean(zone?.querySelector('[data-public-disclosure]'))
   })()`), 30_000)
   requireEvidence(gated, 'the first public review is disclosure-gated')
   const gatedDom = await crossWorkspaceMemoryDom(shared.agentId)
@@ -1950,7 +1951,7 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   const review = await waitFor(() => instance.cdp.evaluate(`(() => {
     const zone=document.querySelector('[data-agent-detail="${shared.agentId}"] [data-memory-zone="public"]')
     const candidate=zone?.querySelector('[data-public-candidate]')
-    return candidate&&candidate.querySelector('[data-public-source]')?zone:null
+    return Boolean(candidate&&candidate.querySelector('[data-public-source]'))
   })()`), 60_000)
   requireEvidence(review, 'the acknowledged refresh produced a reviewable candidate')
   await collectNetwork()

@@ -1291,6 +1291,15 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
+test('cross-workspace waits return plain data across the CDP boundary', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(phase, 'the sharing phase exists')
+  assert.ok(phase.includes("return Boolean(zone?.querySelector('[data-public-disclosure]'))"), 'the disclosure wait returns a boolean')
+  assert.ok(phase.includes("return Boolean(candidate&&candidate.querySelector('[data-public-source]'))"), 'the candidate wait returns a boolean')
+  assert.equal(phase.includes('?zone:null'), false, 'no wait may hand a DOM node back through CDP')
+})
+
 test('every cross-workspace selector gesture reopens its session first', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
