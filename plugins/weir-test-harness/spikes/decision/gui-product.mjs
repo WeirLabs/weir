@@ -66,6 +66,7 @@ const nativeKeyPackets = []
 const hostOnboardingDismissals = []
 const publicWires = []
 const pageBindings = []
+const shellReloads = []
 writeJson(join(out, 'host-onboarding.json'), hostOnboardingDismissals)
 let instance = null
 let instanceNumber = 0
@@ -1909,15 +1910,18 @@ async function runMigratedLegacyProfileSurface() {
 }
 
 /**
- * The Decision page captures the workspace session it saw when it mounted, and
- * the renderer can still commit the outgoing conversation right after a switch.
- * A public gesture is only attributable when the wire proves the page is bound to
- * the intended workspace, so the page is re-opened until that read matches.
+ * The Decision page captures the workspace session it saw when its region was
+ * first rendered: the product keeps that capture per renderer lifetime, so a
+ * plain session switch (or five of them) never re-binds it. A public gesture is
+ * only attributable when the wire proves the page is bound to the intended
+ * workspace, so the first attempt is a plain re-open and a stale capture is
+ * corrected by reloading the renderer, which restores the session from scratch.
  */
 async function openDecisionPageForSession(sessionId, label, tab = 'agents') {
   requireEvidence(knownSessionIds.has(sessionId), 'only a session created by this run can own the Decision page')
   const attempts = []
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (attempt > 1) await reloadDecisionShell(`${label}#${attempt}`)
     const mark = networkRpc.length
     await openIsolatedSession(sessionId)
     await openPage(tab)
@@ -1930,7 +1934,7 @@ async function openDecisionPageForSession(sessionId, label, tab = 'agents') {
         return last ? { sessionId: last.args?.sessionId ?? null, method: last.method, rpcId: last.rpcId ?? null } : null
       }, 20_000)
     } catch { observed = null }
-    attempts.push({ attempt, bound: observed?.sessionId ?? null, method: observed?.method ?? null, rpcId: observed?.rpcId ?? null })
+    attempts.push({ attempt, reloaded: attempt > 1, bound: observed?.sessionId ?? null, method: observed?.method ?? null, rpcId: observed?.rpcId ?? null })
     if (observed && observed.sessionId === sessionId) {
       const receipt = { label, sessionId, method: observed.method, rpcId: observed.rpcId, attempts }
       pageBindings.push(receipt)
@@ -1941,6 +1945,22 @@ async function openDecisionPageForSession(sessionId, label, tab = 'agents') {
   pageBindings.push({ label, sessionId, method: null, rpcId: null, attempts })
   writeJson(join(out, 'cross-page-session-bindings.json'), pageBindings)
   throw new Error(`The Decision page never bound to the intended workspace session for ${label}: ${JSON.stringify(attempts)}`)
+}
+
+/** Reload the renderer so the restored workspace session renders from scratch. */
+async function reloadDecisionShell(label) {
+  await instance.cdp.request('Page.reload', { ignoreCache: false })
+  await waitFor(() => instance.cdp.evaluate('Boolean(window.__decisionQA)'), 90_000)
+  await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-weir-decision-trigger="weir-decision-selector"]'))`), 90_000)
+  // A reload renumbers CDP request ids; drop the previous per-load maps so a
+  // reused id can never hide a fresh RPC from the evidence.
+  if (instance.network) {
+    instance.network.requests = new Map()
+    instance.network.responses = new Map()
+    instance.network.completed = new Set()
+  }
+  shellReloads.push({ label })
+  writeJson(join(out, 'cross-page-shell-reloads.json'), shellReloads)
 }
 
 /** The raw service payload of one captured Decision RPC response. */
@@ -2166,7 +2186,21 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   await openRecord(w4.sessionId, w4Case.caseId)
   await assertUiRpc({ label: 'W4 record list', method: 'records', args: { sessionId: w4.sessionId }, mark: recordMark })
   await openDisclosure(`weir-da-record-advanced-${w4Case.caseId}`)
-  await keyboardActivate('Open the public guidance attempt pack', `[data-record-detail="${w4Case.caseId}"] details[data-attempt-context-pack="${w4Attempt.attemptId}"] > summary`)
+  // The attempt context pack is one native <details>; reveal it with a real
+  // pointer click on its summary (the same gesture a user makes), never by
+  // forcing the open property.
+  const packTarget = await instance.cdp.evaluate(`(() => {
+    const summary=document.querySelector('[data-record-detail=${JSON.stringify(w4Case.caseId)}] details[data-attempt-context-pack=${JSON.stringify(w4Attempt.attemptId)}] > summary')
+    if(!summary)return null
+    summary.scrollIntoView({block:'center',inline:'nearest'})
+    const rect=summary.getBoundingClientRect()
+    return {x:rect.left+rect.width/2,y:rect.top+rect.height/2,text:summary.textContent.trim()}
+  })()`)
+  requireEvidence(packTarget && packTarget.text, 'the attempt context pack disclosure is rendered')
+  for (const [type, buttons] of [['mouseMoved', 0], ['mousePressed', 1], ['mouseReleased', 0]]) {
+    await instance.cdp.request('Input.dispatchMouseEvent', { type, x: packTarget.x, y: packTarget.y, button: type === 'mouseMoved' ? 'none' : 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1 })
+  }
+  writeJson(join(out, 'cross-public-record-reveal.json'), { caseId: w4Case.caseId, attemptId: w4Attempt.attemptId, method: 'CDP Input.dispatchMouseEvent', target: packTarget })
   const recordCapture = await waitFor(() => instance.cdp.evaluate(`(() => {
     const detail=document.querySelector('[data-record-detail=${JSON.stringify(w4Case.caseId)}]')
     if(!detail)return null

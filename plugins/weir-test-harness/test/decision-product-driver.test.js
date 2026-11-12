@@ -1595,7 +1595,15 @@ test('the matrix binds every public gesture to its workspace before acting', () 
   assert.ok(binding, 'openDecisionPageForSession exists')
   assert.ok(binding.includes("item.method === 'agents' || item.method === 'inbox'"), 'the binding is read from the page-issued RPC')
   assert.ok(binding.includes('observed.sessionId === sessionId'), 'the page must be bound to the intended workspace session')
-  assert.ok(binding.includes('for (let attempt = 1; attempt <= 5; attempt += 1)'), 'a stale capture is re-opened, not accepted')
+  assert.ok(binding.includes('for (let attempt = 1; attempt <= 3; attempt += 1)'), 'a stale capture is re-opened, not accepted')
+  // The product keeps its captured session per renderer lifetime: a repeated
+  // switch cannot re-bind it, so a stale capture is corrected by a reload.
+  assert.ok(binding.includes('if (attempt > 1) await reloadDecisionShell('), 'a stale capture is corrected by reloading the renderer')
+  const reload = driver.match(/async function reloadDecisionShell\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(reload, 'reloadDecisionShell exists')
+  assert.ok(reload.includes("instance.cdp.request('Page.reload'"), 'the reload is a real renderer reload')
+  assert.ok(reload.includes('cross-page-shell-reloads.json'), 'every reload is durable evidence')
+  assert.ok(reload.includes('instance.network.completed = new Set()'), 'a reload cannot hide a fresh RPC behind a reused request id')
   assert.ok(binding.includes('pageBindings.push(receipt)'), 'every binding is durable evidence')
   for (const session of ['w1', 'w2', 'w3', 'w4']) {
     assert.ok(phase.includes(`openDecisionPageForSession(${session}.sessionId`), `${session}: the page is re-opened per workspace`)
