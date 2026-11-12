@@ -1837,11 +1837,12 @@ test('export failure guard forbids a success surface and demands an actionable e
 test('the export leg is gated, uses the real controls and verifies the file itself', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes("process.env.WEIR_DECISION_PRODUCT_EXPORT !== '1'"), 'the export leg needs an explicit opt-in flag')
-  assert.ok(driver.includes('p4State.exportSurface = await runExportSurfaceAcceptance()'), 'the leg runs inside the real Desktop matrix')
+  assert.ok(driver.includes('const exportSurface = await runExportSurfaceAcceptance(w4.sessionId)'), 'the leg runs inside the real Desktop matrix on the live workspace session')
   assert.ok(driver.includes("'[data-record-export] [data-action=\"export\"]'"), 'the action is reached through the rendered advanced area')
   assert.ok(driver.includes("'#weir-da-export .weir-da-actions button:last-child'"), 'the confirmation is the rendered dialog')
   assert.ok(driver.includes("waitFor(() => instance.cdp.evaluate(`(() => {\n    const section=document.querySelector('[data-export-result=\"success\"]')"), 'success is read from the rendered surface')
   assert.ok(driver.includes("await shot('export-success')") && driver.includes("await shot('export-failure')"), 'both paths keep screenshots')
+  assert.ok(driver.includes('[data-export-result=\"error\"] [data-action=\"export-retry\"]'), 'the retry is reached on the rendered failure surface')
   assert.ok(driver.includes("chmodSync(exportsDir, 0o500)") && driver.includes("chmodSync(exportsDir, 0o700)"), 'the failure path really removes write permission and restores it')
   assert.ok(driver.includes('inspectExportFile(successPayload)'), 'the file is verified from disk, not only from the surface')
   assert.ok(driver.includes("check('exportFailureShowsActionableReasonWithoutSuccess'"), 'the failure path cannot show a success surface')

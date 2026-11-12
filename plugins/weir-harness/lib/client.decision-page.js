@@ -326,7 +326,7 @@ window.__ModuleLoader__.load({
         jsx.jsx("p", { "data-export-file": true, children: `${t("decisionExportFile")}: ${view.result.file}` }, "file"),
         jsx.jsx("p", { "data-export-bytes": true, children: `${t("decisionExportBytes")}: ${view.result.bytesText}` }, "bytes"),
         jsx.jsx("p", { "data-export-sha256": true, children: `${t("decisionExportChecksum")}: ${view.result.sha256}` }, "checksum"),
-        jsx.jsx(ui.Button, { ref: props.copyRef, "data-action": "export-copy", onClick: () => props.onCopy(), children: t(view.copied ? "decisionExportCopied" : "decisionExportCopyPath") }, "copy"),
+        jsx.jsx(ui.Button, { "data-action": "export-copy", onClick: () => props.onCopy(), children: t(view.copied ? "decisionExportCopied" : "decisionExportCopyPath") }, "copy"),
       ] });
     }
 
@@ -705,6 +705,11 @@ window.__ModuleLoader__.load({
       const [confirm, setConfirm] = react.useState(null);
       const [exportState, setExportState] = react.useState({ phase: "idle", value: null, error: null, copied: false });
       const exportPendingRef = react.useRef(false);
+      // A retry replaces the failure surface with the success surface, which
+      // unmounts the retry button: focus must land on the new result instead of
+      // falling to the page body. A committed-state effect is the only place the
+      // new ref really exists.
+      const exportFocusRef = react.useRef(false);
       const [editor, setEditor] = react.useState(null);
       const [selectedAgentId, setSelectedAgentId] = react.useState(null);
       const [agentFocusRequest, setAgentFocusRequest] = react.useState(null);
@@ -718,9 +723,16 @@ window.__ModuleLoader__.load({
       const tabRef = react.useRef(tab);
       const filterRef = react.useRef(appliedFilter);
       const selectedCaseRef = react.useRef(selectedCaseId);
+      react.useEffect(() => {
+        if (!exportFocusRef.current || exportState.phase !== "success" || !exportState.value) return;
+        exportFocusRef.current = false;
+        // The result section is the only place the copy control exists; a DOM read
+        // avoids depending on ref forwarding through the shared Button.
+        const target = globalThis.document?.querySelector?.('[data-export-result="success"] [data-action="export-copy"]');
+        if (target && typeof target.focus === "function" && target.isConnected !== false) target.focus();
+      }, [exportState.phase, exportState.value]);
       const primaryNavRef = react.useRef(null);
       const exportButtonRef = react.useRef(null);
-      const exportCopyRef = react.useRef(null);
       const agentCreateRef = react.useRef(null);
       const agentSummaryRef = react.useRef(null);
       const agentBackRef = react.useRef(null);
@@ -1123,7 +1135,8 @@ window.__ModuleLoader__.load({
        * the old session's authority, and the page only records the real result.
        * A thrown or incomplete result becomes an actionable failure state.
        */
-      const startExport = async () => {
+      const startExport = async options => {
+        const focusResult = options?.focusResult === true;
         if (exportPendingRef.current) return;
         exportPendingRef.current = true;
         setExportState({ phase: "pending", value: null, error: null, copied: false });
@@ -1136,6 +1149,7 @@ window.__ModuleLoader__.load({
           setExportState(checked.valid
             ? { phase: "success", value: checked.result, error: null, copied: false }
             : { phase: "error", value: null, error: { code: "EXPORT_INVALID_RESULT" }, copied: false });
+          if (checked.valid && focusResult) exportFocusRef.current = true;
         } catch (reason) {
           if (epochRef.current !== epoch || sessionId !== requestSession) return;
           setExportState({ phase: "error", value: null, error: asError(reason, "EXPORT_FAILED"), copied: false });
@@ -1237,7 +1251,7 @@ window.__ModuleLoader__.load({
       const recordsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-records-view", children: [
         RecordFilters({ filter, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters }),
         RecordsAdvancedActions({ view: exportView, ui, t, buttonRef: exportButtonRef, onRequest: () => setConfirm({ kind: "export" }) }),
-        ExportResult({ view: exportView, ui, t, copyRef: exportCopyRef, onRetry: startExport, onCopy: copyExportPath }),
+        ExportResult({ view: exportView, ui, t, onRetry: () => startExport({ focusResult: true }), onCopy: copyExportPath }),
         jsx.jsxs("div", { className: "weir-da-records-layout", "data-drill-in": drillIn, children: [
           jsx.jsxs("div", { className: "weir-da-record-list", "aria-label": t("decisionRecords"), children: [
             listBody,

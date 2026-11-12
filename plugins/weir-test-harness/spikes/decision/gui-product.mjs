@@ -2436,7 +2436,10 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
   check('publicUiActionsCarryTheIntendedWorkspaceSession', wireProblems.length === 0, { problems: wireProblems, actions: publicWires, bindings: pageBindings })
   writeJson(join(out, 'cross-workspace-matrix.json'), { phase, sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, assistant: shared.agentId, cases: { w1: w1Case.caseId, w2: w2Case.caseId, w4: w4Case.caseId, auto: autoCase.caseId }, publicVersions, published: { snapshotId: published.snapshotId, version: published.version, revision: published.revision, contentHash: published.contentHash, principleId: publishedPrincipleId }, publicObservations, publicWires, pageBindings, publicGuidance: { case: { caseId: w4Case.caseId, state: w4Guidance.case.state, agentId: w4Guidance.case.agentId }, attempt: { attemptId: w4Attempt.attemptId, outcome: w4Attempt.outcome, citedEvidenceIds: w4Attempt.citedEvidenceIds, pins: w4Attempt.pins, publicL2: w4Attempt.packManifest?.memory?.publicL2 ?? null, evidenceIds: w4Attempt.packManifest?.evidenceIds ?? [] }, problems: guidanceProblems }, publicRecordDetail: { capture: recordCapture, problems: recordProblems }, publicRejection: { candidate: secondCandidate, problems: rejectionProblems, audit: rejectionAudit }, denials, gatedDom, candidateDom, secondCandidateDom, publishedDom, rolledBack: { w1: w1RolledBack, w2: w2Dom }, w3Dom, w4Dom, autoShare, refreshRpc, reviewRpc, privateMemory, problems: sharedProblems })
   check('crossWorkspaceSharedIdentityAndPrivateIsolation', sharedProblems.length === 0, sharedProblems)
-  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, agentId: shared.agentId, denials, problems: [...sharedProblems, ...wireProblems, ...guidanceProblems, ...recordProblems, ...rejectionProblems] }
+  // Gated real-Desktop export leg: W4 owns live cases in this profile, so its own
+  // session is the export scope.
+  const exportSurface = await runExportSurfaceAcceptance(w4.sessionId)
+  return { sessions: { w1: w1.sessionId, w2: w2.sessionId, w3: w3.sessionId, w4: w4.sessionId }, agentId: shared.agentId, denials, problems: [...sharedProblems, ...wireProblems, ...guidanceProblems, ...recordProblems, ...rejectionProblems], exportSurface }
 }
 
 function writeReport(verdict, error = null) {
@@ -3318,10 +3321,12 @@ async function runSelectorZoomMatrix(sessionId) {
 // scope and destination, a real success shows the path/bytes/checksum of a real
 // file (verified from the file itself), a read-only destination must show an
 // actionable failure with no success surface, and both paths return focus.
-async function runExportSurfaceAcceptance(phase = 'GUI-decision-export') {
+async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-export') {
   if (process.env.WEIR_DECISION_PRODUCT_EXPORT !== '1') return null
-  const evidence = { phase }
-  await openPage('records')
+  const evidence = { phase, sessionId }
+  // The export is scoped to one workspace, so bind the page to that workspace's
+  // own session first; a page without a session renders no records at all.
+  await openDecisionPageForSession(sessionId, 'export-surface', 'records')
   await openDisclosure('weir-da-records-advanced')
   const action = await waitFor(() => instance.cdp.evaluate(`(() => {
     const button=document.querySelector('[data-record-export] [data-action="export"]')
@@ -3337,7 +3342,7 @@ async function runExportSurfaceAcceptance(phase = 'GUI-decision-export') {
 
   // Confirmation: the existing dialog, restated scope, nothing written yet.
   const confirmMark = networkRpc.length
-  await keyboardActivate('Request data export', '[data-record-export] [data-action="export"]', { expectFocus: '#weir-da-export' })
+  await keyboardActivate('Request data export', '[data-record-export] [data-action="export"]')
   const dialog = await waitFor(() => instance.cdp.evaluate(`(() => {
     const modal=document.querySelector('#weir-da-export')
     if(!modal)return null
@@ -3349,6 +3354,8 @@ async function runExportSurfaceAcceptance(phase = 'GUI-decision-export') {
     }
   })()`), 30_000)
   const dialogAx = await instance.cdp.accessibility('#weir-da-export')
+  const confirmationFocusInside = await instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-export")?.contains(document.activeElement))')
+  check('exportConfirmationTakesFocus', confirmationFocusInside === true, { confirmationFocusInside })
   const confirmationProblems = exportConfirmationProblems({ dialog, ax: dialogAx })
   writeJson(join(out, 'export-confirmation.json'), { dialog, ax: dialogAx, problems: confirmationProblems })
   await shot('export-confirmation')
@@ -3396,7 +3403,7 @@ async function runExportSurfaceAcceptance(phase = 'GUI-decision-export') {
   let failureFocus = null
   try {
     const failureMark = networkRpc.length
-    await keyboardActivate('Request data export again', '[data-record-export] [data-action="export"]', { expectFocus: '#weir-da-export' })
+    await keyboardActivate('Request data export again', '[data-record-export] [data-action="export"]')
     await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-export"))'), 30_000)
     await keyboardActivate('Confirm the failing data export', '#weir-da-export .weir-da-actions button:last-child', { expectFocus: '[data-record-export] [data-action="export"]' })
     failureDom = await waitFor(() => instance.cdp.evaluate(`(() => {
@@ -3425,7 +3432,7 @@ async function runExportSurfaceAcceptance(phase = 'GUI-decision-export') {
 
   // The retry recovers on the real surface once the directory is writable again.
   const retryMark = networkRpc.length
-  await keyboardActivate('Retry the data export', '[data-record-export] [data-action="export-retry"]', { expectFocus: '[data-record-export] [data-action="export"]' })
+  await keyboardActivate('Retry the data export', '[data-export-result="error"] [data-action="export-retry"]', { expectFocus: '[data-export-result="success"] [data-action="export-copy"]' })
   const retriedDom = await waitFor(() => instance.cdp.evaluate(`(() => {
     const section=document.querySelector('[data-export-result="success"]')
     if(!section)return null
@@ -3438,7 +3445,7 @@ async function runExportSurfaceAcceptance(phase = 'GUI-decision-export') {
   const retryProblems = [
     ...exportSuccessSurfaceProblems({
       dom: { ...retriedDom, bytesText: '', sha256: '' }, wire: retryPayload ?? {}, wireArgs: retryWire.at(-1)?.args ?? {},
-      file: retryFile, focus: await measureFocus('[data-record-export] [data-action="export"]'),
+      file: retryFile, focus: await measureFocus('[data-export-result="success"] [data-action="export-copy"]'),
     }).filter(problem => !/does not show the real (size|checksum)/.test(problem)),
   ]
   writeJson(join(out, 'export-retry.json'), { dom: retriedDom, wire: retryPayload, file: retryFile, problems: retryProblems })
@@ -3462,22 +3469,27 @@ function inspectExportFile(payload) {
   try { envelope = JSON.parse(content) } catch { envelope = null }
   const stat = statSync(path)
   const directory = dirname(path)
-  let checksumValid = false
-  if (envelope) {
-    const rest = { ...envelope }
-    delete rest.integrity
-    checksumValid = createHash('sha256').update(canonicalFileJson(rest)).digest('hex') === envelope?.integrity?.value
-  }
+  // The product checksum is canonical-JSON integrity over the envelope, not a
+  // hash of the pretty file bytes: recompute exactly what the product promised.
+  const canonicalChecksum = envelope ? createHash('sha256').update(JSON.stringify(canonicalFileJson(withoutIntegrity(envelope)))).digest('hex') : ''
   return {
     exists: true,
     bytes: stat.size,
     mode: (stat.mode & 0o777).toString(8),
     directoryMode: (statSync(directory).mode & 0o777).toString(8),
-    sha256: createHash('sha256').update(content).digest('hex') === payload?.sha256 ? payload.sha256 : createHash('sha256').update(content).digest('hex'),
-    envelope: envelope ? { ...envelope, checksumValid } : null,
+    sha256: canonicalChecksum,
+    contentSha256: createHash('sha256').update(content).digest('hex'),
+    envelope: envelope ? { ...envelope, checksumValid: canonicalChecksum === envelope?.integrity?.value } : null,
     containsWorkspaceKey: content.includes('workspaceKey'),
     containsAbsolutePath: /(?:^|["'\s])(?:\/Users\/|\/home\/|\/private\/|\/var\/|[A-Za-z]:\\)/.test(content),
   }
+}
+
+/** The envelope without its own integrity field, for checksum recomputation. */
+function withoutIntegrity(envelope) {
+  const rest = { ...envelope }
+  delete rest.integrity
+  return rest
 }
 
 /** Canonical JSON over the file envelope, to verify the checksum independently. */
@@ -3860,7 +3872,6 @@ try {
     learningRunId: p4State.crossWorkspaceLegacy.expected.privateLearningRunId,
     snapshotId: p4State.crossWorkspaceLegacy.expected.privateSnapshotId,
   })
-  p4State.exportSurface = await runExportSurfaceAcceptance()
   await stopOwned('cross-workspace-final')
   copyFileSync(legacyDatabasePath(), join(out, 'decision-migrated.db'))
   const exceptions = runtimeEvents.filter(item => item.event.method === 'Runtime.exceptionThrown')
