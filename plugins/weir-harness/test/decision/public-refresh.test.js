@@ -163,3 +163,26 @@ test('archived and disabled Agents never start public extraction', async t => {
   assert.equal(f.requests.length, 0)
   assert.equal(f.broker.learning.listRuns(f.profile.agentId).filter(run => run.zone === 'public').length, 0)
 })
+
+test('the published public summary carries the reviewed wording but no provenance', async t => {
+  const f = await publicMemoryFixture(t)
+  await f.seedDecision({ workspaceKey: f.w1, rootSessionId: 'root1', key: 'summary-w1' })
+  await f.seedDecision({ workspaceKey: f.w2, rootSessionId: 'root2', key: 'summary-w2' })
+  f.respond(crossWorkspaceAdd(2))
+  const started = await f.broker.publicMemoryRefresh({ sessionId: 'root1', agentId: f.profile.agentId, acknowledgedDisclosure: true })
+  assert.equal(started.status, 'candidate', JSON.stringify(started))
+  const published = await f.broker.snapshotPublish({ sessionId: 'root1', snapshotId: started.candidate.snapshotId, expectedRevision: started.candidate.revision })
+  assert.equal(published.state, 'published')
+  assert.equal(published.zone, 'public')
+
+  const summary = f.broker.publicMemorySummary(f.profile.agentId)
+  assert.equal(summary.current.version, 1)
+  assert.equal(summary.current.principles.length, 1)
+  const principle = summary.current.principles[0]
+  assert.equal(principle.text, 'Prefer the shared documented option')
+  assert.deepEqual(principle.scope, {})
+  assert.deepEqual(Object.keys(principle).sort(), ['principleId', 'scope', 'text'], 'only reviewed wording and workspace-agnostic hints survive')
+  const serialized = JSON.stringify(summary)
+  for (const workspace of [f.w1, f.w2]) assert.equal(serialized.includes(workspace), false)
+  assert.equal(serialized.includes('"sources"'), false)
+})

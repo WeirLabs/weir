@@ -1163,7 +1163,12 @@ export class DecisionBroker {
     return { required: true, version: 1, key: 'public-memory-first-extraction' }
   }
 
-  /** Compact public state shared by the refresh response and the review page. */
+  /**
+   * Compact public state shared by the refresh response and the review page.
+   * The published version carries its reviewed wording read-only so an adopted
+   * principle can be read afterwards; a principle row never carries a source, a
+   * workspace key or a record origin, only its text and workspace-agnostic hints.
+   */
   publicState(agentId) {
     const current = this.learning.currentPublicSnapshot(agentId)
     const currentRun = current ? this.learning.getRunById(current.learningRunId) : null
@@ -1173,6 +1178,7 @@ export class DecisionBroker {
         contentHash: current.contentHash, principleCount: current.principles.length,
         workspaceCount: currentRun?.inputFrozen.workspaceAliases?.length ?? 0,
         sourceCount: (currentRun?.inputFrozen.caseIds?.length ?? 0) + (currentRun?.inputFrozen.feedbackIds?.length ?? 0),
+        principles: publicPrincipleRows(current.principles),
       } : null,
     }
   }
@@ -1529,6 +1535,36 @@ export class DecisionBroker {
     return this.query.metrics({ ...input, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
   }
 }
+
+/**
+ * Read-only rows of a published public Snapshot: the reviewed wording plus its
+ * workspace-agnostic scope hints. Source lineages, workspace keys and record
+ * origins stay Host-internal, so a public reader can never reconstruct them.
+ * @param {{principleId:string,text:string,scope?:any}[]} principles
+ */
+function publicPrincipleRows(principles) {
+  return (principles ?? []).map(principle => ({
+    principleId: principle.principleId, text: principle.text, scope: publicScopeHints(principle.scope),
+  }))
+}
+
+/**
+ * Only the workspace-agnostic hint fields of a public scope survive, and a hint
+ * that would carry an absolute path or a record id is dropped rather than
+ * displayed: the published surface is ordinary language, not provenance.
+ * @param {any} scope
+ */
+function publicScopeHints(scope) {
+  const hints = {}
+  for (const key of ['paths', 'tags', 'authorizationClasses']) {
+    const entries = scope?.[key]
+    if (!Array.isArray(entries)) continue
+    const safe = entries.filter(entry => typeof entry === 'string' && entry.length <= 200 && publicContentIssues(entry, []).length === 0)
+    if (safe.length) hints[key] = safe
+  }
+  return hints
+}
+
 /** @template T @param {T} value @returns {T} */
 function cloneJson(value) { return JSON.parse(JSON.stringify(value)) }
 

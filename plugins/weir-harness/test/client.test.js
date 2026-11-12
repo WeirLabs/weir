@@ -2498,6 +2498,9 @@ describe('weir settings client half', () => {
     'decisionPublicStatusFailed', 'decisionPublicStatusIdle', 'decisionPublicStatusLoading', 'decisionPublicStatusPublished',
     'decisionPublicStatusRejected', 'decisionPublicStatusRolledBack', 'decisionPublicStatusRunning', 'decisionPublicStatusUpToDate',
     'decisionPublicWorkspaces', 'decisionScopeCurrentWorkspace', 'decisionWorkspaceExperience',
+    'decisionPublicCurrentPrinciples', 'decisionPublicCurrentText', 'decisionPublicFrozenInput',
+    'decisionPublicOpAdd', 'decisionPublicOpMerge', 'decisionPublicOpNarrow', 'decisionPublicOpRefine', 'decisionPublicOpRetire',
+    'decisionPublicProposedText', 'decisionPublicScope',
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

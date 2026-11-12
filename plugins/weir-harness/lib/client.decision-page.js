@@ -83,6 +83,47 @@ window.__ModuleLoader__.load({
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
 
+    // A public surface is ordinary language, never provenance: a hint that would
+    // carry an absolute path or a record id is dropped instead of rendered.
+    const UNSAFE_PUBLIC_HINT = /^(?:[A-Za-z]:[\\/]|~[\\/]|\\\\|\/|file:)|\b(?:dc|ev|fb|lr|ms)_[A-Za-z0-9][A-Za-z0-9_-]{5,}/;
+    const PUBLIC_CHANGE_OP_KEYS = {
+      add: "decisionPublicOpAdd", refine: "decisionPublicOpRefine", merge: "decisionPublicOpMerge",
+      narrow: "decisionPublicOpNarrow", retire: "decisionPublicOpRetire",
+    };
+
+    function publicOpLabel(op, t) {
+      const key = PUBLIC_CHANGE_OP_KEYS[op];
+      return key ? t(key) : String(op ?? "");
+    }
+
+    /** Workspace-agnostic scope hints, formatted for reading. */
+    function publicScopeText(scope, t) {
+      const value = scope && typeof scope === "object" ? scope : {};
+      const parts = [];
+      for (const key of ["paths", "tags"]) {
+        for (const entry of Array.isArray(value[key]) ? value[key] : []) {
+          if (typeof entry === "string" && entry && !UNSAFE_PUBLIC_HINT.test(entry)) parts.push(entry);
+        }
+      }
+      for (const entry of Array.isArray(value.authorizationClasses) ? value.authorizationClasses : []) {
+        if (typeof entry === "string" && entry) parts.push(`${t("decisionAuthorizationClasses")}: ${entry}`);
+      }
+      return parts.join(" · ");
+    }
+
+    /**
+     * The wording a reviewer must be able to read before adopting or discarding:
+     * the operation's own text, else the candidate principle's text (narrow),
+     * else the published principle text the change retires.
+     */
+    function publicChangeWording(change, view) {
+      const candidate = (Array.isArray(view.principles) ? view.principles : []).find(item => item.principleId === change.principleId);
+      const published = (Array.isArray(view.current?.principles) ? view.current.principles : []).find(item => item.principleId === change.principleId);
+      const found = [change.text, candidate?.text, published?.text]
+        .find(value => typeof value === "string" && value.trim());
+      return found ?? "";
+    }
+
     function RecordDetail(props) {
       const { detail, model, ui, t, draft } = props;
       const agents = Array.isArray(props.agents) ? props.agents : [];
@@ -330,6 +371,17 @@ window.__ModuleLoader__.load({
       const current = view.current
         ? jsx.jsx("p", { "data-public-current": String(view.current.version ?? ""), children: `${t("decisionPublicCurrentVersion")}: ${view.current.version ?? "—"} · ${view.current.principleCount ?? 0}` }, "current")
         : jsx.jsx("p", { children: t("decisionPublicNoCurrent") }, "no-current");
+      const publishedPrinciples = Array.isArray(view.current?.principles) ? view.current.principles : [];
+      const published = publishedPrinciples.length ? jsx.jsxs("section", { className: "weir-da-public-published", "data-public-published-principles": true, children: [
+        jsx.jsx("strong", { children: t("decisionPublicCurrentPrinciples") }, "title"),
+        jsx.jsx("ul", { children: publishedPrinciples.map((principle, index) => {
+          const scope = publicScopeText(principle.scope, t);
+          return jsx.jsxs("li", { "data-public-published-principle": principle.principleId, children: [
+            jsx.jsx("p", { "data-public-published-text": true, children: principle.text || "—" }, "text"),
+            scope ? jsx.jsx("p", { className: "weir-da-caption", children: `${t("decisionPublicScope")}: ${scope}` }, "scope") : null,
+          ] }, `${principle.principleId}:${index}`);
+        }) }, "list"),
+      ] }, "published") : null;
       const disclosure = view.disclosureRequired ? jsx.jsxs("section", { className: "weir-da-public-disclosure", "data-public-disclosure": true, role: "note", children: [
         jsx.jsx("strong", { children: t("decisionPublicDisclosureTitle") }, "title"),
         jsx.jsx("p", { children: t("decisionPublicDisclosureBody") }, "body"),
@@ -337,9 +389,24 @@ window.__ModuleLoader__.load({
       ] }, "disclosure") : null;
       const candidate = view.candidate ? jsx.jsxs("section", { className: "weir-da-public-candidate", "data-public-candidate": String(view.candidate.snapshotId ?? ""), children: [
         jsx.jsxs("p", { children: `${t("decisionPublicCandidate")} · ${t("decisionApplyChangeCount")}: ${view.readiness.changeCount ?? view.changes.length}` }, "summary"),
-        jsx.jsx("p", { className: "weir-da-caption", children: `${t("decisionPublicWorkspaces")}: ${view.candidate.workspaceCount} · ${t("decisionPublicSourceCount")}: ${view.candidate.sourceCount}` }, "counts"),
+        jsx.jsx("p", { className: "weir-da-caption", "data-public-frozen-input": true, children: `${t("decisionPublicFrozenInput")}: ${t("decisionPublicWorkspaces")} ${view.candidate.workspaceCount} · ${t("decisionPublicSourceCount")} ${view.candidate.sourceCount}` }, "counts"),
         view.changes.length
-          ? jsx.jsx("ul", { "data-public-changes": true, children: view.changes.map((change, index) => jsx.jsx("li", { children: `${change.op} · ${change.principleId ?? "—"}` }, `${change.principleId ?? change.op}:${index}`)) }, "changes")
+          ? jsx.jsxs("section", { "data-public-changes": true, children: [
+            jsx.jsx("strong", { children: t("decisionPublicChanges") }, "title"),
+            jsx.jsx("ul", { children: view.changes.map((change, index) => {
+            const wording = publicChangeWording(change, view);
+            const principle = (Array.isArray(view.principles) ? view.principles : []).find(item => item.principleId === change.principleId);
+            const scope = publicScopeText(change.scope ?? principle?.scope, t);
+            return jsx.jsxs("li", { "data-public-change": change.op, children: [
+              jsx.jsx("strong", { children: `${publicOpLabel(change.op, t)} · ${change.principleId ?? "—"}` }, "op"),
+              jsx.jsxs("p", { children: [
+                jsx.jsx("span", { className: "weir-da-caption", children: `${t(change.op === "retire" ? "decisionPublicCurrentText" : "decisionPublicProposedText")}: ` }, "label"),
+                jsx.jsx("span", { "data-public-change-text": true, children: wording || "—" }, "text"),
+              ] }, "wording"),
+              scope ? jsx.jsx("p", { className: "weir-da-caption", "data-public-change-scope": true, children: `${t("decisionPublicScope")}: ${scope}` }, "scope") : null,
+            ] }, `${change.principleId ?? change.op}:${index}`);
+            }) }, "list"),
+          ] }, "changes")
           : jsx.jsx("p", { className: "weir-da-caption", children: t("decisionPublicNoChanges") }, "no-changes"),
         view.sources.length ? jsx.jsxs("section", { "data-public-sources": true, children: [
           jsx.jsx("strong", { children: t("decisionPublicSources") }, "title"),
@@ -374,6 +441,7 @@ window.__ModuleLoader__.load({
         header,
         view.phase === "loading" ? jsx.jsx("p", { role: "status", className: "weir-da-caption", children: t("decisionPublicRefreshing") }, "refreshing") : null,
         current,
+        published,
         disclosure,
         jsx.jsx("div", { className: "weir-da-actions", children: jsx.jsx(ui.Button, { "data-action": "public-refresh", disabled: !view.canRefresh || busy, "aria-busy": view.phase === "loading", onClick: () => { if (view.canRefresh && !busy) return props.onRefresh(); }, children: t(view.phase === "loading" ? "decisionPublicRefreshing" : "decisionPublicRefresh") }, "refresh") }, "refresh-actions"),
         failed,
