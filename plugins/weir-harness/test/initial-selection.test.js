@@ -72,6 +72,24 @@ test('default binding: identity-shaped entries pass through verbatim', () => {
   expect(bound.missing).toEqual([])
 })
 
+test('default reconciliation: an identity missing from an authoritative inventory degrades to missing', () => {
+  const retired = identity('custom', 'retired-skill')
+  const bound = bindDefaultSkillNames([alpha, retired], [candidateOf(alpha)], { authoritative: true })
+  expect(bound.skills.length).toBe(1)
+  expect(bound.skills[0] === alpha).toBe(true)
+  expect(bound.missing).toEqual([{ kind: 'skill', ref: 'retired-skill', reason: 'no longer in the inventory' }])
+})
+
+test('default reconciliation: a non-authoritative inventory keeps identity entries verbatim', () => {
+  const retired = identity('custom', 'retired-skill')
+  for (const options of [undefined, {}, { authoritative: false }]) {
+    const bound = bindDefaultSkillNames([retired], [], options)
+    expect(bound.skills.length).toBe(1)
+    expect(bound.skills[0] === retired).toBe(true)
+    expect(bound.missing).toEqual([])
+  }
+})
+
 test('default binding: a unique name binds to that candidate identity', () => {
   const bound = bindDefaultSkillNames(['deep-work'], [candidateOf(builtinA), candidateOf(builtinB)])
   expect(bound.skills[0] === builtinA).toBe(true)
@@ -156,6 +174,24 @@ test('regression: one unbindable name degrades to missing, the default does not 
   const enabled = list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)
   expect(enabled).toEqual(['deep-work'])
   expect(provider.status(options('sess-part', 'ws-part')).error ?? null).toBe(null)
+})
+
+test('regression (DSH 0.2.2): a default identity the complete inventory no longer carries does not wedge the session', { skip: storePlatformSkip }, async () => {
+  const dir = home()
+  const store = openCapabilityStore({ root: rootOf(dir), platform: 'darwin' })
+  // What a pre-0.2.2 DSH default recorded: identities for Creator-mode skills
+  // the host no longer ships. The default itself is never rewritten.
+  const retired = createSkillIdentity({ scope: 'custom', root: '/Applications/DSH/app.asar/skills', name: 'cordis-plugin-development', opaqueId: 'retired' })
+  await store.commit({ kind: 'defaults', workspaceKey: 'ws-retired' }, 0, () => ({ skills: [alpha, retired], mcpServers: [], unresolvedRefs: [] }))
+  const provider = mount(dir, { inventoryCandidates: [candidateOf(alpha), candidateOf(builtinA)] })
+  const list = await provider.list(options('sess-retired', 'ws-retired'))
+  const enabled = list.candidates.filter(item => item.invocation.modelInvocable).map(item => item.name)
+  expect(enabled).toEqual(['alpha'])
+  expect(provider.status(options('sess-retired', 'ws-retired')).error ?? null).toBe(null)
+  // The record is intact: the retired identity is still in the default.
+  const record = await store.read({ kind: 'defaults', workspaceKey: 'ws-retired' })
+  expect(record.kind).toBe('ok')
+  expect(record.payload.skills.map(entry => entry.name)).toEqual(['alpha', 'cordis-plugin-development'])
 })
 
 test('6.5 mounted: without a default the builtin baseline is selected and reported', { skip: storePlatformSkip }, async () => {

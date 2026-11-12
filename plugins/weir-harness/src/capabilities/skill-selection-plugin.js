@@ -17,7 +17,7 @@ import { preloadLifecycleSnapshots } from './lifecycle-preload.js'
 import { lifecycleFeedRegistry } from './lifecycle-feed.js'
 import { classifySelectionFailure } from './selection-status.js'
 import { resolveInitialSelection, baselineSkillIdentities, bindDefaultSkillNames } from './initial-selection.js'
-import { partitionUnresolvedSkills } from './skill-applicability.js'
+import { partitionUnresolvedSkills, hostBundleSkillRoots } from './skill-applicability.js'
 import { workspaceKeyOf, createPresetVerbs } from './preset-library.js'
 import { createDefaultsVerbs } from './defaults-transaction.js'
 import { buildPresetsPayload, buildDefaultGetPayload } from './read-payloads.js'
@@ -193,16 +193,17 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             if (!registryServers[identity]) resolved.missing.push({ kind: 'mcp', ref: identity, reason: 'configured default is not registered' })
           }
           resolved.selection.mcpIncarnations = Object.fromEntries(resolved.selection.mcpServers.filter(identity => registryServers[identity]).map(identity => [identity, registryServers[identity].incarnation ?? null]))
-          // Name-string skill entries in a workspace default (the client
-          // draft's wire shape, written by default-save from:'draft') bind
-          // against the live inventory by unique name; unbindable entries
-          // degrade to reported missing, never failing the whole default.
-          // Identity-shaped records (from:'applied') skip the inventory
-          // entirely — it still only runs on the builtin-baseline path.
-          if (resolved.source === 'workspace-default' && resolved.selection.skills.some(entry => typeof entry === 'string')) {
+          // Workspace-default entries are reconciled against the live
+          // inventory: name strings (the client draft's wire shape, written by
+          // default-save from:'draft') bind by unique name, and identity-shaped
+          // records (from:'applied') are checked for exact presence when the
+          // inventory is COMPLETE. Unbindable or retired entries degrade to
+          // reported missing, never failing the whole default; an incomplete
+          // inventory proves nothing, so identity entries stay verbatim.
+          if (resolved.source === 'workspace-default' && resolved.selection.skills.length > 0) {
             const snapshot = await inventory(options)
             complete = complete && snapshot?.complete !== false
-            const bound = bindDefaultSkillNames(resolved.selection.skills, snapshot?.candidates)
+            const bound = bindDefaultSkillNames(resolved.selection.skills, snapshot?.candidates, { authoritative: snapshot?.complete === true })
             resolved.selection.skills = bound.skills
             resolved.missing = [...resolved.missing, ...bound.missing]
           }
@@ -490,6 +491,10 @@ export function createSkillSelectionPlugin(dependencies = {}) {
             // - KNOWN-BUT-INAPPLICABLE names (resolvable in a profile-supplemental
             //   directory, e.g. creative-preset skills carried by a workspace
             //   default) are SKIPPED with a per-name reason;
+            // - an identity rooted in a HOST BUNDLE Skill directory that the
+            //   installed host version no longer ships is SKIPPED with a
+            //   per-name reason: a host upgrade retired it, no replacement is
+            //   authorized, and the stored preset/default record stays intact;
             // - a project identity PROVEN to belong to another workspace (its
             //   canonical root is outside every current project Skill root of a
             //   COMPLETE inventory) is SKIPPED as not applicable in this
@@ -505,6 +510,10 @@ export function createSkillSelectionPlugin(dependencies = {}) {
               roots: inventoryResult?.roots,
               complete: inventoryResult?.complete,
               knownSupplemental: name => supplementalSkillKnown(config.supplementalSkillDirs, name),
+              hostSkillRoots: hostBundleSkillRoots([
+                config.bundledSkillDir ?? process.env.DSH_BUNDLED_SKILL_DIR,
+                ...(Array.isArray(config.supplementalSkillDirs) ? config.supplementalSkillDirs : []),
+              ]),
             })
             if (unknown.length > 0) return { kind: 'error', text: JSON.stringify({ status: 'missing', missing: unknown, ...(skipped.length > 0 ? { skipped } : {}) }) }
             const response = await face.applySelection(

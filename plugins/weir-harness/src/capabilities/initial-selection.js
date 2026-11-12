@@ -8,7 +8,12 @@
 //    by guessing. Name-string skill entries (the client draft's wire shape,
 //    and records written by `default-save from:'draft'`) bind against the
 //    live inventory by unique name; unbindable entries are reported as
-//    missing, never guessed, never failing the whole default.
+//    missing, never guessed, never failing the whole default. Identity-shaped
+//    entries (records saved `from:'applied'`) are checked against the exact
+//    live inventory when it is COMPLETE, so a host upgrade that drops a
+//    bundled Skill reports that entry as missing instead of wedging every
+//    session that inherits the default; an incomplete inventory proves
+//    nothing and keeps the entries verbatim (fail closed).
 // 2. Otherwise the explicit builtin-Skills baseline plus the managed MCP
 //    identities the composition already enables. A legacy Weir session
 //    without any policy lands here too: its configured MCP is kept (this
@@ -18,7 +23,7 @@
 //    module is mounted by the preset's own selection row, so other presets
 //    are untouched by construction.
 
-import { createSkillIdentity } from './skill-identity.js'
+import { createSkillIdentity, skillIdentityKey } from './skill-identity.js'
 /**
  * @param {{
  *   defaultsRecord: { kind: string, payload?: unknown },
@@ -46,29 +51,39 @@ export function baselineSkillIdentities(candidates, scopes = ['weir-builtin']) {
 /**
  * Bind the skill entries of a workspace-default snapshot against the live
  * inventory. An entry that already parses as a SkillIdentity is kept
- * verbatim (records saved `from:'applied'`); a plain name string (the client
- * draft's wire shape, records written by `default-save from:'draft'`) binds
- * to exactly ONE parsed candidate with that name — zero or multiple matches
- * are NOT authorized and degrade to a reported missing entry. Any other
- * garbage entry is missing too: fail closed PER ENTRY, never throwing,
- * never failing the whole default.
+ * verbatim UNLESS the caller proves the inventory is complete (`authoritative`)
+ * and no parsed candidate carries that exact identity — then it is reported
+ * missing, exactly like an unbindable name, instead of failing the whole
+ * session at the provider. A plain name string (the client draft's wire shape,
+ * records written by `default-save from:'draft'`) binds to exactly ONE parsed
+ * candidate with that name — zero or multiple matches are NOT authorized and
+ * degrade to a reported missing entry. Any other garbage entry is missing
+ * too: fail closed PER ENTRY, never throwing, never failing the whole default.
  * @param {unknown} entries @param {unknown} candidates
+ * @param {{ authoritative?: boolean }} [options]
  * @returns {{ skills: unknown[],
  *   missing: Array<{ kind: 'skill', ref: unknown, reason: string }> }}
  */
-export function bindDefaultSkillNames(entries, candidates) {
+export function bindDefaultSkillNames(entries, candidates, options = {}) {
+  const authoritative = options.authoritative === true
   const parsed = (Array.isArray(candidates) ? candidates : [])
     .filter(candidate => /** @type {any} */ (candidate)?.status === 'parsed'
       && /** @type {any} */ (candidate)?.identity
       && typeof /** @type {any} */ (candidate)?.name === 'string')
+  const byKey = new Map(parsed.map(candidate => [skillIdentityKey(/** @type {any} */ (candidate).identity), candidate]))
   const skills = []
   const missing = []
   for (const entry of Array.isArray(entries) ? entries : []) {
-    try {
-      createSkillIdentity(/** @type {any} */ (entry))
+    let identity
+    try { identity = createSkillIdentity(/** @type {any} */ (entry)) } catch { identity = null }
+    if (identity !== null) {
+      if (authoritative && !byKey.has(skillIdentityKey(identity))) {
+        missing.push({ kind: 'skill', ref: identity.name, reason: 'no longer in the inventory' })
+        continue
+      }
       skills.push(entry)
       continue
-    } catch { /* not an identity shape — try name binding below */ }
+    }
     if (typeof entry === 'string') {
       const matches = parsed.filter(candidate => /** @type {any} */ (candidate).name === entry)
       if (matches.length === 1) {

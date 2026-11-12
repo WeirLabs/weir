@@ -31,6 +31,8 @@ import { basename, dirname, isAbsolute, join, sep } from 'node:path'
 export const NOT_APPLICABLE_IN_WORKSPACE = 'not applicable in this workspace'
 /** Reason reported for a name known only to a profile-supplemental preset root. */
 export const NOT_APPLICABLE_IN_PRESET = 'not applicable in this agent preset'
+/** Reason reported for a Skill identity retired by the installed host version. */
+export const NOT_PROVIDED_BY_HOST = 'no longer provided by this host version'
 
 /** The two project Skill discovery roots of one workspace, relative to its project root. */
 const PROJECT_SKILL_SUFFIXES = Object.freeze(['.dsh/skills', '.agents/skills'])
@@ -111,6 +113,46 @@ export function workspaceProjectSkillRoots(roots, options = {}) {
 }
 
 /**
+ * Canonical keys of the HOST BUNDLE Skill roots an installed host version
+ * ships. Only `bundledSkillDir` and the profile-supplemental preset roots
+ * qualify: they are installed with the host, so an identity under one of them
+ * that the CURRENT inventory no longer resolves was retired by a host upgrade
+ * — it is not a user/project Skill that merely went missing. Missing paths are
+ * canonicalized through their deepest existing ancestor, so a directory the
+ * upgrade itself removed still matches the stored identity root.
+ * @param {unknown} dirs candidate host roots (non-strings are ignored)
+ * @param {{ platform?: string }} [options]
+ * @returns {Set<string>}
+ */
+export function hostBundleSkillRoots(dirs, options = {}) {
+  const platform = options.platform ?? process.platform
+  const keys = new Set()
+  for (const dir of Array.isArray(dirs) ? dirs : []) {
+    if (typeof dir !== 'string' || dir.length === 0 || !isAbsolute(dir)) continue
+    const key = canonicalPathKey(dir, platform)
+    if (key !== null) keys.add(key)
+  }
+  return keys
+}
+
+/**
+ * Is this identity rooted in one of the host bundle Skill roots? Callers must
+ * pass only roots returned by `hostBundleSkillRoots`; this predicate only
+ * answers the path question.
+ * @param {unknown} identity
+ * @param {Set<string>} hostRoots
+ * @param {{ platform?: string }} [options]
+ * @returns {boolean}
+ */
+export function isHostBundleIdentity(identity, hostRoots, options = {}) {
+  const value = /** @type {Record<string, unknown> | null} */ (
+    identity && typeof identity === 'object' ? identity : null)
+  if (!value || typeof value.root !== 'string' || value.root.length === 0 || !isAbsolute(value.root)) return false
+  const key = canonicalPathKey(value.root, options.platform ?? process.platform)
+  return key !== null && hostRoots.has(key)
+}
+
+/**
  * Is this identity a project identity rooted OUTSIDE every current project root?
  * The caller must have authorized the classification (complete inventory and a
  * non-empty project root set) — this predicate only answers the path question.
@@ -137,6 +179,10 @@ export function isForeignProjectIdentity(identity, projectRoots, options = {}) {
  *   `skipped` with `not applicable in this workspace`
  * - a legacy name or identity name known to a profile-supplemental preset root →
  *   `not applicable in this agent preset` (the pre-existing contract)
+ * - an identity rooted in a host bundle Skill root the installed host version
+ *   no longer ships → `no longer provided by this host version`
+ *   (`hostSkillRoots` must be supplied by the caller; absent means no skip;
+ *   an incomplete inventory authorizes no skip)
  * - everything else → `unknown` (the caller keeps the hard-failure contract and
  *   preserves the draft)
  * @param {unknown[]} entries unresolved draft entries (identity objects or name strings)
@@ -144,18 +190,24 @@ export function isForeignProjectIdentity(identity, projectRoots, options = {}) {
  *   roots?: unknown,
  *   complete?: unknown,
  *   knownSupplemental?: (name: string) => boolean,
+ *   hostSkillRoots?: Set<string>,
  *   platform?: string,
  * }} [options]
  * @returns {{ skipped: Array<{ name: string, reason: string }>, unknown: string[] }}
  */
 export function partitionUnresolvedSkills(entries, options = {}) {
   const knownSupplemental = typeof options.knownSupplemental === 'function' ? options.knownSupplemental : () => false
+  const hostRoots = options.hostSkillRoots instanceof Set ? options.hostSkillRoots : null
   // Evidence gate: an incomplete inventory, or a current workspace whose project
   // roots did not resolve, authorizes no cross-workspace skip at all.
   const projectRoots = options.complete === true
     ? workspaceProjectSkillRoots(options.roots, options)
     : new Set()
   const canProveForeign = projectRoots.size > 0
+  // A retired host Skill is only provable against a COMPLETE inventory: an
+  // unreadable root could simply have hidden it. The host-root predicate is
+  // path-exact, so no project-root evidence is needed.
+  const canProveRetired = options.complete === true
   const skipped = []
   const unknown = []
   for (const entry of Array.isArray(entries) ? entries : []) {
@@ -173,6 +225,10 @@ export function partitionUnresolvedSkills(entries, options = {}) {
     const name = typeof identity.name === 'string' && identity.name.length > 0 ? identity.name : String(entry)
     if (knownSupplemental(name)) {
       skipped.push({ name, reason: NOT_APPLICABLE_IN_PRESET })
+      continue
+    }
+    if (canProveRetired && hostRoots !== null && isHostBundleIdentity(identity, hostRoots, options)) {
+      skipped.push({ name, reason: NOT_PROVIDED_BY_HOST })
       continue
     }
     if (canProveForeign && isForeignProjectIdentity(identity, projectRoots, options)) {

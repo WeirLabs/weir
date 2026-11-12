@@ -587,6 +587,35 @@ const mountApply = (root, { customSkillDirs = [], supplementalSkillDirs = [], ag
 const identityOf = (listing, name, scope) =>
   listing.skills.find(row => row.name === name && row.status === 'parsed' && row.identity?.scope === scope)?.identity ?? null
 
+test('host upgrade: a host-bundle skill the installed version retired is skipped and the rest commits', { skip }, async () => {
+  const host = pinHermeticHostRoots()
+  try {
+    const root = mkdtempSync(join(tmpdir(), 'weir-cmd-host-retired-'))
+    const { mkdirSync, writeFileSync } = await import('node:fs')
+    const hostSkills = join(root, 'host-skills')
+    writeSkill(hostSkills, 'dsh-doc')
+    const { call } = mountApply(root, {
+      customSkillDirs: [hostSkills],
+      supplementalSkillDirs: [hostSkills],
+      agentsHome: host.agentsHome,
+    })
+    const listing = await call('list')
+    const retained = identityOf(listing, 'dsh-doc', 'custom')
+    expect(retained === null).toBe(false)
+    // The identity an old workspace default/preset recorded for a Creator-mode
+    // skill this host version no longer ships (same host root, no directory).
+    const retired = { scope: 'custom', root: hostSkills, name: 'cordis-plugin-development', provenance: null, opaqueId: 'retired-host-skill', portable: false }
+    const applied = await call(`apply ${JSON.stringify({ requestId: 'host-retired-1', expectedRevision: 0, skills: [retained, retired], mcpServers: [] })}`)
+    expect(applied.status).toBe('applied')
+    expect(applied.effective.skills.map(identity => identity.name)).toEqual(['dsh-doc'])
+    expect(applied.skipped).toEqual([{ name: 'cordis-plugin-development', reason: 'no longer provided by this host version' }])
+    const after = await call('receipt')
+    expect(after.effective.skills).toEqual(['dsh-doc'])
+  } finally {
+    host.restore()
+  }
+})
+
 test('cross-workspace: a preset entry rooted in another workspace is skipped and the rest commits', { skip }, async () => {
   const host = pinHermeticHostRoots()
   try {
@@ -772,6 +801,23 @@ test('cross-workspace partition helper: evidence gates, reasons and ordering', a
     { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
     { name: 'travel', reason: NOT_APPLICABLE_IN_WORKSPACE },
   ])
+
+  // Host-retired classification: path-exact, COMPLETE inventory only, and it
+  // never catches a user/project identity that merely went missing.
+  const { hostBundleSkillRoots, isHostBundleIdentity, NOT_PROVIDED_BY_HOST } = await import('../src/capabilities/skill-applicability.js')
+  const hostRoot = '/applications/dsh/app.asar/dsh-agent-preset/skills'
+  const hostRoots = hostBundleSkillRoots([hostRoot])
+  const retired = { scope: 'custom', root: hostRoot, name: 'cordis-plugin-development', opaqueId: 'retired' }
+  expect(hostRoots.size).toBe(1)
+  expect(isHostBundleIdentity(retired, hostRoots)).toBe(true)
+  expect(partitionUnresolvedSkills([retired], { roots, complete: true, hostSkillRoots: hostRoots }))
+    .toEqual({ skipped: [{ name: 'cordis-plugin-development', reason: NOT_PROVIDED_BY_HOST }], unknown: [] })
+  expect(partitionUnresolvedSkills([retired], { roots, complete: false, hostSkillRoots: hostRoots }))
+    .toEqual({ skipped: [], unknown: ['cordis-plugin-development'] })
+  expect(partitionUnresolvedSkills([unknownUser], { roots, complete: true, hostSkillRoots: hostRoots }))
+    .toEqual({ skipped: [], unknown: ['ghost'] })
+  expect(partitionUnresolvedSkills([{ ...retired, root: '/home/skills' }], { roots, complete: true, hostSkillRoots: hostRoots }))
+    .toEqual({ skipped: [], unknown: ['cordis-plugin-development'] })
 
   const rootKeys = workspaceProjectSkillRoots(roots)
   expect(rootKeys.size).toBe(2)
