@@ -18,7 +18,7 @@ import {
   applyConsolidationOperations, buildConsolidationPack, parseConsolidationCandidate, replayOperations,
 } from './learning/consolidator.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM, publicContentIssues } from './learning/public.js'
-import { PUBLIC_ZONE, workspaceAlias } from './learning/namespace.js'
+import { PRIVATE_ZONE, PUBLIC_ZONE, memoryNamespace, workspaceAlias } from './learning/namespace.js'
 import { DecisionLearning } from './store/learning.js'
 import { decisionOrigin, excludedRequest, excludedStockHookRequest, sessionModelRoute } from './route.js'
 import { autoAdmission, classifyAutoRequest, routeAuto } from './router.js'
@@ -903,18 +903,26 @@ export class DecisionBroker {
     })
   }
 
+  /**
+   * Assistant detail. The identity is profile-global; the two memory zones are
+   * projected separately: `learningRuns`/`snapshots` are the current workspace's
+   * private zone only, and `publicMemory` is the workspace-agnostic public zone.
+   * Neither projection carries a realpath; public provenance stays an opaque alias.
+   * @param {{sessionId:string,agentId:string}} input
+   */
   async agent(input) {
     if (!this.store) return null
     const context = await this.sessionContext(input.sessionId)
     const profile = this.profiles.getProfile(input.agentId)
+    const privateNamespace = memoryNamespace(PRIVATE_ZONE, context.workspaceKey)
     const currentSnapshot = this.learning.currentSnapshot(profile.agentId, context.workspaceKey)
-    const snapshotHistory = this.learning.listSnapshots(profile.agentId).slice(0, 20)
+    const snapshotHistory = this.learning.listSnapshots(profile.agentId, privateNamespace).slice(0, 20)
     if (currentSnapshot && !snapshotHistory.some(snapshot => snapshot.snapshotId === currentSnapshot.snapshotId)) snapshotHistory.push(currentSnapshot)
     return {
       ...profile,
       descriptionHistory: this.profiles.descriptionHistory(profile.agentId),
       currentSnapshotId: currentSnapshot?.snapshotId ?? null,
-      learningRuns: this.learning.listRuns(profile.agentId).slice(0, 20).map(run => ({
+      learningRuns: this.learning.listRuns(profile.agentId, privateNamespace).slice(0, 20).map(run => ({
         learningRunId: run.learningRunId, outcome: run.outcome, revision: run.revision,
         createdAt: run.createdAt, updatedAt: run.updatedAt,
       })),
@@ -923,6 +931,7 @@ export class DecisionBroker {
         state: snapshot.state, learningRunId: snapshot.learningRunId, revision: snapshot.revision,
         contentHash: snapshot.contentHash, createdAt: snapshot.createdAt, updatedAt: snapshot.updatedAt,
       })),
+      publicMemory: this.publicMemorySummary(profile.agentId),
     }
   }
 
@@ -1168,6 +1177,25 @@ export class DecisionBroker {
     }
   }
 
+  /**
+   * Read-only public-zone summary for the assistant detail: current published
+   * version, the pending candidate (if any) and the first-extraction disclosure.
+   * It never calls the model and never carries a workspace path.
+   * @param {string} agentId
+   */
+  publicMemorySummary(agentId) {
+    const candidateRun = this.learning.activePublicRun(agentId)
+    return {
+      zone: PUBLIC_ZONE,
+      ...this.publicState(agentId),
+      candidate: candidateRun?.outcome === 'candidate' ? this.publicCandidateSummary(candidateRun) : null,
+      run: candidateRun ? {
+        learningRunId: candidateRun.learningRunId, outcome: candidateRun.outcome, revision: candidateRun.revision,
+      } : null,
+      disclosure: { ...this.publicDisclosure(), required: !this.learning.hasPublicRun(agentId) },
+    }
+  }
+
   /** @param {any} run */
   publicCandidateSummary(run) {
     if (!run) return null
@@ -1240,12 +1268,32 @@ export class DecisionBroker {
     const last = this.learning.lastPublicHighWater(agentId)
     if (last === sourceSet.highWater) {
       const previous = this.learning.lastPublicRun(agentId)
+      // A failed extraction never repeats on its own. Only an explicit user retry
+      // at an unchanged high-water mark starts exactly one new run.
+      if (previous?.outcome === 'failed' && input.retryFailedExtraction === true) {
+        this.audit('learning-run', {
+          agentId, rootSessionId: context.rootSessionId, zone: PUBLIC_ZONE, action: 'retry',
+          sourceCount: sourceSet.sources.length, workspaceCount: sourceSet.workspaces.length,
+        })
+        return this.executePublicLearning({ context, profile, requestId: this.publicRetryRequestId(agentId, sourceSet.highWater) })
+      }
       return this.publicRefreshResult(agentId, previous?.outcome === 'failed' ? 'failed' : 'up-to-date', previous, sourceSet)
     }
     if (!this.learning.hasPublicRun(agentId) && input.acknowledgedDisclosure !== true) {
       return this.publicRefreshResult(agentId, 'disclosure-required', null, sourceSet)
     }
     return this.executePublicLearning({ context, profile, requestId: `public:${agentId}:${sourceSet.highWater}` })
+  }
+
+  /**
+   * A distinct request id per explicit retry, so one user action starts one new
+   * run instead of replaying the failed one.
+   * @param {string} agentId @param {string} highWater
+   */
+  publicRetryRequestId(agentId, highWater) {
+    const previous = this.learning.listRuns(agentId, memoryNamespace(PUBLIC_ZONE))
+      .filter(run => run.inputFrozen.sourceHighWater === highWater).length
+    return `public:${agentId}:${highWater}:retry:${previous + 1}`
   }
 
   async executePublicLearning({ context, profile, requestId }) {
