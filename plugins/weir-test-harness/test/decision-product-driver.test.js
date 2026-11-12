@@ -1619,3 +1619,25 @@ test('the matrix binds every public gesture to its workspace before acting', () 
   assert.ok(phase.includes('publicAuditLines(workspaceFour)'), 'the rejection audit is read from the rejecting workspace')
   assert.ok(phase.includes("const w4Guidance = await waitFor(async () => { const value = await record(w4.sessionId, 'w4-public-attempt', w4Case.caseId)"), 'the Attempt is read from the record detail of the evidence-free workspace')
 })
+
+// The driver builds its page expressions as template literals; a raw newline
+// inside an injected single-quoted string is a page-level SyntaxError that only
+// surfaces mid-run, so every new probe is compiled here first.
+test('the injected page probes compile before the real run reaches them', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const templateAfter = marker => {
+    const from = driver.indexOf('instance.cdp.evaluate(`', driver.indexOf(marker))
+    assert.ok(from > 0, `${marker}: an injected expression exists`)
+    const to = driver.indexOf('`)', from)
+    assert.ok(to > from, `${marker}: the injected expression closes`)
+    return driver.slice(from + 'instance.cdp.evaluate(`'.length, to)
+  }
+  const memoryZone = templateAfter('async function crossWorkspaceMemoryDom(')
+  const memoryExpression = new Function('agentId', `return \`${memoryZone}\``)('ag_compile_check')
+  assert.ok(memoryExpression.includes('ag_compile_check'), 'the zone probe interpolates its agent id')
+  assert.doesNotThrow(() => new Function('document', `return (${memoryExpression})`), 'the zone probe is valid page source')
+  const recordProbe = templateAfter('const recordCapture = await waitFor(')
+  const recordExpression = new Function('w4Case', 'w4Attempt', `return \`${recordProbe}\``)({ caseId: 'dc_compile_check' }, { attemptId: 'at_compile_check' })
+  assert.ok(recordExpression.includes('dc_compile_check') && recordExpression.includes('at_compile_check'), 'the record probe interpolates its case and attempt ids')
+  assert.doesNotThrow(() => new Function('document', `return (${recordExpression})`), 'the record probe is valid page source')
+})

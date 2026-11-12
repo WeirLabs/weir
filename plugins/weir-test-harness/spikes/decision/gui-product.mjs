@@ -1794,7 +1794,7 @@ async function crossWorkspaceMemoryDom(agentId) {
         readableLinks:candidate.querySelectorAll('[data-action="open-learning-record"],[data-learning-source-record] button').length,
         adoptOnRender:false,
         text:candidate.innerText,
-        aliasesText:[...candidate.querySelectorAll('[data-public-source]')].map(el=>el.innerText).join('\n'),
+        aliasesText:[...candidate.querySelectorAll('[data-public-source]')].map(el=>el.innerText).join('\\n'),
       }:{present:false},
       current:current?{version:current.getAttribute('data-public-current'),rollback:Boolean(publicZone.querySelector('[data-action="public-rollback"]'))}:null,
     }
