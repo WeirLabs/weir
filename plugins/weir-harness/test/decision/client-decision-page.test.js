@@ -440,10 +440,10 @@ test('record pagination appends and dedupes without replacing the selected detai
   let tree = await openRecords(harness)
   let rows = findAll(tree, node => node.role === 'button' && node['data-case-id'])
   assert.equal(rows.length, 1)
-  // Rows are content-sized divs with button semantics (a styled <button> pinned
-  // its height to min-height and clipped long titles). The critical layout is
-  // inline so a stale CSS chunk (chunk URLs are entry-revision keyed and cached
-  // immutably) can never pin the row height again.
+  // Rows are content-sized divs with button semantics. The scrolling stack
+  // keeps them uncompressed (flex: 0 0 auto children — a single-column grid
+  // collapsed its auto tracks to min-height under overflow), and the inline
+  // display/width keep the row block-level even if a stale CSS chunk loads.
   assert.equal(rows[0].role, 'button')
   assert.equal(rows[0].tabIndex, 0)
   assert.equal(rows[0].style?.display, 'block')

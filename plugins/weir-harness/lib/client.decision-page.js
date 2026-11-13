@@ -1244,12 +1244,12 @@ window.__ModuleLoader__.load({
         : resources.records.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.records.value.length ? resources.records.value.map(record => {
           const summary = model.recordSummary(record, resources.agents.value, t);
-          // A plain button element pins its height to min-height in Chromium once it
-          // is styled as a grid container, so long titles overflowed and the next row
-          // painted over them. A div with button semantics sizes to its content.
-          // The critical layout is inline because chunk URLs are keyed by the entry
-          // revision and cached immutably: a stale stylesheet chunk must never be
-          // able to pin the row height again.
+          // The row stays a content-sized block inside the scrolling stack:
+          // the list's children are flex: 0 0 auto (a single-column grid
+          // collapsed its auto tracks to min-height under overflow, and
+          // default flex children shrink — both painted rows over each
+          // other). The inline display/width are belt-and-suspenders on top
+          // of the stylesheet so no chunk-cache mix can reintroduce it.
           const openRecordRow = () => readRecord(record.caseId, { select: true });
           return jsx.jsxs("div", { className: "weir-da-record-row", style: { display: "block", width: "100%", boxSizing: "border-box" }, "data-case-id": record.caseId, role: "button", tabIndex: 0, "aria-pressed": selectedCaseId === record.caseId, onClick: openRecordRow, onKeyDown: event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRecordRow() } }, children: [
             jsx.jsx("strong", { children: summary?.title ?? t("decisionRecord") }, "title"),

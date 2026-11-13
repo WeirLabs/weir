@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({
 .weir-da-selector-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .weir-da-selector-panel { margin: auto; position: fixed; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .weir-da-selector-header { min-width: 0; display: grid; gap: 4px; padding: 14px 16px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
-.weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 8px; display: grid; gap: 2px; align-content: start; }
+.weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; }
 .weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-title-size, 14px); line-height: var(--weir-font-title-line, 20px); font-weight: 600; }
 .weir-da-selector-title + .weir-da-caption { margin: 0; }
 .weir-da-selector-options { min-width: 0; display: grid; gap: 2px; }
@@ -106,7 +106,7 @@ window.__ModuleLoader__.load({
 .weir-da-primary-nav .weir-da-button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
 .weir-da-count { display: inline-flex; min-width: 12px; align-items: center; justify-content: center; margin-inline-start: 6px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); font-variant-numeric: tabular-nums; }
 .weir-da-view { min-width: 0; flex: 1 1 auto; min-height: 0; }
-.weir-da-view[data-view="inbox"], .weir-da-view[data-view="metrics"] { display: grid; gap: 12px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
+.weir-da-view[data-view="inbox"], .weir-da-view[data-view="metrics"] { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; overscroll-behavior: contain; }
 .weir-da-view[data-view="records"], .weir-da-view[data-view="agents"] { display: flex; flex-direction: column; overflow: hidden; }
 .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
 .weir-da-card { min-width: 0; padding: 16px; border-radius: var(--dsw-radius-xl); background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
@@ -122,11 +122,16 @@ window.__ModuleLoader__.load({
 .weir-da-evidence-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .weir-da-evidence-list li { padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); white-space: pre-wrap; }
 .weir-da-records-layout { min-width: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
-/* The two panes scroll independently; the page itself must not scroll. */
-.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
+/* The two panes scroll independently; the page itself must not scroll.
+   Scrolling stacks must be flex columns, never single-column grids: under
+   overflow Chromium collapses the grid's auto tracks to the item min-height
+   (measured 68px uniform steps, rows painting over each other), while flex
+   children simply scroll once they are forbidden to shrink. */
+.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overscroll-behavior: contain; }
+.weir-da-record-list > *, .weir-da-record-detail-pane > *, .weir-da-agent-list > *, .weir-da-agent-detail-pane > *, .weir-da-selector-body > *, .weir-da-view[data-view="inbox"] > *, .weir-da-view[data-view="metrics"] > * { flex: 0 0 auto; }
 .weir-da-record-detail-pane { padding-right: 4px; }
-/* The row is a content-sized block card. A grid container pinned its height to
-   min-height in Chromium, clipping multi-line titles. */
+/* The row is a content-sized block card. The list stack owns scrolling; the
+   row itself never compresses (flex: 0 0 auto from the rule above). */
 .weir-da-record-row { box-sizing: border-box; width: 100%; min-height: 64px; align-self: start; display: block; padding: 12px; border: 0.5px solid transparent; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); text-align: start; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
 .weir-da-record-row > strong { display: block; font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
 .weir-da-record-row > span, .weir-da-record-row > time { display: block; margin-top: 4px; }
@@ -159,7 +164,7 @@ window.__ModuleLoader__.load({
 .weir-da-section-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .weir-da-section-header h2, .weir-da-metrics h2 { margin: 0; font-size: var(--weir-font-section-size, 16px); line-height: var(--weir-font-section-line, 24px); font-weight: 600; }
 .weir-da-agents-layout { min-width: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
-.weir-da-agent-list, .weir-da-agent-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
+.weir-da-agent-list, .weir-da-agent-detail-pane { min-width: 0; display: flex; flex-direction: column; gap: 4px; overflow-y: auto; overscroll-behavior: contain; }
 .weir-da-agent-detail-pane { padding-right: 4px; }
 .weir-da-agent-summary { display: grid; gap: 8px; padding: 12px; }
 .weir-da-agent-summary .weir-da-card-header { margin-bottom: 0; }
