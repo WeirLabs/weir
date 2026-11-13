@@ -210,6 +210,16 @@ test('master-detail panes own their scrolling instead of sharing the page scroll
   assert.match(css, /\.weir-da-agents-layout \{[^}]*align-items: stretch;[^}]*min-height: 0;/)
   assert.match(css, /\.weir-da-record-list, \.weir-da-record-detail-pane \{[^}]*overflow-y: auto;/)
   assert.match(css, /\.weir-da-agent-list, \.weir-da-agent-detail-pane \{[^}]*overflow-y: auto;/)
+  // Scrolling stacks are flex columns with unshrinkable children: a
+  // single-column grid collapses its auto tracks to min-height once the
+  // content overflows the scroll container, and default flex children
+  // shrink — both measured as rows painting over each other (68px steps).
+  assert.match(css, /\.weir-da-record-list, \.weir-da-record-detail-pane \{[^}]*display: flex;[^}]*flex-direction: column;/)
+  assert.match(css, /\.weir-da-agent-list, \.weir-da-agent-detail-pane \{[^}]*display: flex;[^}]*flex-direction: column;/)
+  assert.match(css, /\.weir-da-selector-body \{[^}]*display: flex;[^}]*flex-direction: column;/)
+  assert.match(css, /\.weir-da-view\[data-view="inbox"\], \.weir-da-view\[data-view="metrics"\] \{[^}]*display: flex;[^}]*flex-direction: column;/)
+  assert.match(css, /\.weir-da-record-list > \*, \.weir-da-record-detail-pane > \*, \.weir-da-agent-list > \*, \.weir-da-agent-detail-pane > \*, \.weir-da-selector-body > \*[^}]*flex: 0 0 auto;/)
+  assert.doesNotMatch(css, /\.weir-da-record-list, \.weir-da-record-detail-pane \{[^}]*display: grid;/)
   // The records/agents views must not add a second page-level scroller.
   assert.match(css, /\.weir-da-view\[data-view="records"\], \.weir-da-view\[data-view="agents"\] \{[^}]*overflow: hidden;/)
 })
