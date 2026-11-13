@@ -508,6 +508,7 @@ window.__ModuleLoader__.load({
           jsx.jsx(ui.Button, { variant: "secondary", "data-action": "edit-agent", onClick: props.onEdit, children: t("decisionEditAgent") }, "edit"),
           jsx.jsx(ui.Button, { variant: "ghost", "data-agent-state": agent.state === "enabled" ? "disabled" : "enabled", disabled: agent.state === "archived", onClick: () => props.requestState(agent.state === "enabled" ? "disabled" : "enabled"), children: t(agent.state === "enabled" ? "decisionDisableAgent" : "decisionEnableAgent") }, "toggle"),
           jsx.jsx(ui.Button, { variant: "danger", "data-agent-state": "archived", disabled: agent.state === "archived", onClick: () => props.requestState("archived"), children: t("decisionArchiveAgent") }, "archive"),
+          jsx.jsx(ui.Button, { variant: "danger", "data-action": "delete-agent", onClick: () => props.requestDelete(), children: t("decisionDeleteAgent") }, "delete"),
         ] }, "actions"),
         jsx.jsxs("section", { className: "weir-da-memory-zone weir-da-public-zone", "data-memory-zone": "public", "aria-labelledby": `weir-da-public-zone-${agent.agentId}`, children: [
           jsx.jsx("h3", { id: `weir-da-public-zone-${agent.agentId}`, ref: props.publicZoneRef, tabIndex: -1, children: t("decisionPublicMemory") }, "title"),
@@ -1082,6 +1083,17 @@ window.__ModuleLoader__.load({
             }));
             await readLearning(refreshed);
             if (method === "profileUpsert") { setEditor(null); requestAgentFocus("detail"); }
+          } else if (method === "profileDelete") {
+            // The deleted assistant is gone for good: drop the selection, go
+            // back to the list and reread it authoritatively.
+            const agentRows = await actions.agents();
+            if (epochRef.current !== epoch || sessionId !== requestSession) return;
+            setResources(current => ({ ...current,
+              agents: { ...current.agents, status: "ready", value: Array.isArray(agentRows) ? agentRows : [], error: null },
+              agent: { status: "idle", value: null, error: null },
+            }));
+            setSelectedAgentId(null);
+            backToAgents();
           } else if (method.startsWith("learning") || method.startsWith("snapshot")) {
             const selected = resources.agent.value;
             if (selected) await selectAgent(selected.agentId);
@@ -1308,6 +1320,15 @@ window.__ModuleLoader__.load({
           requestPublicAction: action => { publicActionRef.current = true; setConfirm({ ...action, public: true }); },
           onEdit: () => { setEditor(newAgentEditor(selectedAgent)); requestAgentFocus("editor"); },
           requestState: state => setConfirm({ kind: "agent-state", agentId: selectedAgent.agentId, state }),
+          // The delete confirmation always shows fresh authoritative counts;
+          // a vanishing assistant falls back to a plain list refresh.
+          requestDelete: async () => {
+            try {
+              const preview = await actions.profileDeletePreview(selectedAgent.agentId);
+              if (!preview) { await loadAgents(); backToAgents(); return; }
+              setConfirm({ kind: "agent-delete", agentId: selectedAgent.agentId, name: selectedAgent.name, preview });
+            } catch (reason) { setActionError(asError(reason)); }
+          },
           learningProps: {
             detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
             scopeSummary: model.scopeSummary,
@@ -1351,6 +1372,21 @@ window.__ModuleLoader__.load({
         confirmLabel: t(confirm.state === "archived" ? "decisionArchiveAgent" : confirm.state === "disabled" ? "decisionDisableAgent" : "decisionEnableAgent"),
         cancelLabel: t("decisionCancel"), danger: confirm.state === "archived", pending: pending !== null,
         onCancel: () => setConfirm(null), onConfirm: () => { const { agentId, state } = confirm; setConfirm(null); return run("profileSetState", agentId, state); },
+      }) : confirm?.kind === "agent-delete" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
+        id: "weir-da-agent-delete", title: t("decisionDeleteAgentTitle"),
+        body: jsx.jsxs("div", { children: [
+          jsx.jsx("p", { children: t("decisionDeleteAgentLead") }, "lead"),
+          jsx.jsx("p", { children: jsx.jsx("strong", { children: confirm.name }) }, "name"),
+          jsx.jsxs("ul", { children: [
+            jsx.jsx("li", { "data-delete-count": "cases", children: `${t("decisionDeleteCountCases")}: ${confirm.preview.counts.cases}` }, "cases"),
+            jsx.jsx("li", { "data-delete-count": "evidence", children: `${t("decisionDeleteCountEvidence")}: ${confirm.preview.counts.evidence}` }, "evidence"),
+            jsx.jsx("li", { "data-delete-count": "feedback", children: `${t("decisionDeleteCountFeedback")}: ${confirm.preview.counts.feedback + confirm.preview.counts.corrections}` }, "feedback"),
+            jsx.jsx("li", { "data-delete-count": "learning", children: `${t("decisionDeleteCountLearning")}: ${confirm.preview.counts.learningRuns + confirm.preview.counts.snapshots}` }, "learning"),
+          ] }, "counts"),
+        ] }),
+        confirmLabel: t("decisionDeleteAgentConfirm"), cancelLabel: t("decisionCancel"), danger: true, pending: pending !== null,
+        onCancel: () => setConfirm(null),
+        onConfirm: () => { const { agentId, preview } = confirm; setConfirm(null); return run("profileDelete", agentId, preview.counts.cases); },
       }) : confirm?.kind === "export" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-export", returnFocus: exportButtonRef,
         title: t("decisionExportTitle"), body: jsx.jsx("p", { children: t("decisionExportConfirmation") }),

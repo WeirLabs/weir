@@ -4,7 +4,7 @@ export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
 export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
   'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'routingReview', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
-  'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'profileUpsert', 'profileSetState',
+  'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'profileUpsert', 'profileSetState', 'profileDeletePreview', 'profileDelete',
   'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
   'publicMemoryRefresh', 'publicCandidate', 'exportData',
 ])
@@ -44,12 +44,16 @@ export function createDecisionRemoteService(dependencies) {
       const status = broker?.status()
       if (!broker || (status.available !== true && !(method === 'overview' && status.reason === 'disabled'))) return { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: status?.reason ?? 'Decision Broker is unavailable' } }
       let value
-      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method) || EXPORT_METHODS.has(method)
+      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || method === 'profileDelete' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method) || EXPORT_METHODS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
       // Identity calls take no workspace: the caller cannot name one, and the
       // profile-global identity must not depend on where the call came from.
       if (method === 'setSelector') value = await broker.setSelector(context.rootSessionId, args.mode, args.agentId)
       else if (method === 'profileSetState') value = await broker.profileSetState(args.agentId, args.state)
+      // Delete calls forward only the two caller-owned fields; everything else
+      // about the cascade is derived server-side.
+      else if (method === 'profileDelete') value = await broker.profileDelete({ agentId: args.agentId, expectedCases: args.expectedCases })
+      else if (method === 'profileDeletePreview') value = await broker.profileDeletePreview({ agentId: args.agentId })
       else if (method === 'profileUpsert') value = await broker.profileUpsert(args)
       else if (method === 'routingReview') value = await broker.routingReview({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })

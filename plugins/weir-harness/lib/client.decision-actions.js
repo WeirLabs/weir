@@ -17,6 +17,8 @@ window.__ModuleLoader__.load({
         feedback: (caseId, verb, text) => call("feedback", { caseId, verb, ...(text === undefined ? {} : { payload: { text } }) }),
         correction: (caseId, direction, scope, supersedes) => call("correction", { caseId, direction, scope, supersedes }),
         profileUpsert: value => call("profileUpsert", value), profileSetState: (agentId, state) => call("profileSetState", { agentId, state }),
+        profileDeletePreview: agentId => call("profileDeletePreview", { agentId }),
+        profileDelete: (agentId, expectedCases) => call("profileDelete", { agentId, expectedCases }),
         learningStart: (agentId, requestId) => call("learningStart", { agentId, requestId }),
         learningRun: learningRunId => call("learningRun", { learningRunId }),
         snapshotPublish: (snapshotId, expectedRevision) => call("snapshotPublish", { snapshotId, expectedRevision }),
