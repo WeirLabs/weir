@@ -67,6 +67,8 @@ window.__ModuleLoader__.load({
 .weir-da-choice-copy { min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
 .weir-da-choice-description { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); }
 .weir-da-actions { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The destructive archive action keeps its distance from routine actions. */
+.weir-da-agent-detail .weir-da-actions [data-agent-state="archived"] { margin-inline-start: auto; }
 .weir-da-dialog { width: min(440px, calc(100vw - 32px)); max-height: min(600px, calc(100dvh - 32px)); overflow: auto; overscroll-behavior: contain; margin: auto; padding: 20px; }
 /* The dialog is a focus container, not an interactive control: its own ring
    would draw a blue frame around the whole panel. */

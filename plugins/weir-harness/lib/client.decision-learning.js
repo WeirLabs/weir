@@ -95,7 +95,9 @@ window.__ModuleLoader__.load({
           return props.confirmAction?.({ kind: "snapshotRollback", snapshotId: view.currentSnapshot.snapshotId, expectedRevision: view.currentRevision, currentVersion: view.currentVersion });
         }, children: t("decisionRollback") }, "rollback") : null,
         !view.pendingReview ? jsx.jsxs("div", { className: "weir-da-actions", children: [
-          jsx.jsx(ui.Button, { variant: "primary", "data-action": "learning-start", disabled: !view.canStart, "aria-busy": props.pending === "learningStart", onClick: () => { if (view.canStart) return props.onStart?.(); }, children: t("decisionConsolidate") }, "start"),
+          // The detail panel keeps a single solid action (edit); starting a
+          // consolidation is a routine quiet action.
+          jsx.jsx(ui.Button, { "data-action": "learning-start", disabled: !view.canStart, "aria-busy": props.pending === "learningStart", onClick: () => { if (view.canStart) return props.onStart?.(); }, children: t("decisionConsolidate") }, "start"),
         ] }, "actions") : null,
         view.startBlockKey && !view.pendingReview ? jsx.jsx("p", { className: "weir-da-caption", children: t(view.startBlockKey) }, "start-block") : null,
         view.pendingReview ? jsx.jsxs("section", { className: "weir-da-candidate-review", "data-candidate-review": true, children: [
@@ -114,8 +116,18 @@ window.__ModuleLoader__.load({
             jsx.jsx(ui.Button, { "data-action": "learning-reject", disabled: !view.canReview, onClick: () => confirm("snapshotReject"), children: t("decisionReject") }, "reject"),
           ] }, "actions"),
         ] }, "candidate") : null,
-        jsx.jsx(ui.Disclosure, { id: `weir-da-learning-advanced-${props.agent?.agentId ?? "unknown"}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => LearningDiagnostics({ view, ui, t, pending: props.pending, selectRun: props.selectRun, selectSnapshot: props.selectSnapshot }) }, "advanced"),
+        // The owning detail panel merges every advanced surface into a single
+        // bottom disclosure (hideAdvanced); standalone renders keep their own.
+        props.hideAdvanced === true ? null : jsx.jsx(ui.Disclosure, { id: `weir-da-learning-advanced-${props.agent?.agentId ?? "unknown"}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => LearningDiagnostics({ view, ui, t, pending: props.pending, selectRun: props.selectRun, selectSnapshot: props.selectSnapshot }) }, "advanced"),
       ] });
+    }
+
+    // The diagnostics content of AgentLearning without its Disclosure wrapper,
+    // so the assistant detail panel can merge every advanced surface into one.
+    function AgentLearningDiagnostics(props) {
+      const t = props.t ?? (key => key);
+      const ui = props.ui;
+      return LearningDiagnostics({ view: learningView(props), ui, t, pending: props.pending, selectRun: props.selectRun, selectSnapshot: props.selectSnapshot });
     }
 
     function PrincipleChanges(props) {
@@ -214,6 +226,7 @@ window.__ModuleLoader__.load({
 
     exports.principleDiff = principleDiff;
     exports.AgentLearning = AgentLearning;
+    exports.AgentLearningDiagnostics = AgentLearningDiagnostics;
     exports.learningView = learningView;
     exports.status = status;
     return module.exports;

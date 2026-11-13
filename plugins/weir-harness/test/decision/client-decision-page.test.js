@@ -715,7 +715,9 @@ function currentLearningInspection(harness) {
 function learningDiagnosticControl(harness, attribute, value) {
   const detail = findAll(harness.render(), node => node['data-agent-detail'] === 'ag_a')[0]
   const learning = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
-  const advanced = findAll(harness.learning.AgentLearning(learning), node => node.type === harness.ui.Disclosure)[0]
+  // The detail renders AgentLearning with hideAdvanced; the standalone render
+  // used for driving diagnostics controls restores its own disclosure.
+  const advanced = findAll(harness.learning.AgentLearning({ ...learning, hideAdvanced: false }), node => node.type === harness.ui.Disclosure)[0]
   const control = findAll(advanced.children(), node => node[attribute] === value)[0]
   assert.ok(control, `${attribute} ${value}`)
   return control
