@@ -57,3 +57,7 @@ Weir 的浏览器半区（`plugins/weir-harness/lib/client.*.js`）不是一堆�
 - 单元与契约测试覆盖原语行为、焦点/滚动锁/几何夹取。
 - 真实渲染证据用隔离 profile 的 Desktop 截图（`.weir/uiux-visual/`），覆盖明暗主题与锚定浮层定位。
 - 已知边界：状态圆点（6–8px）仍使用 `border-radius: 50%`，未配对 `corner-shape: round`（该尺寸下视觉差异不可辨，记为有意例外）；完整视觉矩阵（中英、360/768/1440、200% 缩放、键盘-only）在变更验收阶段补齐。
+
+## 9. chunk 缓存与内联关键布局
+
+宿主以入口 `lib/client.js` 的 fs 元数据生成 rev 作为全部 lazy chunk URL 的唯一缓存键，且响应为 `cache-control: immutable`（硬契约见 `docs/spikes.md` S49）：入口 rev 不变时，浏览器永久命中旧 chunk，Cmd+R 与重启 App 都不能自愈。因此凡「被旧 CSS 覆盖就会造成重叠/裁切事故」的关键布局（如判断记录条目的 `display`/`width`/`box-sizing`）一律内联在元素上，组件不因样式表 chunk 新旧而错位；chunk 修复合入后必须重建 digest 顶起 rev，并要求用户完全退出重开 App。
