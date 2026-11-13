@@ -214,6 +214,13 @@ test('master-detail panes own their scrolling instead of sharing the page scroll
   assert.match(css, /\.weir-da-view\[data-view="records"\], \.weir-da-view\[data-view="agents"\] \{[^}]*overflow: hidden;/)
 })
 
+test('record rows size to their content instead of a pinned height', async () => {
+  const css = (await load()).DecisionStyles().children
+  assert.match(css, /\.weir-da-record-row \{[^}]*display: grid;[^}]*align-content: start;/)
+  assert.doesNotMatch(css, /\.weir-da-record-row \{[^}]*[;{]\s*height: 64px/)
+  assert.match(css, /\.weir-da-disclosure-trigger::after/)
+})
+
 test('assistant master-detail styles keep compact summaries, independent regions, and narrow drill-in', async () => {
   const css = (await load()).DecisionStyles().children
   assert.match(css, /\.weir-da-agents-layout \{[^}]*display: grid;[^}]*grid-template-columns:/)

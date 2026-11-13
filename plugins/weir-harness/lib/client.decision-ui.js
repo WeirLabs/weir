@@ -43,7 +43,7 @@ window.__ModuleLoader__.load({
   .weir-da-button:hover:not(:disabled) { background: var(--dsw-alias-button-elevated-fill); }
   .weir-da-button[data-variant="primary"]:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
   .weir-da-button[data-variant="ghost"]:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-  .weir-da-disclosure-trigger:hover, .weir-da-selector-trigger:hover:not(:disabled), .weir-da-selector-option:hover, .weir-da-choice:hover { background: var(--dsw-alias-interactive-bg-hover); }
+  .weir-da-disclosure-trigger:hover, .weir-da-selector-trigger:hover:not(:disabled), .weir-da-selector-option:hover, .weir-da-choice:hover, .weir-da-record-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
 }
 .weir-da-button:focus-visible, .weir-da-disclosure-trigger:focus-visible, .weir-da-selector-trigger:focus-visible, .weir-da-page select:focus-visible, .weir-da-page input:focus-visible, .weir-da-page textarea:focus-visible, .weir-ui-menu-item:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 .weir-da-field { min-width: 0; display: grid; gap: 6px; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
@@ -125,8 +125,10 @@ window.__ModuleLoader__.load({
 /* The two panes scroll independently; the page itself must not scroll. */
 .weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
 .weir-da-record-detail-pane { padding-right: 4px; }
-.weir-da-record-row.weir-da-button { width: 100%; height: auto; min-height: 64px; display: grid; justify-items: start; gap: 4px; padding: 12px; border-color: transparent; text-align: start; white-space: normal; overflow-wrap: anywhere; }
-.weir-da-record-row[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-2); }
+/* The row is a content-sized card: grid tracks follow the text, never min-height. */
+.weir-da-record-row { box-sizing: border-box; width: 100%; min-height: 64px; display: grid; justify-items: start; align-content: start; gap: 4px; padding: 12px; border: 0.5px solid transparent; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); text-align: start; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
+.weir-da-record-row:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.weir-da-record-row[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-3); border-color: var(--dsw-alias-border-selected); }
 .weir-da-record-row span { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
 .weir-da-record-back { display: none; }
 @media (max-width: 760px) {
@@ -136,7 +138,9 @@ window.__ModuleLoader__.load({
   .weir-da-records-layout[data-drill-in="false"] .weir-da-record-detail-pane { display: none; }
   .weir-da-record-back { display: inline-flex; }
 }
-.weir-da-disclosure-trigger { box-sizing: border-box; width: 100%; min-height: 32px; padding: 6px 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--weir-font-body-size, 13px); text-align: start; cursor: pointer; }
+.weir-da-disclosure-trigger { box-sizing: border-box; width: 100%; min-height: 32px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 0; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--weir-font-body-size, 13px); text-align: start; cursor: pointer; }
+.weir-da-disclosure-trigger::after { content: "▾"; color: var(--dsw-alias-label-tertiary); transition: transform .15s ease; }
+.weir-da-disclosure-trigger[aria-expanded="true"]::after { transform: rotate(180deg); }
 .weir-da-disclosure { min-width: 0; }
 .weir-da-disclosure [role="region"] { min-width: 0; padding-top: 10px; }
 .weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
@@ -145,7 +149,7 @@ window.__ModuleLoader__.load({
 .weir-da-filters { min-width: 0; display: grid; gap: 12px; }
 .weir-da-records-view, .weir-da-agents-view { min-width: 0; display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; }
 .weir-da-filter-row { min-width: 0; display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-.weir-da-filter { min-width: 0; flex: 1 1 160px; display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
+.weir-da-filter { min-width: 0; flex: 0 1 240px; max-width: 280px; display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
 .weir-da-filter input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
 .weir-da-section-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .weir-da-section-header h2, .weir-da-metrics h2 { margin: 0; font-size: var(--weir-font-section-size, 16px); line-height: var(--weir-font-section-line, 24px); font-weight: 600; }
