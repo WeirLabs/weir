@@ -890,6 +890,33 @@ test('ConfirmDialog returns focus without scrolling the Decision page after a co
   }
 })
 
+test('DecisionAnswers collapses a single legend that repeats the card title, keeping it for assistive technology', async () => {
+  const runtime = makeReact()
+  const ui = await load(runtime.react)
+  const base = { suggestions: [], onChange: () => {}, onSubmit: () => {}, t: key => key }
+  // Single question identical to the card title: legend is sr-only.
+  runtime.begin()
+  let tree = ui.DecisionAnswers({ ...base, questions: [{ id: 'q', question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No' }] }], collapseTitle: 'Ship it?' })
+  const hidden = findAll(tree, node => node.type === 'legend')
+  assert.equal(hidden.length, 1)
+  assert.equal(hidden[0].className, 'weir-da-sr-only')
+  assert.equal(hidden[0].children, 'Ship it?')
+  // Same setup without a matching title keeps the visible legend.
+  runtime.begin()
+  tree = ui.DecisionAnswers({ ...base, questions: [{ id: 'q', question: 'Ship it?', options: [{ label: 'Yes' }, { label: 'No' }] }] })
+  assert.equal(findAll(tree, node => node.type === 'legend')[0].className, undefined)
+  // Multiple questions never collapse, even when one matches.
+  runtime.begin()
+  tree = ui.DecisionAnswers({ ...base, questions: [{ id: 'q', question: 'Ship it?', options: [{ label: 'Yes' }] }, { id: 'q2', question: 'Why?', options: [{ label: 'Fast' }] }], collapseTitle: 'Ship it?' })
+  assert.ok(findAll(tree, node => node.type === 'legend').every(node => node.className === undefined))
+})
+
+test('warn and error notices carry an accent bar so key alerts stand out', async () => {
+  const css = (await load()).DecisionStyles().children
+  assert.match(css, /\.weir-ui-notice\[data-tone="warn"\] \{[^}]*box-shadow: inset 2px 0 0 var\(--dsw-alias-state-warn-label\);/)
+  assert.match(css, /\.weir-ui-notice\[data-tone="error"\] \{[^}]*box-shadow: inset 2px 0 0 var\(--dsw-alias-state-error-primary\);/)
+})
+
 test('DecisionAnswers fills suggestions locally and submits one complete original-shaped batch', async () => {
   const runtime = makeReact()
   const ui = await load(runtime.react)
