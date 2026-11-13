@@ -26,9 +26,9 @@
 
 ### Fixed
 
-- **Decision 判断记录重叠根因：宿主客户端 chunk 不可变缓存混发**：宿主以入口文件 `lib/client.js` 的 fs 元数据（mtime/ctime/size）生成 rev，所有 lazy chunk 的 URL 仅以该 rev 为缓存键且 `cache-control: immutable`；同一 rev 下若先缓存了旧 CSS chunk、后缓存新页面 chunk，界面会长期卡在「新工具栏 + 旧行样式」的混合态，Cmd+R 乃至重启 App 都不自愈（rev 不变则 URL 不变、浏览器直接命中缓存）。现在把记录行的关键布局（`display`/`width`/`box-sizing`）内联到元素上，任何过期样式表都无法再把行高钉死；同时重建入口 digest 顶起 rev 强制全量重取。该机制已登记为 docs/spikes.md S49。
-- **Decision 判断记录条目仍被裁切 + 工具栏占位浪费**：上一版把行换成按钮语义但仍保留网格容器，Chromium 依旧把高度钉在 `min-height`。现在行是纯块级卡片（旧 button 与新 div 两种结构都按内容撑高），标题与元信息各自成块；“更多筛选/数据导出”并入筛选工具条同一行，判断记录列表上移约 120px。
-- **Decision 判断记录条目被裁切/重叠**：记录条目此前是 `<button>` 网格容器，Chromium 把高度钉在 `min-height`，两行以上标题溢出卡片、被下一条卡片盖住。改为按内容撑高的行容器（保留 `role=button`、Tab 与 Enter/Space 语义），并给选中/悬停/焦点明确样式；同时把“更多筛选/数据导出”的空旷全宽条改为带箭头的紧凑行，筛选下拉不再拉满面板宽度。
+- **Decision 判断记录重叠的真正根因：滚动堆叠容器用了单列 grid**：用真实 39 行数据复现后实测：记录/助手列表、详情窗格、选择器列表体、收件箱与指标视图这些「自身滚动」的堆叠容器是单列 grid，一旦内容总高超过滚动容器，Chromium 会把 auto 轨道全部压到条目 `min-height`（实测统一 68px 步进，而实际行高 73–205px），行与行互相压盖；换成 flex 但不禁止收缩同样被压扁（全部 64px）。最终修复：这些滚动堆叠一律 `display:flex; flex-direction:column`，其子元素 `flex: 0 0 auto`（实测 0 重叠），并纳入契约测试。此前「按钮换 div」「内联行布局」是必要的但都不治本；更早一条把根因误判为「宿主 chunk 缓存混发」——经真实数据复现证伪，已更正（缓存机制本身属实，见 docs/spikes.md S49/S50）。
+- **Decision 判断记录条目仍被裁切 + 工具栏占位浪费**：上一版把行换成按钮语义但仍保留网格容器，高度依旧被压。现在行是纯块级卡片（旧 button 与新 div 两种结构都按内容撑高），标题与元信息各自成块；“更多筛选/数据导出”并入筛选工具条同一行，判断记录列表上移约 120px。
+- **Decision 判断记录条目被裁切/重叠**：记录条目此前是 `<button>` 网格容器，两行以上标题溢出卡片、被下一条卡片盖住。改为按内容撑高的行容器（保留 `role=button`、Tab 与 Enter/Space 语义），并给选中/悬停/焦点明确样式；同时把“更多筛选/数据导出”的空旷全宽条改为带箭头的紧凑行，筛选下拉不再拉满面板宽度。
 - **Decision 记录主从布局共用一个滚动容器**：判断记录与助手管理的列表和详情此前共享页面滚动，长列表会把详情挤出视口，滚到底点条目看不到内容。现在页头/导航固定，列表与详情各自独立滚动，选中后详情从头显示，页面本身不再滚动；窄屏钻取不变。
 - **DSH 0.2.2 技能收编后 Capabilities 失效**：宿主把四项 Creator 技能（`agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`）替换为 `dsh-doc` 后，工作区默认值与预设里记录的旧 identity 让每个 Weir 会话的技能 provider 整批 fail closed（Badge 显示「技能 ? · MCP ?」、回执 `selection-unavailable`、Apply 逐项报这四个名称无法解析）。工作区默认读取现在按完整库存核对 identity 条目，逐项报告并排除宿主已移除的条目（默认记录逐字不改写，库存不完整时不排除）；Apply 把「宿主 bundle 技能根下、当前宿主已不再提供」的 identity 分类为 `skipped`（`no longer provided by this host version`），其余可解析条目照常提交；`weir-creative` 的提示词改为加载 `dsh-doc` 及其按需引用。详见 [会话能力管理器](docs/features/session-capability-manager.md) 与 [预设打包](docs/features/preset-packaging.md)。
 - **Decision 边界与恢复加固**：跨 root/workspace 动作和纠正目标均校验归属并写审计；窄 scope 不可授权更宽请求，证据展开到真实用户答案，文件证据当次只读复核，冲突任一侧被引用都阻止回答。用户裁决与证据原子写入，高版本记录明确拒绝，并发首次送达保持幂等，意外失败进入可恢复待办，耗尽后的显式恢复每次只追加一个 Attempt。

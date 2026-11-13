@@ -58,6 +58,9 @@ Weir 的浏览器半区（`plugins/weir-harness/lib/client.*.js`）不是一堆�
 - 真实渲染证据用隔离 profile 的 Desktop 截图（`.weir/uiux-visual/`），覆盖明暗主题与锚定浮层定位。
 - 已知边界：状态圆点（6–8px）仍使用 `border-radius: 50%`，未配对 `corner-shape: round`（该尺寸下视觉差异不可辨，记为有意例外）；完整视觉矩阵（中英、360/768/1440、200% 缩放、键盘-only）在变更验收阶段补齐。
 
-## 9. chunk 缓存与内联关键布局
+## 9. 滚动堆叠容器与 chunk 缓存
 
-宿主以入口 `lib/client.js` 的 fs 元数据生成 rev 作为全部 lazy chunk URL 的唯一缓存键，且响应为 `cache-control: immutable`（硬契约见 `docs/spikes.md` S49）：入口 rev 不变时，浏览器永久命中旧 chunk，Cmd+R 与重启 App 都不能自愈。因此凡「被旧 CSS 覆盖就会造成重叠/裁切事故」的关键布局（如判断记录条目的 `display`/`width`/`box-sizing`）一律内联在元素上，组件不因样式表 chunk 新旧而错位；chunk 修复合入后必须重建 digest 顶起 rev，并要求用户完全退出重开 App。
+两条运行纪律，均来自 2026-11 判断记录重叠事故的三轮误诊：
+
+- **滚动堆叠必须是 flex 列**（`docs/spikes.md` S50）：任何自身 `overflow` 滚动的堆叠容器（记录/助手列表、详情窗格、选择器列表体、收件箱/指标视图）禁止单列 grid——内容总高超过容器后 Chromium 把 auto 轨道压到条目 `min-height`，行互相压盖；一律 `display:flex; flex-direction:column` 且子元素 `flex: 0 0 auto`。契约测试钉死。验证此类修复必须用「内容总高超过容器」的真实数据量，注入两三行不算数。
+- **chunk 缓存键 = 入口 rev**（`docs/spikes.md` S49）：宿主以入口 `lib/client.js` 的 fs 元数据生成 rev 作为全部 lazy chunk URL 的唯一缓存键且 `cache-control: immutable`。客户端修复合入后必须重建 digest 顶起 rev，并让用户完全退出重开 App；排查「代码已修但界面没变」先验证渲染端实际字节，再谈缓存理论。记录行的 `display`/`width`/`box-sizing` 内联在元素上作为兜底。
