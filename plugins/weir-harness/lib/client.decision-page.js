@@ -278,12 +278,13 @@ window.__ModuleLoader__.load({
       const outcomeKeys = { answer: "decisionOutcomeAnswer", return: "decisionOutcomeReturn", escalate: "decisionOutcomeEscalate", failed: "decisionOutcomeFailed" };
       const feedbackKeys = { none: "decisionFeedbackNone", validated: "decisionFeedbackValidated", disputed: "decisionFeedbackDisputed" };
       const options = (values, keys) => values.map(value => ({ value, label: t(keys[value]) }));
+      // One toolbar row: the two common filters, the apply action and both
+      // disclosure entries. Advanced filters expand underneath the row instead
+      // of adding a second full-width bar.
       return jsx.jsxs("section", { className: "weir-da-filters", "aria-label": t("decisionRecordFilters"), children: [
-        jsx.jsxs("div", { className: "weir-da-filter-row", children: [
-          FilterSelect({ name: "agentId", label: t("decisionFilterAgent"), allLabel: t("decisionAllAssistants"), value: filter.agentId, onChange: change("agentId"), options: props.agents.map(agent => ({ value: agent.agentId, label: agent.name })) }),
-          FilterSelect({ name: "state", label: t("decisionFilterState"), allLabel: t("decisionAllStates"), value: filter.state, onChange: change("state"), options: options(Object.keys(stateKeys), stateKeys) }),
-          jsx.jsx(ui.Button, { variant: "primary", onClick: props.onApply, children: t("decisionApplyFilters") }, "apply"),
-        ] }, "common"),
+        FilterSelect({ name: "agentId", label: t("decisionFilterAgent"), allLabel: t("decisionAllAssistants"), value: filter.agentId, onChange: change("agentId"), options: props.agents.map(agent => ({ value: agent.agentId, label: agent.name })) }),
+        FilterSelect({ name: "state", label: t("decisionFilterState"), allLabel: t("decisionAllStates"), value: filter.state, onChange: change("state"), options: options(Object.keys(stateKeys), stateKeys) }),
+        jsx.jsx(ui.Button, { variant: "primary", onClick: props.onApply, children: t("decisionApplyFilters") }, "apply"),
         jsx.jsx(ui.Disclosure, { id: "weir-da-more-record-filters", label: t("decisionMoreFilters"), children: () => jsx.jsxs("div", { className: "weir-da-filter-row weir-da-filter-advanced", children: [
           FilterSelect({ name: "outcome", label: t("decisionFilterOutcome"), allLabel: t("decisionAllOutcomes"), value: filter.outcome, onChange: change("outcome"), options: options(Object.keys(outcomeKeys), outcomeKeys) }),
           FilterSelect({ name: "reasonCode", label: t("decisionFilterReason"), allLabel: t("decisionAllReasons"), value: filter.reasonCode, onChange: change("reasonCode"), options: ["INVALID_PREMISE", "MISSING_CONTEXT", "OUT_OF_SCOPE", "CONFLICTING_EVIDENCE", "STALE_EVIDENCE", "UNSUPPORTED_OPTIONS"].map(value => ({ value, label: t(model.reasonKey(value)) })) }),
@@ -293,8 +294,10 @@ window.__ModuleLoader__.load({
           ] }, "scope"),
           FilterSelect({ name: "feedbackState", label: t("decisionFilterFeedback"), allLabel: t("decisionAllFeedback"), value: filter.feedbackState, onChange: change("feedbackState"), options: options(Object.keys(feedbackKeys), feedbackKeys) }),
         ] }) }, "advanced"),
+        props.advanced ?? null,
       ] });
     }
+
     /**
      * The explicit data export lives in the records advanced area: one button, a
      * disclosure explaining the scope and the destination, and nothing that
@@ -1253,8 +1256,7 @@ window.__ModuleLoader__.load({
         }) : jsx.jsx(ui.EmptyState, { children: t(model.recordEmptyState({ sessionId, filtered: Object.values(appliedFilter).some(Boolean) })) });
       const exportView = model.exportView(exportState);
       const recordsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-records-view", children: [
-        RecordFilters({ filter, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters }),
-        RecordsAdvancedActions({ view: exportView, ui, t, buttonRef: exportButtonRef, onRequest: () => setConfirm({ kind: "export" }) }),
+        RecordFilters({ filter, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters, advanced: RecordsAdvancedActions({ view: exportView, ui, t, buttonRef: exportButtonRef, onRequest: () => setConfirm({ kind: "export" }) }) }),
         ExportResult({ view: exportView, ui, t, onRetry: () => startExport({ focusResult: true }), onCopy: copyExportPath }),
         jsx.jsxs("div", { className: "weir-da-records-layout", "data-drill-in": drillIn, children: [
           jsx.jsxs("div", { className: "weir-da-record-list", "aria-label": t("decisionRecords"), children: [
