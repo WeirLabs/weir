@@ -12,11 +12,11 @@ window.__ModuleLoader__.load({
 		// (client.hash-edit-model.js, ten exports) and `t` arrive via props —
 		// the composition root (lib/client.js) pulls both chunks in parallel.
 		const hashEditHeaderStyle = { display: "flex", alignItems: "center", gap: "8px", padding: "6px 4px", cursor: "pointer", userSelect: "none", borderRadius: "var(--dsw-radius-sm)" };
-		const hashEditTitleStyle = { fontSize: "13px", fontWeight: 500, lineHeight: "18px", flexShrink: 0 };
-		const hashEditPathStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
-		const hashEditMetaStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", flexShrink: 0 };
-		const hashEditHintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", padding: "4px 4px" };
-		const hashEditPreStyle = { margin: 0, padding: "8px 10px", fontSize: "12px", lineHeight: "16px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-bg-layer-3)" };
+		const hashEditTitleStyle = { fontSize: "var(--dsw-font-xs-13-font-size)", fontWeight: 500, lineHeight: "var(--dsw-font-xs-13-line-height)", flexShrink: 0 };
+		const hashEditPathStyle = { background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
+		const hashEditMetaStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)", flexShrink: 0 };
+		const hashEditHintStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)", padding: "4px 4px" };
+		const hashEditPreStyle = { margin: 0, padding: "8px 10px", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-bg-layer-3)" };
 		/** Status tone: errors and interruptions stay explicit in the header. */
 		function hashEditStateColor(state) {
 			if (state === "error") return "var(--dsw-alias-state-error-primary)";

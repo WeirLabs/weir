@@ -51,7 +51,7 @@ window.__ModuleLoader__.load({
 				borderRadius: "var(--dsw-radius-sm)",
 				cursor: "pointer",
 				padding: "2px 8px",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				lineHeight: "16px",
 				color: "var(--dsw-alias-label-secondary)",
 				transition: "background-color 120ms ease, color 120ms ease, border-color 120ms ease"
@@ -70,7 +70,7 @@ window.__ModuleLoader__.load({
 				left: 0,
 				maxWidth: "280px",
 				padding: "8px 10px",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				lineHeight: "16px",
 				border: 0,
 				borderLeft: `2px solid ${WARN}`,

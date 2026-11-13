@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
     const jsx = require("react/jsx-runtime");
     const PAGE_ID = "weir-decisions";
     const contextPackStyle = { background: "var(--dsw-alias-bg-base)", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "6px 8px" };
-    const contextPackBodyStyle = { display: "grid", gap: "8px", paddingTop: "8px", fontSize: "12px", lineHeight: "16px" };
+    const contextPackBodyStyle = { display: "grid", gap: "8px", paddingTop: "8px", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)" };
     const contextPackLabelStyle = { color: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
     const contextPackListStyle = { margin: "4px 0 0", paddingLeft: "22px", overflowWrap: "anywhere" };
 

@@ -39,9 +39,9 @@ window.__ModuleLoader__.load({
 			border: "none",
 			outline: "none",
 			padding: "0 20px 0 8px",
-			fontSize: "13px",
+			fontSize: "var(--dsw-font-xs-13-font-size)",
 			fontWeight: 500,
-			lineHeight: "20px",
+			lineHeight: "var(--dsw-font-xs-13-line-height)",
 			textAlign: "left",
 			overflow: "hidden",
 			textOverflow: "ellipsis"
@@ -59,8 +59,8 @@ window.__ModuleLoader__.load({
 			boxShadow: "var(--dsw-elevation-panel)",
 			padding: "4px"
 		};
-		const menuRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", minHeight: "32px", width: "100%", padding: "8px 10px", borderRadius: "var(--dsw-radius-md)", background: "none", border: "none", cursor: "pointer", fontSize: "13px", lineHeight: "18px", textAlign: "left", color: "var(--dsw-alias-label-primary)" };
-		const menuHeaderStyle = { fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dsw-alias-label-secondary)", padding: "8px 10px 2px" };
+		const menuRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", minHeight: "32px", width: "100%", padding: "8px 10px", borderRadius: "var(--dsw-radius-md)", background: "none", border: "none", cursor: "pointer", fontSize: "var(--dsw-font-xs-13-font-size)", lineHeight: "var(--dsw-font-xs-13-line-height)", textAlign: "left", color: "var(--dsw-alias-label-primary)" };
+		const menuHeaderStyle = { fontSize: "var(--dsw-font-xxxs-11-font-size)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dsw-alias-label-secondary)", padding: "8px 10px 2px" };
 		function ModelPickerField(props) {
 			const { value, onChange, getSession, t, disabled = false } = props;
 			const [open, setOpen] = react.useState(false);

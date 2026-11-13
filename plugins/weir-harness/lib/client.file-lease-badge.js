@@ -56,8 +56,8 @@ window.__ModuleLoader__.load({
 			borderRadius: "var(--dsw-radius-sm)",
 			cursor: "pointer",
 			padding: "3px 8px",
-			fontSize: "12px",
-			lineHeight: "16px",
+			fontSize: "var(--dsw-font-xxs-12-font-size)",
+			lineHeight: "var(--dsw-font-xxs-12-line-height)",
 			color: "var(--dsw-alias-label-secondary)"
 		};
 		// Popover surface: the theme's documented overlay token (light and dark).
@@ -75,8 +75,8 @@ window.__ModuleLoader__.load({
 			boxShadow: "0 6px 24px var(--dsw-alias-border-l2)",
 			padding: "10px 12px",
 			color: "var(--dsw-alias-label-primary)",
-			fontSize: "12px",
-			lineHeight: "18px"
+			fontSize: "var(--dsw-font-xxs-12-font-size)",
+			lineHeight: "var(--dsw-font-xxs-12-line-height)"
 		};
 		const mutedStyle = { color: "var(--dsw-alias-label-secondary)" };
 		/** A group heading: bold, and spaced only when something precedes it. */

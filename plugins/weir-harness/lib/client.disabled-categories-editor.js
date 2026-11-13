@@ -17,16 +17,16 @@ window.__ModuleLoader__.load({
 		// (same-package sync require is impossible in the ModuleLoader).
 		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
-		const labelStyle = { fontSize: "14px", fontWeight: 500, lineHeight: "20px" };
-		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const labelStyle = { fontSize: "var(--dsw-font-s-14-font-size)", fontWeight: 500, lineHeight: "var(--dsw-font-s-14-line-height)" };
+		const hintStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)" };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
-		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
+		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "var(--dsw-font-xxs-12-font-size)", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
 		const chainPanelStyle = { display: "flex", flexDirection: "column", gap: "12px", padding: "12px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)", background: "var(--dsw-alias-bg-layer-3)", marginTop: "8px" };
-		const chainCategoryStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px" };
-		const chainDescStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const chainCategoryStyle = { fontSize: "var(--dsw-font-xs-13-font-size)", fontWeight: 600, lineHeight: "var(--dsw-font-xs-13-line-height)" };
+		const chainDescStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)" };
 		const chainRungStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" };
-		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
-		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "var(--dsw-alias-label-on-color)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "13px" };
+		const chainButtonStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "var(--dsw-font-xxs-12-font-size)", color: "var(--dsw-alias-label-secondary)", textDecoration: "underline" };
+		const chainSaveStyle = { background: "var(--dsw-alias-state-business-primary)", border: "none", cursor: "pointer", color: "var(--dsw-alias-label-on-color)", borderRadius: "var(--dsw-radius-sm)", padding: "4px 14px", fontSize: "var(--dsw-font-xs-13-font-size)" };
 		/** Open-state decision for the toggle editor: blank (unset at every
 		 * layer) and malformed stored values both open with EVERY switch off —
 		 * no stored state may strand the field uneditable; `invalid`

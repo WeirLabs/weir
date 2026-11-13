@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
 				minHeight: 0,
 				boxSizing: "border-box",
 				padding: "12px",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				color: LABEL1
 			},
 			header: {
@@ -88,8 +88,8 @@ window.__ModuleLoader__.load({
 					borderBottom: "0.5px solid var(--dsw-alias-border-l1)",
 					flex: "none"
 				},
-				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, flex: "none" },
-				summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, whiteSpace: "nowrap", flex: "none", marginLeft: "2px" },
+				title: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", fontWeight: 600, flex: "none" },
+				summary: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, whiteSpace: "nowrap", flex: "none", marginLeft: "2px" },
 				spacer: { flex: "1 1 auto" },
 				iconButton: {
 					width: "22px",
@@ -113,7 +113,7 @@ window.__ModuleLoader__.load({
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "3px 8px 3px 24px",
 					background: CARD_BG,
@@ -126,7 +126,7 @@ window.__ModuleLoader__.load({
 			chips: {
 				row: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap", margin: "2px 0 4px", flex: "none" },
 				chip: (active, hue) => ({
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "14px",
 					fontWeight: active ? 600 : 500,
 					padding: "2px 8px",
@@ -149,8 +149,8 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: "6px",
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					padding: "3px 2px",
@@ -158,8 +158,8 @@ window.__ModuleLoader__.load({
 					background: "var(--dsw-alias-bg-layer-1)"
 				},
 				count: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: MUTED,
 					background: HOVER_BG,
@@ -170,8 +170,8 @@ window.__ModuleLoader__.load({
 					flex: "none"
 				},
 				parentNote: {
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					color: MUTED,
 					flex: "none",
 					padding: "0 2px 4px"
@@ -191,19 +191,19 @@ window.__ModuleLoader__.load({
 				nameLine: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0, flexWrap: "wrap" },
 				name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 },
 				desc: {
-					fontSize: "11px",
-					lineHeight: "15px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					color: MUTED,
 					overflow: "hidden",
 					textOverflow: "ellipsis",
 					whiteSpace: "nowrap"
 				},
-				meta: { fontSize: "10px", lineHeight: "14px", color: MUTED, flex: "none", marginTop: "1px" }
+				meta: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, flex: "none", marginTop: "1px" }
 			},
 			tag: {
 				base: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					padding: "0 5px",
 					borderRadius: "var(--dsw-radius-sm)",
@@ -221,12 +221,12 @@ window.__ModuleLoader__.load({
 			},
 			detail: {
 				block: { margin: "4px 0" },
-				label: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2, padding: "0 2px 2px" },
-				text: { fontSize: "12px", lineHeight: "17px", color: LABEL1, padding: "0 2px", whiteSpace: "pre-wrap", wordBreak: "break-word" },
+				label: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600, color: LABEL2, padding: "0 2px 2px" },
+				text: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: LABEL1, padding: "0 2px", whiteSpace: "pre-wrap", wordBreak: "break-word" },
 				content: {
 					margin: 0,
 					padding: "8px 10px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					whiteSpace: "pre-wrap",
 					wordBreak: "break-word",
@@ -242,7 +242,7 @@ window.__ModuleLoader__.load({
 					gap: "6px",
 					alignItems: "center",
 					flexWrap: "wrap",
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "16px",
 					padding: "6px 8px",
 					margin: "6px 0",
@@ -257,7 +257,7 @@ window.__ModuleLoader__.load({
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
@@ -269,7 +269,7 @@ window.__ModuleLoader__.load({
 				area: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
@@ -282,7 +282,7 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				select: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "3px 6px",
 					background: CARD_BG,
@@ -291,13 +291,13 @@ window.__ModuleLoader__.load({
 					color: LABEL1,
 					transition: TRANSITION
 				},
-				error: { fontSize: "11px", lineHeight: "15px", color: WARN_TEXT },
+				error: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: WARN_TEXT },
 				actions: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", flex: "none", marginTop: "2px" }
 			},
 			button: {
 				primary: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					fontWeight: 600,
 					padding: "3px 10px",
 					cursor: "pointer",
@@ -308,7 +308,7 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				ghost: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
@@ -320,7 +320,7 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				dangerGhost: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
@@ -345,7 +345,7 @@ window.__ModuleLoader__.load({
 					flexWrap: "wrap"
 				},
 				chip: (hue) => ({
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "16px",
 					fontWeight: 600,
 					padding: "1px 7px",
@@ -358,7 +358,7 @@ window.__ModuleLoader__.load({
 					gap: "4px",
 					alignItems: "center"
 				}),
-				text: { fontSize: "11px", lineHeight: "16px", color: LABEL2, minWidth: 0 }
+				text: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: LABEL2, minWidth: 0 }
 			},
 			state: {
 				wrap: {
@@ -381,8 +381,8 @@ window.__ModuleLoader__.load({
 					background: tint(hue, 10),
 					flex: "none"
 				}),
-				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, color: LABEL1 },
-				desc: { fontSize: "11px", lineHeight: "16px", color: MUTED, maxWidth: "280px" },
+				title: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", fontWeight: 600, color: LABEL1 },
+				desc: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, maxWidth: "280px" },
 				skeleton: { display: "flex", flexDirection: "column", gap: "8px" },
 				skeletonRow: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 6px" },
 				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm)", background: SKELETON, flex: "none" }),
@@ -1066,7 +1066,7 @@ window.__ModuleLoader__.load({
 										] }),
 											react_jsx_runtime.jsxs("div", { style: S.detail.actions, children: entry.promoted ? [
 												react_jsx_runtime.jsx("span", {
-													style: { fontSize: "11px", lineHeight: "16px", color: MUTED },
+													style: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED },
 													children: t("blackboard.promotedReadonlyDetail", "Promoted entries are read-only: the durable copy lives in the target document, this board copy preserves the session references.")
 												})
 											] : [

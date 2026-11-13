@@ -73,8 +73,8 @@ window.__ModuleLoader__.load({
 		const S = {
 			section: { marginTop: "12px" },
 			title: {
-				fontSize: "11px",
-				lineHeight: "16px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
+				lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				fontWeight: 600,
 				color: LABEL2,
 				margin: "0 0 4px"
@@ -91,7 +91,7 @@ window.__ModuleLoader__.load({
 				padding: "8px 10px",
 				margin: "6px 0"
 			},
-			cardTitle: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2 },
+			cardTitle: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600, color: LABEL2 },
 			// Warning strip (destructive confirms, name conflicts): 2px left bar
 			// on a warn tint — the worktree callout recipe.
 			strip: {
@@ -99,7 +99,7 @@ window.__ModuleLoader__.load({
 				flexDirection: "column",
 				gap: "6px",
 				padding: "6px 8px",
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				color: LABEL2,
 				background: tint(WARN, 10),
@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
 			},
 			notice: {
 				padding: "5px 8px",
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				color: "var(--dsw-alias-state-success-primary)",
 				background: tint(SUCCESS, 10),
@@ -128,13 +128,13 @@ window.__ModuleLoader__.load({
 			},
 			row: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" },
 			name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "none", maxWidth: "46%", fontWeight: 600 },
-			summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, flex: 1, minWidth: "80px" },
-			hint: { fontSize: "11px", lineHeight: "16px", color: MUTED, padding: "2px 0" },
-			warn: { fontSize: "11px", lineHeight: "16px", color: WARN_TEXT },
+			summary: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, flex: 1, minWidth: "80px" },
+			hint: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, padding: "2px 0" },
+			warn: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: WARN_TEXT },
 			input: {
 				width: "100%",
 				boxSizing: "border-box",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				lineHeight: "16px",
 				padding: "4px 8px",
 				background: CARD_BG,
@@ -146,7 +146,7 @@ window.__ModuleLoader__.load({
 			textarea: {
 				width: "100%",
 				boxSizing: "border-box",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				lineHeight: "16px",
 				padding: "6px 8px",
 				background: CARD_BG,
@@ -159,11 +159,11 @@ window.__ModuleLoader__.load({
 				whiteSpace: "pre",
 				transition: TRANSITION
 			},
-			select: { fontSize: "11px", lineHeight: "16px", color: LABEL1, background: CARD_BG, border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", padding: "1px 4px" },
+			select: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "16px", color: LABEL1, background: CARD_BG, border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", padding: "1px 4px" },
 			buttonRow: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
-			label: { fontSize: "11px", lineHeight: "16px", display: "flex", gap: "4px", alignItems: "center", color: LABEL2 },
+			label: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", display: "flex", gap: "4px", alignItems: "center", color: LABEL2 },
 			button: {
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				fontWeight: 500,
 				padding: "2px 8px",
@@ -176,8 +176,8 @@ window.__ModuleLoader__.load({
 				transition: TRANSITION
 			},
 			primary: {
-				fontSize: "11px",
-				lineHeight: "16px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
+				lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				fontWeight: 600,
 				padding: "2px 10px",
 				cursor: "pointer",
@@ -189,8 +189,8 @@ window.__ModuleLoader__.load({
 				transition: TRANSITION
 			},
 			danger: {
-				fontSize: "11px",
-				lineHeight: "16px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
+				lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				fontWeight: 600,
 				padding: "2px 10px",
 				cursor: "pointer",
@@ -202,7 +202,7 @@ window.__ModuleLoader__.load({
 				transition: TRANSITION
 			},
 			dangerOutline: {
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				fontWeight: 500,
 				padding: "2px 8px",
@@ -220,7 +220,7 @@ window.__ModuleLoader__.load({
 			badge: (scope) => {
 				const hue = SCOPE_HUES[scope] ?? MUTED;
 				return {
-					fontSize: "10px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "14px",
 					fontWeight: 600,
 					padding: "0 5px",

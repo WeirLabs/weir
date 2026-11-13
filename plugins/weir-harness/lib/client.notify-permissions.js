@@ -35,14 +35,14 @@ window.__ModuleLoader__.load({
 			"notifyPermState_granted", "notifyPermState_denied", "notifyPermState_unknown",
 			"notifyPermReason_alerts-allowed", "notifyPermReason_not-allowed", "notifyPermReason_no-record", "notifyPermReason_default", "notifyPermReason_unreadable"
 		];
-		const labelStyle = { fontSize: "14px", fontWeight: 500, lineHeight: "20px" };
-		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const labelStyle = { fontSize: "var(--dsw-font-s-14-font-size)", fontWeight: 500, lineHeight: "var(--dsw-font-s-14-line-height)" };
+		const hintStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)" };
 		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
 		const sectionStyle = { display: "flex", flexDirection: "column", gap: "10px" };
 		const buttonRowStyle = { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" };
 		const stateRowStyle = { display: "flex", alignItems: "center", gap: "8px" };
-		const errorStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-state-error-primary)" };
+		const errorStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-state-error-primary)" };
 		const stateDot = (state) => ({ width: "8px", height: "8px", borderRadius: "50%", display: "inline-block", flexShrink: 0, background: state === "granted" ? "var(--dsw-alias-state-business-primary)" : state === "denied" ? "var(--dsw-alias-state-error-primary)" : "var(--dsw-alias-label-tertiary)" });
 		/**
 		 * Which single step the panel highlights. granted → test, then confirm;

@@ -25,9 +25,9 @@ window.__ModuleLoader__.load({
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		const mono = { fontFamily: MONO, overflowWrap: "anywhere", wordBreak: "break-word" };
 		const text = {
-			title: { fontSize: "13px", lineHeight: "18px", fontWeight: 600, color: "var(--dsw-alias-label-primary)" },
-			meta: { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" },
-			foot: { fontSize: "11px", lineHeight: "15px", color: "var(--dsw-alias-label-tertiary)" },
+			title: { fontSize: "var(--dsw-font-xs-13-font-size)", lineHeight: "var(--dsw-font-xs-13-line-height)", fontWeight: 600, color: "var(--dsw-alias-label-primary)" },
+			meta: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)" },
+			foot: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: "var(--dsw-alias-label-tertiary)" },
 		};
 		const cardStyle = {
 			background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l2)",
@@ -36,7 +36,7 @@ window.__ModuleLoader__.load({
 		};
 		const buttonBase = {
 			display: "inline-flex", alignItems: "center", gap: "5px", padding: "3px 9px",
-			fontSize: "12px", lineHeight: "16px", borderRadius: "var(--dsw-radius-sm)",
+			fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", borderRadius: "var(--dsw-radius-sm)",
 			border: "1px solid transparent", background: "none", cursor: "pointer",
 			color: "var(--dsw-alias-label-secondary)", fontWeight: 400, flex: "none",
 		};
@@ -50,7 +50,7 @@ window.__ModuleLoader__.load({
 		const disabledStyle = { opacity: 0.5, cursor: "not-allowed" };
 		/** 2px left bar + soft tint: reason (attention) and next (business) callouts. */
 		const calloutStyle = (color) => ({
-			padding: "5px 8px", fontSize: "12px", lineHeight: "16px",
+			padding: "5px 8px", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "16px",
 			color: "var(--dsw-alias-label-secondary)", background: tint(color, 8),
 			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs)",
 			overflowWrap: "anywhere",
@@ -58,7 +58,7 @@ window.__ModuleLoader__.load({
 		const inputStyle = {
 			width: "100%", boxSizing: "border-box", background: "var(--dsw-alias-bg-base)",
 			border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)",
-			padding: "6px 8px", fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-primary)",
+			padding: "6px 8px", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-primary)",
 		};
 		// ---- 16x16 stroke icons (stroke: currentColor) ----
 		const PATHS = {
@@ -122,7 +122,7 @@ window.__ModuleLoader__.load({
 			return jsxs("span", {
 				style: {
 					display: "inline-flex", alignItems: "center", gap: "5px", padding: "1px 7px",
-					fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: props.color,
+					fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "16px", fontWeight: 600, color: props.color,
 					background: tint(props.color, 12), border: `1px solid ${props.color}`,
 					borderRadius: "var(--dsw-radius-sm)", flex: "none", whiteSpace: "nowrap",
 				},
@@ -154,7 +154,7 @@ window.__ModuleLoader__.load({
 				style: {
 					margin: "8px 0 0", padding: "6px 0", maxHeight: "280px", overflow: "auto",
 					background: "var(--dsw-alias-bg-base)", border: "0.5px solid var(--dsw-alias-border-l2)",
-					borderRadius: "var(--dsw-radius-md)", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
+					borderRadius: "var(--dsw-radius-md)", fontFamily: MONO, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				},
 				children: jsx("div", {
 					style: { display: "inline-block", minWidth: "100%" },
@@ -170,7 +170,7 @@ window.__ModuleLoader__.load({
 				style: { display: "flex", alignItems: "center", gap: "6px", ...text.meta },
 				children: [
 					jsx("span", { style: { color: ok ? SUCCESS : ERROR, display: "inline-flex" }, children: jsx(Icon, { name: ok ? "check" : "x", size: 11 }) }, "icon"),
-					jsx("span", { style: { ...mono, fontSize: "12px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: entry.name }, "name"),
+					jsx("span", { style: { ...mono, fontSize: "var(--dsw-font-xxs-12-font-size)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: entry.name }, "name"),
 					typeof entry.ms === "number" ? jsx("span", { style: { ...text.foot, flex: "none" }, children: `${Math.round(entry.ms / 1000)}s` }, "ms") : null,
 					!ok && entry.exit !== null ? jsx("span", {
 						style: { ...text.foot, flex: "none", color: ERROR, border: `1px solid ${ERROR}`, borderRadius: "var(--dsw-radius-sm)", padding: "0 5px" },
@@ -253,7 +253,7 @@ window.__ModuleLoader__.load({
 				"data-weir-worktree-marker": "",
 				"data-weir-worktree-count": String(lanes.length),
 				title: mode ? "Worktree mode · lanes" : "Worktree lanes",
-				style: { display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "10px", lineHeight: "12px", color },
+				style: { display: "inline-flex", alignItems: "center", gap: "3px", fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color },
 				children: [
 					jsx(Icon, { name: "branch", size: 11 }, "icon"),
 					lanes.length > 0 ? jsx("span", { children: String(lanes.length) }, "count") : null,
@@ -265,7 +265,7 @@ window.__ModuleLoader__.load({
 		 * awaiting/base-moved, click opens the panel. */
 		const statusPillStyle = {
 			display: "inline-flex", alignItems: "center", gap: "5px",
-			padding: "1px 7px", fontSize: "11px", lineHeight: "16px", fontWeight: 600,
+			padding: "1px 7px", fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600,
 			color: "var(--dsw-alias-label-secondary)", cursor: "pointer", background: "none",
 			border: "0.5px solid var(--dsw-alias-border-l3)",
 			borderRadius: "var(--dsw-radius-sm)"
@@ -349,12 +349,12 @@ window.__ModuleLoader__.load({
 				// 2. branch row: branch → base | ↑↓ chips | diffstat | lane id
 				jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", marginTop: "5px", minWidth: 0, color: "var(--dsw-alias-label-tertiary)" }, children: [
 					jsx(Icon, { name: "branch", size: 12 }, "icon"),
-					jsx("span", { style: { ...mono, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `${lane.branch} → ${lane.base ?? "?"}` }, "branches"),
+					jsx("span", { style: { ...mono, fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: `${lane.branch} → ${lane.base ?? "?"}` }, "branches"),
 					lane.ahead !== null && (ahead > 0 || behind > 0) ? jsx("span", {
 						style: { ...text.foot, flex: "none", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "0 5px", color: "var(--dsw-alias-label-secondary)" },
 						children: `↑${ahead} ↓${behind}`,
 					}, "counts") : null,
-					lane.stat ? jsxs("span", { style: { ...mono, fontSize: "11px", lineHeight: "15px", flex: "none", display: "inline-flex", gap: "4px", alignItems: "baseline" }, children: [
+					lane.stat ? jsxs("span", { style: { ...mono, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", flex: "none", display: "inline-flex", gap: "4px", alignItems: "baseline" }, children: [
 						jsx("span", { style: { color: SUCCESS }, children: `+${lane.stat.added}` }, "add"),
 						jsx("span", { style: { color: ERROR }, children: `−${lane.stat.removed}` }, "remove"),
 						jsx("span", { style: text.foot, children: t("files").replace("{n}", String(lane.stat.files)) }, "files"),
@@ -586,7 +586,7 @@ window.__ModuleLoader__.load({
 					jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }, children: [
 						jsx("span", { style: { color: "var(--dsw-alias-label-tertiary)", display: "inline-flex" }, children: jsx(Icon, { name: "branch", size: 12 }) }, "icon"),
 						jsx("span", {
-							style: { ...mono, fontSize: "12px", fontWeight: 600, color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-3)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+							style: { ...mono, fontSize: "var(--dsw-font-xxs-12-font-size)", fontWeight: 600, color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-layer-3)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 							title: view.repo?.branch ?? undefined,
 							children: view.repo?.branch ?? "?",
 						}, "branch"),
@@ -701,7 +701,7 @@ window.__ModuleLoader__.load({
 			if (meta.conflicts.length) {
 				bodyRows.push(jsxs("div", { style: calloutStyle(ERROR), children: [
 					jsx("div", { style: { fontWeight: 600, marginBottom: "2px" }, children: t("conflicts") }, "label"),
-					...meta.conflicts.map((path) => jsx("div", { style: { ...mono, fontSize: "11px" }, children: path }, path)),
+					...meta.conflicts.map((path) => jsx("div", { style: { ...mono, fontSize: "var(--dsw-font-xxxs-11-font-size)" }, children: path }, path)),
 				] }, "conflicts"));
 			}
 			if (meta.check.length) {
@@ -710,8 +710,8 @@ window.__ModuleLoader__.load({
 			if (meta.merge?.commit) {
 				bodyRows.push(jsxs("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
 					jsx("span", { style: text.foot, children: t("mergeCommit") }, "label"),
-					jsx("span", { style: { ...mono, fontSize: "11px", background: "var(--dsw-alias-bg-layer-3)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", color: "var(--dsw-alias-label-primary)" }, children: String(meta.merge.commit).slice(0, 10) }, "sha"),
-					meta.merge.stat ? jsxs("span", { style: { ...mono, fontSize: "11px", display: "inline-flex", gap: "4px" }, children: [
+					jsx("span", { style: { ...mono, fontSize: "var(--dsw-font-xxxs-11-font-size)", background: "var(--dsw-alias-bg-layer-3)", borderRadius: "var(--dsw-radius-sm)", padding: "1px 6px", color: "var(--dsw-alias-label-primary)" }, children: String(meta.merge.commit).slice(0, 10) }, "sha"),
+					meta.merge.stat ? jsxs("span", { style: { ...mono, fontSize: "var(--dsw-font-xxxs-11-font-size)", display: "inline-flex", gap: "4px" }, children: [
 						jsx("span", { style: { color: SUCCESS }, children: `+${meta.merge.stat.added}` }, "add"),
 						jsx("span", { style: { color: ERROR }, children: `−${meta.merge.stat.removed}` }, "remove"),
 					] }, "stat") : null,
@@ -748,7 +748,7 @@ window.__ModuleLoader__.load({
 							jsx("span", { style: { ...text.title, flex: "none" }, children: title }, "title"),
 							meta.lane ? jsx("button", {
 								type: "button",
-								style: { ...ghostStyle, ...mono, fontSize: "11px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "40%" },
+								style: { ...ghostStyle, ...mono, fontSize: "var(--dsw-font-xxxs-11-font-size)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "40%" },
 								title: meta.lane,
 								onClick: (event) => { event.stopPropagation(); if (typeof props.openFile === "function" && meta.lane) props.openFile(meta.lane); },
 								children: meta.lane,
@@ -770,7 +770,7 @@ window.__ModuleLoader__.load({
 			const output = Array.isArray(block?.content) ? block.content.map((part) => (part?.type === "text" && typeof part.text === "string" ? part.text : "")).filter((value) => value !== "").join("\n") : "";
 			const hintStyle = { ...text.foot, marginBottom: "3px" };
 			const preStyle = {
-				margin: 0, padding: "6px 8px", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
+				margin: 0, padding: "6px 8px", fontFamily: MONO, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: "240px", overflow: "auto",
 				border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)",
 				background: "var(--dsw-alias-bg-base)", color: "var(--dsw-alias-label-secondary)",

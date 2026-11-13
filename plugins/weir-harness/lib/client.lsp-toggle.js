@@ -21,8 +21,8 @@ window.__ModuleLoader__.load({
 			borderRadius: "var(--dsw-radius-sm)",
 			cursor: "pointer",
 			padding: "3px 8px",
-			fontSize: "12px",
-			lineHeight: "16px",
+			fontSize: "var(--dsw-font-xxs-12-font-size)",
+			lineHeight: "var(--dsw-font-xxs-12-line-height)",
 			color: "var(--dsw-alias-label-secondary)"
 		};
 		const lspDotStyle = (on) => ({

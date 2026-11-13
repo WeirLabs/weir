@@ -95,7 +95,7 @@ window.__ModuleLoader__.load({
 					borderRadius: "var(--dsw-radius-lg)",
 					boxShadow: "var(--dsw-elevation-prominent)",
 					padding: "12px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					color: LABEL1
 				},
 				// Sidebar frame: a full-height flex column — the pane does NOT
@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
 					minHeight: 0,
 					boxSizing: "border-box",
 					padding: "12px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					color: LABEL1
 				}
 			},
@@ -123,7 +123,7 @@ window.__ModuleLoader__.load({
 					borderBottom: "0.5px solid var(--dsw-alias-border-l1)",
 					flex: "none"
 				},
-				summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, whiteSpace: "nowrap", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", marginLeft: "2px" },
+				summary: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, whiteSpace: "nowrap", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", marginLeft: "2px" },
 				close: {
 					width: "22px",
 					height: "22px",
@@ -158,8 +158,8 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				count: {
-					fontSize: "9px",
-					lineHeight: "12px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					background: HOVER_BG,
@@ -184,7 +184,7 @@ window.__ModuleLoader__.load({
 					borderRadius: "var(--dsw-radius-lg)",
 					boxShadow: "var(--dsw-elevation-prominent)",
 					padding: "12px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					color: LABEL1
 				})
 			},
@@ -193,8 +193,8 @@ window.__ModuleLoader__.load({
 				// inactive segments carry the track fill, the active segment is a
 				// raised layer-1 pill; 2px gutters between segments.
 				base: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					padding: "3px 10px",
 					cursor: "pointer",
 					border: "none",
@@ -221,7 +221,7 @@ window.__ModuleLoader__.load({
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "3px 8px 3px 24px",
 					background: CARD_BG,
@@ -247,8 +247,8 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: "6px",
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					padding: "3px 2px",
@@ -256,8 +256,8 @@ window.__ModuleLoader__.load({
 					background: shell === "sidebar" ? "var(--dsw-alias-bg-layer-1)" : "var(--dsw-alias-bg-overlay)"
 				}),
 				count: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: MUTED,
 					background: HOVER_BG,
@@ -279,8 +279,8 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: "6px",
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					padding: "0 2px 3px"
@@ -301,8 +301,8 @@ window.__ModuleLoader__.load({
 				nameLine: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0, flexWrap: "wrap" },
 				name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 },
 				desc: {
-					fontSize: "11px",
-					lineHeight: "15px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					color: MUTED,
 					overflow: "hidden",
 					textOverflow: "ellipsis",
@@ -311,8 +311,8 @@ window.__ModuleLoader__.load({
 			},
 			tag: {
 				base: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					padding: "0 5px",
 					borderRadius: "var(--dsw-radius-sm)",
@@ -346,7 +346,7 @@ window.__ModuleLoader__.load({
 				diffBadge: (added) => {
 					const hue = added ? SUCCESS : DANGER;
 					return {
-						fontSize: "11px",
+						fontSize: "var(--dsw-font-xxxs-11-font-size)",
 						lineHeight: "16px",
 						fontWeight: 600,
 						padding: "0 6px",
@@ -358,8 +358,8 @@ window.__ModuleLoader__.load({
 					};
 				},
 				apply: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					fontWeight: 600,
 					padding: "4px 12px",
 					cursor: "pointer",
@@ -370,7 +370,7 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				discard: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
@@ -383,7 +383,7 @@ window.__ModuleLoader__.load({
 				},
 				// Commit-phase chip: dot-less tonal badge (worktree Badge recipe).
 				chip: (hue) => ({
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "16px",
 					fontWeight: 600,
 					padding: "1px 7px",
@@ -417,8 +417,8 @@ window.__ModuleLoader__.load({
 					background: tint(hue, 10),
 					flex: "none"
 				}),
-				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, color: LABEL1 },
-				desc: { fontSize: "11px", lineHeight: "16px", color: MUTED, maxWidth: "280px" },
+				title: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", fontWeight: 600, color: LABEL1 },
+				desc: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, maxWidth: "280px" },
 				skeleton: { display: "flex", flexDirection: "column", gap: "8px" },
 				skeletonRow: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 6px" },
 				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm)", background: SKELETON, flex: "none" }),
@@ -439,7 +439,7 @@ window.__ModuleLoader__.load({
 				addButton: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "6px 8px",
 					cursor: "pointer",
@@ -458,11 +458,11 @@ window.__ModuleLoader__.load({
 					borderRadius: "var(--dsw-radius-md)",
 					padding: "8px"
 				},
-				title: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2 },
+				title: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600, color: LABEL2 },
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
@@ -471,11 +471,11 @@ window.__ModuleLoader__.load({
 					color: LABEL1,
 					transition: TRANSITION
 				},
-				error: { fontSize: "11px", lineHeight: "15px", color: WARN_TEXT },
+				error: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: WARN_TEXT },
 				actions: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
 				primary: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					fontWeight: 600,
 					padding: "3px 10px",
 					cursor: "pointer",
@@ -486,7 +486,7 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				ghost: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
@@ -768,7 +768,7 @@ window.__ModuleLoader__.load({
 						},
 						children: [
 							react_jsx_runtime.jsx("div", { style: S.form.title, children: t("capability.skills.paths.confirmTitle", "Remove this Skill scan path?") }),
-							react_jsx_runtime.jsxs("div", { style: { fontSize: "11px", lineHeight: "16px", color: LABEL2, overflowWrap: "anywhere" }, children: [
+							react_jsx_runtime.jsxs("div", { style: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: LABEL2, overflowWrap: "anywhere" }, children: [
 								t("capability.skills.paths.confirmBody", "Remove this canonical directory from the Profile? Selection drafts, applied capabilities, and defaults are not rewritten: "),
 								react_jsx_runtime.jsx("code", { style: { color: LABEL1, fontFamily: "var(--dsw-font-markdown-code-block-font-family)" }, children: path })
 							] }),
@@ -792,7 +792,7 @@ window.__ModuleLoader__.load({
 						children: [
 							react_jsx_runtime.jsx("code", {
 								title: path,
-								style: { flex: 1, minWidth: 0, color: LABEL1, fontSize: "11px", lineHeight: "16px", fontFamily: "var(--dsw-font-markdown-code-block-font-family)", overflowWrap: "anywhere" },
+								style: { flex: 1, minWidth: 0, color: LABEL1, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontFamily: "var(--dsw-font-markdown-code-block-font-family)", overflowWrap: "anywhere" },
 								children: path
 							}),
 							react_jsx_runtime.jsx("button", {
@@ -866,7 +866,7 @@ window.__ModuleLoader__.load({
 									})
 								] })
 							] }),
-							react_jsx_runtime.jsx("div", { style: { fontSize: "11px", lineHeight: "16px", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
+							react_jsx_runtime.jsx("div", { style: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
 							react_jsx_runtime.jsxs("form", {
 								"aria-label": t("capability.skills.paths.addLabel", "Skill scan directory"),
 								onSubmit: (event) => { event.preventDefault(); void runMutation("add", input); },
