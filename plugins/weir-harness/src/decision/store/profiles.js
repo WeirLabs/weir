@@ -162,12 +162,62 @@ export class DecisionProfiles {
     })
     return this.getProfile(agentId)
   }
-
   /** @param {string} agentId */
   getProfile(agentId) {
     const row = this.store.db.prepare('SELECT * FROM agent_profiles WHERE agent_id=?').get(agentId)
     if (!row) throw new DecisionContractError('PROFILE_NOT_FOUND', agentId)
     return profileOf(row, this.descriptionRevision(agentId, 'user', row.user_desc_rev))
+  }
+
+  /**
+   * Read-only counts of every record family an assistant owns, for the delete
+   * confirmation dialog. Returns null when the assistant does not exist.
+   * @param {string} agentId
+   */
+  deletePreview(agentId) {
+    const db = this.store.db
+    const profile = db.prepare('SELECT agent_id,name,state FROM agent_profiles WHERE agent_id=?').get(agentId)
+    if (!profile) return null
+    const count = sql => db.prepare(sql).get(agentId)?.n ?? 0
+    return {
+      agentId: profile.agent_id, name: profile.name, state: profile.state,
+      counts: {
+        cases: count('SELECT COUNT(*) n FROM cases WHERE agent_id=?'),
+        attempts: count('SELECT COUNT(*) n FROM attempts WHERE agent_id=?'),
+        evidence: count('SELECT COUNT(*) n FROM evidence WHERE agent_id=?'),
+        feedback: count('SELECT COUNT(*) n FROM feedback WHERE agent_id=?'),
+        corrections: count('SELECT COUNT(*) n FROM corrections WHERE agent_id=?'),
+        routeDecisions: db.prepare('SELECT COUNT(*) n FROM route_decisions WHERE case_id IN (SELECT case_id FROM cases WHERE agent_id=?)').get(agentId)?.n ?? 0,
+        learningRuns: count('SELECT COUNT(*) n FROM learning_runs WHERE agent_id=?'),
+        snapshots: count('SELECT COUNT(*) n FROM memory_snapshots WHERE agent_id=?'),
+        revisions: count('SELECT COUNT(*) n FROM agent_profile_revisions WHERE agent_id=?'),
+      },
+    }
+  }
+
+  /**
+   * Permanently delete an assistant and every record it owns, inside one
+   * serialized write transaction. Selectors, aggregate metrics and on-disk
+   * export files are deliberately left untouched.
+   * @param {string} agentId @returns {Promise<Record<string, number>>} deleted row counts
+   */
+  async deleteCascade(agentId) {
+    return this.store.write(db => {
+      const counts = {}
+      counts.corrections = db.prepare('DELETE FROM corrections WHERE agent_id=?').run(agentId).changes
+      counts.feedback = db.prepare('DELETE FROM feedback WHERE agent_id=?').run(agentId).changes
+      counts.attemptEvidence = db.prepare('DELETE FROM attempt_evidence WHERE attempt_id IN (SELECT attempt_id FROM attempts WHERE agent_id=?)').run(agentId).changes
+      counts.evidence = db.prepare('DELETE FROM evidence WHERE agent_id=?').run(agentId).changes
+      counts.attempts = db.prepare('DELETE FROM attempts WHERE agent_id=?').run(agentId).changes
+      counts.routeDecisions = db.prepare('DELETE FROM route_decisions WHERE case_id IN (SELECT case_id FROM cases WHERE agent_id=?)').run(agentId).changes
+      counts.cases = db.prepare('DELETE FROM cases WHERE agent_id=?').run(agentId).changes
+      counts.learningRuns = db.prepare('DELETE FROM learning_runs WHERE agent_id=?').run(agentId).changes
+      counts.snapshots = db.prepare('DELETE FROM memory_snapshots WHERE agent_id=?').run(agentId).changes
+      counts.revisions = db.prepare('DELETE FROM agent_profile_revisions WHERE agent_id=?').run(agentId).changes
+      const result = db.prepare('DELETE FROM agent_profiles WHERE agent_id=?').run(agentId)
+      if (result.changes !== 1) throw new DecisionContractError('PROFILE_NOT_FOUND', agentId)
+      return counts
+    })
   }
 
   /** @param {{includeArchived?: boolean}} [options] */

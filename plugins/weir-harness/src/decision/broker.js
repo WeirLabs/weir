@@ -209,6 +209,29 @@ export class DecisionBroker {
     return profile
   }
 
+  /** Read-only delete preview: which record families and how many rows the
+   * cascade will remove. Returns null for an unknown assistant. */
+  async profileDeletePreview(input) {
+    await this.ensureStore()
+    return this.profiles.deletePreview(input.agentId)
+  }
+
+  /** Permanently delete an assistant and every record it owns. The caller must
+   * pass the case count shown in the confirmation dialog; a mismatch means a
+   * concurrent write happened after the preview and the delete is refused
+   * without touching anything. */
+  async profileDelete(input) {
+    await this.ensureStore()
+    const preview = this.profiles.deletePreview(input.agentId)
+    if (!preview) throw new DecisionContractError('AGENT_NOT_FOUND', input.agentId)
+    if (preview.counts.cases !== input.expectedCases) {
+      throw new DecisionContractError('DELETE_COUNTS_STALE', `expected ${String(input.expectedCases)} cases, found ${String(preview.counts.cases)}`)
+    }
+    const counts = await this.profiles.deleteCascade(input.agentId)
+    this.audit('agent-profile', { agentId: input.agentId, name: preview.name, action: 'delete', counts })
+    return { agentId: input.agentId, counts }
+  }
+
   async consult({ agent, args, signal, toolCallId }) {
     const status = this.status()
     if (!status.enabled || status.reason === 'disabled') throw new DecisionContractError('DECISION_OFF', 'Decision Agents are globally disabled')

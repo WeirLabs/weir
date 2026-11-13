@@ -1189,6 +1189,48 @@ test('assistant state and archive require confirmation, retain history copy, and
   assert.deepEqual(calls[1], ['ag_a', 'archived'])
   harness.unmount()
 })
+
+test('assistant delete asks for a counted confirmation and returns to a refreshed list', async () => {
+  const deletes = []
+  let listed = [assistantDetail]
+  const harness = await createPageHarness({ actions: {
+    agents: async () => listed, inbox: async () => [], agent: async () => assistantDetail, records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileDeletePreview: async agentId => ({ agentId, name: assistantDetail.name, state: 'enabled', counts: { cases: 3, attempts: 5, evidence: 7, feedback: 2, corrections: 1, routeDecisions: 4, learningRuns: 2, snapshots: 1, revisions: 2 } }),
+    profileDelete: async (...args) => { deletes.push(args); listed = []; return { agentId: args[0], counts: {} } },
+    learningRun: async id => ({ learningRunId: id, agentId: 'ag_a', outcome: 'candidate', inputFrozen: {}, operations: [] }),
+    memorySnapshot: async id => ({ snapshotId: id, agentId: 'ag_a', state: 'published', revision: 4, principles: [] }),
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  findAll(harness.render(), node => node['data-action'] === 'delete-agent')[0].onClick()
+  await harness.flush()
+  let dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  assert.ok(dialog)
+  assert.equal(deletes.length, 0)
+  const body = textOf(dialog.body)
+  assert.ok(body.includes('decisionDeleteAgentLead'), body)
+  assert.ok(body.includes(assistantDetail.name), body)
+  for (const expected of ['decisionDeleteCountCases: 3', 'decisionDeleteCountEvidence: 7', 'decisionDeleteCountFeedback: 3', 'decisionDeleteCountLearning: 3']) assert.ok(body.includes(expected), expected)
+  // Cancel first: nothing is deleted and the dialog closes.
+  await dialog.onCancel()
+  await harness.flush()
+  assert.equal(deletes.length, 0)
+  assert.equal(findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog).length, 0)
+  // Reopen and confirm: the delete runs with the previewed count and the
+  // detail unmounts onto a refreshed list.
+  findAll(harness.render(), node => node['data-action'] === 'delete-agent')[0].onClick()
+  await harness.flush()
+  dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog)[0]
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.deepEqual(deletes, [['ag_a', 3]])
+  tree = harness.render()
+  assert.equal(findAll(tree, node => node['data-agent-detail']).length, 0)
+  assert.equal(findAll(tree, node => node['data-action'] === 'open-agent').length, 0)
+  harness.unmount()
+})
 test('advanced metrics load lazily, retry failures, and show readable values with raw values separately disclosed', async () => {
   const raw = {
     window: 'all', since: null, casesOpened: 12, attemptsTotal: 20, autoAnswered: 3, autoAnswerRate: 0.25,
