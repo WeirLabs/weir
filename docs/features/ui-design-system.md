@@ -47,6 +47,11 @@ Weir 的浏览器半区（`plugins/weir-harness/lib/client.*.js`）不是一堆�
 ## 6. 原语
 
 `PageHeader`、`Section`、`Row`、`Button`（`sm`/`md`，`primary|secondary|ghost|danger`）、`Field`、`Badge`、`Notice`、`Skeleton`、`Tabs`、`Menu`/`MenuItem`/`MenuSeparator`、`Disclosure`、`ConfirmDialog`、`DecisionModalFrame`、`LoadingState`/`EmptyState`/`ErrorState`。
+层级纪律：
+
+- **重点提醒**（需要用户行动或知情确认的状态，如升级原因、首次确认门）一律 `Notice` 的 `warn`/`error` 档，两档都带左侧重点条，禁止用普通段落呈现。
+- **内容分割**靠主色小节标题加 0.5px 细分隔线（`section + section`），不靠盒中盒卡片。
+- **重复信息折叠**：当辅助标签与已展示的标题完全重复（如单题卡片的题干 legend），用 `.weir-da-sr-only` 保留读屏语义、视觉上去重；`Field` 支持 `labelClassName`、`DecisionAnswers` 支持 `collapseTitle`。
 
 ## 7. 契约测试
 
