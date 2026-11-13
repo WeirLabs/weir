@@ -89,7 +89,7 @@ window.__ModuleLoader__.load({
 .weir-da-primary-nav { box-sizing: border-box; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
 .weir-da-primary-nav .weir-da-button { min-height: 32px; border-color: transparent; background: transparent; border-radius: var(--dsw-radius-sm); }
 .weir-da-primary-nav .weir-da-button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
-.weir-da-count { display: inline-flex; min-width: 20px; min-height: 20px; align-items: center; justify-content: center; margin-inline-start: 6px; padding: 0 5px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-2); font-size: var(--weir-font-small-size, 12px); }
+.weir-da-count { display: inline-flex; min-width: 12px; align-items: center; justify-content: center; margin-inline-start: 6px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); font-variant-numeric: tabular-nums; }
 .weir-da-view, .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
 .weir-da-card { min-width: 0; padding: 16px; border-radius: var(--dsw-radius-xl); background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
 .weir-da-card[data-flat="true"] { background: var(--dsw-alias-bg-layer-1); border-radius: var(--dsw-radius-lg); }

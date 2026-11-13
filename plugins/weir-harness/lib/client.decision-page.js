@@ -1372,7 +1372,7 @@ window.__ModuleLoader__.load({
           ] }, "header"),
           jsx.jsx("nav", { ref: primaryNavRef, tabIndex: -1, className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
             "data-view": id, onClick: () => navigate(id), "aria-pressed": view.tab === id,
-            children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, "aria-label": `${resources.inbox.value.length}` }, "count") : null] }),
+            children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" && resources.inbox.value.length > 0 ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, children: String(resources.inbox.value.length) }, "count") : null] }),
           }, id)) }, "nav"),
           actionError ? jsx.jsx(ui.ErrorState, { children: t(model.errorKey(actionError)) }, "action-error") : null,
           view.tab === "inbox" ? jsx.jsx("section", { "data-view": "inbox", className: "weir-da-view", children: inboxContent }, "inbox") : null,
