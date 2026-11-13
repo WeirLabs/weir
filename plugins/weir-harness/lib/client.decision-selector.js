@@ -140,7 +140,7 @@ window.__ModuleLoader__.load({
         role: "dialog", "aria-modal": true, "aria-labelledby": TITLE_ID,
         "aria-describedby": "weir-da-selector-safety", tabIndex: -1,
         pending, "aria-busy": pending, closeOnBackdrop: true, onRequestClose: close,
-        restoreFocus: false, returnFocus: triggerRef, scrollOrigin: triggerRef,
+        restoreFocus: false, returnFocus: triggerRef, scrollOrigin: triggerRef, anchor: triggerRef,
         openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel"), onDismissError: () => setOpen(false),
         children: [
           jsx.jsxs("div", { className: "weir-da-selector-header", "data-selector-part": "header", children: [

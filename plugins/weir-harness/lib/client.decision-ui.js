@@ -71,12 +71,15 @@ window.__ModuleLoader__.load({
 /* The dialog is a focus container, not an interactive control: its own ring
    would draw a blue frame around the whole panel. */
 .weir-da-overlay:focus, .weir-da-overlay:focus-visible { outline: none; }
-.weir-da-dialog::backdrop, .weir-da-selector-panel::backdrop { background: rgba(0, 0, 0, .32); }
+/* The anchored selector is a popover: it covers the visual viewport for
+   outside-click dismissal but must not dim the page. */
+.weir-da-dialog::backdrop { background: rgba(0, 0, 0, .32); }
+.weir-da-selector-panel::backdrop { background: transparent; }
 .weir-da-selector { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
 .weir-da-selector-trigger { box-sizing: border-box; min-width: 0; max-width: 280px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); cursor: pointer; }
 .weir-da-selector-trigger[data-unavailable="true"] { color: var(--dsw-alias-state-warn-label); border-color: var(--dsw-alias-state-warn-primary); }
 .weir-da-selector-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.weir-da-selector-panel { margin: auto; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.weir-da-selector-panel { margin: auto; position: fixed; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
 .weir-da-selector-header { min-width: 0; display: grid; gap: 4px; padding: 14px 16px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 8px; display: grid; gap: 2px; align-content: start; }
 .weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-title-size, 14px); line-height: var(--weir-font-title-line, 20px); font-weight: 600; }
@@ -566,6 +569,56 @@ window.__ModuleLoader__.load({
       };
     }
 
+
+    // Anchor a modal dialog to its trigger (composer selector): still a native
+    // dialog with modal semantics, focus trap and scroll lock, but placed above
+    // the trigger like the host's own selectors instead of centred.
+    function anchorDecisionDialog(dialog, anchor, options = {}) {
+      if (!dialog || !anchor || typeof anchor.getBoundingClientRect !== "function") return () => {};
+      const hostDocument = dialog.ownerDocument ?? null;
+      const view = hostDocument?.defaultView ?? null;
+      const gap = options.gap ?? 8;
+      const margin = options.margin ?? 8;
+      const viewport = view?.visualViewport ?? null;
+      const place = () => {
+        const rect = anchor.getBoundingClientRect?.();
+        if (!rect) return;
+        const left = viewport?.offsetLeft ?? 0;
+        const top = viewport?.offsetTop ?? 0;
+        const width = viewport?.width ?? view?.innerWidth ?? 0;
+        const height = viewport?.height ?? view?.innerHeight ?? 0;
+        if (!width || !height) return;
+        const panelWidth = Math.min(Math.max(rect.width, 320), Math.max(240, width - margin * 2), 360);
+        dialog.style.position = "fixed";
+        dialog.style.margin = "0";
+        dialog.style.width = `${panelWidth}px`;
+        const measured = dialog.getBoundingClientRect();
+        const spaceAbove = rect.top - top - gap - margin;
+        const spaceBelow = top + height - rect.bottom - gap - margin;
+        const placeAbove = spaceAbove >= Math.min(measured.height || 0, 240) || spaceAbove >= spaceBelow;
+        const available = Math.max(160, placeAbove ? spaceAbove : spaceBelow);
+        dialog.style.maxHeight = `${Math.min(560, available)}px`;
+        const clampedLeft = Math.max(left + margin, Math.min(rect.left, left + width - margin - panelWidth));
+        const panelHeight = Math.min(dialog.getBoundingClientRect().height || 0, Math.min(560, available));
+        const positionedTop = placeAbove ? Math.max(top + margin, rect.top - gap - panelHeight) : rect.bottom + gap;
+        dialog.style.left = `${clampedLeft}px`;
+        dialog.style.top = `${positionedTop}px`;
+        dialog.dataset.placement = placeAbove ? "above" : "below";
+      };
+      place();
+      view?.addEventListener?.("resize", place);
+      viewport?.addEventListener?.("resize", place);
+      viewport?.addEventListener?.("scroll", place);
+      const observer = typeof view?.ResizeObserver === "function" ? new view.ResizeObserver(place) : null;
+      observer?.observe(dialog);
+      return () => {
+        view?.removeEventListener?.("resize", place);
+        viewport?.removeEventListener?.("resize", place);
+        viewport?.removeEventListener?.("scroll", place);
+        observer?.disconnect();
+      };
+    }
+
     function DecisionModalFrame(props) {
       const internalDialogRef = react.useRef(null);
       const dialogRef = props.dialogRef ?? internalDialogRef;
@@ -598,7 +651,9 @@ window.__ModuleLoader__.load({
           props.onOpenError?.(error);
           return undefined;
         }
-        const releaseViewportContainment = containDecisionModalInVisualViewport(dialog, hostDocument?.defaultView);
+        // An anchored dialog clamps itself; the centred containment pass would
+        // fight its explicit top/left.
+        const releaseViewportContainment = props.anchor ? anchorDecisionDialog(dialog, focusTarget(props.anchor)) : containDecisionModalInVisualViewport(dialog, hostDocument?.defaultView);
         const initial = focusTarget(props.initialFocus) ?? dialog;
         initial?.focus?.();
         return () => {
