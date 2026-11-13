@@ -1247,8 +1247,11 @@ window.__ModuleLoader__.load({
           // A plain button element pins its height to min-height in Chromium once it
           // is styled as a grid container, so long titles overflowed and the next row
           // painted over them. A div with button semantics sizes to its content.
+          // The critical layout is inline because chunk URLs are keyed by the entry
+          // revision and cached immutably: a stale stylesheet chunk must never be
+          // able to pin the row height again.
           const openRecordRow = () => readRecord(record.caseId, { select: true });
-          return jsx.jsxs("div", { className: "weir-da-record-row", "data-case-id": record.caseId, role: "button", tabIndex: 0, "aria-pressed": selectedCaseId === record.caseId, onClick: openRecordRow, onKeyDown: event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRecordRow() } }, children: [
+          return jsx.jsxs("div", { className: "weir-da-record-row", style: { display: "block", width: "100%", boxSizing: "border-box" }, "data-case-id": record.caseId, role: "button", tabIndex: 0, "aria-pressed": selectedCaseId === record.caseId, onClick: openRecordRow, onKeyDown: event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRecordRow() } }, children: [
             jsx.jsx("strong", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("span", { children: `${summary?.agentName ?? t("decisionSelector")} · ${t(summary?.statusKey ?? "decisionStatusUnknown")}` }, "meta"),
             summary?.time ? jsx.jsx("time", { children: readableTime(summary.time) }, "time") : null,

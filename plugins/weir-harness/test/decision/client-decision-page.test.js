@@ -441,9 +441,13 @@ test('record pagination appends and dedupes without replacing the selected detai
   let rows = findAll(tree, node => node.role === 'button' && node['data-case-id'])
   assert.equal(rows.length, 1)
   // Rows are content-sized divs with button semantics (a styled <button> pinned
-  // its height to min-height and clipped long titles).
+  // its height to min-height and clipped long titles). The critical layout is
+  // inline so a stale CSS chunk (chunk URLs are entry-revision keyed and cached
+  // immutably) can never pin the row height again.
   assert.equal(rows[0].role, 'button')
   assert.equal(rows[0].tabIndex, 0)
+  assert.equal(rows[0].style?.display, 'block')
+  assert.equal(rows[0].style?.width, '100%')
   assert.equal(textOf(rows[0]).includes('Original A'), true)
   assert.equal(textOf(rows[0]).includes('Tone'), true)
   assert.equal(textOf(rows[0]).includes('2026'), true)
