@@ -639,6 +639,22 @@ window.__ModuleLoader__.load({
 				throw new Error(result.error?.code === "call-threw" ? result.error.message : "malformed environment facts response");
 			});
 			ctx.effect(() => ctx.locale.register(NS, { zh, en }), "ui-weir-settings: dictionaries");
+			// Shared design-system stylesheet: inserted once per client run so every
+			// surface (settings, capability, blackboard, worktree, MCP, tool cards) can
+			// use the same classes without waiting for a decision chunk to mount. The
+			// CSS string stays owned by the design-system chunk (single source).
+			ctx.effect(() => {
+				const hostDocument = globalThis.document;
+				if (!hostDocument?.head || typeof hostDocument.createElement !== "function") return undefined;
+				const style = hostDocument.createElement("style");
+				style.setAttribute("data-weir-ui-kit", "");
+				hostDocument.head.appendChild(style);
+				let live = true;
+				require.async("./client.decision-ui.js").then((module) => {
+					if (live) style.textContent = module.DECISION_UI_CSS ?? "";
+				}, () => {});
+				return () => { live = false; style.remove(); };
+			}, "ui-weir-settings: design-system stylesheet");
 			// Web notification delivery: the page half of "notify as DeepSeek Harness".
 			// It long-polls the host for notes the host decided to send and shows
 			// them as web notifications. Started here (not from the settings page) so
