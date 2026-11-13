@@ -216,7 +216,8 @@ test('master-detail panes own their scrolling instead of sharing the page scroll
 
 test('record rows size to their content instead of a pinned height', async () => {
   const css = (await load()).DecisionStyles().children
-  assert.match(css, /\.weir-da-record-row \{[^}]*display: grid;[^}]*align-content: start;/)
+  assert.match(css, /\.weir-da-record-row \{[^}]*display: block;/)
+  assert.match(css, /\.weir-da-record-row > strong \{ display: block;/)
   assert.doesNotMatch(css, /\.weir-da-record-row \{[^}]*[;{]\s*height: 64px/)
   assert.match(css, /\.weir-da-disclosure-trigger::after/)
 })
