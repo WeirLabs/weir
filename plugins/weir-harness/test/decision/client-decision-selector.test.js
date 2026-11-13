@@ -402,7 +402,8 @@ test('unavailable, zero-agent, and globally disabled views never silently reassi
   triggerOf(tree).onClick()
   tree = zero.render()
   assert.equal(textOf(panelOf(tree)).includes('decisionNoAgents'), true)
-  assert.ok(findAll(partOf(panelOf(tree), 'body'), node => node.type === zero.props.ui.EmptyState).length > 0)
+  // Empty guidance is a plain caption inside the list, not a boxed empty state.
+  assert.ok(findAll(partOf(panelOf(tree), 'body'), node => node['data-selector-empty'] === true).length > 0)
   assert.ok(buttonOf(partOf(panelOf(tree), 'footer'), zero.props.ui, 'decisionCreateAgent'))
   buttonOf(tree, zero.props.ui, 'decisionCreateAgent').onClick()
   tree = zero.render()

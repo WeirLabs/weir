@@ -33,7 +33,9 @@ window.__ModuleLoader__.load({
 }
 .weir-da-button { min-height: 28px; max-width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: var(--weir-gap-xs); padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-button-elevated-fill); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); font-weight: 500; cursor: pointer; }
 .weir-da-button[data-size="md"] { min-height: 36px; padding: 0 14px; border-radius: var(--dsw-radius-md); }
-.weir-da-button[data-variant="primary"] { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-on-color); font-weight: 600; }
+/* The brand fill is near-black in light and near-white in dark, so the label is
+   the foreground token (white / near-black), not the always-white on-color. */
+.weir-da-button[data-variant="primary"] { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); font-weight: 600; }
 .weir-da-button[data-variant="ghost"] { border-color: transparent; background: transparent; color: var(--dsw-alias-label-secondary); }
 .weir-da-button[data-variant="danger"] { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); background: transparent; }
 .weir-da-button:disabled { cursor: not-allowed; opacity: .55; }
@@ -43,7 +45,7 @@ window.__ModuleLoader__.load({
   .weir-da-button[data-variant="ghost"]:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
   .weir-da-disclosure-trigger:hover, .weir-da-selector-trigger:hover:not(:disabled), .weir-da-selector-option:hover, .weir-da-choice:hover { background: var(--dsw-alias-interactive-bg-hover); }
 }
-.weir-da-button:focus-visible, .weir-da-disclosure-trigger:focus-visible, .weir-da-selector-trigger:focus-visible, .weir-da-choice:focus-within, .weir-da-page select:focus-visible, .weir-da-page input:focus-visible, .weir-da-page textarea:focus-visible, .weir-ui-menu-item:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.weir-da-button:focus-visible, .weir-da-disclosure-trigger:focus-visible, .weir-da-selector-trigger:focus-visible, .weir-da-page select:focus-visible, .weir-da-page input:focus-visible, .weir-da-page textarea:focus-visible, .weir-ui-menu-item:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 .weir-da-field { min-width: 0; display: grid; gap: 6px; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
 .weir-da-field-hint, .weir-da-caption { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); overflow-wrap: anywhere; }
 .weir-da-field input, .weir-da-field textarea, .weir-da-answer-textarea, .weir-da-select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
@@ -53,7 +55,9 @@ window.__ModuleLoader__.load({
 .weir-da-badge[data-variant="error"] { color: var(--dsw-alias-state-error-primary); }
 .weir-da-state { min-width: 0; padding: 12px; border-radius: var(--dsw-radius-lg); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); overflow-wrap: anywhere; }
 .weir-da-state[data-variant="error"] { color: var(--dsw-alias-state-error-primary); }
-.weir-da-overlay { min-width: 0; border: 0; border-radius: var(--dsw-radius-panel); background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-prominent); }
+/* Dialog and selector surfaces use the menu material: the overlay fill is a mid
+   grey in dark mode, which made the panel read as a light sheet. */
+.weir-da-overlay { min-width: 0; border: 0; border-radius: var(--dsw-radius-panel); background: var(--dsw-specific-menu); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-panel); }
 .weir-da-answers { min-width: 0; display: grid; gap: 14px; margin: 0; padding: 0; }
 .weir-da-question { min-width: 0; margin: 0; padding: 0; border: 0; }
 .weir-da-question legend { max-width: 100%; padding: 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: 19px; font-weight: 600; overflow-wrap: anywhere; }
@@ -64,6 +68,9 @@ window.__ModuleLoader__.load({
 .weir-da-choice-description { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); }
 .weir-da-actions { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .weir-da-dialog { width: min(440px, calc(100vw - 32px)); max-height: min(600px, calc(100dvh - 32px)); overflow: auto; overscroll-behavior: contain; margin: auto; padding: 20px; }
+/* The dialog is a focus container, not an interactive control: its own ring
+   would draw a blue frame around the whole panel. */
+.weir-da-overlay:focus, .weir-da-overlay:focus-visible { outline: none; }
 .weir-da-dialog::backdrop, .weir-da-selector-panel::backdrop { background: rgba(0, 0, 0, .32); }
 .weir-da-selector { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
 .weir-da-selector-trigger { box-sizing: border-box; min-width: 0; max-width: 280px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); cursor: pointer; }
@@ -75,12 +82,14 @@ window.__ModuleLoader__.load({
 .weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-title-size, 14px); line-height: var(--weir-font-title-line, 20px); font-weight: 600; }
 .weir-da-selector-title + .weir-da-caption { margin: 0; }
 .weir-da-selector-options { min-width: 0; display: grid; gap: 2px; }
-.weir-da-selector-option { min-width: 0; min-height: 32px; display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; border: 0; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); cursor: pointer; overflow-wrap: anywhere; }
-.weir-da-selector-option[data-selected="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
+.weir-da-selector-option { min-width: 0; min-height: 36px; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 0; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); cursor: pointer; overflow-wrap: anywhere; }
+.weir-da-selector-option[data-selected="true"] { background: var(--dsw-alias-bg-layer-3); box-shadow: inset 0 0 0 1px var(--dsw-alias-border-selected); color: var(--dsw-alias-label-primary); }
+.weir-da-selector-option[data-selected="true"] > span > span:first-child { font-weight: 600; }
 .weir-da-selector-option input { flex: none; margin: 3px 0 0; }
+.weir-da-selector-option:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 .weir-da-selector-option > span { min-width: 0; display: grid; gap: 2px; }
 .weir-da-selector-option .weir-da-caption { display: block; }
-.weir-da-selector-footer { padding: 10px 16px 14px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-selector-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px 14px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
 .weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 24px; }
 .weir-da-page-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }

@@ -188,7 +188,9 @@ test('shared atoms use theme tokens, explicit action hierarchy, and readable sta
   assert.match(styles.children, /\.weir-da-button:hover/)
   assert.match(styles.children, /:focus-visible/)
   assert.match(styles.children, /@media \(max-width: 600px\)/)
-  assert.match(styles.children, /--dsw-alias-bg-overlay/)
+  // Dialog and selector surfaces use the menu material, not the mid-grey overlay fill.
+  assert.match(styles.children, /\.weir-da-overlay \{[^}]*background: var\(--dsw-specific-menu\)/)
+  assert.match(styles.children, /\.weir-da-selector-option\[data-selected="true"\] \{[^}]*border-selected/)
   assert.match(styles.children, /\.weir-da-conversation-card \{ position: relative; \}/)
   assert.match(styles.children, /\.weir-da-candidate-review/)
   assert.match(styles.children, /\.weir-da-learning-diagnostics pre/)
