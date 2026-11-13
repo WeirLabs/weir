@@ -26,6 +26,7 @@
 
 ### Fixed
 
+- **Decision 判断记录条目仍被裁切 + 工具栏占位浪费**：上一版把行换成按钮语义但仍保留网格容器，Chromium 依旧把高度钉在 `min-height`。现在行是纯块级卡片（旧 button 与新 div 两种结构都按内容撑高），标题与元信息各自成块；“更多筛选/数据导出”并入筛选工具条同一行，判断记录列表上移约 120px。
 - **Decision 判断记录条目被裁切/重叠**：记录条目此前是 `<button>` 网格容器，Chromium 把高度钉在 `min-height`，两行以上标题溢出卡片、被下一条卡片盖住。改为按内容撑高的行容器（保留 `role=button`、Tab 与 Enter/Space 语义），并给选中/悬停/焦点明确样式；同时把“更多筛选/数据导出”的空旷全宽条改为带箭头的紧凑行，筛选下拉不再拉满面板宽度。
 - **Decision 记录主从布局共用一个滚动容器**：判断记录与助手管理的列表和详情此前共享页面滚动，长列表会把详情挤出视口，滚到底点条目看不到内容。现在页头/导航固定，列表与详情各自独立滚动，选中后详情从头显示，页面本身不再滚动；窄屏钻取不变。
 - **DSH 0.2.2 技能收编后 Capabilities 失效**：宿主把四项 Creator 技能（`agent-experience`、`cordis-plugin-development`、`editing-cordis-compositions`、`cordis-composition-reference`）替换为 `dsh-doc` 后，工作区默认值与预设里记录的旧 identity 让每个 Weir 会话的技能 provider 整批 fail closed（Badge 显示「技能 ? · MCP ?」、回执 `selection-unavailable`、Apply 逐项报这四个名称无法解析）。工作区默认读取现在按完整库存核对 identity 条目，逐项报告并排除宿主已移除的条目（默认记录逐字不改写，库存不完整时不排除）；Apply 把「宿主 bundle 技能根下、当前宿主已不再提供」的 identity 分类为 `skipped`（`no longer provided by this host version`），其余可解析条目照常提交；`weir-creative` 的提示词改为加载 `dsh-doc` 及其按需引用。详见 [会话能力管理器](docs/features/session-capability-manager.md) 与 [预设打包](docs/features/preset-packaging.md)。
