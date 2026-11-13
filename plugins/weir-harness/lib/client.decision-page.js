@@ -1241,7 +1241,11 @@ window.__ModuleLoader__.load({
         : resources.records.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.records.value.length ? resources.records.value.map(record => {
           const summary = model.recordSummary(record, resources.agents.value, t);
-          return jsx.jsxs(ui.Button, { className: "weir-da-record-row", "data-case-id": record.caseId, "aria-pressed": selectedCaseId === record.caseId, onClick: () => readRecord(record.caseId, { select: true }), children: [
+          // A plain button element pins its height to min-height in Chromium once it
+          // is styled as a grid container, so long titles overflowed and the next row
+          // painted over them. A div with button semantics sizes to its content.
+          const openRecordRow = () => readRecord(record.caseId, { select: true });
+          return jsx.jsxs("div", { className: "weir-da-record-row", "data-case-id": record.caseId, role: "button", tabIndex: 0, "aria-pressed": selectedCaseId === record.caseId, onClick: openRecordRow, onKeyDown: event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRecordRow() } }, children: [
             jsx.jsx("strong", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("span", { children: `${summary?.agentName ?? t("decisionSelector")} · ${t(summary?.statusKey ?? "decisionStatusUnknown")}` }, "meta"),
             summary?.time ? jsx.jsx("time", { children: readableTime(summary.time) }, "time") : null,
