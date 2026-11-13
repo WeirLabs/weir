@@ -93,17 +93,30 @@ test('Agent details use the learning chunk product surface instead of legacy but
   assert.equal(typeof harness.learning.AgentLearning, 'function')
   const elements = findAll(detail, node => node.type === harness.learning.AgentLearning)
   assert.equal(elements.length, 1)
-  const agentAdvanced = findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
-  assert.equal(agentAdvanced.revealOnOpen, 'end')
-  assert.equal(findAll(agentAdvanced.children(), node => node.type === harness.learning.AgentLearning).length, 0)
+  // Exactly one advanced surface per assistant: the detail owns the single
+  // disclosure, the learning surface is rendered without its own (hideAdvanced)
+  // and contributes its diagnostics through AgentLearningDiagnostics instead.
+  const agentAdvanced = findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')
+  assert.equal(agentAdvanced.length, 1)
+  assert.equal(agentAdvanced[0].revealOnOpen, 'end')
+  assert.equal(findAll(agentAdvanced[0].children(), node => node.type === harness.learning.AgentLearning).length, 0)
+  assert.equal(findAll(agentAdvanced[0].children(), node => node.type === harness.learning.AgentLearningDiagnostics).length, 1)
+  assert.equal(findAll(detail, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics').length, 1)
 
-  const rendered = harness.learning.AgentLearning(elements[0])
+  assert.equal(elements[0].hideAdvanced, true)
+  const renderedHidden = harness.learning.AgentLearning(elements[0])
+  assert.equal(findAll(renderedHidden, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics').length, 0)
+
+  const rendered = harness.learning.AgentLearning({ ...elements[0], hideAdvanced: false })
   const text = JSON.stringify(rendered)
   for (const key of ['decisionLearningGovernance', 'decisionNoCurrentSnapshot', 'decisionLearningIdle', 'decisionConsolidate']) assert.ok(text.includes(key), key)
   for (const key of ['decisionPublish', 'decisionReject', 'decisionRollback', 'decisionLearningRuns', 'decisionSnapshots', 'learningRuns', 'snapshots']) assert.equal(text.includes(key), false, key)
   assert.equal(findAll(rendered, node => node.type === 'pre').length, 0)
   const learningAdvanced = findAll(rendered, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
   assert.equal(learningAdvanced.revealOnOpen, 'end')
+  // The merged diagnostics view renders the same content without a wrapper.
+  const diagnostics = harness.learning.AgentLearningDiagnostics({ ...elements[0], hideAdvanced: false })
+  assert.ok(JSON.stringify(diagnostics).includes('decisionNoLearningDetail'))
   harness.unmount()
 })
 

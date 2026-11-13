@@ -393,9 +393,12 @@ window.__ModuleLoader__.load({
     function PublicMemory(props) {
       const { view, ui, t, pending } = props;
       const busy = typeof pending === "string";
+      // Refresh lives in the section header as a small quiet button instead of
+      // a full-width row of its own.
       const header = jsx.jsxs("header", { className: "weir-da-section-header", children: [
         jsx.jsx("h4", { children: t("decisionPublicCandidate") }, "label"),
         jsx.jsx(ui.Badge, { variant: view.statusVariant, "data-public-status": view.status, role: "status", "aria-live": "polite", children: t(view.statusKey) }, "status"),
+        jsx.jsx(ui.Button, { variant: "ghost", size: "sm", "data-action": "public-refresh", disabled: !view.canRefresh || busy, "aria-busy": view.phase === "loading", onClick: () => { if (view.canRefresh && !busy) return props.onRefresh(); }, children: t(view.phase === "loading" ? "decisionPublicRefreshing" : "decisionPublicRefresh") }, "refresh"),
       ] }, "header");
       if (view.phase === "idle" || (view.phase === "loading" && !view.hasValue)) {
         return jsx.jsxs("div", { className: "weir-da-public-memory", "data-public-memory": true, children: [header, jsx.jsx(ui.LoadingState, { children: t("decisionPublicStatusLoading") }, "loading")] });
@@ -481,7 +484,6 @@ window.__ModuleLoader__.load({
         current,
         published,
         disclosure,
-        jsx.jsx("div", { className: "weir-da-actions", children: jsx.jsx(ui.Button, { "data-action": "public-refresh", disabled: !view.canRefresh || busy, "aria-busy": view.phase === "loading", onClick: () => { if (view.canRefresh && !busy) return props.onRefresh(); }, children: t(view.phase === "loading" ? "decisionPublicRefreshing" : "decisionPublicRefresh") }, "refresh") }, "refresh-actions"),
         failed,
         candidate,
         rollback,
@@ -496,9 +498,11 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [jsx.jsx("h2", { children: agent.name }, "name"), jsx.jsx("p", { children: agent.userDescription?.text || t("decisionNoPreference") }, "preference")] }, "copy"),
           jsx.jsx(ui.Badge, { variant: agent.state === "enabled" ? "success" : agent.state === "disabled" ? "warn" : "idle", children: t(agentStateKey(agent.state)) }, "state"),
         ] }, "header"),
+        // One calm action row: no heavy fills, the state toggle stays ghost,
+        // and the destructive archive sits at the far end.
         jsx.jsxs("div", { className: "weir-da-actions", children: [
-          jsx.jsx(ui.Button, { variant: "primary", "data-action": "edit-agent", onClick: props.onEdit, children: t("decisionEditAgent") }, "edit"),
-          jsx.jsx(ui.Button, { "data-agent-state": agent.state === "enabled" ? "disabled" : "enabled", disabled: agent.state === "archived", onClick: () => props.requestState(agent.state === "enabled" ? "disabled" : "enabled"), children: t(agent.state === "enabled" ? "decisionDisableAgent" : "decisionEnableAgent") }, "toggle"),
+          jsx.jsx(ui.Button, { variant: "secondary", "data-action": "edit-agent", onClick: props.onEdit, children: t("decisionEditAgent") }, "edit"),
+          jsx.jsx(ui.Button, { variant: "ghost", "data-agent-state": agent.state === "enabled" ? "disabled" : "enabled", disabled: agent.state === "archived", onClick: () => props.requestState(agent.state === "enabled" ? "disabled" : "enabled"), children: t(agent.state === "enabled" ? "decisionDisableAgent" : "decisionEnableAgent") }, "toggle"),
           jsx.jsx(ui.Button, { variant: "danger", "data-agent-state": "archived", disabled: agent.state === "archived", onClick: () => props.requestState("archived"), children: t("decisionArchiveAgent") }, "archive"),
         ] }, "actions"),
         jsx.jsxs("section", { className: "weir-da-memory-zone weir-da-public-zone", "data-memory-zone": "public", "aria-labelledby": `weir-da-public-zone-${agent.agentId}`, children: [
@@ -515,11 +519,14 @@ window.__ModuleLoader__.load({
         jsx.jsxs("section", { className: "weir-da-memory-zone weir-da-private-zone", "data-memory-zone": "workspace", "aria-labelledby": `weir-da-private-zone-${agent.agentId}`, children: [
           jsx.jsx("h3", { id: `weir-da-private-zone-${agent.agentId}`, children: t("decisionWorkspaceExperience") }, "title"),
           jsx.jsx("p", { className: "weir-da-caption", role: "note", "data-private-isolation": true, children: t("decisionPrivateIsolation") }, "isolation"),
-          jsx.jsx(props.learningProps.learning.AgentLearning, { ...props.learningProps, agent, ui }, "learning"),
+          jsx.jsx(props.learningProps.learning.AgentLearning, { ...props.learningProps, agent, ui, hideAdvanced: true }, "learning"),
         ] }, "private-zone"),
+        // Exactly one advanced surface per assistant: profile history, the
+        // learning diagnostics and the raw profile share this slim disclosure.
         jsx.jsx(ui.Disclosure, { id: `weir-da-agent-advanced-${agent.agentId}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-agent-diagnostics", children: [
           jsx.jsx("h3", { children: t("decisionProfileHistory") }, "history-title"),
           jsx.jsx("ul", { children: (agent.descriptionHistory ?? []).map(item => jsx.jsx("li", { children: `v${item.revision}: ${item.text}` }, item.revision)) }, "history"),
+          jsx.jsx(props.learningProps.learning.AgentLearningDiagnostics, { ...props.learningProps, agent, ui }, "learning-diagnostics"),
           jsx.jsx("pre", { children: JSON.stringify(agent, null, 2) }, "raw"),
         ] }) }, "advanced"),
       ] });
