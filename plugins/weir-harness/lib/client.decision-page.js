@@ -1261,7 +1261,7 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { className: "weir-da-record-detail-pane", children: [
             jsx.jsx(ui.Button, { variant: "ghost", className: "weir-da-record-back", onClick: () => setDrillIn(false), children: t("decisionBackToRecords") }, "back"),
             recordContent,
-          ] }, "detail"),
+          ] }, selectedCaseId ?? "detail"),
         ] }, "layout"),
       ] });
       const selectedAgent = resources.agent.status === "ready" ? resources.agent.value : null;

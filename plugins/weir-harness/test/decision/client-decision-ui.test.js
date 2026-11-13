@@ -201,6 +201,19 @@ test('shared atoms use theme tokens, explicit action hierarchy, and readable sta
   assert.equal(source.includes('@deepseek-ai/'), false)
 })
 
+test('master-detail panes own their scrolling instead of sharing the page scroller', async () => {
+  const css = (await load()).DecisionStyles().children
+  // The page is a fixed shell: header/nav stay put and the view fills the rest.
+  assert.match(css, /\.weir-da-page-inner \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*height: 100%;/)
+  // Both master-detail layouts stretch to that height and let each pane scroll.
+  assert.match(css, /\.weir-da-records-layout \{[^}]*align-items: stretch;[^}]*min-height: 0;/)
+  assert.match(css, /\.weir-da-agents-layout \{[^}]*align-items: stretch;[^}]*min-height: 0;/)
+  assert.match(css, /\.weir-da-record-list, \.weir-da-record-detail-pane \{[^}]*overflow-y: auto;/)
+  assert.match(css, /\.weir-da-agent-list, \.weir-da-agent-detail-pane \{[^}]*overflow-y: auto;/)
+  // The records/agents views must not add a second page-level scroller.
+  assert.match(css, /\.weir-da-view\[data-view="records"\], \.weir-da-view\[data-view="agents"\] \{[^}]*overflow: hidden;/)
+})
+
 test('assistant master-detail styles keep compact summaries, independent regions, and narrow drill-in', async () => {
   const css = (await load()).DecisionStyles().children
   assert.match(css, /\.weir-da-agents-layout \{[^}]*display: grid;[^}]*grid-template-columns:/)

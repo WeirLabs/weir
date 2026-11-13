@@ -94,7 +94,10 @@ window.__ModuleLoader__.load({
 .weir-da-selector-option .weir-da-caption { display: block; }
 .weir-da-selector-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px 14px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
-.weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 24px; }
+/* The page is a fixed shell: header and navigation keep their place and each
+   view owns its scrolling. Sharing one scroller with the master-detail layout
+   let the list push the detail pane out of view. */
+.weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 24px; height: 100%; }
 .weir-da-page-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .weir-da-page-header h1 { margin: 0; font-size: var(--weir-font-page-size, 24px); line-height: var(--weir-font-page-line, 32px); font-weight: 650; }
 .weir-da-page-header p { margin: 4px 0 0; max-width: 68ch; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
@@ -102,7 +105,10 @@ window.__ModuleLoader__.load({
 .weir-da-primary-nav .weir-da-button { min-height: 32px; border-color: transparent; background: transparent; border-radius: var(--dsw-radius-sm); }
 .weir-da-primary-nav .weir-da-button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
 .weir-da-count { display: inline-flex; min-width: 12px; align-items: center; justify-content: center; margin-inline-start: 6px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); font-variant-numeric: tabular-nums; }
-.weir-da-view, .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
+.weir-da-view { min-width: 0; flex: 1 1 auto; min-height: 0; }
+.weir-da-view[data-view="inbox"], .weir-da-view[data-view="metrics"] { display: grid; gap: 12px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
+.weir-da-view[data-view="records"], .weir-da-view[data-view="agents"] { display: flex; flex-direction: column; overflow: hidden; }
+.weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
 .weir-da-card { min-width: 0; padding: 16px; border-radius: var(--dsw-radius-xl); background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
 .weir-da-card[data-flat="true"] { background: var(--dsw-alias-bg-layer-1); border-radius: var(--dsw-radius-lg); }
 .weir-da-conversation-card { position: relative; }
@@ -115,8 +121,10 @@ window.__ModuleLoader__.load({
 .weir-da-record-detail h3 { margin: 0 0 8px; font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); font-weight: 600; color: var(--dsw-alias-label-secondary); }
 .weir-da-evidence-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .weir-da-evidence-list li { padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); white-space: pre-wrap; }
-.weir-da-records-layout { min-width: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 4px; }
+.weir-da-records-layout { min-width: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
+/* The two panes scroll independently; the page itself must not scroll. */
+.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
+.weir-da-record-detail-pane { padding-right: 4px; }
 .weir-da-record-row.weir-da-button { width: 100%; height: auto; min-height: 64px; display: grid; justify-items: start; gap: 4px; padding: 12px; border-color: transparent; text-align: start; white-space: normal; overflow-wrap: anywhere; }
 .weir-da-record-row[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-2); }
 .weir-da-record-row span { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
@@ -134,14 +142,16 @@ window.__ModuleLoader__.load({
 .weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
 .weir-da-suggestion-review { margin: 12px 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
 .weir-da-suggestion-review ul, .weir-da-memory-summary { margin: 6px 0 0; padding-inline-start: 20px; }
-.weir-da-filters, .weir-da-records-view, .weir-da-agents-view { min-width: 0; display: grid; gap: 12px; }
+.weir-da-filters { min-width: 0; display: grid; gap: 12px; }
+.weir-da-records-view, .weir-da-agents-view { min-width: 0; display: flex; flex-direction: column; gap: 12px; flex: 1 1 auto; min-height: 0; }
 .weir-da-filter-row { min-width: 0; display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
 .weir-da-filter { min-width: 0; flex: 1 1 160px; display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
 .weir-da-filter input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
 .weir-da-section-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .weir-da-section-header h2, .weir-da-metrics h2 { margin: 0; font-size: var(--weir-font-section-size, 16px); line-height: var(--weir-font-section-line, 24px); font-weight: 600; }
-.weir-da-agents-layout { min-width: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.weir-da-agent-list, .weir-da-agent-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; }
+.weir-da-agents-layout { min-width: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
+.weir-da-agent-list, .weir-da-agent-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; overflow-y: auto; overscroll-behavior: contain; }
+.weir-da-agent-detail-pane { padding-right: 4px; }
 .weir-da-agent-summary { display: grid; gap: 8px; padding: 12px; }
 .weir-da-agent-summary .weir-da-card-header { margin-bottom: 0; }
 .weir-da-agent-summary-preference { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
