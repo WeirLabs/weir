@@ -9,6 +9,8 @@
 
 ### Added
 
+- **Decision 助手永久删除**：助手详情新增「删除助手」，弹出二次确认对话框并列出将一并删除的各类记录真实数量（判断记录、判断依据、反馈与纠正、学习整理与公共记忆版本）；确认后在单个 SQLite 事务中级联删除该助手的档案、修订、全部 Case/Attempt/Evidence/反馈/纠正/RouteDecision/学习 Run/Snapshot（含公共记忆），事务失败整体回滚。确认携带预览时的记录数，期间有新写入则拒绝执行并提示重新确认（`DELETE_COUNTS_STALE`）；删除成功写入一条含各类删除数量的审计。会话选择器仍引用被删助手时按既有「不可用选择」诚实呈现，聚合指标与已落盘导出文件不回溯。详见 [Decision Agent](docs/features/decision-agent.md)。
+
 - **本地多 Decision Agent（P0 契约 + P1 核心）**：可创建、编辑、停用和归档独立 Agent，在会话中选择 `Off` 或指定 Agent；有证据且 scope 匹配时按原选项回答，不完整问题带原因码退回，真正的新判断进入原生用户升级。新增 `decision_consult`、持久 Case/Attempt/Evidence 历史、原生用户裁决复用、重启恢复和真实修订/重试。默认关闭，无 Auto、语义整合、自动画像学习、跨工作区共享或导出。详见 [Decision Agent](docs/features/decision-agent.md)。
 - **决策卡与左侧栏管理页**：显示结论理由、证据出处、记录版本、暂定建议和逐题结论；提供 Agent 档案、六维过滤的只读决策记录、持久待办收件箱与指标。赞、踩、撤销、评论、纠正、裁决、改派、取消和重试均写入本地权威历史，并支持重启后恢复。
 - **九项 Decision Agent 设置**：总开关、Attempt 超时/次数/并发、上下文与输出预算、Agent 模型链、保留天数和私有存储目录。`generatedDescription` 在 P1 恒空只读。
