@@ -38,4 +38,5 @@
 - [会话能力管理器](session-capability-manager.md)：会话级能力选择、Apply 事务、MCP 会话级关闭、预设库与默认值、管理界面与通知。
 - [MCP server 管理](mcp-server-management.md)：完整生命周期、registry incarnation、strict mount/disposal、批量预览、credential refs、AI Host 确认与 Select/Apply 边界。
 - [工具使用观测](tool-usage-observability.md)：冷安全的本地 JSONL 请求工具面计数/字节与调用结果审计，不记录载荷、不进行外部上报。
+- [Weir 客户端设计系统](ui-design-system.md)：令牌纪律、圆角/材质/遮罩/菜单/排版规则、共享原语与契约测试——改任何客户端界面前先读这篇。
 - [会话黑板](blackboard.md)：会话内 Agent 协作的知识交换所——发现即写、仲裁写入、类型枚举、用量可计量，晋升评估由用户一键发起并逐项裁决。
