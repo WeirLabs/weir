@@ -213,7 +213,9 @@ window.__ModuleLoader__.load({
           ] }, "copy"),
           jsx.jsx(ui.Badge, { variant: "warn", children: t(summary?.statusKey ?? "decisionStatusAwaitingUser") }, "status"),
         ] }, "header"),
-        jsx.jsx("p", { children: current.escalation?.missing?.[0] ?? t(summary?.reasonKey ?? "decisionReasonUnknown") }, "reason"),
+        // The escalation reason is the one thing the user must not miss: it is
+        // an accent-barred notice, not another flat paragraph.
+        jsx.jsx(ui.Notice, { tone: "warn", children: current.escalation?.missing?.[0] ?? t(summary?.reasonKey ?? "decisionReasonUnknown") }, "reason"),
         suggestions.length || perQuestion.length ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [
           jsx.jsxs("strong", { children: [t("decisionSuggestions"), " · ", t("decisionSuggestionNotSubmitted")] }, "title"),
           suggestions.length ? jsx.jsx("ul", { children: suggestions.map((answer, index) => {
@@ -226,7 +228,7 @@ window.__ModuleLoader__.load({
           }) }, "per-question") : null,
         ] }, "guidance") : null,
         jsx.jsx(ui.DecisionAnswers, {
-          questions, answers: draft.answers, suggestions, pending,
+          questions, answers: draft.answers, suggestions, pending, collapseTitle: summary?.title,
           onChange: value => props.updateDraft("answers", value), onSubmit: value => props.run("decide", current.caseId, value), t,
         }, "answers"),
         jsx.jsx(ui.Disclosure, {
@@ -423,11 +425,13 @@ window.__ModuleLoader__.load({
           ] }, `${principle.principleId}:${index}`);
         }) }, "list"),
       ] }, "published") : null;
-      const disclosure = view.disclosureRequired ? jsx.jsxs("section", { className: "weir-da-public-disclosure", "data-public-disclosure": true, role: "note", children: [
+      // The first-run consent is the zone's key alert: an accent-barred warn
+      // notice with the acknowledge action inside, not more flat paragraphs.
+      const disclosure = view.disclosureRequired ? jsx.jsx(ui.Notice, { tone: "warn", children: jsx.jsxs("section", { className: "weir-da-public-disclosure", "data-public-disclosure": true, role: "note", children: [
         jsx.jsx("strong", { children: t("decisionPublicDisclosureTitle") }, "title"),
         jsx.jsx("p", { children: t("decisionPublicDisclosureBody") }, "body"),
         jsx.jsx(ui.Button, { variant: "primary", "data-action": "public-acknowledge", disabled: busy, onClick: () => { if (!busy) return props.onAcknowledge(); }, children: t("decisionPublicDisclosureAcknowledge") }, "acknowledge"),
-      ] }, "disclosure") : null;
+      ] }) }, "disclosure") : null;
       const candidate = view.candidate ? jsx.jsxs("section", { className: "weir-da-public-candidate", "data-public-candidate": String(view.candidate.snapshotId ?? ""), children: [
         jsx.jsxs("p", { children: `${t("decisionPublicCandidate")} · ${t("decisionApplyChangeCount")}: ${view.readiness.changeCount ?? view.changes.length}` }, "summary"),
         jsx.jsx("p", { className: "weir-da-caption", "data-public-frozen-input": true, children: `${t("decisionPublicFrozenInput")}: ${t("decisionPublicWorkspaces")} ${view.candidate.workspaceCount} · ${t("decisionPublicSourceCount")} ${view.candidate.sourceCount}` }, "counts"),

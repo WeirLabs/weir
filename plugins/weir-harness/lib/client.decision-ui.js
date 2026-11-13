@@ -119,8 +119,11 @@ window.__ModuleLoader__.load({
 .weir-da-card-header p, .weir-da-card p { margin: 4px 0 0; line-height: var(--weir-font-body-line, 20px); }
 .weir-da-record-answers { display: grid; gap: 10px; }
 .weir-da-answer-summary { min-width: 0; display: grid; gap: 4px; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
-.weir-da-record-detail section { min-width: 0; margin-top: 16px; }
-.weir-da-record-detail h3 { margin: 0 0 8px; font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); font-weight: 600; color: var(--dsw-alias-label-secondary); }
+.weir-da-record-detail section { min-width: 0; margin-top: 18px; }
+/* Detail sections are separated by hairlines and led by primary-colour
+   headings, so the body no longer reads as one flat wall of text. */
+.weir-da-record-detail section + section { padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-record-detail h3 { margin: 0 0 8px; font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); font-weight: 600; color: var(--dsw-alias-label-primary); }
 .weir-da-evidence-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .weir-da-evidence-list li { padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); white-space: pre-wrap; }
 .weir-da-records-layout { min-width: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 16px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
@@ -156,6 +159,8 @@ window.__ModuleLoader__.load({
 .weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
 .weir-da-suggestion-review { margin: 12px 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
 .weir-da-suggestion-review ul, .weir-da-memory-summary { margin: 6px 0 0; padding-inline-start: 20px; }
+.weir-da-public-disclosure { min-width: 0; display: grid; gap: 6px; justify-items: start; }
+.weir-da-public-disclosure p { margin: 0; }
 .weir-da-filters { min-width: 0; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
 .weir-da-filters > .weir-da-disclosure { flex: 0 0 auto; }
 .weir-da-filters > .weir-da-disclosure .weir-da-disclosure-trigger { width: auto; }
@@ -242,11 +247,21 @@ window.__ModuleLoader__.load({
 .weir-ui-row-main { min-width: 0; display: grid; gap: 2px; }
 .weir-ui-row-main strong { font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); font-weight: 600; }
 .weir-ui-row-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+/* Visually hidden but present for assistive technology. */
+.weir-da-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* The assistant detail's two memory zones read as two separated regions
+   with their own primary-colour headings instead of one long text column. */
+.weir-da-memory-zone { min-width: 0; margin-top: 20px; padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-memory-zone > h3 { margin: 0; font-size: var(--weir-font-body-size, 14px); line-height: var(--weir-font-body-line, 20px); font-weight: 600; color: var(--dsw-alias-label-primary); }
+.weir-da-memory-zone > .weir-da-caption { margin: 4px 0 0; }
 .weir-ui-truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .weir-ui-clamp-2 { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .weir-ui-notice { min-width: 0; display: flex; align-items: flex-start; gap: 8px; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); overflow-wrap: anywhere; }
-.weir-ui-notice[data-tone="warn"] { color: var(--dsw-alias-state-warn-label); }
-.weir-ui-notice[data-tone="error"] { color: var(--dsw-alias-state-error-primary); }
+/* Alert tones carry an accent bar so an actionable warning never reads as
+   yet another flat paragraph. */
+.weir-ui-notice[data-tone="warn"] { color: var(--dsw-alias-state-warn-label); box-shadow: inset 2px 0 0 var(--dsw-alias-state-warn-label); }
+.weir-ui-notice[data-tone="error"] { color: var(--dsw-alias-state-error-primary); box-shadow: inset 2px 0 0 var(--dsw-alias-state-error-primary); }
+.weir-ui-notice strong { color: var(--dsw-alias-label-primary); }
 .weir-ui-skeleton { min-height: 12px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-skeleton); }
 .weir-ui-tabs { display: inline-flex; gap: 2px; padding: 4px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
 .weir-ui-tabs button { min-height: 28px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; cursor: pointer; }
@@ -309,7 +324,7 @@ window.__ModuleLoader__.load({
         ? react.cloneElement(props.children, { "aria-describedby": [childProps?.["aria-describedby"], hintId].filter(Boolean).join(" ") })
         : props.children;
       return jsx.jsxs("div", { className: "weir-da-field", "data-field": props.id, children: [
-        jsx.jsx("label", { htmlFor: props.id, children: props.label }, "label"),
+        jsx.jsx("label", { htmlFor: props.id, className: props.labelClassName, children: props.label }, "label"),
         control,
         props.hint ? jsx.jsx("div", { id: hintId, className: "weir-da-field-hint", children: props.hint }, "hint") : null,
       ] });
@@ -776,6 +791,10 @@ window.__ModuleLoader__.load({
       const instanceId = react.useId();
       const incompleteId = `weir-da-answers-${instanceId}-incomplete`;
       const questions = Array.isArray(props.questions) ? props.questions : [];
+      // A single question identical to the card title keeps its legend for
+      // assistive technology but does not print the same sentence twice.
+      const collapseTitle = typeof props.collapseTitle === "string" && props.collapseTitle.length > 0 ? props.collapseTitle : null;
+      const collapseLegend = question => collapseTitle !== null && questions.length === 1 && question.question === collapseTitle;
       const [localAnswers, setLocalAnswers] = react.useState({});
       const [submitting, setSubmitting] = react.useState(false);
       const pendingRef = react.useRef(false);
@@ -820,7 +839,7 @@ window.__ModuleLoader__.load({
           ...questions.map(question => {
             const answer = answers[question.id] ?? {};
             if (!Array.isArray(question.options)) return jsx.jsx(Field, {
-              id: `weir-da-answer-${instanceId}-${question.id}`, label: question.question,
+              id: `weir-da-answer-${instanceId}-${question.id}`, label: question.question, labelClassName: collapseLegend(question) ? "weir-da-sr-only" : undefined,
               children: jsx.jsx("textarea", {
                 id: `weir-da-answer-${instanceId}-${question.id}`, className: "weir-da-answer-textarea", rows: 3,
                 value: answer.custom ?? "", disabled: pending, "aria-label": question.question, "aria-describedby": !isAnswered(question) ? incompleteId : undefined,
@@ -828,7 +847,7 @@ window.__ModuleLoader__.load({
               }),
             }, question.id);
             return jsx.jsxs("fieldset", { className: "weir-da-question", disabled: pending, "data-question-id": question.id, "aria-describedby": !isAnswered(question) ? incompleteId : undefined, children: [
-              jsx.jsx("legend", { children: question.question }, "legend"),
+              jsx.jsx("legend", { className: collapseLegend(question) ? "weir-da-sr-only" : undefined, children: question.question }, "legend"),
               jsx.jsx("div", { className: "weir-da-choices", children: question.options.map((option, index) => {
                 const value = typeof option?.label === "string" ? option.label : String(option?.value ?? "");
                 const multiple = question.multiSelect === true;
