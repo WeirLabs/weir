@@ -238,7 +238,7 @@ describe('client.settings-page chunk', () => {
     expect(exports.WeirCard({ view: 'summary', page: 'routing', t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('routingDescription')
   })
 
-  it('renders the card-based sections and the default visible set per group', async () => {
+  it('renders the flat group sections and the default visible set per group', async () => {
     const { exports, editors } = await loadPage()
     const rendered = renderCard(exports, editors, {
       fields: makeFields(),
@@ -247,15 +247,16 @@ describe('client.settings-page chunk', () => {
     // one child: the cards column (no restart reminder)
     expect(rendered.children).toHaveLength(1)
     const column = rendered.children[0]
-    expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '12px' })
+    expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '28px' })
     const cards = cardsOf(rendered)
     const groupIds = Object.keys(cards)
     expect(groupIds).toEqual(MAIN_GROUPS)
-    // every card: layered background, l1 border, radius, title inside the top
+    // every group is flat (no second outline inside the settings dialog) and
+    // keeps its title as the first child
     for (const [id, card] of Object.entries(cards)) {
-      expect(card.style.background).toBe('var(--dsw-alias-bg-layer-1)')
-      expect(card.style.border).toBe('1px solid var(--dsw-alias-border-l1)')
-      expect(card.style.borderRadius).toBe('12px')
+      expect(card.style.background).toBeUndefined()
+      expect(card.style.border).toBeUndefined()
+      expect(card.style.borderRadius).toBeUndefined()
       expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
     // the default visible set (product defaults: todo/guard/worktree/robash/
@@ -272,7 +273,7 @@ describe('client.settings-page chunk', () => {
     // hairline separators: the first row in a card has none, the rest do
     const todoRows = cards.todo.children.slice(1)
     expect(todoRows[0].style.borderTop).toBe('none')
-    for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('1px solid var(--dsw-alias-border-l2)')
+    for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('0.5px solid var(--dsw-alias-border-l2)')
   })
 
   it('keeps the three conservative Auto controls in the existing Decision group', async () => {
@@ -305,9 +306,9 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(routing, 'routingCategories')).toEqual(['delegateCategoryChains', 'delegateDisabledCategories'])
     expect(rowKeys(routing, 'routingAgents')).toEqual(['delegateAgentChains'])
     expect(rowKeys(routing, 'routingSupervision')).toEqual(['supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
-    // the routing cards keep the card chrome and the translated group titles
+    // the routing groups are flat too and keep the translated group titles
     for (const id of ROUTING_GROUPS) {
-      expect(routing[id].style.borderRadius).toBe('12px')
+      expect(routing[id].style.borderRadius).toBeUndefined()
       expect(routing[id].children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
   })
@@ -346,7 +347,7 @@ describe('client.settings-page chunk', () => {
     expect(todoRows[0].style.borderLeft).toBe(undefined)
     for (const row of todoRows.slice(1)) {
       expect(row['data-depth']).toBe(1)
-      expect(row.style.borderLeft).toBe('1px solid var(--dsw-alias-border-l2)')
+      expect(row.style.borderLeft).toBe('0.5px solid var(--dsw-alias-border-l2)')
       expect(row.style.paddingLeft).toBe('16px')
     }
     // the two-level case: notifyMinTurnSeconds nests under notifyOnComplete
@@ -723,7 +724,7 @@ describe('client.settings-page chunk', () => {
     // toast surface: dark in both themes, no border, elevation shadow
     expect(bar.style.background).toBe('var(--dsw-alias-toast-bg)')
     expect(bar.style.border).toBe('none')
-    expect(bar.style.borderRadius).toBe('var(--dsw-radius-lg, 12px)')
+    expect(bar.style.borderRadius).toBe('var(--dsw-radius-lg)')
     // the pending count interpolates through the real dictionaries
     expect(JSON.stringify(dirtyForm)).toContain('3 unsaved change(s)')
     const dirtyZh = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 2 }), { t: tFor('zh') })
@@ -743,7 +744,7 @@ describe('client.settings-page chunk', () => {
     const discards = findAll(normal, (node) => node.__type === 'button' && node.children === 'discardChanges')
     expect(discards).toHaveLength(1)
     const discard = discards[0]
-    expect(discard.style.color).toBe('var(--dsw-static-deepseek-400, var(--dsw-alias-brand-primary))')
+    expect(discard.style.color).toBe('var(--dsw-alias-link)')
     expect(discard.children).toBe('discardChanges')
     expect(save.variant).toBe('primary')
     expect(save.disabled).toBe(false)

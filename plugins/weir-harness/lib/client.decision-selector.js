@@ -140,7 +140,7 @@ window.__ModuleLoader__.load({
         role: "dialog", "aria-modal": true, "aria-labelledby": TITLE_ID,
         "aria-describedby": "weir-da-selector-safety", tabIndex: -1,
         pending, "aria-busy": pending, closeOnBackdrop: true, onRequestClose: close,
-        restoreFocus: false, returnFocus: triggerRef, scrollOrigin: triggerRef,
+        restoreFocus: false, returnFocus: triggerRef, scrollOrigin: triggerRef, anchor: triggerRef,
         openErrorLabel: t("decisionFailed"), dismissLabel: t("decisionCancel"), onDismissError: () => setOpen(false),
         children: [
           jsx.jsxs("div", { className: "weir-da-selector-header", "data-selector-part": "header", children: [
@@ -168,11 +168,11 @@ window.__ModuleLoader__.load({
               children: view.options.map(optionRow),
             }, "options") : null,
             pending ? jsx.jsx("div", { role: "status", "aria-live": "polite", className: "weir-da-caption", children: t("decisionSaving") }, "saving") : null,
-            view.emptyKey ? jsx.jsx(ui.EmptyState, { children: t(view.emptyKey) }, "empty") : null,
+            view.emptyKey ? jsx.jsx("p", { className: "weir-da-caption", "data-selector-empty": true, children: t(view.emptyKey) }, "empty") : null,
           ] }, "body"),
           jsx.jsxs("div", { className: "weir-da-actions weir-da-selector-footer", "data-selector-part": "footer", children: [
-            view.emptyKey ? jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => bridge(props.onCreate), children: t("decisionCreateAgent") }, "create") : null,
-            jsx.jsx(ui.Button, { variant: "ghost", disabled: pending, onClick: () => bridge(props.onManage), children: t("decisionManageAgents") }, "manage"),
+            view.emptyKey ? jsx.jsx(ui.Button, { variant: "primary", disabled: pending, onClick: () => bridge(props.onCreate), children: t("decisionCreateAgent") }, "create") : null,
+            jsx.jsx(ui.Button, { variant: "secondary", disabled: pending, onClick: () => bridge(props.onManage), children: t("decisionManageAgents") }, "manage"),
           ] }, "footer"),
         ],
       }) : null;

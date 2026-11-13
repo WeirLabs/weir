@@ -8,38 +8,38 @@ window.__ModuleLoader__.load({
 		let react = require("react");
 		let react_jsx_runtime = require("react/jsx-runtime");
 
-		const ACCENT = "var(--dsw-alias-state-business-primary, #4176e6)";
-		const SUCCESS = "var(--dsw-alias-state-success-primary, #22c55e)";
-		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
-		const DANGER = "var(--dsw-alias-state-error-primary, #ef4444)";
-		const LABEL = "var(--dsw-alias-label-primary, inherit)";
-		const MUTED = "var(--dsw-alias-label-tertiary, #81858c)";
-		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
-		const HOVER = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
-		const CARD = "var(--dsw-alias-bg-base, #fff)";
-		const OVERLAY = "var(--dsw-alias-bg-overlay, #fff)";
+		const ACCENT = "var(--dsw-alias-state-business-primary)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary)";
+		const WARN = "var(--dsw-alias-state-warn-primary)";
+		const DANGER = "var(--dsw-alias-state-error-primary)";
+		const LABEL = "var(--dsw-alias-label-primary)";
+		const MUTED = "var(--dsw-alias-label-tertiary)";
+		const BORDER = "var(--dsw-alias-border-l2)";
+		const HOVER = "var(--dsw-alias-interactive-bg-hover)";
+		const CARD = "var(--dsw-alias-bg-base)";
+		const OVERLAY = "var(--dsw-alias-bg-overlay)";
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		const S = {
 			view: { position: "relative", display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 },
 			toolbar: { display: "flex", gap: "5px", alignItems: "center", flexWrap: "wrap" },
-			card: { display: "flex", flexDirection: "column", gap: "5px", padding: "7px", margin: "5px 0", background: CARD, border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-md, 8px)" },
+			card: { display: "flex", flexDirection: "column", gap: "5px", padding: "7px", margin: "5px 0", background: CARD, border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-md)" },
 			row: { display: "flex", gap: "6px", alignItems: "flex-start", flexWrap: "wrap" },
 			name: { color: LABEL, fontWeight: 600, overflowWrap: "anywhere" },
-			meta: { color: MUTED, fontSize: "11px", lineHeight: "15px", overflowWrap: "anywhere" },
-			input: { width: "100%", boxSizing: "border-box", padding: "4px 7px", color: LABEL, background: CARD, border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm, 6px)", fontSize: "12px", lineHeight: "16px" },
+			meta: { color: MUTED, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", overflowWrap: "anywhere" },
+			input: { width: "100%", boxSizing: "border-box", padding: "4px 7px", color: LABEL, background: CARD, border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "16px" },
 			field: { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 },
-			error: { color: DANGER, fontSize: "11px", lineHeight: "15px" },
-			warning: { color: WARN, fontSize: "11px", lineHeight: "15px" },
-			button: { padding: "3px 8px", color: LABEL, background: "none", border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm, 6px)", cursor: "pointer", fontSize: "11px", lineHeight: "15px" },
-			primary: { padding: "3px 10px", color: "var(--dsw-alias-bg-base, #fff)", background: ACCENT, border: `1px solid ${ACCENT}`, borderRadius: "var(--dsw-radius-sm, 6px)", cursor: "pointer", fontSize: "11px", lineHeight: "15px", fontWeight: 600 },
+			error: { color: DANGER, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)" },
+			warning: { color: WARN, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)" },
+			button: { padding: "3px 8px", color: LABEL, background: "none", border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", cursor: "pointer", fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "15px" },
+			primary: { padding: "3px 10px", color: "var(--dsw-alias-bg-base)", background: ACCENT, border: `1px solid ${ACCENT}`, borderRadius: "var(--dsw-radius-sm)", cursor: "pointer", fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "15px", fontWeight: 600 },
 			disabled: { opacity: 0.5, cursor: "not-allowed" },
-			tag: { display: "inline-flex", alignItems: "center", width: "fit-content", padding: "0 5px", border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm, 6px)", color: MUTED, fontSize: "10px", lineHeight: "14px", whiteSpace: "nowrap" },
-			pre: { margin: 0, padding: "6px", maxHeight: "180px", overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: LABEL, background: HOVER, borderRadius: "var(--dsw-radius-sm, 6px)", fontSize: "10px", lineHeight: "14px" },
-			dialogShade: { position: "absolute", inset: 0, zIndex: 4, display: "flex", alignItems: "center", justifyContent: "center", padding: "12px", background: "var(--dsw-alias-bg-scrim, rgba(0,0,0,.28))" },
-			dialog: { display: "flex", flexDirection: "column", gap: "8px", width: "100%", padding: "12px", color: LABEL, background: OVERLAY, border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-lg, 12px)", boxShadow: "var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,.14))" },
+			tag: { display: "inline-flex", alignItems: "center", width: "fit-content", padding: "0 5px", border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", color: MUTED, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", whiteSpace: "nowrap" },
+			pre: { margin: 0, padding: "6px", maxHeight: "180px", overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: LABEL, background: HOVER, borderRadius: "var(--dsw-radius-sm)", fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)" },
+			dialogShade: { position: "absolute", inset: 0, zIndex: 4, display: "flex", alignItems: "center", justifyContent: "center", padding: "12px", background: "rgba(0, 0, 0, .32)" },
+			dialog: { display: "flex", flexDirection: "column", gap: "8px", width: "100%", padding: "12px", color: LABEL, background: OVERLAY, border: 0, borderRadius: "var(--dsw-radius-panel)", boxShadow: "var(--dsw-elevation-prominent)" },
 		};
 		const ring = {
-			onFocus: (event) => { if (event?.currentTarget?.style) { event.currentTarget.style.outline = "2px solid var(--dsw-alias-focus-ring, currentColor)"; event.currentTarget.style.outlineOffset = "1px"; } },
+			onFocus: (event) => { if (event?.currentTarget?.style) { event.currentTarget.style.outline = "2px solid var(--dsw-alias-state-business-primary)"; event.currentTarget.style.outlineOffset = "1px"; } },
 			onBlur: (event) => { if (event?.currentTarget?.style) { event.currentTarget.style.outline = "none"; event.currentTarget.style.outlineOffset = ""; } },
 		};
 		const button = (label, props = {}) => react_jsx_runtime.jsx("button", {
@@ -445,7 +445,7 @@ window.__ModuleLoader__.load({
 				return react_jsx_runtime.jsxs("div", { style: S.card, children: [
 					react_jsx_runtime.jsx("strong", { style: S.name, children: t("capability.mcp.pasteTitle", "Paste MCP JSON (single or mcpServers batch)") }),
 					react_jsx_runtime.jsx("textarea", {
-						style: { ...S.input, minHeight: "110px", fontFamily: "var(--dsw-font-mono, monospace)" },
+						style: { ...S.input, minHeight: "110px", fontFamily: "var(--dsw-font-mono)" },
 						value: editor.text, disabled: editor.busy, "aria-label": t("capability.mcp.pasteLabel", "MCP JSON document"), ...ring,
 						onChange: event => setEditor({ ...editor, text: event.target.value, preview: null, result: null }),
 					}),

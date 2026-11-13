@@ -20,9 +20,9 @@ window.__ModuleLoader__.load({
 		// snapshot of its call — it never polls and never claims current
 		// ownership. The model helpers arrive through props.model (the entry
 		// composes lib/client.file-lease-tool-model.js); errors never throw out.
-		const MONO = "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)";
+		const MONO = "var(--dsw-font-markdown-code-block-font-family)";
 		const TONES = {
-			success: "var(--dsw-alias-state-success-primary, #2f855a)",
+			success: "var(--dsw-alias-state-success-primary)",
 			wait: "var(--dsw-alias-state-business-primary)",
 			danger: "var(--dsw-alias-state-error-primary)",
 			warn: "var(--dsw-alias-state-warn-primary)",
@@ -32,13 +32,13 @@ window.__ModuleLoader__.load({
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		const mono = { fontFamily: MONO, overflowWrap: "anywhere", wordBreak: "break-word" };
 		const text = {
-			title: { fontSize: "13px", lineHeight: "18px", fontWeight: 600, color: "var(--dsw-alias-label-primary)" },
-			body: { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)", overflowWrap: "anywhere" },
-			foot: { fontSize: "11px", lineHeight: "15px", color: "var(--dsw-alias-label-tertiary)", overflowWrap: "anywhere" }
+			title: { fontSize: "var(--dsw-font-xs-13-font-size)", lineHeight: "var(--dsw-font-xs-13-line-height)", fontWeight: 600, color: "var(--dsw-alias-label-primary)" },
+			body: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)", overflowWrap: "anywhere" },
+			foot: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: "var(--dsw-alias-label-tertiary)", overflowWrap: "anywhere" }
 		};
 		const cardStyle = {
-			background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-md, 8px)", padding: "8px 10px",
+			background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l2)",
+			borderRadius: "var(--dsw-radius-md)", padding: "8px 10px",
 			minWidth: 0, maxWidth: "100%", overflow: "hidden"
 		};
 		const rowButtonStyle = {
@@ -47,16 +47,16 @@ window.__ModuleLoader__.load({
 			textAlign: "left", font: "inherit", color: "inherit"
 		};
 		const calloutStyle = (color) => ({
-			padding: "5px 8px", fontSize: "12px", lineHeight: "16px",
+			padding: "5px 8px", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "16px",
 			color: "var(--dsw-alias-label-secondary)", background: tint(color, 8),
-			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs, 4px)",
+			borderLeft: `2px solid ${color}`, borderRadius: "var(--dsw-radius-xs)",
 			overflowWrap: "anywhere"
 		});
 		const preStyle = {
-			margin: 0, padding: "6px 8px", fontFamily: MONO, fontSize: "11px", lineHeight: "16px",
+			margin: 0, padding: "6px 8px", fontFamily: MONO, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 			whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", maxHeight: "240px", overflow: "auto",
 			boxSizing: "border-box", maxWidth: "100%", minWidth: 0,
-			border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md, 8px)",
+			border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-md)",
 			background: "var(--dsw-alias-bg-base)", color: "var(--dsw-alias-label-secondary)"
 		};
 		/** `{name}` placeholders, substituted literally (no host interpolation assumed). */
@@ -104,7 +104,7 @@ window.__ModuleLoader__.load({
 				"data-weir-lease-badge": props.state,
 				style: {
 					display: "inline-flex", alignItems: "center", gap: "5px", padding: "1px 7px",
-					fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: props.color,
+					fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "16px", fontWeight: 600, color: props.color,
 					background: tint(props.color, 12), border: `1px solid ${props.color}`,
 					borderRadius: "var(--dsw-radius-sm)", flex: "none", whiteSpace: "nowrap"
 				},
@@ -115,7 +115,7 @@ window.__ModuleLoader__.load({
 			});
 		}
 		const line = (key, children, style) => jsx("div", { style: style ?? text.body, children }, key);
-		const pathChip = (path) => jsx("span", { style: { ...mono, fontSize: "11px", color: "var(--dsw-alias-label-primary)" }, children: path });
+		const pathChip = (path) => jsx("span", { style: { ...mono, fontSize: "var(--dsw-font-xxxs-11-font-size)", color: "var(--dsw-alias-label-primary)" }, children: path });
 		/** A labelled path list; each row may carry a trailing localized note. */
 		function pathList(key, label, rows) {
 			return jsxs("div", { style: { display: "flex", flexDirection: "column", gap: "2px" }, children: [
@@ -241,11 +241,11 @@ window.__ModuleLoader__.load({
 				subject = jsx("span", { style: { ...text.body, flex: "0 1 auto", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }, children: fill(t("leaseToolStatusSummary"), { mine: meta.mine.length, others: meta.others.length }) }, "subject");
 			} else if (paths.length) {
 				subject = jsxs("span", { style: { display: "inline-flex", alignItems: "baseline", gap: "4px", flex: "0 1 auto", minWidth: 0, overflow: "hidden" }, children: [
-					jsx("span", { "data-weir-lease-path": "", style: { ...mono, fontSize: "12px", color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }, children: paths[0] }, "path"),
+					jsx("span", { "data-weir-lease-path": "", style: { ...mono, fontSize: "var(--dsw-font-xxs-12-font-size)", color: "var(--dsw-alias-label-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }, children: paths[0] }, "path"),
 					paths.length > 1 ? jsx("span", { "data-weir-lease-more": "", style: { ...text.foot, flex: "none" }, children: `+${paths.length - 1}` }, "more") : null
 				] }, "subject");
 			} else if (requestId) {
-				subject = jsx("span", { style: { fontFamily: MONO, fontSize: "12px", color: "var(--dsw-alias-label-secondary)", flex: "0 1 auto", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }, children: requestId }, "subject");
+				subject = jsx("span", { style: { fontFamily: MONO, fontSize: "var(--dsw-font-xxs-12-font-size)", color: "var(--dsw-alias-label-secondary)", flex: "0 1 auto", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }, children: requestId }, "subject");
 			}
 			const hover = model.resultText(block);
 			const body = meta ? outcomeRows(meta, t) : fallbackRows(state, paths, requestId, block, model, t);

@@ -606,34 +606,47 @@ window.__ModuleLoader__.load({
 				this.form.dispose();
 			}
 		};
-		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
+		// Row = flexible copy column + fixed control column. A grid keeps every control
+		// on one axis and stops long descriptions from wrapping around a control that
+		// happens to be wide (the ragged text the screenshots showed).
+		const rowStyle = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: "24px", padding: "12px 0" };
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
-		const labelStyle = { fontSize: "14px", fontWeight: 500, lineHeight: "20px" };
+		const labelStyle = { fontSize: "var(--dsw-font-s-14-font-size)", fontWeight: 500, lineHeight: "var(--dsw-font-s-14-line-height)" };
 		// child rows step the label size down slightly with depth
-		const childLabelStyle = { ...labelStyle, fontSize: "13px" };
+		const childLabelStyle = { ...labelStyle, fontSize: "var(--dsw-font-xs-13-font-size)" };
 		const labelTextStyle = { display: "inline-flex", alignItems: "center", gap: "6px" };
-		const hintStyle = { fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-label-secondary)" };
+		const hintStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)" };
 		// Card-based group sections (design D7): layered background, l1 border,
 		// radius, the group title inside the card top, hairline l2 separators
 		// between rows. Colors only from theme tokens; geometry hardcoded.
-		const cardStyle = { background: "var(--dsw-alias-bg-layer-1)", border: "1px solid var(--dsw-alias-border-l1)", borderRadius: "12px", padding: "6px 16px 12px" };
-		const cardTitleStyle = { fontSize: "13px", fontWeight: 600, lineHeight: "18px", padding: "8px 0 2px", color: "var(--dsw-alias-label-primary)" };
-		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "12px" };
+		// Settings cards share the official material: R20, hairline stroke and the
+		// card fill token, so they read as the same surface as every other card.
+		// Group sections are flat, like the host settings page: a title, then rows
+		// separated by hairlines. Boxing a card inside the settings dialog put a second
+		// outline around every group (visible in the captured settings screenshot).
+		const cardStyle = { display: "grid", gap: "2px", padding: "0" };
+		const cardTitleStyle = { fontSize: "var(--dsw-font-base-16-font-size)", fontWeight: 600, lineHeight: "var(--dsw-font-base-16-line-height)", padding: "0 0 4px", color: "var(--dsw-alias-label-primary)" };
+		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "28px" };
+		const valueFieldStyle = { maxWidth: "320px", minWidth: 0 };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
-		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
+		// A segmented control owns the full width under its label instead of
+		// competing with the description for horizontal space.
+		const stackedRowStyle = { display: "grid", gap: "8px", padding: "12px 0" };
+		const stackedControlStyle = { display: "flex", flexDirection: "column", alignItems: "stretch", gap: "4px", minWidth: 0 };
+		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "var(--dsw-font-xxs-12-font-size)", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
 		// Compact native dropdown for enum rows marked `display: "select"`
 		// (today only worktreeAutoApprove — its three long option labels squeeze
 		// the row label in a segmented control). Geometry matches the small
 		// inputs of the worktree-view config editor; colors from theme tokens.
-		const selectStyle = { fontSize: "12px", lineHeight: "16px", padding: "3px 6px", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", maxWidth: "220px", flex: "none" };
+		const selectStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", padding: "3px 6px", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", color: "var(--dsw-alias-label-primary)", background: "var(--dsw-alias-bg-base)", maxWidth: "220px", flex: "none" };
 		const reminderTagsStyle = { display: "flex", flexWrap: "wrap", gap: "6px" };
 		// Row chrome inside a card: hairline separator (skipped on the first
 		// row), and for child rows a left guide line plus padding scaled by
 		// depth — both in the l2 border token.
 		function rowWrapStyle(depth, first) {
 			return {
-				borderTop: first ? "none" : "1px solid var(--dsw-alias-border-l2)",
-				...(depth > 0 ? { borderLeft: "1px solid var(--dsw-alias-border-l2)", marginLeft: "2px", paddingLeft: `${depth * 16}px` } : {})
+				borderTop: first ? "none" : "0.5px solid var(--dsw-alias-border-l2)",
+				...(depth > 0 ? { borderLeft: "0.5px solid var(--dsw-alias-border-l2)", marginLeft: "2px", paddingLeft: `${depth * 16}px` } : {})
 			};
 		}
 		// The always-on restart-required tag for rows in RESTART_FIELDS — the
@@ -648,12 +661,13 @@ window.__ModuleLoader__.load({
 		function ChoiceField(props) {
 			const { descriptor, field, t, disabled } = props;
 			const depth = props.depth ?? 0;
-			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
+			const stacked = descriptor.kind !== "boolean" && descriptor.display !== "select";
+			return react_jsx_runtime.jsx("div", { style: stacked ? stackedRowStyle : rowStyle, children: [
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
 					labelWithTag(descriptor, t, depth > 0 ? childLabelStyle : labelStyle),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) }),
 				] }),
-				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+				react_jsx_runtime.jsxs("div", { style: stacked ? stackedControlStyle : { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
 						// ONE effective-value helper with the condition evaluator:
 						// what the switch shows is what `when` sees.
@@ -790,18 +804,18 @@ window.__ModuleLoader__.load({
 		// host's Toast surface (dark in BOTH themes) instead of the group cards:
 		// a floating action bar must read as a surface ABOVE the rows, not as
 		// one more row. Colors only from theme tokens, geometry hardcoded.
-		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "10px 14px", background: "var(--dsw-alias-toast-bg)", border: "none", borderRadius: "var(--dsw-radius-lg, 12px)", boxShadow: "var(--dsw-shadow-lv3, 0 8px 24px rgba(0,0,0,.18))" };
-		const saveBarTextStyle = { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, fontSize: "12px", lineHeight: "16px", color: "var(--dsw-alias-toast-label)" };
+		const saveBarStyle = { position: "sticky", bottom: "12px", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginTop: "12px", padding: "10px 14px", background: "var(--dsw-alias-toast-bg)", border: "none", borderRadius: "var(--dsw-radius-lg)", boxShadow: "var(--dsw-shadow-lv3)" };
+		const saveBarTextStyle = { display: "flex", alignItems: "center", gap: "8px", minWidth: 0, fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-toast-label)" };
 		// warn-label (not warn-primary) is the token designed for dark surfaces.
 		const saveBarFailedStyle = { color: "var(--dsw-alias-state-warn-label)" };
 		// Discard as a plain text action (the host toast's action pattern): the
 		// outline Button variant is tuned for regular surfaces and reads poorly
 		// on the always-dark toast surface.
-		const saveBarDiscardStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "12px", lineHeight: "16px", padding: "4px 2px", color: "var(--dsw-static-deepseek-400, var(--dsw-alias-brand-primary))" };
+		const saveBarDiscardStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", padding: "4px 2px", color: "var(--dsw-alias-link)" };
 		const saveBarActionsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
 		// The form-shell notice lines (unavailable / readOnly) keep the host
 		// contract's role="status" lines in the page's hint styling.
-		const formNoticeStyle = { fontSize: "13px", lineHeight: "18px", color: "var(--dsw-alias-label-secondary)", margin: "0 0 12px" };
+		const formNoticeStyle = { fontSize: "var(--dsw-font-xs-13-font-size)", lineHeight: "var(--dsw-font-xs-13-line-height)", color: "var(--dsw-alias-label-secondary)", margin: "0 0 12px" };
 		/** Local form shell replacing the host primitives.SettingsForm (whose
 		 * footer sits at the bottom of a long page and cannot be restyled from
 		 * outside). The host contract is preserved verbatim: staged edits are
@@ -959,7 +973,7 @@ window.__ModuleLoader__.load({
 						onReset: () => props.resetField(node.field)
 					}));
 				}
-				return wrap(react_jsx_runtime.jsx(primitives.SettingsValueField, {
+				return wrap(react_jsx_runtime.jsx("div", { style: valueFieldStyle, children: react_jsx_runtime.jsx(primitives.SettingsValueField, {
 					id: `plugin-config-${WEIR_NS}-${node.field}`,
 					label: react_jsx_runtime.jsxs("span", { style: labelTextStyle, children: [t(node.field), restartTag(node, t)] }),
 					hint: t(`${node.field}Hint`),
@@ -974,7 +988,7 @@ window.__ModuleLoader__.load({
 					overridden: field.overridden,
 					onEdit: (text) => props.edit(node.field, text),
 					onReset: () => props.resetField(node.field)
-				}));
+				}) }));
 			};
 			// Card sections: the tree walk prunes hidden subtrees wholesale (a
 			// hidden parent hides every descendant), and children land directly
@@ -1030,7 +1044,7 @@ window.__ModuleLoader__.load({
 		const columnStyle = {
 			display: "flex",
 			flexDirection: "column",
-			gap: "var(--dsw-spacing-3, 12px)"
+			gap: "12px"
 		};
 		const ITEM_SLOT = "settings.weir.item";
 		// The section shell is page-agnostic: the composition root passes the

@@ -7,8 +7,8 @@ window.__ModuleLoader__.load({
     const react = require("react");
     const jsx = require("react/jsx-runtime");
     const PAGE_ID = "weir-decisions";
-    const contextPackStyle = { background: "var(--dsw-alias-bg-base)", border: "1px solid var(--dsw-alias-border-l2)", borderRadius: "6px", padding: "6px 8px" };
-    const contextPackBodyStyle = { display: "grid", gap: "8px", paddingTop: "8px", fontSize: "12px", lineHeight: "16px" };
+    const contextPackStyle = { background: "var(--dsw-alias-bg-base)", border: "0.5px solid var(--dsw-alias-border-l2)", borderRadius: "var(--dsw-radius-sm)", padding: "6px 8px" };
+    const contextPackBodyStyle = { display: "grid", gap: "8px", paddingTop: "8px", fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)" };
     const contextPackLabelStyle = { color: "var(--dsw-alias-label-secondary)", fontWeight: 600 };
     const contextPackListStyle = { margin: "4px 0 0", paddingLeft: "22px", overflowWrap: "anywhere" };
 
@@ -1372,7 +1372,7 @@ window.__ModuleLoader__.load({
           ] }, "header"),
           jsx.jsx("nav", { ref: primaryNavRef, tabIndex: -1, className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
             "data-view": id, onClick: () => navigate(id), "aria-pressed": view.tab === id,
-            children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, "aria-label": `${resources.inbox.value.length}` }, "count") : null] }),
+            children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" && resources.inbox.value.length > 0 ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, children: String(resources.inbox.value.length) }, "count") : null] }),
           }, id)) }, "nav"),
           actionError ? jsx.jsx(ui.ErrorState, { children: t(model.errorKey(actionError)) }, "action-error") : null,
           view.tab === "inbox" ? jsx.jsx("section", { "data-view": "inbox", className: "weir-da-view", children: inboxContent }, "inbox") : null,

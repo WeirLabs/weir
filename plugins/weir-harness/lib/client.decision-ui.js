@@ -9,80 +9,117 @@ window.__ModuleLoader__.load({
     const jsx = require("react/jsx-runtime");
 
     const DECISION_UI_CSS = `
-.weir-da-button { box-sizing: border-box; min-height: 32px; max-width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 18px; font-weight: 500; cursor: pointer; }
-.weir-da-button[data-variant="primary"] { color: var(--dsw-alias-state-business-primary); border-color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, var(--dsw-alias-bg-layer-1)); font-weight: 600; }
+.weir-da-page, .weir-da-overlay, .weir-da-selector, .weir-ui-scope {
+  --weir-font-body-size: var(--dsw-font-s-14-font-size);
+  --weir-font-body-line: var(--dsw-font-s-14-line-height);
+  --weir-font-caption-size: var(--dsw-font-xs-13-font-size);
+  --weir-font-caption-line: var(--dsw-font-xs-13-line-height);
+  --weir-font-small-size: var(--dsw-font-xxs-12-font-size);
+  --weir-font-small-line: var(--dsw-font-xxs-12-line-height);
+  --weir-font-title-size: var(--dsw-font-base-16-font-size);
+  --weir-font-title-line: var(--dsw-font-base-16-line-height);
+  --weir-font-section-size: var(--dsw-font-m-18-font-size);
+  --weir-font-section-line: var(--dsw-font-m-18-line-height);
+  --weir-font-page-size: var(--dsw-font-xl-24-font-size);
+  --weir-font-page-line: var(--dsw-font-xl-24-line-height);
+  --weir-gap-xs: 4px;
+  --weir-gap-sm: 8px;
+  --weir-gap-md: 12px;
+  --weir-gap-lg: 16px;
+  --weir-gap-xl: 24px;
+}
+.weir-da-button, .weir-da-field, .weir-da-card, .weir-da-state, .weir-ui-menu, .weir-da-overlay {
+  box-sizing: border-box;
+}
+.weir-da-button { min-height: 28px; max-width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: var(--weir-gap-xs); padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-button-elevated-fill); color: var(--dsw-alias-label-primary); font: inherit; font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); font-weight: 500; cursor: pointer; }
+.weir-da-button[data-size="md"] { min-height: 36px; padding: 0 14px; border-radius: var(--dsw-radius-md); }
+/* The brand fill is near-black in light and near-white in dark, so the label is
+   the foreground token (white / near-black), not the always-white on-color. */
+.weir-da-button[data-variant="primary"] { border-color: transparent; background: var(--dsw-alias-button-primary-fill); color: var(--dsw-alias-label-primary-foreground); font-weight: 600; }
 .weir-da-button[data-variant="ghost"] { border-color: transparent; background: transparent; color: var(--dsw-alias-label-secondary); }
-.weir-da-button[data-variant="danger"] { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
-.weir-da-button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.weir-da-button[data-variant="danger"] { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); background: transparent; }
 .weir-da-button:disabled { cursor: not-allowed; opacity: .55; }
-.weir-da-button:focus-visible, .weir-da-disclosure-trigger:focus-visible, .weir-da-selector-trigger:focus-visible, .weir-da-choice:focus-within { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
-.weir-da-field { min-width: 0; display: grid; gap: 6px; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 18px; }
-.weir-da-field-hint, .weir-da-caption { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
-.weir-da-field input, .weir-da-field textarea, .weir-da-answer-textarea { box-sizing: border-box; width: 100%; min-width: 0; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); padding: 7px 9px; font: inherit; }
-.weir-da-badge { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 16px; }
+@media (hover: hover) {
+  .weir-da-button:hover:not(:disabled) { background: var(--dsw-alias-button-elevated-fill); }
+  .weir-da-button[data-variant="primary"]:hover:not(:disabled) { background: var(--dsw-alias-button-primary-hover); }
+  .weir-da-button[data-variant="ghost"]:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+  .weir-da-disclosure-trigger:hover, .weir-da-selector-trigger:hover:not(:disabled), .weir-da-selector-option:hover, .weir-da-choice:hover { background: var(--dsw-alias-interactive-bg-hover); }
+}
+.weir-da-button:focus-visible, .weir-da-disclosure-trigger:focus-visible, .weir-da-selector-trigger:focus-visible, .weir-da-page select:focus-visible, .weir-da-page input:focus-visible, .weir-da-page textarea:focus-visible, .weir-ui-menu-item:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.weir-da-field { min-width: 0; display: grid; gap: 6px; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
+.weir-da-field-hint, .weir-da-caption { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); overflow-wrap: anywhere; }
+.weir-da-field input, .weir-da-field textarea, .weir-da-answer-textarea, .weir-da-select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.weir-da-badge { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 0 6px; min-height: 20px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); }
 .weir-da-badge[data-variant="success"] { color: var(--dsw-alias-state-success-primary); }
-.weir-da-badge[data-variant="warn"] { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-warn-primary)); }
+.weir-da-badge[data-variant="warn"] { color: var(--dsw-alias-state-warn-label); }
 .weir-da-badge[data-variant="error"] { color: var(--dsw-alias-state-error-primary); }
-.weir-da-state { box-sizing: border-box; min-width: 0; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
-.weir-da-state[data-variant="error"] { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
-.weir-da-overlay { box-sizing: border-box; min-width: 0; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-overlay); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-shadow-overlay, 0 8px 28px var(--dsw-alias-border-l2)); }
+.weir-da-state { min-width: 0; padding: 12px; border-radius: var(--dsw-radius-lg); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); overflow-wrap: anywhere; }
+.weir-da-state[data-variant="error"] { color: var(--dsw-alias-state-error-primary); }
+/* Dialog and selector surfaces use the menu material: the overlay fill is a mid
+   grey in dark mode, which made the panel read as a light sheet. */
+.weir-da-overlay { min-width: 0; border: 0; border-radius: var(--dsw-radius-panel); background: var(--dsw-specific-menu); color: var(--dsw-alias-label-primary); box-shadow: var(--dsw-elevation-panel); }
 .weir-da-answers { min-width: 0; display: grid; gap: 14px; margin: 0; padding: 0; }
 .weir-da-question { min-width: 0; margin: 0; padding: 0; border: 0; }
-.weir-da-question legend { max-width: 100%; padding: 0; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 19px; font-weight: 600; overflow-wrap: anywhere; }
+.weir-da-question legend { max-width: 100%; padding: 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: 19px; font-weight: 600; overflow-wrap: anywhere; }
 .weir-da-choices { display: grid; gap: 4px; margin-top: 7px; }
-.weir-da-choice { min-width: 0; min-height: 32px; display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--dsw-radius-sm, 6px); color: var(--dsw-alias-label-primary); cursor: pointer; }
-.weir-da-choice:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.weir-da-choice { min-width: 0; min-height: 32px; display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); cursor: pointer; }
 .weir-da-choice input { flex: none; margin: 3px 0 0; }
 .weir-da-choice-copy { min-width: 0; display: grid; gap: 2px; overflow-wrap: anywhere; }
-.weir-da-choice-description { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 16px; }
+.weir-da-choice-description { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); }
 .weir-da-actions { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.weir-da-dialog { width: min(420px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: auto; overscroll-behavior: contain; margin: auto; padding: 16px; }
-.weir-da-dialog::backdrop, .weir-da-selector-panel::backdrop { background: color-mix(in srgb, var(--dsw-alias-bg-base) 64%, transparent); }
+.weir-da-dialog { width: min(440px, calc(100vw - 32px)); max-height: min(600px, calc(100dvh - 32px)); overflow: auto; overscroll-behavior: contain; margin: auto; padding: 20px; }
+/* The dialog is a focus container, not an interactive control: its own ring
+   would draw a blue frame around the whole panel. */
+.weir-da-overlay:focus, .weir-da-overlay:focus-visible { outline: none; }
+/* The anchored selector is a popover: it covers the visual viewport for
+   outside-click dismissal but must not dim the page. */
+.weir-da-dialog::backdrop { background: rgba(0, 0, 0, .32); }
+.weir-da-selector-panel::backdrop { background: transparent; }
 .weir-da-selector { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
-.weir-da-selector-trigger { box-sizing: border-box; min-width: 0; max-width: 280px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 16px; cursor: pointer; }
-.weir-da-selector-trigger:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.weir-da-selector-trigger[data-unavailable="true"] { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-warn-primary)); border-color: var(--dsw-alias-state-warn-primary); }
+.weir-da-selector-trigger { box-sizing: border-box; min-width: 0; max-width: 280px; min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); cursor: pointer; }
+.weir-da-selector-trigger[data-unavailable="true"] { color: var(--dsw-alias-state-warn-label); border-color: var(--dsw-alias-state-warn-primary); }
 .weir-da-selector-trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.weir-da-selector-panel { margin: auto; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
-.weir-da-selector-header { min-width: 0; display: grid; gap: 4px; padding: 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
-.weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 10px 12px; display: grid; gap: 10px; align-content: start; }
-.weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: 14px; line-height: 20px; }
+.weir-da-selector-panel { margin: auto; position: fixed; width: min(360px, calc(100vw - 32px)); max-height: min(560px, calc(100dvh - 32px)); overflow: hidden; overscroll-behavior: contain; padding: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.weir-da-selector-header { min-width: 0; display: grid; gap: 4px; padding: 14px 16px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-selector-body { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px 8px; display: grid; gap: 2px; align-content: start; }
+.weir-da-selector-title { margin: 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-title-size, 14px); line-height: var(--weir-font-title-line, 20px); font-weight: 600; }
 .weir-da-selector-title + .weir-da-caption { margin: 0; }
-.weir-da-selector-options { min-width: 0; display: grid; gap: 4px; }
-.weir-da-selector-option { min-width: 0; min-height: 36px; display: flex; align-items: flex-start; gap: 8px; padding: 8px; border: 1px solid transparent; border-radius: var(--dsw-radius-sm, 6px); color: var(--dsw-alias-label-primary); cursor: pointer; overflow-wrap: anywhere; }
-.weir-da-selector-option:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.weir-da-selector-option[data-selected="true"] { border-color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, var(--dsw-alias-bg-overlay)); }
+.weir-da-selector-options { min-width: 0; display: grid; gap: 2px; }
+.weir-da-selector-option { min-width: 0; min-height: 36px; display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px; border: 0; border-radius: var(--dsw-radius-md); color: var(--dsw-alias-label-primary); cursor: pointer; overflow-wrap: anywhere; }
+.weir-da-selector-option[data-selected="true"] { background: var(--dsw-alias-bg-layer-3); box-shadow: inset 0 0 0 1px var(--dsw-alias-border-selected); color: var(--dsw-alias-label-primary); }
+.weir-da-selector-option[data-selected="true"] > span > span:first-child { font-weight: 600; }
 .weir-da-selector-option input { flex: none; margin: 3px 0 0; }
+.weir-da-selector-option:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
 .weir-da-selector-option > span { min-width: 0; display: grid; gap: 2px; }
 .weir-da-selector-option .weir-da-caption { display: block; }
-.weir-da-selector-footer { padding: 8px 12px 12px; border-top: 1px solid var(--dsw-alias-border-l2); }
-.weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
-.weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+.weir-da-selector-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px 14px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-page { position: relative; box-sizing: border-box; height: 100%; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
+.weir-da-page-inner { box-sizing: border-box; width: min(100%, 1200px); min-width: 0; margin: 0 auto; padding: 24px; display: grid; gap: 24px; }
 .weir-da-page-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.weir-da-page-header h1 { margin: 0; font-size: 24px; line-height: 32px; font-weight: 650; }
-.weir-da-page-header p { margin: 4px 0 0; max-width: 68ch; color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
-.weir-da-primary-nav { box-sizing: border-box; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; gap: 2px; padding: 3px; border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); }
-.weir-da-primary-nav .weir-da-button { border-color: transparent; background: transparent; }
-.weir-da-primary-nav .weir-da-button[aria-pressed="true"] { border-color: var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
-.weir-da-count { display: inline-flex; min-width: 20px; min-height: 20px; align-items: center; justify-content: center; margin-inline-start: 6px; padding: 0 5px; border-radius: 10px; background: var(--dsw-alias-bg-layer-2); font-size: 12px; }
+.weir-da-page-header h1 { margin: 0; font-size: var(--weir-font-page-size, 24px); line-height: var(--weir-font-page-line, 32px); font-weight: 650; }
+.weir-da-page-header p { margin: 4px 0 0; max-width: 68ch; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
+.weir-da-primary-nav { box-sizing: border-box; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
+.weir-da-primary-nav .weir-da-button { min-height: 32px; border-color: transparent; background: transparent; border-radius: var(--dsw-radius-sm); }
+.weir-da-primary-nav .weir-da-button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
+.weir-da-count { display: inline-flex; min-width: 12px; align-items: center; justify-content: center; margin-inline-start: 6px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); font-variant-numeric: tabular-nums; }
 .weir-da-view, .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
-.weir-da-card { box-sizing: border-box; min-width: 0; padding: 16px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
+.weir-da-card { min-width: 0; padding: 16px; border-radius: var(--dsw-radius-xl); background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
+.weir-da-card[data-flat="true"] { background: var(--dsw-alias-bg-layer-1); border-radius: var(--dsw-radius-lg); }
 .weir-da-conversation-card { position: relative; }
 .weir-da-card-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.weir-da-card-header h2 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
-.weir-da-card-header p, .weir-da-card p { margin: 4px 0 0; line-height: 20px; }
+.weir-da-card-header h2 { margin: 0; font-size: var(--weir-font-title-size, 16px); line-height: var(--weir-font-title-line, 24px); font-weight: 600; }
+.weir-da-card-header p, .weir-da-card p { margin: 4px 0 0; line-height: var(--weir-font-body-line, 20px); }
 .weir-da-record-answers { display: grid; gap: 10px; }
-.weir-da-answer-summary { min-width: 0; display: grid; gap: 4px; padding: 10px; border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-answer-summary { min-width: 0; display: grid; gap: 4px; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
 .weir-da-record-detail section { min-width: 0; margin-top: 16px; }
-.weir-da-record-detail h3 { margin: 0 0 8px; font-size: 13px; line-height: 18px; }
+.weir-da-record-detail h3 { margin: 0 0 8px; font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); font-weight: 600; color: var(--dsw-alias-label-secondary); }
 .weir-da-evidence-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.weir-da-evidence-list li { padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); white-space: pre-wrap; }
+.weir-da-evidence-list li { padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); white-space: pre-wrap; }
 .weir-da-records-layout { min-width: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 6px; }
-.weir-da-record-row.weir-da-button { width: 100%; height: auto; min-height: 64px; display: grid; justify-items: start; gap: 4px; padding: 10px; text-align: start; white-space: normal; overflow-wrap: anywhere; }
-.weir-da-record-row span { color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.weir-da-select { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 32px; padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
-.weir-da-page select:focus-visible, .weir-da-page input:focus-visible, .weir-da-page textarea:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.weir-da-record-list, .weir-da-record-detail-pane { min-width: 0; display: grid; gap: 4px; }
+.weir-da-record-row.weir-da-button { width: 100%; height: auto; min-height: 64px; display: grid; justify-items: start; gap: 4px; padding: 12px; border-color: transparent; text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.weir-da-record-row[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-2); }
+.weir-da-record-row span { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
 .weir-da-record-back { display: none; }
 @media (max-width: 760px) {
   .weir-da-page-inner { padding: 16px; gap: 16px; }
@@ -91,25 +128,24 @@ window.__ModuleLoader__.load({
   .weir-da-records-layout[data-drill-in="false"] .weir-da-record-detail-pane { display: none; }
   .weir-da-record-back { display: inline-flex; }
 }
-.weir-da-disclosure-trigger { box-sizing: border-box; width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; text-align: start; cursor: pointer; }
-.weir-da-disclosure-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.weir-da-disclosure-trigger { box-sizing: border-box; width: 100%; min-height: 32px; padding: 6px 8px; border: 0.5px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: var(--weir-font-body-size, 13px); text-align: start; cursor: pointer; }
 .weir-da-disclosure { min-width: 0; }
 .weir-da-disclosure [role="region"] { min-width: 0; padding-top: 10px; }
 .weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
-.weir-da-suggestion-review { margin: 12px 0; padding: 10px; border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-suggestion-review { margin: 12px 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
 .weir-da-suggestion-review ul, .weir-da-memory-summary { margin: 6px 0 0; padding-inline-start: 20px; }
 .weir-da-filters, .weir-da-records-view, .weir-da-agents-view { min-width: 0; display: grid; gap: 12px; }
 .weir-da-filter-row { min-width: 0; display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
-.weir-da-filter { min-width: 0; flex: 1 1 160px; display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.weir-da-filter input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm, 6px); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.weir-da-filter { min-width: 0; flex: 1 1 160px; display: grid; gap: 5px; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
+.weir-da-filter input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; padding: 5px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
 .weir-da-section-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-.weir-da-section-header h2, .weir-da-metrics h2 { margin: 0; font-size: 16px; line-height: 24px; }
+.weir-da-section-header h2, .weir-da-metrics h2 { margin: 0; font-size: var(--weir-font-section-size, 16px); line-height: var(--weir-font-section-line, 24px); font-weight: 600; }
 .weir-da-agents-layout { min-width: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
-.weir-da-agent-list, .weir-da-agent-detail-pane { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.weir-da-agent-list, .weir-da-agent-detail-pane { min-width: 0; display: grid; gap: 4px; align-content: start; }
 .weir-da-agent-summary { display: grid; gap: 8px; padding: 12px; }
 .weir-da-agent-summary .weir-da-card-header { margin-bottom: 0; }
 .weir-da-agent-summary-preference { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-.weir-da-agent-summary[data-selected="true"] { border-color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, var(--dsw-alias-bg-layer-1)); }
+.weir-da-agent-summary[data-selected="true"] { background: var(--dsw-alias-bg-layer-3); }
 .weir-da-agent-summary .weir-da-button { justify-self: start; }
 .weir-da-agent-back { display: none; }
 @media (max-width: 760px) {
@@ -119,38 +155,38 @@ window.__ModuleLoader__.load({
   .weir-da-agent-back { display: inline-flex; }
 }
 .weir-da-agent-editor .weir-da-field textarea, .weir-da-agent-advanced textarea { resize: vertical; max-height: 40vh; overflow: auto; overflow-wrap: normal; }
-.weir-da-correction-preview { padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
-.weir-da-evaluation { min-width: 0; display: grid; gap: 8px; padding: 10px 0; border-top: 1px solid var(--dsw-alias-border-l2); }
-.weir-da-learning { min-width: 0; display: grid; gap: 12px; padding-top: 16px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-correction-preview { padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
+.weir-da-evaluation { min-width: 0; display: grid; gap: 8px; padding: 12px 0; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-learning { min-width: 0; display: grid; gap: 12px; padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-learning > p { margin: 0; }
-.weir-da-learning .weir-da-section-header h3 { margin: 0; font-size: 14px; line-height: 20px; }
-.weir-da-candidate-review { min-width: 0; display: grid; gap: 12px; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-learning .weir-da-section-header h3 { margin: 0; font-size: var(--weir-font-caption-size, 14px); line-height: var(--weir-font-caption-line, 20px); }
+.weir-da-candidate-review { min-width: 0; display: grid; gap: 12px; padding: 14px; border-radius: var(--dsw-radius-lg); background: var(--dsw-alias-bg-layer-1); }
 .weir-da-principle-changes, .weir-da-principle-changes > section, .weir-da-learning-sources, .weir-da-learning-diagnostics, .weir-da-learning-diagnostics > section { min-width: 0; display: grid; gap: 8px; }
-.weir-da-principle-changes h4, .weir-da-learning-sources h4, .weir-da-learning-diagnostics h4 { margin: 0; font-size: 13px; line-height: 18px; }
+.weir-da-principle-changes h4, .weir-da-learning-sources h4, .weir-da-learning-diagnostics h4 { margin: 0; font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); font-weight: 600; color: var(--dsw-alias-label-secondary); }
 .weir-da-principle-changes ul, .weir-da-learning-sources ul, .weir-da-learning-diagnostics ul { min-width: 0; display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.weir-da-principle-changes li, .weir-da-learning-sources li { min-width: 0; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1); }
-.weir-da-principle-changes li > div + div { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-principle-changes li, .weir-da-learning-sources li { min-width: 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
+.weir-da-principle-changes li > div + div { margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-principle-changes li p { margin: 4px 0 0; white-space: pre-wrap; }
 .weir-da-source-excerpt { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .weir-da-learning-diagnostics ul { max-height: 240px; overflow: auto; overscroll-behavior: contain; }
 .weir-da-learning-diagnostics .weir-da-button { width: 100%; height: auto; white-space: normal; text-align: start; overflow-wrap: anywhere; }
 .weir-da-metrics { display: grid; gap: 16px; }
 .weir-da-metrics section { min-width: 0; }
-.weir-da-metrics h3 { margin: 0 0 8px; font-size: 13px; }
+.weir-da-metrics h3 { margin: 0 0 8px; font-size: var(--weir-font-caption-size, 13px); }
 .weir-da-metrics-grid { min-width: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 8px; margin: 0; }
-.weir-da-metric { min-width: 0; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
-.weir-da-metric dt { color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.weir-da-metric dd { margin: 4px 0 0; color: var(--dsw-alias-label-primary); font-size: 18px; font-weight: 600; overflow-wrap: anywhere; }
+.weir-da-metric { min-width: 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
+.weir-da-metric dt { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
+.weir-da-metric dd { margin: 4px 0 0; color: var(--dsw-alias-label-primary); font-size: var(--weir-font-section-size, 18px); font-weight: 600; overflow-wrap: anywhere; }
 .weir-da-routing-review, .weir-da-routing-content, .weir-da-routing-list { min-width: 0; display: grid; gap: 12px; }
-.weir-da-routing-review { padding-top: 16px; border-top: 1px solid var(--dsw-alias-border-l2); }
+.weir-da-routing-review { padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-routing-review > p { margin: 0; }
-.weir-da-routing-item { min-width: 0; display: grid; justify-items: start; gap: 6px; padding: 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); }
+.weir-da-routing-item { min-width: 0; display: grid; justify-items: start; gap: 6px; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
 .weir-da-routing-item p { margin: 0; }
-.weir-da-routing-item time { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.weir-da-routing-item time { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
 .weir-da-route-history { min-width: 0; display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.weir-da-route-history li { min-width: 0; display: grid; gap: 4px; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); overflow-wrap: anywhere; }
-.weir-da-route-history time { color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.weir-da-advanced-record pre, .weir-da-agent-diagnostics pre, .weir-da-metrics pre, .weir-da-learning-diagnostics pre { box-sizing: border-box; max-width: 100%; max-height: 420px; margin: 0; overflow: auto; padding: 10px; border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-base); font-size: 12px; }
+.weir-da-route-history li { min-width: 0; display: grid; gap: 4px; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); overflow-wrap: anywhere; }
+.weir-da-route-history time { color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-small-size, 12px); }
+.weir-da-advanced-record pre, .weir-da-agent-diagnostics pre, .weir-da-metrics pre, .weir-da-learning-diagnostics pre { box-sizing: border-box; max-width: 100%; max-height: 420px; margin: 0; overflow: auto; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); font-family: var(--dsw-font-mono); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); }
 .weir-da-agent-diagnostics button { max-width: 100%; overflow-wrap: anywhere; }
 @media (max-width: 400px) { .weir-da-page-inner { padding: 52px 12px 12px; } }
 @media (max-width: 600px) {
@@ -166,6 +202,29 @@ window.__ModuleLoader__.load({
 .weir-da-page[data-visual-viewport="compact"] .weir-da-button { min-height: 36px; }
 .weir-da-page[data-visual-viewport="compact"] .weir-da-actions { align-items: stretch; }
 .weir-da-page[data-visual-viewport="compact"] .weir-da-actions .weir-da-button { flex: 1 1 auto; }
+.weir-ui-menu { min-width: 200px; max-width: min(360px, calc(100vw - 16px)); display: grid; gap: 0; padding: 4px; border: 0; border-radius: var(--dsw-radius-lg); background: var(--dsw-specific-menu); box-shadow: var(--dsw-elevation-panel); color: var(--dsw-alias-label-primary); font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); }
+.weir-ui-menu-item { min-width: 0; min-height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border: 0; border-radius: var(--dsw-radius-md); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; text-align: start; cursor: pointer; overflow-wrap: anywhere; }
+.weir-ui-menu-item[data-selected="true"] { background: var(--dsw-alias-bg-layer-3); }
+.weir-ui-menu-item[aria-disabled="true"] { color: var(--dsw-alias-label-tertiary); cursor: not-allowed; }
+@media (hover: hover) { .weir-ui-menu-item:hover:not([aria-disabled="true"]) { background: var(--dsw-alias-interactive-bg-hover); } }
+.weir-ui-menu-separator { height: 0; margin: 4px 0; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-ui-section { min-width: 0; display: grid; gap: 12px; }
+.weir-ui-section-header { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.weir-ui-section-header h2 { margin: 0; font-size: var(--weir-font-section-size, 18px); line-height: var(--weir-font-section-line, 26px); font-weight: 600; }
+.weir-ui-section-header p { margin: 2px 0 0; max-width: 68ch; color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); }
+.weir-ui-row { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
+.weir-ui-row-main { min-width: 0; display: grid; gap: 2px; }
+.weir-ui-row-main strong { font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); font-weight: 600; }
+.weir-ui-row-actions { flex: none; display: flex; align-items: center; gap: 8px; }
+.weir-ui-truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.weir-ui-clamp-2 { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.weir-ui-notice { min-width: 0; display: flex; align-items: flex-start; gap: 8px; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-secondary); font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); overflow-wrap: anywhere; }
+.weir-ui-notice[data-tone="warn"] { color: var(--dsw-alias-state-warn-label); }
+.weir-ui-notice[data-tone="error"] { color: var(--dsw-alias-state-error-primary); }
+.weir-ui-skeleton { min-height: 12px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-bg-skeleton); }
+.weir-ui-tabs { display: inline-flex; gap: 2px; padding: 4px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
+.weir-ui-tabs button { min-height: 28px; padding: 0 10px; border: 0; border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; cursor: pointer; }
+.weir-ui-tabs button[aria-selected="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
 `;
 
     function DecisionStyles() {
@@ -203,6 +262,7 @@ window.__ModuleLoader__.load({
         type: "button", ...rest,
         className: ["weir-da-button", className].filter(Boolean).join(" "),
         "data-variant": variant,
+        "data-size": props.size ?? "sm",
         children,
       });
     }
@@ -509,6 +569,56 @@ window.__ModuleLoader__.load({
       };
     }
 
+
+    // Anchor a modal dialog to its trigger (composer selector): still a native
+    // dialog with modal semantics, focus trap and scroll lock, but placed above
+    // the trigger like the host's own selectors instead of centred.
+    function anchorDecisionDialog(dialog, anchor, options = {}) {
+      if (!dialog || !anchor || typeof anchor.getBoundingClientRect !== "function") return () => {};
+      const hostDocument = dialog.ownerDocument ?? null;
+      const view = hostDocument?.defaultView ?? null;
+      const gap = options.gap ?? 8;
+      const margin = options.margin ?? 8;
+      const viewport = view?.visualViewport ?? null;
+      const place = () => {
+        const rect = anchor.getBoundingClientRect?.();
+        if (!rect) return;
+        const left = viewport?.offsetLeft ?? 0;
+        const top = viewport?.offsetTop ?? 0;
+        const width = viewport?.width ?? view?.innerWidth ?? 0;
+        const height = viewport?.height ?? view?.innerHeight ?? 0;
+        if (!width || !height) return;
+        const panelWidth = Math.min(Math.max(rect.width, 320), Math.max(240, width - margin * 2), 360);
+        dialog.style.position = "fixed";
+        dialog.style.margin = "0";
+        dialog.style.width = `${panelWidth}px`;
+        const measured = dialog.getBoundingClientRect();
+        const spaceAbove = rect.top - top - gap - margin;
+        const spaceBelow = top + height - rect.bottom - gap - margin;
+        const placeAbove = spaceAbove >= Math.min(measured.height || 0, 240) || spaceAbove >= spaceBelow;
+        const available = Math.max(160, placeAbove ? spaceAbove : spaceBelow);
+        dialog.style.maxHeight = `${Math.min(560, available)}px`;
+        const clampedLeft = Math.max(left + margin, Math.min(rect.left, left + width - margin - panelWidth));
+        const panelHeight = Math.min(dialog.getBoundingClientRect().height || 0, Math.min(560, available));
+        const positionedTop = placeAbove ? Math.max(top + margin, rect.top - gap - panelHeight) : rect.bottom + gap;
+        dialog.style.left = `${clampedLeft}px`;
+        dialog.style.top = `${positionedTop}px`;
+        dialog.dataset.placement = placeAbove ? "above" : "below";
+      };
+      place();
+      view?.addEventListener?.("resize", place);
+      viewport?.addEventListener?.("resize", place);
+      viewport?.addEventListener?.("scroll", place);
+      const observer = typeof view?.ResizeObserver === "function" ? new view.ResizeObserver(place) : null;
+      observer?.observe(dialog);
+      return () => {
+        view?.removeEventListener?.("resize", place);
+        viewport?.removeEventListener?.("resize", place);
+        viewport?.removeEventListener?.("scroll", place);
+        observer?.disconnect();
+      };
+    }
+
     function DecisionModalFrame(props) {
       const internalDialogRef = react.useRef(null);
       const dialogRef = props.dialogRef ?? internalDialogRef;
@@ -541,7 +651,9 @@ window.__ModuleLoader__.load({
           props.onOpenError?.(error);
           return undefined;
         }
-        const releaseViewportContainment = containDecisionModalInVisualViewport(dialog, hostDocument?.defaultView);
+        // An anchored dialog clamps itself; the centred containment pass would
+        // fight its explicit top/left.
+        const releaseViewportContainment = props.anchor ? anchorDecisionDialog(dialog, focusTarget(props.anchor)) : containDecisionModalInVisualViewport(dialog, hostDocument?.defaultView);
         const initial = focusTarget(props.initialFocus) ?? dialog;
         initial?.focus?.();
         return () => {
@@ -739,6 +851,174 @@ window.__ModuleLoader__.load({
       }) });
     }
 
+
+    // ---- Shared surfaces -----------------------------------------------------
+    // Every page renders through these primitives so spacing, radius, elevation
+    // and typography stay identical across features (see ui-design-system).
+
+    function PageHeader(props) {
+      return jsx.jsxs("header", { className: "weir-da-page-header", children: [
+        jsx.jsxs("div", { children: [
+          jsx.jsx("h1", { children: props.title }, "title"),
+          props.description ? jsx.jsx("p", { children: props.description }, "description") : null,
+        ] }, "titles"),
+        props.actions ? jsx.jsx("div", { className: "weir-da-actions", "data-page-actions": true, children: props.actions }, "actions") : null,
+      ] });
+    }
+
+    function Section(props) {
+      const headingId = props.id ? `${props.id}-heading` : undefined;
+      return jsx.jsxs("section", { className: "weir-ui-section", "data-section": props.id, "aria-labelledby": headingId, children: [
+        props.title ? jsx.jsxs("div", { className: "weir-ui-section-header", children: [
+          jsx.jsxs("div", { children: [
+            jsx.jsx("h2", { id: headingId, children: props.title }, "title"),
+            props.description ? jsx.jsx("p", { children: props.description }, "description") : null,
+          ] }, "heading"),
+          props.actions ? jsx.jsx("div", { className: "weir-da-actions", children: props.actions }, "actions") : null,
+        ] }, "header") : null,
+        props.children,
+      ] });
+    }
+
+    function Row(props) {
+      return jsx.jsxs("div", { className: "weir-ui-row", "data-row": props.id, children: [
+        jsx.jsxs("div", { className: "weir-ui-row-main", children: [
+          props.title ? jsx.jsx("strong", { className: "weir-ui-truncate", children: props.title }, "title") : null,
+          props.description ? jsx.jsx("span", { className: "weir-da-caption weir-ui-clamp-2", children: props.description }, "description") : null,
+        ] }, "main"),
+        props.actions ? jsx.jsx("div", { className: "weir-ui-row-actions", children: props.actions }, "actions") : null,
+      ] });
+    }
+
+    function Notice(props) {
+      const tone = props.tone ?? "neutral";
+      return jsx.jsx("div", { className: "weir-ui-notice", "data-tone": tone, role: tone === "error" ? "alert" : "status", children: props.children });
+    }
+
+    function Skeleton(props) {
+      return jsx.jsx("div", { className: "weir-ui-skeleton", "aria-hidden": "true", style: { height: `${props.height ?? 12}px`, width: props.width ?? "100%" } });
+    }
+
+    function Tabs(props) {
+      const tabs = Array.isArray(props.tabs) ? props.tabs : [];
+      return jsx.jsx("div", { className: "weir-ui-tabs", role: "tablist", children: tabs.map(tab => jsx.jsx("button", {
+        type: "button", role: "tab", id: tab.id, "aria-selected": tab.id === props.value, "aria-controls": tab.controls,
+        onClick: () => props.onChange?.(tab.id), children: tab.label,
+      }, tab.id)) });
+    }
+
+    // ---- Anchored menu -------------------------------------------------------
+    // Shared menu material: R16 outer + 4px padding + R12/H32 items. Placement
+    // clamps to the viewport; a vertical flip wins over losing horizontal
+    // alignment, matching the official overlay rule.
+
+    function useAnchoredMenuPosition(open, anchorRef, menuRef) {
+      const [position, setPosition] = react.useState(null);
+      react.useEffect(() => {
+        if (!open) { setPosition(null); return undefined; }
+        const hostWindow = anchorRef?.current?.ownerDocument?.defaultView ?? globalThis;
+        const place = () => {
+          const anchor = anchorRef?.current;
+          const menu = menuRef?.current;
+          if (!anchor || !menu || typeof anchor.getBoundingClientRect !== "function") return;
+          const rect = anchor.getBoundingClientRect();
+          const viewportWidth = Number(hostWindow?.innerWidth) || 0;
+          const viewportHeight = Number(hostWindow?.innerHeight) || 0;
+          const margin = 8;
+          const gap = 4;
+          const menuWidth = menu.offsetWidth || Math.min(280, viewportWidth - margin * 2);
+          const menuHeight = menu.offsetHeight || 0;
+          let left = rect.left;
+          if (left + menuWidth > viewportWidth - margin) left = rect.right - menuWidth;
+          left = Math.max(margin, Math.min(left, Math.max(margin, viewportWidth - margin - menuWidth)));
+          let top = rect.bottom + gap;
+          let maxHeight = Math.max(120, viewportHeight - top - margin);
+          if (top + menuHeight > viewportHeight - margin) {
+            const above = rect.top - gap - margin;
+            if (above >= Math.min(menuHeight, 120)) {
+              maxHeight = Math.max(120, above);
+              top = Math.max(margin, rect.top - gap - Math.min(menuHeight, maxHeight));
+            }
+          }
+          setPosition({ left, top, maxHeight });
+        };
+        place();
+        hostWindow?.addEventListener?.("resize", place);
+        hostWindow?.addEventListener?.("scroll", place, true);
+        return () => {
+          hostWindow?.removeEventListener?.("resize", place);
+          hostWindow?.removeEventListener?.("scroll", place, true);
+        };
+      }, [open]);
+      return position;
+    }
+
+    function MenuItem(props) {
+      const disabled = props.disabled === true;
+      return jsx.jsx("button", {
+        type: "button", role: "menuitem", className: "weir-ui-menu-item",
+        "data-selected": props.selected === true || undefined,
+        "aria-disabled": disabled || undefined, disabled,
+        "data-menu-value": props.value,
+        onClick: event => { if (disabled) return; props.onSelect?.(event); },
+        children: props.children,
+      });
+    }
+
+    function MenuSeparator() {
+      return jsx.jsx("div", { className: "weir-ui-menu-separator", role: "separator" });
+    }
+
+    function Menu(props) {
+      const menuRef = react.useRef(null);
+      const open = props.open === true;
+      const position = useAnchoredMenuPosition(open, props.anchorRef, menuRef);
+      react.useEffect(() => {
+        if (!open) return undefined;
+        const menu = menuRef.current;
+        if (!menu) return undefined;
+        const items = () => Array.from(menu.querySelectorAll?.('[role="menuitem"]:not([disabled])') ?? []);
+        items()[0]?.focus?.();
+        const onKeyDown = event => {
+          const list = items();
+          if (!list.length) return;
+          const index = list.indexOf(event.target);
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); props.onClose?.("escape"); }
+          else if (event.key === "ArrowDown") { event.preventDefault(); list[(index + 1) % list.length]?.focus?.(); }
+          else if (event.key === "ArrowUp") { event.preventDefault(); list[(index - 1 + list.length) % list.length]?.focus?.(); }
+          else if (event.key === "Home") { event.preventDefault(); list[0]?.focus?.(); }
+          else if (event.key === "End") { event.preventDefault(); list[list.length - 1]?.focus?.(); }
+          else if (event.key === "Tab") props.onClose?.("blur");
+        };
+        const onPointerDown = event => {
+          if (menu.contains?.(event.target)) return;
+          if (props.anchorRef?.current?.contains?.(event.target)) return;
+          props.onClose?.("outside");
+        };
+        menu.addEventListener("keydown", onKeyDown);
+        const hostDocument = menu.ownerDocument ?? globalThis.document;
+        hostDocument?.addEventListener?.("pointerdown", onPointerDown, true);
+        return () => {
+          menu.removeEventListener("keydown", onKeyDown);
+          hostDocument?.removeEventListener?.("pointerdown", onPointerDown, true);
+        };
+      }, [open]);
+      if (!open) return null;
+      return jsx.jsx("div", {
+        ref: menuRef, className: "weir-ui-menu", role: "menu", "aria-label": props.label, tabIndex: -1,
+        style: {
+          position: "fixed",
+          left: `${position?.left ?? 0}px`,
+          top: `${position?.top ?? 0}px`,
+          maxHeight: `${position?.maxHeight ?? 320}px`,
+          overflowY: "auto",
+          zIndex: 1200,
+          visibility: position ? "visible" : "hidden",
+        },
+        children: props.children,
+      });
+    }
+
     exports.DECISION_UI_CSS = DECISION_UI_CSS;
     exports.DecisionStyles = DecisionStyles;
     exports.DecisionIcon = DecisionIcon;
@@ -753,6 +1033,15 @@ window.__ModuleLoader__.load({
     exports.ConfirmDialog = ConfirmDialog;
     exports.DecisionAnswers = DecisionAnswers;
     exports.DecisionRouteHistory = DecisionRouteHistory;
+    exports.PageHeader = PageHeader;
+    exports.Section = Section;
+    exports.Row = Row;
+    exports.Notice = Notice;
+    exports.Skeleton = Skeleton;
+    exports.Tabs = Tabs;
+    exports.Menu = Menu;
+    exports.MenuItem = MenuItem;
+    exports.MenuSeparator = MenuSeparator;
     return module.exports;
   },
 });

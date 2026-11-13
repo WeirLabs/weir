@@ -29,20 +29,20 @@ window.__ModuleLoader__.load({
 		// painted by the ring/hover handlers — no hooks, no wrapper components,
 		// and every button keeps its exact label-only children (the chunk tests
 		// locate buttons by label).
-		const ACCENT = "var(--dsw-alias-state-business-primary, #4176e6)";
-		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover, #3563d1)";
-		const SUCCESS = "var(--dsw-alias-state-success-primary, #22c55e)";
-		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
-		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
-		const DANGER = "var(--dsw-alias-state-error-primary, #ef4444)";
-		const LABEL1 = "var(--dsw-alias-label-primary, inherit)";
-		const LABEL2 = "var(--dsw-alias-label-secondary, #61666b)";
-		const MUTED = "var(--dsw-alias-label-tertiary, #81858c)";
-		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
-		const BORDER_STRONG = "var(--dsw-alias-border-l3, rgba(127,127,127,.26))";
-		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
-		const CARD_BG = "var(--dsw-alias-bg-base, #fff)";
-		const MONO = "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)";
+		const ACCENT = "var(--dsw-alias-state-business-primary)";
+		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary)";
+		const WARN = "var(--dsw-alias-state-warn-primary)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label)";
+		const DANGER = "var(--dsw-alias-state-error-primary)";
+		const LABEL1 = "var(--dsw-alias-label-primary)";
+		const LABEL2 = "var(--dsw-alias-label-secondary)";
+		const MUTED = "var(--dsw-alias-label-tertiary)";
+		const BORDER = "var(--dsw-alias-border-l2)";
+		const BORDER_STRONG = "var(--dsw-alias-border-l3)";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover)";
+		const CARD_BG = "var(--dsw-alias-bg-base)";
+		const MONO = "var(--dsw-font-markdown-code-block-font-family)";
 		const TRANSITION = "background-color 120ms ease, color 120ms ease, border-color 120ms ease";
 		/** Soft tinted background (worktree-view recipe); the colored border/text stays as the no-color-mix fallback. */
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
@@ -52,8 +52,8 @@ window.__ModuleLoader__.load({
 		const SCOPE_HUES = {
 			user: SUCCESS,
 			global: SUCCESS,
-			project: "var(--dsw-static-blue-500, #3b82f6)",
-			workspace: "var(--dsw-static-blue-500, #3b82f6)",
+			project: "var(--dsw-alias-state-business-primary)",
+			workspace: "var(--dsw-alias-state-business-primary)",
 		};
 		// Focus ring and hover paint without stylesheets (inline-style chunk
 		// discipline): the handlers write to the event target's inline style and
@@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
 			if (el && el.style) Object.assign(el.style, styles);
 		};
 		const ring = {
-			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }),
+			onFocus: (event) => paint(event, { outline: "2px solid var(--dsw-alias-state-business-primary)", outlineOffset: "1px" }),
 			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 		};
 		const hover = (over, out) => ({
@@ -73,8 +73,8 @@ window.__ModuleLoader__.load({
 		const S = {
 			section: { marginTop: "12px" },
 			title: {
-				fontSize: "11px",
-				lineHeight: "16px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
+				lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				fontWeight: 600,
 				color: LABEL2,
 				margin: "0 0 4px"
@@ -86,12 +86,12 @@ window.__ModuleLoader__.load({
 				flexDirection: "column",
 				gap: "6px",
 				background: CARD_BG,
-				border: `1px solid ${BORDER}`,
-				borderRadius: "var(--dsw-radius-md, 8px)",
+				border: `0.5px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-md)",
 				padding: "8px 10px",
 				margin: "6px 0"
 			},
-			cardTitle: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2 },
+			cardTitle: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600, color: LABEL2 },
 			// Warning strip (destructive confirms, name conflicts): 2px left bar
 			// on a warn tint — the worktree callout recipe.
 			strip: {
@@ -99,59 +99,59 @@ window.__ModuleLoader__.load({
 				flexDirection: "column",
 				gap: "6px",
 				padding: "6px 8px",
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				color: LABEL2,
 				background: tint(WARN, 10),
 				borderLeft: `2px solid ${WARN}`,
-				borderRadius: "var(--dsw-radius-xs, 4px)",
+				borderRadius: "var(--dsw-radius-xs)",
 				margin: "4px 0"
 			},
 			notice: {
 				padding: "5px 8px",
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
-				color: "var(--dsw-alias-state-success-primary, #2a7d2a)",
+				color: "var(--dsw-alias-state-success-primary)",
 				background: tint(SUCCESS, 10),
 				borderLeft: `2px solid ${SUCCESS}`,
-				borderRadius: "var(--dsw-radius-xs, 4px)",
+				borderRadius: "var(--dsw-radius-xs)",
 				margin: "4px 0"
 			},
 			// Preset row card: header line (name + namespace badge + counts) with
 			// the inline actions trailing.
 			preset: {
 				background: CARD_BG,
-				border: `1px solid ${BORDER}`,
-				borderRadius: "var(--dsw-radius-md, 8px)",
+				border: `0.5px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-md)",
 				padding: "7px 10px",
 				margin: "0 0 6px"
 			},
 			row: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" },
 			name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "none", maxWidth: "46%", fontWeight: 600 },
-			summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, flex: 1, minWidth: "80px" },
-			hint: { fontSize: "11px", lineHeight: "16px", color: MUTED, padding: "2px 0" },
-			warn: { fontSize: "11px", lineHeight: "16px", color: WARN_TEXT },
+			summary: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, flex: 1, minWidth: "80px" },
+			hint: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, padding: "2px 0" },
+			warn: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: WARN_TEXT },
 			input: {
 				width: "100%",
 				boxSizing: "border-box",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				lineHeight: "16px",
 				padding: "4px 8px",
 				background: CARD_BG,
-				border: `1px solid ${BORDER}`,
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				border: `0.5px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm)",
 				color: LABEL1,
 				transition: TRANSITION
 			},
 			textarea: {
 				width: "100%",
 				boxSizing: "border-box",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				lineHeight: "16px",
 				padding: "6px 8px",
 				background: CARD_BG,
-				border: `1px solid ${BORDER}`,
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				border: `0.5px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm)",
 				color: LABEL1,
 				fontFamily: MONO,
 				minHeight: "96px",
@@ -159,57 +159,57 @@ window.__ModuleLoader__.load({
 				whiteSpace: "pre",
 				transition: TRANSITION
 			},
-			select: { fontSize: "11px", lineHeight: "16px", color: LABEL1, background: CARD_BG, border: `1px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm, 6px)", padding: "1px 4px" },
+			select: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "16px", color: LABEL1, background: CARD_BG, border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", padding: "1px 4px" },
 			buttonRow: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
-			label: { fontSize: "11px", lineHeight: "16px", display: "flex", gap: "4px", alignItems: "center", color: LABEL2 },
+			label: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", display: "flex", gap: "4px", alignItems: "center", color: LABEL2 },
 			button: {
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				fontWeight: 500,
 				padding: "2px 8px",
 				cursor: "pointer",
 				background: "none",
-				border: `1px solid ${BORDER}`,
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				border: `0.5px solid ${BORDER}`,
+				borderRadius: "var(--dsw-radius-sm)",
 				color: LABEL2,
 				flex: "none",
 				transition: TRANSITION
 			},
 			primary: {
-				fontSize: "11px",
-				lineHeight: "16px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
+				lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				fontWeight: 600,
 				padding: "2px 10px",
 				cursor: "pointer",
 				border: "none",
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				borderRadius: "var(--dsw-radius-sm)",
 				background: ACCENT,
-				color: "var(--dsw-alias-bg-base, #fff)",
+				color: "var(--dsw-alias-bg-base)",
 				flex: "none",
 				transition: TRANSITION
 			},
 			danger: {
-				fontSize: "11px",
-				lineHeight: "16px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
+				lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 				fontWeight: 600,
 				padding: "2px 10px",
 				cursor: "pointer",
 				border: "none",
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				borderRadius: "var(--dsw-radius-sm)",
 				background: DANGER,
-				color: "var(--dsw-alias-bg-base, #fff)",
+				color: "var(--dsw-alias-bg-base)",
 				flex: "none",
 				transition: TRANSITION
 			},
 			dangerOutline: {
-				fontSize: "11px",
+				fontSize: "var(--dsw-font-xxxs-11-font-size)",
 				lineHeight: "16px",
 				fontWeight: 500,
 				padding: "2px 8px",
 				cursor: "pointer",
 				background: "none",
 				border: `1px solid ${DANGER}`,
-				borderRadius: "var(--dsw-radius-sm, 6px)",
+				borderRadius: "var(--dsw-radius-sm)",
 				color: DANGER,
 				flex: "none",
 				transition: TRANSITION
@@ -220,12 +220,12 @@ window.__ModuleLoader__.load({
 			badge: (scope) => {
 				const hue = SCOPE_HUES[scope] ?? MUTED;
 				return {
-					fontSize: "10px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "14px",
 					fontWeight: 600,
 					padding: "0 5px",
 					border: `1px solid ${hue}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					background: tint(hue, 10),
 					color: hue,
 					flex: "none",

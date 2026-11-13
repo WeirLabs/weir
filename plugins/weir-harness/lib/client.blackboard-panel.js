@@ -18,31 +18,31 @@ window.__ModuleLoader__.load({
 		// page is hidden) and updatedAt drives detail staleness. Every list and
 		// flow decision comes from the pure model chunk; this tree only paints
 		// state. All hooks run before any derived work — no early returns.
-		const ACCENT = "var(--dsw-alias-state-business-primary, #4176e6)";
-		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover, #3563d1)";
-		const SUCCESS = "var(--dsw-alias-state-success-primary, #22c55e)";
-		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
-		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
-		const DANGER = "var(--dsw-alias-state-error-primary, #ef4444)";
-		const LABEL1 = "var(--dsw-alias-label-primary, inherit)";
-		const LABEL2 = "var(--dsw-alias-label-secondary, #61666b)";
-		const MUTED = "var(--dsw-alias-label-tertiary, #81858c)";
-		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
-		const BORDER_STRONG = "var(--dsw-alias-border-l3, rgba(127,127,127,.26))";
-		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
-		const SKELETON = "var(--dsw-alias-bg-skeleton, rgba(127,127,127,.12))";
-		const CARD_BG = "var(--dsw-alias-bg-base, #fff)";
+		const ACCENT = "var(--dsw-alias-state-business-primary)";
+		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary)";
+		const WARN = "var(--dsw-alias-state-warn-primary)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label)";
+		const DANGER = "var(--dsw-alias-state-error-primary)";
+		const LABEL1 = "var(--dsw-alias-label-primary)";
+		const LABEL2 = "var(--dsw-alias-label-secondary)";
+		const MUTED = "var(--dsw-alias-label-tertiary)";
+		const BORDER = "var(--dsw-alias-border-l2)";
+		const BORDER_STRONG = "var(--dsw-alias-border-l3)";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover)";
+		const SKELETON = "var(--dsw-alias-bg-skeleton)";
+		const CARD_BG = "var(--dsw-alias-bg-base)";
 		const TRANSITION = "background-color 120ms ease, color 120ms ease, border-color 120ms ease";
 		/** Soft tinted background (worktree-view recipe). */
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
 		// entryType → hue family: knowledge kinds read at a glance; unknown
 		// types fall back to the neutral label hue.
 		const TYPE_HUES = {
-			map: "var(--dsw-static-blue-500, #3b82f6)",
+			map: "var(--dsw-alias-state-business-primary)",
 			contract: SUCCESS,
 			deadend: DANGER,
 			wiring: WARN_TEXT,
-			recipe: "var(--dsw-alias-label-deep-diving, #6d5bd0)",
+			recipe: "var(--dsw-alias-label-deep-diving)",
 			why: ACCENT,
 		};
 		const paint = (event, styles) => {
@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
 			window.addEventListener("pointerdown", () => { keyboardModality = false; }, true);
 		}
 		const ring = {
-			onFocus: (event) => { if (keyboardModality) paint(event, { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }); },
+			onFocus: (event) => { if (keyboardModality) paint(event, { outline: "2px solid var(--dsw-alias-state-business-primary)", outlineOffset: "1px" }); },
 			onBlur: (event) => paint(event, { outline: "none", outlineOffset: "" }),
 		};
 		const hover = (over, out) => ({
@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
 				minHeight: 0,
 				boxSizing: "border-box",
 				padding: "12px",
-				fontSize: "12px",
+				fontSize: "var(--dsw-font-xxs-12-font-size)",
 				color: LABEL1
 			},
 			header: {
@@ -85,11 +85,11 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					marginBottom: "8px",
 					paddingBottom: "8px",
-					borderBottom: "1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.10))",
+					borderBottom: "0.5px solid var(--dsw-alias-border-l1)",
 					flex: "none"
 				},
-				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, flex: "none" },
-				summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, whiteSpace: "nowrap", flex: "none", marginLeft: "2px" },
+				title: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", fontWeight: 600, flex: "none" },
+				summary: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, whiteSpace: "nowrap", flex: "none", marginLeft: "2px" },
 				spacer: { flex: "1 1 auto" },
 				iconButton: {
 					width: "22px",
@@ -102,7 +102,7 @@ window.__ModuleLoader__.load({
 					cursor: "pointer",
 					background: "none",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: MUTED,
 					transition: TRANSITION
 				}
@@ -113,12 +113,12 @@ window.__ModuleLoader__.load({
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "3px 8px 3px 24px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				}
@@ -126,13 +126,13 @@ window.__ModuleLoader__.load({
 			chips: {
 				row: { display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap", margin: "2px 0 4px", flex: "none" },
 				chip: (active, hue) => ({
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "14px",
 					fontWeight: active ? 600 : 500,
 					padding: "2px 8px",
 					cursor: "pointer",
 					border: `1px solid ${active ? (hue ?? ACCENT) : BORDER}`,
-					borderRadius: "var(--dsw-radius-xl, 999px)",
+					borderRadius: "var(--dsw-radius-xl)",
 					background: active ? tint(hue ?? ACCENT, 12) : "none",
 					color: active ? (hue ?? ACCENT) : LABEL2,
 					transition: TRANSITION
@@ -149,29 +149,29 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: "6px",
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					padding: "3px 2px",
 					margin: "6px 0 2px",
-					background: "var(--dsw-alias-bg-layer-1, #fff)"
+					background: "var(--dsw-alias-bg-layer-1)"
 				},
 				count: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: MUTED,
 					background: HOVER_BG,
-					borderRadius: "var(--dsw-radius-xl, 999px)",
+					borderRadius: "var(--dsw-radius-xl)",
 					padding: "0 6px",
 					minWidth: "16px",
 					textAlign: "center",
 					flex: "none"
 				},
 				parentNote: {
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					color: MUTED,
 					flex: "none",
 					padding: "0 2px 4px"
@@ -183,7 +183,7 @@ window.__ModuleLoader__.load({
 					alignItems: "flex-start",
 					gap: "8px",
 					padding: "4px 6px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					cursor: "pointer",
 					transition: TRANSITION
 				},
@@ -191,22 +191,22 @@ window.__ModuleLoader__.load({
 				nameLine: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0, flexWrap: "wrap" },
 				name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 },
 				desc: {
-					fontSize: "11px",
-					lineHeight: "15px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					color: MUTED,
 					overflow: "hidden",
 					textOverflow: "ellipsis",
 					whiteSpace: "nowrap"
 				},
-				meta: { fontSize: "10px", lineHeight: "14px", color: MUTED, flex: "none", marginTop: "1px" }
+				meta: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, flex: "none", marginTop: "1px" }
 			},
 			tag: {
 				base: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					padding: "0 5px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					border: "1px solid transparent",
 					flex: "none",
 					whiteSpace: "nowrap"
@@ -216,25 +216,25 @@ window.__ModuleLoader__.load({
 					return { color: hue, border: `1px solid ${hue}`, background: tint(hue, 10) };
 				},
 				warn: { color: WARN_TEXT, border: `1px solid ${WARN}`, background: tint(WARN, 12) },
-				neutral: { color: MUTED, border: `1px solid ${BORDER_STRONG}`, background: "none" },
+				neutral: { color: MUTED, border: `0.5px solid ${BORDER_STRONG}`, background: "none" },
 				promoted: { color: SUCCESS, border: `1px solid ${SUCCESS}`, background: tint(SUCCESS, 10) }
 			},
 			detail: {
 				block: { margin: "4px 0" },
-				label: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2, padding: "0 2px 2px" },
-				text: { fontSize: "12px", lineHeight: "17px", color: LABEL1, padding: "0 2px", whiteSpace: "pre-wrap", wordBreak: "break-word" },
+				label: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600, color: LABEL2, padding: "0 2px 2px" },
+				text: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: LABEL1, padding: "0 2px", whiteSpace: "pre-wrap", wordBreak: "break-word" },
 				content: {
 					margin: 0,
 					padding: "8px 10px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					whiteSpace: "pre-wrap",
 					wordBreak: "break-word",
 					maxHeight: "320px",
 					overflow: "auto",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-md, 8px)",
-					background: "var(--dsw-alias-interactive-bg-solid, rgba(127,127,127,.06))"
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-md)",
+					background: "var(--dsw-alias-bg-layer-3)"
 				},
 				actions: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", marginTop: "8px" },
 				banner: {
@@ -242,11 +242,11 @@ window.__ModuleLoader__.load({
 					gap: "6px",
 					alignItems: "center",
 					flexWrap: "wrap",
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "16px",
 					padding: "6px 8px",
 					margin: "6px 0",
-					borderRadius: "var(--dsw-radius-md, 8px)",
+					borderRadius: "var(--dsw-radius-md)",
 					border: `1px solid ${WARN}`,
 					background: tint(WARN, 10),
 					color: WARN_TEXT
@@ -257,24 +257,24 @@ window.__ModuleLoader__.load({
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				},
 				area: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					minHeight: "96px",
 					resize: "vertical",
@@ -282,52 +282,52 @@ window.__ModuleLoader__.load({
 					transition: TRANSITION
 				},
 				select: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "3px 6px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				},
-				error: { fontSize: "11px", lineHeight: "15px", color: WARN_TEXT },
+				error: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: WARN_TEXT },
 				actions: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", flex: "none", marginTop: "2px" }
 			},
 			button: {
 				primary: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					fontWeight: 600,
 					padding: "3px 10px",
 					cursor: "pointer",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					background: ACCENT,
-					color: "var(--dsw-alias-bg-base, #fff)",
+					color: "var(--dsw-alias-bg-base)",
 					transition: TRANSITION
 				},
 				ghost: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
 					cursor: "pointer",
 					background: "none",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL2,
 					transition: TRANSITION
 				},
 				dangerGhost: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
 					cursor: "pointer",
 					background: "none",
 					border: `1px solid ${DANGER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: DANGER,
 					transition: TRANSITION
 				},
@@ -335,7 +335,7 @@ window.__ModuleLoader__.load({
 			},
 			footer: {
 				bar: {
-					borderTop: `1px solid ${BORDER}`,
+					borderTop: `0.5px solid ${BORDER}`,
 					marginTop: "8px",
 					paddingTop: "8px",
 					display: "flex",
@@ -345,11 +345,11 @@ window.__ModuleLoader__.load({
 					flexWrap: "wrap"
 				},
 				chip: (hue) => ({
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "16px",
 					fontWeight: 600,
 					padding: "1px 7px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: hue,
 					background: tint(hue, 12),
 					border: `1px solid ${hue}`,
@@ -358,7 +358,7 @@ window.__ModuleLoader__.load({
 					gap: "4px",
 					alignItems: "center"
 				}),
-				text: { fontSize: "11px", lineHeight: "16px", color: LABEL2, minWidth: 0 }
+				text: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: LABEL2, minWidth: 0 }
 			},
 			state: {
 				wrap: {
@@ -381,11 +381,11 @@ window.__ModuleLoader__.load({
 					background: tint(hue, 10),
 					flex: "none"
 				}),
-				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, color: LABEL1 },
-				desc: { fontSize: "11px", lineHeight: "16px", color: MUTED, maxWidth: "280px" },
+				title: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", fontWeight: 600, color: LABEL1 },
+				desc: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, maxWidth: "280px" },
 				skeleton: { display: "flex", flexDirection: "column", gap: "8px" },
 				skeletonRow: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 6px" },
-				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm, 6px)", background: SKELETON, flex: "none" }),
+				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm)", background: SKELETON, flex: "none" }),
 				srOnly: {
 					position: "absolute",
 					width: "1px",
@@ -1066,7 +1066,7 @@ window.__ModuleLoader__.load({
 										] }),
 											react_jsx_runtime.jsxs("div", { style: S.detail.actions, children: entry.promoted ? [
 												react_jsx_runtime.jsx("span", {
-													style: { fontSize: "11px", lineHeight: "16px", color: MUTED },
+													style: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED },
 													children: t("blackboard.promotedReadonlyDetail", "Promoted entries are read-only: the durable copy lives in the target document, this board copy preserves the session references.")
 												})
 											] : [

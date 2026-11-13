@@ -29,20 +29,20 @@ window.__ModuleLoader__.load({
 		// the event target itself — no hooks, no wrapper components, and the
 		// pinned structure (manager 7/1 hooks, header children[1] = MCP tab,
 		// popover root children[1] = addBlock, footer chip order) is untouched.
-		const ACCENT = "var(--dsw-alias-state-business-primary, #4176e6)";
-		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover, #3563d1)";
-		const SUCCESS = "var(--dsw-alias-state-success-primary, #22c55e)";
-		const WARN = "var(--dsw-alias-state-warn-primary, #f59e0b)";
-		const WARN_TEXT = "var(--dsw-alias-state-warn-label, #b45309)";
-		const DANGER = "var(--dsw-alias-state-error-primary, #ef4444)";
-		const LABEL1 = "var(--dsw-alias-label-primary, inherit)";
-		const LABEL2 = "var(--dsw-alias-label-secondary, #61666b)";
-		const MUTED = "var(--dsw-alias-label-tertiary, #81858c)";
-		const BORDER = "var(--dsw-alias-border-l2, rgba(127,127,127,.18))";
-		const BORDER_STRONG = "var(--dsw-alias-border-l3, rgba(127,127,127,.26))";
-		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover, rgba(127,127,127,.10))";
-		const SKELETON = "var(--dsw-alias-bg-skeleton, rgba(127,127,127,.12))";
-		const CARD_BG = "var(--dsw-alias-bg-base, #fff)";
+		const ACCENT = "var(--dsw-alias-state-business-primary)";
+		const ACCENT_HOVER = "var(--dsw-alias-button-info-hover)";
+		const SUCCESS = "var(--dsw-alias-state-success-primary)";
+		const WARN = "var(--dsw-alias-state-warn-primary)";
+		const WARN_TEXT = "var(--dsw-alias-state-warn-label)";
+		const DANGER = "var(--dsw-alias-state-error-primary)";
+		const LABEL1 = "var(--dsw-alias-label-primary)";
+		const LABEL2 = "var(--dsw-alias-label-secondary)";
+		const MUTED = "var(--dsw-alias-label-tertiary)";
+		const BORDER = "var(--dsw-alias-border-l2)";
+		const BORDER_STRONG = "var(--dsw-alias-border-l3)";
+		const HOVER_BG = "var(--dsw-alias-interactive-bg-hover)";
+		const SKELETON = "var(--dsw-alias-bg-skeleton)";
+		const CARD_BG = "var(--dsw-alias-bg-base)";
 		const TRANSITION = "background-color 120ms ease, color 120ms ease, border-color 120ms ease";
 		/** Soft tinted background (worktree-view recipe); the colored border/text stays as the no-color-mix fallback. */
 		const tint = (color, percent) => `color-mix(in srgb, ${color} ${percent}%, transparent)`;
@@ -51,8 +51,8 @@ window.__ModuleLoader__.load({
 		const SCOPE_HUES = {
 			"weir-builtin": ACCENT,
 			user: SUCCESS,
-			project: "var(--dsw-static-blue-500, #3b82f6)",
-			custom: "var(--dsw-alias-label-deep-diving, #6d5bd0)",
+			project: "var(--dsw-alias-state-business-primary)",
+			custom: "var(--dsw-alias-label-deep-diving)",
 		};
 		// Focus ring and hover paint without stylesheets: the handlers write to
 		// the event target's inline style and clear on the way out. The S styles
@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
 				const focused = event?.target ?? el;
 				const visible = typeof focused?.matches !== "function" || focused.matches(":focus-visible");
 				paint(event, visible
-					? { outline: "2px solid var(--dsw-alias-focus-ring, currentColor)", outlineOffset: "1px" }
+					? { outline: "2px solid var(--dsw-alias-state-business-primary)", outlineOffset: "1px" }
 					: { outline: "none", outlineOffset: "" });
 			},
 			onPointerDown: (event) => paint(event, { outline: "none", outlineOffset: "" }),
@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({
 		const S = {
 			frame: {
 				// Popover frame (geometry unchanged): bg-overlay is the popover
-				// surface (a hard #fff fallback goes invisible under a dark theme).
+				// surface (a hard white fallback goes invisible under a dark theme).
 				popover: {
 					position: "absolute",
 					bottom: "calc(100% + 8px)",
@@ -90,12 +90,12 @@ window.__ModuleLoader__.load({
 					maxWidth: "440px",
 					maxHeight: "440px",
 					overflow: "auto",
-					background: "var(--dsw-alias-bg-overlay, #fff)",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-lg, 12px)",
-					boxShadow: "var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,.14))",
+					background: "var(--dsw-alias-bg-overlay)",
+					border: 0,
+					borderRadius: "var(--dsw-radius-lg)",
+					boxShadow: "var(--dsw-elevation-prominent)",
 					padding: "12px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					color: LABEL1
 				},
 				// Sidebar frame: a full-height flex column — the pane does NOT
@@ -109,7 +109,7 @@ window.__ModuleLoader__.load({
 					minHeight: 0,
 					boxSizing: "border-box",
 					padding: "12px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					color: LABEL1
 				}
 			},
@@ -120,10 +120,10 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					marginBottom: "8px",
 					paddingBottom: "8px",
-					borderBottom: "1px solid var(--dsw-alias-border-l1, rgba(127,127,127,.10))",
+					borderBottom: "0.5px solid var(--dsw-alias-border-l1)",
 					flex: "none"
 				},
-				summary: { fontSize: "11px", lineHeight: "16px", color: MUTED, whiteSpace: "nowrap", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", marginLeft: "2px" },
+				summary: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, whiteSpace: "nowrap", flex: "0 1 auto", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", marginLeft: "2px" },
 				close: {
 					width: "22px",
 					height: "22px",
@@ -135,7 +135,7 @@ window.__ModuleLoader__.load({
 					cursor: "pointer",
 					background: "none",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: MUTED,
 					transition: TRANSITION
 				}
@@ -153,17 +153,17 @@ window.__ModuleLoader__.load({
 					cursor: "pointer",
 					background: "none",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: MUTED,
 					transition: TRANSITION
 				},
 				count: {
-					fontSize: "9px",
-					lineHeight: "12px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					background: HOVER_BG,
-					borderRadius: "var(--dsw-radius-xl, 999px)",
+					borderRadius: "var(--dsw-radius-xl)",
 					padding: "0 4px",
 					minWidth: "12px",
 					textAlign: "center",
@@ -179,12 +179,12 @@ window.__ModuleLoader__.load({
 					boxSizing: "border-box",
 					overflowY: "auto",
 					overflowX: "hidden",
-					background: "var(--dsw-alias-bg-overlay, #fff)",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-lg, 12px)",
-					boxShadow: "var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,.14))",
+					background: "var(--dsw-alias-bg-overlay)",
+					border: 0,
+					borderRadius: "var(--dsw-radius-lg)",
+					boxShadow: "var(--dsw-elevation-prominent)",
 					padding: "12px",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					color: LABEL1
 				})
 			},
@@ -193,8 +193,8 @@ window.__ModuleLoader__.load({
 				// inactive segments carry the track fill, the active segment is a
 				// raised layer-1 pill; 2px gutters between segments.
 				base: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					padding: "3px 10px",
 					cursor: "pointer",
 					border: "none",
@@ -205,14 +205,14 @@ window.__ModuleLoader__.load({
 					...S.tabs.base,
 					marginLeft: at === "first" ? "0" : "2px",
 					borderRadius: at === "first"
-						? "var(--dsw-radius-md, 8px) 0 0 var(--dsw-radius-md, 8px)"
+						? "var(--dsw-radius-md) 0 0 var(--dsw-radius-md)"
 						: at === "last"
-							? "0 var(--dsw-radius-md, 8px) var(--dsw-radius-md, 8px) 0"
+							? "0 var(--dsw-radius-md) var(--dsw-radius-md) 0"
 							: "0",
-					background: active ? "var(--dsw-alias-bg-layer-1, #fff)" : HOVER_BG,
+					background: active ? "var(--dsw-alias-bg-layer-1)" : HOVER_BG,
 					color: active ? LABEL1 : LABEL2,
 					fontWeight: active ? 600 : 500,
-					boxShadow: active ? "var(--dsw-elevation-soft, 0 1px 3px rgba(0,0,0,.10))" : "none"
+					boxShadow: active ? "var(--dsw-elevation-soft)" : "none"
 				})
 			},
 			search: {
@@ -221,12 +221,12 @@ window.__ModuleLoader__.load({
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "3px 8px 3px 24px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				}
@@ -247,21 +247,21 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: "6px",
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					padding: "3px 2px",
 					margin: "6px 0 2px",
-					background: shell === "sidebar" ? "var(--dsw-alias-bg-layer-1, #fff)" : "var(--dsw-alias-bg-overlay, #fff)"
+					background: shell === "sidebar" ? "var(--dsw-alias-bg-layer-1)" : "var(--dsw-alias-bg-overlay)"
 				}),
 				count: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: MUTED,
 					background: HOVER_BG,
-					borderRadius: "var(--dsw-radius-xl, 999px)",
+					borderRadius: "var(--dsw-radius-xl)",
 					padding: "0 6px",
 					minWidth: "16px",
 					textAlign: "center",
@@ -269,8 +269,8 @@ window.__ModuleLoader__.load({
 				},
 				card: {
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-md, 8px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-md)",
 					padding: "6px 8px",
 					margin: "6px 0"
 				},
@@ -279,8 +279,8 @@ window.__ModuleLoader__.load({
 					alignItems: "center",
 					justifyContent: "space-between",
 					gap: "6px",
-					fontSize: "11px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					color: LABEL2,
 					padding: "0 2px 3px"
@@ -292,7 +292,7 @@ window.__ModuleLoader__.load({
 					alignItems: "flex-start",
 					gap: "8px",
 					padding: "4px 6px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					cursor: "pointer",
 					transition: TRANSITION
 				},
@@ -301,8 +301,8 @@ window.__ModuleLoader__.load({
 				nameLine: { display: "flex", gap: "6px", alignItems: "center", minWidth: 0, flexWrap: "wrap" },
 				name: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 },
 				desc: {
-					fontSize: "11px",
-					lineHeight: "15px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					color: MUTED,
 					overflow: "hidden",
 					textOverflow: "ellipsis",
@@ -311,11 +311,11 @@ window.__ModuleLoader__.load({
 			},
 			tag: {
 				base: {
-					fontSize: "10px",
-					lineHeight: "14px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
+					lineHeight: "var(--dsw-font-xxxs-11-line-height)",
 					fontWeight: 600,
 					padding: "0 5px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					border: "1px solid transparent",
 					flex: "none",
 					whiteSpace: "nowrap"
@@ -329,11 +329,11 @@ window.__ModuleLoader__.load({
 				warn: { color: WARN_TEXT, border: `1px solid ${WARN}`, background: tint(WARN, 12) },
 				danger: { color: DANGER, border: `1px solid ${DANGER}`, background: tint(DANGER, 10) },
 				ok: { color: SUCCESS, border: `1px solid ${SUCCESS}`, background: tint(SUCCESS, 10) },
-				neutral: { color: MUTED, border: `1px solid ${BORDER_STRONG}`, background: "none" }
+				neutral: { color: MUTED, border: `0.5px solid ${BORDER_STRONG}`, background: "none" }
 			},
 			footer: {
 				bar: {
-					borderTop: `1px solid ${BORDER}`,
+					borderTop: `0.5px solid ${BORDER}`,
 					marginTop: "8px",
 					paddingTop: "8px",
 					display: "flex",
@@ -346,11 +346,11 @@ window.__ModuleLoader__.load({
 				diffBadge: (added) => {
 					const hue = added ? SUCCESS : DANGER;
 					return {
-						fontSize: "11px",
+						fontSize: "var(--dsw-font-xxxs-11-font-size)",
 						lineHeight: "16px",
 						fontWeight: 600,
 						padding: "0 6px",
-						borderRadius: "var(--dsw-radius-sm, 6px)",
+						borderRadius: "var(--dsw-radius-sm)",
 						color: hue,
 						background: tint(hue, 10),
 						border: `1px solid ${hue}`,
@@ -358,36 +358,36 @@ window.__ModuleLoader__.load({
 					};
 				},
 				apply: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					fontWeight: 600,
 					padding: "4px 12px",
 					cursor: "pointer",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					background: ACCENT,
-					color: "var(--dsw-alias-bg-base, #fff)",
+					color: "var(--dsw-alias-bg-base)",
 					transition: TRANSITION
 				},
 				discard: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
 					cursor: "pointer",
 					background: "none",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL2,
 					transition: TRANSITION
 				},
 				// Commit-phase chip: dot-less tonal badge (worktree Badge recipe).
 				chip: (hue) => ({
-					fontSize: "11px",
+					fontSize: "var(--dsw-font-xxxs-11-font-size)",
 					lineHeight: "16px",
 					fontWeight: 600,
 					padding: "1px 7px",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					color: hue,
 					background: tint(hue, 12),
 					border: `1px solid ${hue}`,
@@ -417,11 +417,11 @@ window.__ModuleLoader__.load({
 					background: tint(hue, 10),
 					flex: "none"
 				}),
-				title: { fontSize: "12px", lineHeight: "16px", fontWeight: 600, color: LABEL1 },
-				desc: { fontSize: "11px", lineHeight: "16px", color: MUTED, maxWidth: "280px" },
+				title: { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", fontWeight: 600, color: LABEL1 },
+				desc: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, maxWidth: "280px" },
 				skeleton: { display: "flex", flexDirection: "column", gap: "8px" },
 				skeletonRow: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 6px" },
-				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm, 6px)", background: SKELETON, flex: "none" }),
+				bone: (width, height) => ({ width, height, borderRadius: "var(--dsw-radius-sm)", background: SKELETON, flex: "none" }),
 				srOnly: {
 					position: "absolute",
 					width: "1px",
@@ -439,14 +439,14 @@ window.__ModuleLoader__.load({
 				addButton: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "6px 8px",
 					cursor: "pointer",
 					color: LABEL2,
 					background: "none",
 					border: `1px dashed ${BORDER_STRONG}`,
-					borderRadius: "var(--dsw-radius-md, 8px)",
+					borderRadius: "var(--dsw-radius-md)",
 					transition: TRANSITION
 				},
 				box: {
@@ -454,46 +454,46 @@ window.__ModuleLoader__.load({
 					flexDirection: "column",
 					gap: "6px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-md, 8px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-md)",
 					padding: "8px"
 				},
-				title: { fontSize: "11px", lineHeight: "16px", fontWeight: 600, color: LABEL2 },
+				title: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontWeight: 600, color: LABEL2 },
 				input: {
 					width: "100%",
 					boxSizing: "border-box",
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					padding: "4px 8px",
 					background: CARD_BG,
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL1,
 					transition: TRANSITION
 				},
-				error: { fontSize: "11px", lineHeight: "15px", color: WARN_TEXT },
+				error: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: WARN_TEXT },
 				actions: { display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" },
 				primary: {
-					fontSize: "12px",
-					lineHeight: "16px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
+					lineHeight: "var(--dsw-font-xxs-12-line-height)",
 					fontWeight: 600,
 					padding: "3px 10px",
 					cursor: "pointer",
 					border: "none",
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					borderRadius: "var(--dsw-radius-sm)",
 					background: ACCENT,
-					color: "var(--dsw-alias-bg-base, #fff)",
+					color: "var(--dsw-alias-bg-base)",
 					transition: TRANSITION
 				},
 				ghost: {
-					fontSize: "12px",
+					fontSize: "var(--dsw-font-xxs-12-font-size)",
 					lineHeight: "16px",
 					fontWeight: 500,
 					padding: "3px 10px",
 					cursor: "pointer",
 					background: "none",
-					border: `1px solid ${BORDER}`,
-					borderRadius: "var(--dsw-radius-sm, 6px)",
+					border: `0.5px solid ${BORDER}`,
+					borderRadius: "var(--dsw-radius-sm)",
 					color: LABEL2,
 					transition: TRANSITION
 				}
@@ -768,9 +768,9 @@ window.__ModuleLoader__.load({
 						},
 						children: [
 							react_jsx_runtime.jsx("div", { style: S.form.title, children: t("capability.skills.paths.confirmTitle", "Remove this Skill scan path?") }),
-							react_jsx_runtime.jsxs("div", { style: { fontSize: "11px", lineHeight: "16px", color: LABEL2, overflowWrap: "anywhere" }, children: [
+							react_jsx_runtime.jsxs("div", { style: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: LABEL2, overflowWrap: "anywhere" }, children: [
 								t("capability.skills.paths.confirmBody", "Remove this canonical directory from the Profile? Selection drafts, applied capabilities, and defaults are not rewritten: "),
-								react_jsx_runtime.jsx("code", { style: { color: LABEL1, fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)" }, children: path })
+								react_jsx_runtime.jsx("code", { style: { color: LABEL1, fontFamily: "var(--dsw-font-markdown-code-block-font-family)" }, children: path })
 							] }),
 							react_jsx_runtime.jsxs("div", { style: { ...S.form.actions, marginTop: "6px" }, children: [
 								react_jsx_runtime.jsx("button", {
@@ -792,7 +792,7 @@ window.__ModuleLoader__.load({
 						children: [
 							react_jsx_runtime.jsx("code", {
 								title: path,
-								style: { flex: 1, minWidth: 0, color: LABEL1, fontSize: "11px", lineHeight: "16px", fontFamily: "var(--dsw-font-markdown-code-block-font-family, ui-monospace, monospace)", overflowWrap: "anywhere" },
+								style: { flex: 1, minWidth: 0, color: LABEL1, fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", fontFamily: "var(--dsw-font-markdown-code-block-font-family)", overflowWrap: "anywhere" },
 								children: path
 							}),
 							react_jsx_runtime.jsx("button", {
@@ -866,7 +866,7 @@ window.__ModuleLoader__.load({
 									})
 								] })
 							] }),
-							react_jsx_runtime.jsx("div", { style: { fontSize: "11px", lineHeight: "16px", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
+							react_jsx_runtime.jsx("div", { style: { fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "var(--dsw-font-xxxs-11-line-height)", color: MUTED, marginBottom: "6px" }, children: t("capability.skills.paths.description", "Profile-scoped directories shared by Weir sessions. Path changes never select Skills, Apply a draft, or rewrite defaults.") }),
 							react_jsx_runtime.jsxs("form", {
 								"aria-label": t("capability.skills.paths.addLabel", "Skill scan directory"),
 								onSubmit: (event) => { event.preventDefault(); void runMutation("add", input); },
