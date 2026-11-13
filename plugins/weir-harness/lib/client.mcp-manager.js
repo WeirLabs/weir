@@ -36,7 +36,7 @@ window.__ModuleLoader__.load({
 			tag: { display: "inline-flex", alignItems: "center", width: "fit-content", padding: "0 5px", border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-sm)", color: MUTED, fontSize: "10px", lineHeight: "14px", whiteSpace: "nowrap" },
 			pre: { margin: 0, padding: "6px", maxHeight: "180px", overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: LABEL, background: HOVER, borderRadius: "var(--dsw-radius-sm)", fontSize: "10px", lineHeight: "14px" },
 			dialogShade: { position: "absolute", inset: 0, zIndex: 4, display: "flex", alignItems: "center", justifyContent: "center", padding: "12px", background: "rgba(0, 0, 0, .32)" },
-			dialog: { display: "flex", flexDirection: "column", gap: "8px", width: "100%", padding: "12px", color: LABEL, background: OVERLAY, border: `0.5px solid ${BORDER}`, borderRadius: "var(--dsw-radius-lg)", boxShadow: "var(--dsw-elevation-prominent)" },
+			dialog: { display: "flex", flexDirection: "column", gap: "8px", width: "100%", padding: "12px", color: LABEL, background: OVERLAY, border: 0, borderRadius: "var(--dsw-radius-panel)", boxShadow: "var(--dsw-elevation-prominent)" },
 		};
 		const ring = {
 			onFocus: (event) => { if (event?.currentTarget?.style) { event.currentTarget.style.outline = "2px solid var(--dsw-alias-state-business-primary)"; event.currentTarget.style.outlineOffset = "1px"; } },

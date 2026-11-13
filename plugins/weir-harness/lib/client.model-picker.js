@@ -53,13 +53,13 @@ window.__ModuleLoader__.load({
 			minWidth: "260px",
 			maxHeight: "320px",
 			overflowY: "auto",
-			background: "var(--dsw-specific-selector)",
-			border: "0.5px solid var(--dsw-alias-border-l2)",
-			borderRadius: "var(--dsw-radius-md)",
-			boxShadow: "var(--dsw-elevation-soft)",
+			background: "var(--dsw-specific-menu)",
+			border: 0,
+			borderRadius: "var(--dsw-radius-lg)",
+			boxShadow: "var(--dsw-elevation-panel)",
 			padding: "4px"
 		};
-		const menuRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", width: "100%", padding: "8px 10px", borderRadius: "var(--dsw-radius-sm)", background: "none", border: "none", cursor: "pointer", fontSize: "13px", lineHeight: "18px", textAlign: "left", color: "var(--dsw-alias-label-primary)" };
+		const menuRowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", minHeight: "32px", width: "100%", padding: "8px 10px", borderRadius: "var(--dsw-radius-md)", background: "none", border: "none", cursor: "pointer", fontSize: "13px", lineHeight: "18px", textAlign: "left", color: "var(--dsw-alias-label-primary)" };
 		const menuHeaderStyle = { fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--dsw-alias-label-secondary)", padding: "8px 10px 2px" };
 		function ModelPickerField(props) {
 			const { value, onChange, getSession, t, disabled = false } = props;

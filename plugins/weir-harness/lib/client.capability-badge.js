@@ -72,7 +72,7 @@ window.__ModuleLoader__.load({
 				padding: "8px 10px",
 				fontSize: "12px",
 				lineHeight: "16px",
-				border: `0.5px solid ${BORDER}`,
+				border: 0,
 				borderLeft: `2px solid ${WARN}`,
 				borderRadius: "var(--dsw-radius-md)",
 				background: "var(--dsw-alias-bg-overlay)",
