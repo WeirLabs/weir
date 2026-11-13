@@ -606,7 +606,10 @@ window.__ModuleLoader__.load({
 				this.form.dispose();
 			}
 		};
-		const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", padding: "10px 0" };
+		// Row = flexible copy column + fixed control column. A grid keeps every control
+		// on one axis and stops long descriptions from wrapping around a control that
+		// happens to be wide (the ragged text the screenshots showed).
+		const rowStyle = { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "center", gap: "24px", padding: "12px 0" };
 		const labelGroupStyle = { display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 };
 		const labelStyle = { fontSize: "var(--dsw-font-s-14-font-size)", fontWeight: 500, lineHeight: "var(--dsw-font-s-14-line-height)" };
 		// child rows step the label size down slightly with depth
@@ -618,10 +621,18 @@ window.__ModuleLoader__.load({
 		// between rows. Colors only from theme tokens; geometry hardcoded.
 		// Settings cards share the official material: R20, hairline stroke and the
 		// card fill token, so they read as the same surface as every other card.
-		const cardStyle = { background: "var(--dsw-alias-settings-card-fill)", border: "0.5px solid var(--dsw-alias-settings-card-stroke)", borderRadius: "var(--dsw-radius-xl)", padding: "6px 16px 12px" };
-		const cardTitleStyle = { fontSize: "var(--dsw-font-xs-13-font-size)", fontWeight: 600, lineHeight: "var(--dsw-font-xs-13-line-height)", padding: "8px 0 2px", color: "var(--dsw-alias-label-primary)" };
-		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "12px" };
+		// Group sections are flat, like the host settings page: a title, then rows
+		// separated by hairlines. Boxing a card inside the settings dialog put a second
+		// outline around every group (visible in the captured settings screenshot).
+		const cardStyle = { display: "grid", gap: "2px", padding: "0" };
+		const cardTitleStyle = { fontSize: "var(--dsw-font-base-16-font-size)", fontWeight: 600, lineHeight: "var(--dsw-font-base-16-line-height)", padding: "0 0 4px", color: "var(--dsw-alias-label-primary)" };
+		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "28px" };
+		const valueFieldStyle = { maxWidth: "320px", minWidth: 0 };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
+		// A segmented control owns the full width under its label instead of
+		// competing with the description for horizontal space.
+		const stackedRowStyle = { display: "grid", gap: "8px", padding: "12px 0" };
+		const stackedControlStyle = { display: "flex", flexDirection: "column", alignItems: "stretch", gap: "4px", minWidth: 0 };
 		const resetStyle = { background: "none", border: "none", cursor: "pointer", fontSize: "var(--dsw-font-xxs-12-font-size)", textDecoration: "underline", color: "var(--dsw-alias-label-secondary)" };
 		// Compact native dropdown for enum rows marked `display: "select"`
 		// (today only worktreeAutoApprove — its three long option labels squeeze
@@ -650,12 +661,13 @@ window.__ModuleLoader__.load({
 		function ChoiceField(props) {
 			const { descriptor, field, t, disabled } = props;
 			const depth = props.depth ?? 0;
-			return react_jsx_runtime.jsx("div", { style: rowStyle, children: [
+			const stacked = descriptor.kind !== "boolean" && descriptor.display !== "select";
+			return react_jsx_runtime.jsx("div", { style: stacked ? stackedRowStyle : rowStyle, children: [
 				react_jsx_runtime.jsxs("div", { style: labelGroupStyle, children: [
 					labelWithTag(descriptor, t, depth > 0 ? childLabelStyle : labelStyle),
 					react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${descriptor.field}Hint`) }),
 				] }),
-				react_jsx_runtime.jsxs("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
+				react_jsx_runtime.jsxs("div", { style: stacked ? stackedControlStyle : { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "4px" }, children: [
 					descriptor.kind === "boolean" ? react_jsx_runtime.jsx(primitives.Switch, {
 						// ONE effective-value helper with the condition evaluator:
 						// what the switch shows is what `when` sees.
@@ -961,7 +973,7 @@ window.__ModuleLoader__.load({
 						onReset: () => props.resetField(node.field)
 					}));
 				}
-				return wrap(react_jsx_runtime.jsx(primitives.SettingsValueField, {
+				return wrap(react_jsx_runtime.jsx("div", { style: valueFieldStyle, children: react_jsx_runtime.jsx(primitives.SettingsValueField, {
 					id: `plugin-config-${WEIR_NS}-${node.field}`,
 					label: react_jsx_runtime.jsxs("span", { style: labelTextStyle, children: [t(node.field), restartTag(node, t)] }),
 					hint: t(`${node.field}Hint`),
@@ -976,7 +988,7 @@ window.__ModuleLoader__.load({
 					overridden: field.overridden,
 					onEdit: (text) => props.edit(node.field, text),
 					onReset: () => props.resetField(node.field)
-				}));
+				}) }));
 			};
 			// Card sections: the tree walk prunes hidden subtrees wholesale (a
 			// hidden parent hides every descendant), and children land directly

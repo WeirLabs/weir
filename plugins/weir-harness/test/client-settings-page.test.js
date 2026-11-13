@@ -238,7 +238,7 @@ describe('client.settings-page chunk', () => {
     expect(exports.WeirCard({ view: 'summary', page: 'routing', t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('routingDescription')
   })
 
-  it('renders the card-based sections and the default visible set per group', async () => {
+  it('renders the flat group sections and the default visible set per group', async () => {
     const { exports, editors } = await loadPage()
     const rendered = renderCard(exports, editors, {
       fields: makeFields(),
@@ -247,15 +247,16 @@ describe('client.settings-page chunk', () => {
     // one child: the cards column (no restart reminder)
     expect(rendered.children).toHaveLength(1)
     const column = rendered.children[0]
-    expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '12px' })
+    expect(column.style).toEqual({ display: 'flex', flexDirection: 'column', gap: '28px' })
     const cards = cardsOf(rendered)
     const groupIds = Object.keys(cards)
     expect(groupIds).toEqual(MAIN_GROUPS)
-    // every card: layered background, l1 border, radius, title inside the top
+    // every group is flat (no second outline inside the settings dialog) and
+    // keeps its title as the first child
     for (const [id, card] of Object.entries(cards)) {
-      expect(card.style.background).toBe('var(--dsw-alias-settings-card-fill)')
-      expect(card.style.border).toBe('0.5px solid var(--dsw-alias-settings-card-stroke)')
-      expect(card.style.borderRadius).toBe('var(--dsw-radius-xl)')
+      expect(card.style.background).toBeUndefined()
+      expect(card.style.border).toBeUndefined()
+      expect(card.style.borderRadius).toBeUndefined()
       expect(card.children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
     // the default visible set (product defaults: todo/guard/worktree/robash/
@@ -305,9 +306,9 @@ describe('client.settings-page chunk', () => {
     expect(rowKeys(routing, 'routingCategories')).toEqual(['delegateCategoryChains', 'delegateDisabledCategories'])
     expect(rowKeys(routing, 'routingAgents')).toEqual(['delegateAgentChains'])
     expect(rowKeys(routing, 'routingSupervision')).toEqual(['supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
-    // the routing cards keep the card chrome and the translated group titles
+    // the routing groups are flat too and keep the translated group titles
     for (const id of ROUTING_GROUPS) {
-      expect(routing[id].style.borderRadius).toBe('var(--dsw-radius-xl)')
+      expect(routing[id].style.borderRadius).toBeUndefined()
       expect(routing[id].children[0].children).toBe(`group${id.charAt(0).toUpperCase()}${id.slice(1)}`)
     }
   })
