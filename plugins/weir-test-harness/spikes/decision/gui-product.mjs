@@ -3180,7 +3180,7 @@ async function runColdRevealMatrix(sessionId, caseId) {
   // The reveal-to-end assertion is only meaningful when the revealed content
   // actually starts below the fold; compact cards fit a 900px viewport, so
   // this matrix runs against a short viewport and restores afterwards.
-  await instance.cdp.setViewport(1280, 560, false)
+  await instance.cdp.setViewport(1280, 480, false)
   await openPage('inbox')
   const article = `article[data-case-id="${caseId}"]`
   const form = `${article} form.weir-da-answers`
