@@ -650,7 +650,12 @@ window.__ModuleLoader__.load({
         dialog.style.maxHeight = `${Math.min(560, available)}px`;
         const clampedLeft = Math.max(left + margin, Math.min(rect.left, left + width - margin - panelWidth));
         const panelHeight = Math.min(dialog.getBoundingClientRect().height || 0, Math.min(560, available));
-        const positionedTop = placeAbove ? Math.max(top + margin, rect.top - gap - panelHeight) : Math.max(top + margin, Math.min(rect.bottom + gap, top + height - margin - panelHeight));
+        // Keep the panel's far edge inside the viewport margin on both
+        // placements: above-placement otherwise pins its bottom to the anchor
+        // and can lose the bottom margin when the anchor sits at the visual
+        // viewport's bottom edge (extreme zoom).
+        const maxTop = top + height - margin - panelHeight;
+        const positionedTop = placeAbove ? Math.max(top + margin, Math.min(rect.top - gap - panelHeight, maxTop)) : Math.max(top + margin, Math.min(rect.bottom + gap, maxTop));
         dialog.style.left = `${clampedLeft}px`;
         dialog.style.top = `${positionedTop}px`;
         dialog.dataset.placement = placeAbove ? "above" : "below";
