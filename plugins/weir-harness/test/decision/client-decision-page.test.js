@@ -207,6 +207,37 @@ function renderedInboxCard(harness, tree = harness.render(), caseId = 'dc-waitin
   return harness.page.InboxItem(element)
 }
 
+test('inbox renders the latest clarification from the loaded record detail', async () => {
+  const harness = await createPageHarness({ actions: {} })
+  const item = waitingFixture()
+  const detail = {
+    case: item,
+    attempts: [],
+    feedback: [{ feedbackId: 'fb-c', kind: 'clarify', actor: 'user', payload: { question: '这条判断引用了哪些依据？', answer: '现有依据只覆盖已提交的判断记录。' } }],
+    routeDecisions: [],
+  }
+  const card = harness.page.InboxItem({
+    item, agents: [{ agentId: 'a', name: 'Tone', state: 'enabled' }], run: () => {}, pending: null,
+    model: harness.model, ui: harness.ui, t: key => key,
+    draft: { answers: {}, reassignTarget: '', clarifyQuestion: undefined, bounceNote: undefined },
+    updateDraft: () => {}, evidence: { status: 'ready', value: detail }, loadEvidence: () => {}, requestCancel: () => {},
+  })
+  const block = findAll(card, node => node['data-clarification'] === true)[0]
+  assert.ok(block, 'clarification block renders in the inbox')
+  assert.match(textOf(block), /这条判断引用了哪些依据/)
+  assert.match(textOf(block), /现有依据只覆盖/)
+  // Three used clarifications disable the entry.
+  const full = harness.page.InboxItem({
+    item, agents: [{ agentId: 'a', name: 'Tone', state: 'enabled' }], run: () => {}, pending: null,
+    model: harness.model, ui: harness.ui, t: key => key,
+    draft: { answers: {}, reassignTarget: '', clarifyQuestion: undefined, bounceNote: undefined },
+    updateDraft: () => {}, loadEvidence: () => {}, requestCancel: () => {},
+    evidence: { status: 'ready', value: { ...detail, feedback: [1, 2, 3].map(index => ({ feedbackId: `fb-${index}`, kind: 'clarify', actor: 'user', payload: { question: `q${index}`, answer: `a${index}` } })) } },
+  })
+  const open = findAll(full, node => node['data-action'] === 'open-clarify')[0]
+  assert.equal(open.disabled, true)
+})
+
 test('inbox uses shared answers, readable tentative guidance, on-demand current evidence, and secondary recovery', async () => {
   const item = waitingFixture()
   const detail = {

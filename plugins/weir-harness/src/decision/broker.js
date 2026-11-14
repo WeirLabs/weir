@@ -899,8 +899,16 @@ export class DecisionBroker {
     if (!question || question.length > 2000) throw new DecisionContractError('MISSING_CONTEXT', 'A clarification question of 1..2000 characters is required')
     const prior = this.store.db.prepare("SELECT COUNT(*) AS n FROM feedback WHERE case_id=? AND kind='clarify'").get(current.caseId).n
     if (prior >= 3) throw new DecisionContractError('CLARIFY_LIMIT', 'Clarification limit reached for this Case')
-    const cited = [...new Set(this.attempts.forCase(current.caseId).flatMap(attempt => Array.isArray(attempt.citedEvidenceIds) ? attempt.citedEvidenceIds : []))]
-    const evidence = cited.map(id => this.evidence.get(id)).filter(value => value && value.status === 'active').map(value => ({ excerpt: value.excerpt }))
+    // Use the same attempt-evidence rows the card shows under 判断依据: an
+    // escalated/returned Attempt cites nothing, so joined attempt_evidence is
+    // the only source that can answer "which evidence did this use?".
+    const evidence = this.store.db.prepare(`
+      SELECT e.evidence_id, e.excerpt, e.status
+      FROM attempt_evidence ae JOIN evidence e ON e.evidence_id = ae.evidence_id
+      WHERE ae.attempt_id IN (SELECT attempt_id FROM attempts WHERE case_id=?)
+      ORDER BY ae.attempt_id, ae.ordinal`).all(current.caseId)
+      .filter(value => value.status === 'active' && typeof value.excerpt === 'string')
+      .map(value => ({ excerpt: value.excerpt }))
     const agent = await this.rootAgent(current.rootSessionId)
     const result = await clarifyCase({
       llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent),
