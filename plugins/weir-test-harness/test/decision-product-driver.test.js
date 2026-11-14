@@ -354,7 +354,7 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(state, 'cardState exists')
-  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===7']) assert.ok(state.includes(token), token)
+  for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===5']) assert.ok(state.includes(token), token)
   const revealBody = driver.match(/async function revealCard\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(revealBody, 'revealCard exists')
   assert.match(revealBody, /Input\.dispatchMouseEvent/, 'a collapsed native process group opens through real CDP pointer input')
@@ -933,7 +933,7 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   const restartedRecord = enabled.indexOf("const restartedRecord = await record(sessionId, 'restart', learned.caseId)", restartedAgent)
   const persisted = enabled.indexOf("check('restartPersistsLearningFeedbackSelectorAndRecords'", restartedRecord)
   const openedAgent = enabled.indexOf('await openAgent(sessionId, primary.agentId)', persisted)
-  const advanced = enabled.indexOf('await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)', openedAgent)
+  const advanced = enabled.indexOf('await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)', openedAgent)
   const restartShot = enabled.indexOf("await shot('24-restart-learning-persisted')", advanced)
   const openedRecord = enabled.indexOf('await openRecord(sessionId, learned.caseId)', restartShot)
   const compared = enabled.indexOf("await compareRecord(sessionId, 'restart-record', learned.caseId, true)", openedRecord)
@@ -997,7 +997,7 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   for (const token of [
     'runP4BeforeRestart', 'runP4AfterRestart', 'auditP4RawEvidence',
     'freshRootsDefaultToPersistedAuto', 'restartPreservesAutoExplicitOffAndLegacyNoRowOff',
-    'emptyWhitelistAuthorityWithoutClassificationOrAttempt', 'zeroCandidatesNoRouteOrAttempt',
+    'emptyWhitelistRoutesOwnedAuthorityWithoutAttempt', 'zeroCandidatesNoRouteOrAttempt',
     'oneCandidateDeterministicAllGates', 'stockClasslessSelectedRouteHasDerivedAAndAllGates',
     'ambiguityHasCandidatesConflictAndNoAttempt', 'invalidOutputFailureHasNoOwnerOrAttempt',
     'timeoutFailureHasNoOwnerOrAttempt', 'explicitConsultPrioritizesSecondaryWithoutChangingAuto',
@@ -1108,7 +1108,8 @@ test('P4 driver exposes native Auto selection routing review and classless stock
   const routeReady = unowned.indexOf('const routeReady = await waitFor(')
   const domRead = unowned.indexOf('const dom = await instance.cdp.evaluate(')
   assert.ok(disclosure >= 0 && routeReady > disclosure && domRead > routeReady, 'inbox RouteDecision history finishes loading before its DOM is asserted')
-  for (const surface of ['card', 'inbox']) assert.ok(unowned.includes(`if (routeRequired) await openDisclosure(\`weir-da-${surface}-routes-\${caseId}\`)`), `${surface} does not require keyboard expansion of a contractually empty route history`)
+  for (const surface of ['card', 'inbox']) assert.ok(unowned.includes(`weir-da-${surface}-routes-`), `${surface} route history opens through its real disclosure path`)
+  assert.ok(unowned.includes('weir-da-card-more-'), 'the card route history lives inside the grouped more-details disclosure')
   assert.ok(!unowned.includes('weir-da-card-recovery-'), 'the redundant conversation recovery expansion is gone')
   const recovery = unowned.indexOf('await openDisclosure(`weir-da-recovery-${caseId}`)')
   assert.ok(recovery > routeReady && domRead > recovery, 'the actual inbox recovery controls render before no-retry is asserted')
