@@ -7,6 +7,9 @@ import { DatabaseSync } from 'node:sqlite'
 import { pathToFileURL } from 'node:url'
 import { IT_ROOT, textChunks, toolCallChunks } from '../mock-kit.js'
 import { decisionPack, observeDecision, readDecisionStore } from '../decision-test-kit.js'
+// The scenario asserts the store stays on the CURRENT schema: pinning an old
+// number here would silently rot every time a migration lands.
+import { CURRENT_SCHEMA_VERSION } from '../../../weir-harness/src/decision/store/schema.js'
 import { parseJsonlLines, readJsonl } from '../jsonl.js'
 
 const id = 'decision-learning'
@@ -220,6 +223,13 @@ function sourceFor(projection, key) {
 
 function decideConsolidation(options, obs) {
   const projection = JSON.parse(obs.lastUser)
+  // A run started by a caller rooted in ANOTHER workspace legitimately freezes
+  // an empty namespace (no fixtures of ours in it). Answer it with an empty
+  // candidate instead of throwing: a thrown brain surfaces as MODEL_ERROR with
+  // no consolidation wire, which would masquerade as a model failure.
+  if (!Array.isArray(projection.cases) || projection.cases.length === 0) {
+    return textChunks(JSON.stringify({ operations: [] }))
+  }
   const phase = process.env.WEIR_IT_DECISION_PHASE ?? 'seed'
   const scope = { workspaces: [projection.workspaceKey] }
   const operation = {
@@ -692,10 +702,26 @@ function assert(run) {
 
   const crossAgent = rpc['cross-agent']?.result
   const crossWorkspace = rpc['cross-workspace']?.result
-  run.check('cross-Agent and cross-workspace RPC reads and mutations are denied without changing authority',
+  const foreignStart = crossWorkspace?.start?.value
+  run.check('cross-Agent reads are denied and a cross-workspace caller only ever gets its own empty namespace',
     ['run', 'snapshot', 'publish'].every(key => crossAgent?.[key]?.error?.code === 'OUT_OF_SCOPE')
-      && ['start', 'run', 'snapshot', 'rollback'].every(key => crossWorkspace?.[key]?.error?.code === 'OUT_OF_SCOPE')
-      && !runByRequest(store, 'cross-workspace-foreign-workspace'),
+      && ['run', 'snapshot', 'rollback'].every(key => crossWorkspace?.[key]?.error?.code === 'OUT_OF_SCOPE')
+      // Since the P5 shared identity the assistant profile is profile-global, so
+      // a caller rooted in ANOTHER workspace may legitimately start a run — but
+      // that run freezes the CALLER's workspace and must not pull a single W1
+      // private record (case, feedback, revision, parent snapshot) into it.
+      && crossWorkspace?.start?.ok === true
+      && foreignStart?.agentId === fixture?.agentA
+      && foreignStart?.namespaceWorkspaceKey === fixture?.otherWorkspace
+      && foreignStart?.inputFrozen?.workspaceKey === fixture?.otherWorkspace
+      && foreignStart?.inputFrozen?.caseIds?.length === 0
+      && foreignStart?.inputFrozen?.feedbackIds?.length === 0
+      && Object.keys(foreignStart?.inputFrozen?.revisions ?? {}).length === 0
+      && foreignStart?.inputFrozen?.parentSnapshotId === null
+      // The run does persist — in the FOREIGN namespace only; nothing of it
+      // may appear under the main workspace's own namespace.
+      && (store?.learning_runs ?? []).every(item => item.inputFrozen?.requestId !== 'cross-workspace-foreign-workspace'
+        || item.namespace_workspace_key === fixture?.otherWorkspace),
     JSON.stringify({ crossAgent, crossWorkspace }))
 
   const rejected = runByRequest(store, 'reject-start')
@@ -755,8 +781,11 @@ function assert(run) {
   const legacyIds = [fixture?.compatibility.p1.attemptId, fixture?.compatibility.p2.attemptId]
   const legacyRows = raw => raw?.rows.attempts.filter(row => legacyIds.includes(row.attempt_id))
   const legacyCases = raw => raw?.rows.cases.filter(row => [fixture?.compatibility.p1.caseId, fixture?.compatibility.p2.caseId].includes(row.case_id))
-  run.check('P1/P2 v1 fixtures reopen byte-identically without schema migration/backfill and exact P2 code never reads Snapshots',
-    seedRaw?.schemaVersion === 1 && finalRaw?.schemaVersion === 1
+  run.check('P1/P2 rows reopen byte-identically with no mid-run migration and exact P2 code never reads Snapshots',
+    // The seed phase opens the store with the CURRENT code, so the only honest
+    // schema assertion is "same version at both ends, and it is the current
+    // one": a hardcoded 1 rotted the moment schema v2 landed.
+    seedRaw?.schemaVersion === CURRENT_SCHEMA_VERSION && finalRaw?.schemaVersion === CURRENT_SCHEMA_VERSION
       && JSON.stringify(seedRaw.schema) === JSON.stringify(finalRaw.schema)
       && JSON.stringify(legacyRows(seedRaw)) === JSON.stringify(legacyRows(finalRaw))
       && JSON.stringify(legacyCases(seedRaw)) === JSON.stringify(legacyCases(finalRaw))

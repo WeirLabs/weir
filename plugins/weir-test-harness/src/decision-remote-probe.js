@@ -105,9 +105,16 @@ async function learningFlow(remote, broker, agent, args) {
         requestContext: () => agent.session.requestContext(),
       },
     }
+    // The caller is rooted in ANOTHER workspace: same shared agent identity, a
+    // session whose cwd is the foreign workspace. The broker therefore freezes
+    // this run under the CALLER's workspace and must keep every W1 private
+    // record out of scope (the cross-workspace reads below must be denied).
+    // `llm` is the real (mock) provider: without it the model gate of the
+    // legitimately-started run cannot dispatch, which would leave a persisted
+    // run with no matching consolidation wire.
     const crossBroker = new DecisionBroker({
       profileContext: broker.profileContext, config: broker.config, now: broker.now, audit: broker.audit,
-      ctx: { agents: { get: id => id === agent.id ? crossAgent : undefined } },
+      ctx: { agents: { get: id => id === agent.id ? crossAgent : undefined }, llm: broker.ctx.llm },
     })
     await crossBroker.start()
     const crossRemote = createDecisionRemoteService({ broker: () => crossBroker })
