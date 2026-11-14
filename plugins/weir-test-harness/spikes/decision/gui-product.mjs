@@ -767,7 +767,9 @@ async function cardState(caseId) {
       const content=[...card.children]
       const formIndex=content.indexOf(form)
       const secondary=content.filter(el=>el.classList.contains('weir-da-disclosure')||el.classList.contains('weir-da-feedback-editor')||el.matches('button.weir-da-button'))
-      return secondary.length===7&&secondary.every(el=>content.indexOf(el)>formIndex)
+      // Progressive disclosure: 3 top-level disclosures (evidence, more-details,
+      // recovery) + feedback row + ghost open-record button = 5 secondary blocks.
+      return secondary.length===5&&secondary.every(el=>content.indexOf(el)>formIndex)
     })
     return {cards:cards.length,forms,formImmediatelyAfterHeader,formBeforeSecondary,recordAnswerSummaries:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-record-answers').length,0),suggestionReviews:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-suggestion-review').length,0),nativeHints:cards.reduce((sum,card)=>sum+card.querySelectorAll('[data-native-answer]').length,0),text:cards.map(card=>card.innerText).join('\\n---\\n')}
   })()`)
@@ -1004,8 +1006,13 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
     const probe=el=>{
       if(!el)return null
       const value=rect(el);const points=[]
+      // Master/detail layouts clip long cards to their inner scrollport: a
+      // card rect legitimately extends past it, and points beyond the clip
+      // belong to the container, not the card. Clamp samples to the clip band.
+      let clipTop=-Infinity,clipBottom=Infinity
+      for(let p=el.parentElement;p;p=p.parentElement){const s=getComputedStyle(p);if(['auto','scroll','overlay','hidden'].includes(s.overflowY)&&p.scrollHeight>p.clientHeight+1){const r=p.getBoundingClientRect();clipTop=Math.max(clipTop,r.top);clipBottom=Math.min(clipBottom,r.bottom)}}
       const left=Math.max(value.left+8,(visual.offsetLeft??0)+1);const right=Math.min(value.right-8,(visual.offsetLeft??0)+visual.width-1)
-      const top=Math.max(value.top+8,(visual.offsetTop??0)+1);const bottom=Math.min(value.bottom-8,(visual.offsetTop??0)+visual.height-1)
+      const top=Math.max(value.top+8,(visual.offsetTop??0)+1,clipTop+1);const bottom=Math.min(value.bottom-8,(visual.offsetTop??0)+visual.height-1,clipBottom-1)
       if(right<left||bottom<top)return {rect:value,hitTestSamples:0,occlusions:[]}
       const middleX=(left+right)/2;const middleY=(top+bottom)/2
       for(let x=left;x<=right;x+=8)points.push([x,middleY])
@@ -1245,7 +1252,9 @@ async function unownedInbox(sessionId, caseId, label, routeRequired = true) {
   await openIsolatedSession(sessionId, true)
   const authority = await record(sessionId, `${label}-unowned`, caseId)
   await waitFor(async () => { const value=await cardState(caseId); return value.cards===1?value:null }, 30_000)
-  if (routeRequired) await openDisclosure(`weir-da-card-routes-${caseId}`)
+  // Card diagnostics are grouped under the More-details disclosure: open the
+  // group first so the nested route-history trigger exists in the DOM.
+  if (routeRequired) { await openDisclosure(`weir-da-card-more-${caseId}`); await openDisclosure(`weir-da-card-routes-${caseId}`) }
   const card = await instance.cdp.evaluate(`(() => { const root=document.querySelector('[data-weir-decision-card=${JSON.stringify(caseId)}]'); return {text:root.innerText,routeText:root.querySelector('.weir-da-route-history')?.innerText??'',retry:root.querySelectorAll('[data-action="retry"]').length,feedback:root.querySelectorAll('[data-feedback]').length,nativeHint:root.querySelectorAll('[data-native-answer]').length} })()`)
   check(`${label}UnownedConversationRouteHistory`, card.retry === 0 && card.feedback === 0 && card.nativeHint === 1 && (!routeRequired || card.routeText.trim().length > 0) && (routeRequired || authority.routeDecisions.length === 0), { caseId, card })
   await openPage('inbox')
@@ -2692,7 +2701,10 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false, longSt
     return {panelOverflow:getComputedStyle(panel).overflow,bodyOverflow:getComputedStyle(body).overflowY,bodyOverscroll:getComputedStyle(body).overscrollBehavior,bodyScrollHeight:body.scrollHeight,bodyClientHeight:body.clientHeight,bodyScrollTop:body.scrollTop,header:rect(document.querySelector('.weir-da-selector-header')),footer:rect(document.querySelector('.weir-da-selector-footer')),horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1}
   })()`)
   const before = await read()
-  const point = await instance.cdp.evaluate(`(() => {const rect=document.querySelector('.weir-da-selector-body').getBoundingClientRect();return {x:rect.left+rect.width/2,y:rect.top+Math.min(rect.height/2,80)}})()`)
+  // CDP input coordinates are visual-viewport DIPs; getBoundingClientRect is in
+  // layout CSS px. Under page zoom (scale 2, nonzero offsets) convert, or the
+  // wheel misses the body and pans the visual viewport instead.
+  const point = await instance.cdp.evaluate(`(() => {const rect=document.querySelector('.weir-da-selector-body').getBoundingClientRect();const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};return {x:Math.max(4,Math.min(visual.width-4,rect.left-visual.offsetLeft+rect.width/2)),y:Math.max(4,Math.min(visual.height-4,rect.top-visual.offsetTop+Math.min(rect.height/2,80)))}})()`)
   await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseWheel', x: point.x, y: point.y, deltaX: 0, deltaY: 180 })
   if (scrollable) await waitFor(() => instance.cdp.evaluate(`document.querySelector('.weir-da-selector-body').scrollTop>${before.bodyScrollTop}`), 10_000).catch(() => {})
   else await new Promise(resolve => setTimeout(resolve, 120))
@@ -3145,7 +3157,10 @@ async function runAgentResumeMatrix(sessionId, primary, secondary) {
 
 async function runLearningResumeMatrix(sessionId, primary, candidate) {
   await openAgent(sessionId, primary.agentId)
-  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  // The assistant detail merged all diagnostics into one disclosure (Nov-14
+  // hierarchy pass); open the merged entry, which contains the learning
+  // diagnostics (AgentLearningDiagnostics).
+  await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)
   await keyboardActivate('Select exact learning run for narrow resume', `[data-learning-run-id="${candidate.run.learningRunId}"]`)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-learning-run-detail=${JSON.stringify(candidate.run.learningRunId)}]'))`), 30_000)
   await keyboardActivate('Select exact learning snapshot for narrow resume', `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
@@ -3170,11 +3185,25 @@ async function runLearningResumeMatrix(sessionId, primary, candidate) {
 }
 
 async function runColdRevealMatrix(sessionId, caseId) {
+  // The reveal-to-end assertion is only meaningful when the revealed content
+  // actually starts below the fold; compact cards fit a 900px viewport, so
+  // this matrix runs against a short viewport and restores afterwards.
+  await instance.cdp.setViewport(1280, 480, false)
   await openPage('inbox')
   const article = `article[data-case-id="${caseId}"]`
   const form = `${article} form.weir-da-answers`
   await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
-  const scroller = 'main.weir-da-page'
+  // The Decision page no longer scrolls as a whole (fixed master/detail
+  // regions): resolve the card's actual scrolling ancestor and measure the
+  // reveal against it instead of main.weir-da-page.
+  const scroller = await instance.cdp.evaluate(`(() => {
+    const start=document.querySelector(${JSON.stringify(article)})
+    for(let el=start?start.parentElement:null;el;el=el.parentElement){
+      const style=getComputedStyle(el)
+      if(['auto','scroll','overlay'].includes(style.overflowY)){el.setAttribute('data-weir-cold-scroller','1');return '[data-weir-cold-scroller="1"]'}
+    }
+    return 'main.weir-da-page'
+  })()`)
   const routeTarget = `#weir-da-inbox-routes-${caseId}-content`
   const routeControl = await holdDecision('record', { sessionId, caseId }, 'hold-fail')
   await openDisclosure(`weir-da-inbox-routes-${caseId}`)
@@ -3207,14 +3236,23 @@ async function runColdRevealMatrix(sessionId, caseId) {
   const draftSelector = `${form} textarea`
   const draftBefore = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(draftSelector)})?.value`)
   requireEvidence(typeof draftBefore === 'string', 'the cold refresh draft is a real textarea value')
-  const routeRefreshBaseline = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
-  const evidenceRefreshBaseline = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
+  // Anchor focus on the draft field BEFORE the baseline: the round trip keeps
+  // focus on the same element, so browser focus-scroll cannot masquerade as a
+  // refresh-induced scroll jump between baseline and refreshed measurements.
+  await keyboardFocus('Anchor cold refresh focus on the draft field', draftSelector)
   const transientDraft = 'Transient cold refresh draft'
   await keyboardFill('Exercise cold refresh draft', draftSelector, transientDraft)
   await keyboardFill('Restore cold refresh draft', draftSelector, draftBefore)
   const restoredDraft = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(draftSelector)})?.value`)
   writeJson(join(out, 'cold-refresh-draft.json'), { selector: draftSelector, before: draftBefore, transient: transientDraft, restored: restoredDraft })
   requireEvidence(restoredDraft === draftBefore, 'the cold refresh draft round-trip restored the exact input')
+  // Typing perturbs scroll natively (caret visibility, validation-hint layout
+  // shifts), so the refresh contract is isolated with a same-value fill: it
+  // forces a parent re-render with zero layout or caret effect, and the scroll
+  // comparison runs against the settled post-restore measurement.
+  const routeRefreshBaseline = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
+  const evidenceRefreshBaseline = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
+  await keyboardFill('No-op cold refresh draft', draftSelector, draftBefore)
   const routeRefreshed = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
   const evidenceRefreshed = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
   const errorEvidence = { kind: 'error', loading: routeLoading, ready: routeReady, refreshBaseline: routeRefreshBaseline, refreshed: routeRefreshed, control: await decisionControl(routeControl) }
@@ -3226,6 +3264,7 @@ async function runColdRevealMatrix(sessionId, caseId) {
   await shot('uiux-cold-refresh-stable', { kind: 'cold-reveal-refresh', error: routeRefreshed, success: evidenceRefreshed })
   check('coldErrorRevealsActualEndOnceWithoutFocusDraftTheft', errorEvidence.problems.length === 0, { problems: errorEvidence.problems, loading: routeLoading, ready: routeReady, refreshBaseline: routeRefreshBaseline, refreshed: routeRefreshed, control: errorEvidence.control })
   check('coldSuccessRevealsActualEndOnceAndRefreshDoesNotJump', successEvidence.problems.length === 0, { problems: successEvidence.problems, loading: evidenceLoading, ready: evidenceReady, refreshBaseline: evidenceRefreshBaseline, refreshed: evidenceRefreshed })
+  await instance.cdp.setViewport(1440, 900, false)
 }
 
 async function setGuiLanguage(language) {
@@ -3321,7 +3360,10 @@ async function runSelectorZoomMatrix(sessionId) {
     uiuxEvidence.zoom.push(row)
     saveUiuxEvidence()
     check(`selectorRealBrowserZoom200At${width}`, row.zoomProblems.length === 0, { width, problems: row.zoomProblems, before: before.visualViewport, after: after.visualViewport, innerWidth: after.innerWidth, devicePixelRatio: after.devicePixelRatio, rect: after.rects.reference })
-    const scrollBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
+    // Page-zoom relayout settles asynchronously: an immediate baseline can
+    // capture a transient scrollHeight, which then reads as a content shrink
+    // at restore. Wait for two identical measurements instead.
+    const scrollBefore = (await selectorOpen({ scrollBaseline: 'stable' })).scrollBefore
     const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
     const audit = await beginModalAudit(`selector-zoom200-${width}`, '#weir-da-selector-panel', trigger, { before: scrollBefore, selector: { scale: 2, scrollable } })
     await keyboardKey(`Close 200 percent selector ${width}`, 'Escape')
@@ -3797,7 +3839,10 @@ try {
 
   const candidateV1 = await startCandidate(sessionId, primary, 1)
   requireEvidence(candidateV1.run.operations[0]?.sources?.[0] === learningCorrection.feedbackId && candidateV1.run.operations[0]?.text === 'Reviewed GUI correction principle: prefer the corrected cross-root answer.', 'v1 uses the actual correction Feedback and correction principle')
-  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  // The assistant detail merged all diagnostics into one disclosure (Nov-14
+  // hierarchy pass); open the merged entry, which contains the learning
+  // diagnostics (AgentLearningDiagnostics).
+  await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)
   const advancedLearning = await governanceState(primary.agentId)
   check('learningAdvancedDiagnosticsRetainIdsAndReplay', advancedLearning.advanced.includes(candidateV1.run.learningRunId) && advancedLearning.advanced.includes(candidateV1.snapshot.snapshotId) && advancedLearning.advanced.includes(candidateV1.run.inputFrozen.inputHash), { runId: candidateV1.run.learningRunId, snapshotId: candidateV1.snapshot.snapshotId })
   await shot('21-learning-v1-diagnostics')
@@ -3872,7 +3917,10 @@ try {
   const restartedRecord = await record(sessionId, 'restart', learned.caseId)
   check('restartPersistsLearningFeedbackSelectorAndRecords', restartedRun.outcome === 'rejected' && restartedRun.revision === rejectedV3.run.revision && restartedSnapshot.state === 'draft' && restartedSnapshot.revision === rejectedV3.snapshot.revision && restartedAgent.currentSnapshotId === candidateV1.snapshot.snapshotId && JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail))
   await openAgent(sessionId, primary.agentId)
-  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  // The assistant detail merged all diagnostics into one disclosure (Nov-14
+  // hierarchy pass); open the merged entry, which contains the learning
+  // diagnostics (AgentLearningDiagnostics).
+  await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)
   await shot('24-restart-learning-persisted')
   await openRecord(sessionId, learned.caseId)
   await compareRecord(sessionId, 'restart-record', learned.caseId, true)
