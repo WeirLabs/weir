@@ -246,11 +246,11 @@ window.__ModuleLoader__.load({
               jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyYouAsked") }, "q-label"), jsx.jsx("span", { children: latestClarify.payload?.question ?? "" }, "q")] }, "question"),
               jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyAnswer") }, "a-label"), jsx.jsx("span", { children: latestClarify.payload?.answer ?? "" }, "a")] }, "answer"),
             ] }, "latest-clarify") : null,
-            jsx.jsxs("div", { className: "weir-da-actions", children: [
+            jsx.jsxs("div", { className: "weir-da-actions weir-da-user-actions", children: [
               view.assigned ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-clarify", disabled: isPending || clarifications.length >= 3, title: clarifications.length >= 3 ? t("decisionClarifyLimit") : undefined, onClick: () => toggleEditor("clarify"), children: t("decisionClarify") }, "open-clarify") : null,
               jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-bounce", disabled: isPending, onClick: () => toggleEditor("bounce"), children: t("decisionBounce") }, "open-bounce"),
             ] }, "entries"),
-            editor === "clarify" ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+            editor === "clarify" ? jsx.jsxs("div", { className: "weir-da-feedback-editor weir-da-user-editor", children: [
               jsx.jsx(ui.Field, { id: `weir-da-card-clarify-${view.caseId}`, label: t("decisionClarify"), hint: t("decisionClarifyHint"), children: jsx.jsx("textarea", {
                 id: `weir-da-card-clarify-${view.caseId}`, "data-draft": "clarifyQuestion", "aria-label": t("decisionClarify"), value: draft.clarifyQuestion ?? "", disabled: isPending,
                 placeholder: t("decisionClarifyPlaceholder"),
@@ -258,7 +258,7 @@ window.__ModuleLoader__.load({
               }) }, "clarify-field"),
               jsx.jsx(ui.Button, { "data-action": "clarify", disabled: isPending || !(draft.clarifyQuestion ?? "").trim(), onClick: () => run("clarify", view.caseId, draft.clarifyQuestion.trim()), children: t("decisionClarifySubmit") }, "clarify-action"),
             ] }, "clarify-editor") : null,
-            editor === "bounce" ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+            editor === "bounce" ? jsx.jsxs("div", { className: "weir-da-feedback-editor weir-da-user-editor", children: [
               jsx.jsx(ui.Field, { id: `weir-da-card-bounce-${view.caseId}`, label: t("decisionBounce"), hint: t("decisionBounceHint"), children: jsx.jsx("textarea", {
                 id: `weir-da-card-bounce-${view.caseId}`, "data-draft": "bounceNote", "aria-label": t("decisionBounce"), value: draft.bounceNote ?? "", disabled: isPending,
                 placeholder: t("decisionBouncePlaceholder"),

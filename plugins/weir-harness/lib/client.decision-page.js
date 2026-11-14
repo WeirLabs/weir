@@ -207,11 +207,11 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyYouAsked") }, "q-label"), jsx.jsx("span", { children: latestClarify.payload?.question ?? "" }, "q")] }, "question"),
           jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyAnswer") }, "a-label"), jsx.jsx("span", { children: latestClarify.payload?.answer ?? "" }, "a")] }, "answer"),
         ] }, "latest-clarify") : null,
-        jsx.jsxs("div", { className: "weir-da-actions weir-da-user-tools", children: [
+        jsx.jsxs("div", { className: "weir-da-actions weir-da-user-actions", children: [
           summary?.assigned !== false && current.agentId ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-clarify", disabled: pending || clarifyCount >= 3, onClick: () => props.updateDraft("clarifyQuestion", draft.clarifyQuestion ?? ""), title: clarifyCount >= 3 ? t("decisionClarifyLimit") : undefined, children: t("decisionClarify") }, "open-clarify") : null,
           jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-bounce", disabled: pending, onClick: () => props.updateDraft("bounceNote", draft.bounceNote ?? ""), children: t("decisionBounce") }, "open-bounce"),
         ] }, "user-tools"),
-        draft.clarifyQuestion !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+        draft.clarifyQuestion !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor weir-da-user-editor", children: [
           jsx.jsx(ui.Field, { id: `weir-da-inbox-clarify-${current.caseId}`, label: t("decisionClarify"), hint: t("decisionClarifyHint"), children: jsx.jsx("textarea", {
             id: `weir-da-inbox-clarify-${current.caseId}`, "data-draft": "clarifyQuestion", "aria-label": t("decisionClarify"), value: draft.clarifyQuestion ?? "", disabled: pending,
             placeholder: t("decisionClarifyPlaceholder"),
@@ -219,7 +219,7 @@ window.__ModuleLoader__.load({
           }) }, "clarify-field"),
           jsx.jsx(ui.Button, { "data-action": "clarify", disabled: pending || !(draft.clarifyQuestion ?? "").trim(), onClick: () => props.run("clarify", current.caseId, (draft.clarifyQuestion ?? "").trim()), children: t("decisionClarifySubmit") }, "clarify"),
         ] }, "clarify-editor") : null,
-        draft.bounceNote !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+        draft.bounceNote !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor weir-da-user-editor", children: [
           jsx.jsx(ui.Field, { id: `weir-da-inbox-bounce-${current.caseId}`, label: t("decisionBounce"), hint: t("decisionBounceHint"), children: jsx.jsx("textarea", {
             id: `weir-da-inbox-bounce-${current.caseId}`, "data-draft": "bounceNote", "aria-label": t("decisionBounce"), value: draft.bounceNote ?? "", disabled: pending,
             placeholder: t("decisionBouncePlaceholder"),
