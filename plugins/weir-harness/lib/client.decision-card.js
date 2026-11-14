@@ -169,7 +169,11 @@ window.__ModuleLoader__.load({
       const perQuestion = Array.isArray(view.escalation?.perQuestion) ? view.escalation.perQuestion : [];
       const previous = view.history.filter(group => group.attempt?.attemptId !== view.currentAttempt?.attemptId);
       const isPending = pending !== null;
-      const ratings = view.assigned ? model.feedbackActions(view.feedbackState) : [];
+      // Ratings answer "was this answer right", so they appear only once a
+      // decision exists (or feedback was already recorded); notes/corrections
+      // stay available on waiting cards.
+      const ratingsVisible = view.assigned && (Boolean(detail.case.decision) || view.feedbackState !== "none");
+      const ratings = ratingsVisible ? model.feedbackActions(view.feedbackState) : [];
       const draft = model.readDraft(drafts, props.sessionId, view.caseId);
       const updateDraft = (field, value) => setDrafts(current => model.draftsReducer(current, { type: "update", sessionId: props.sessionId, caseId: view.caseId, field, value }));
       const toggleEditor = name => {
@@ -226,11 +230,11 @@ window.__ModuleLoader__.load({
           ] }, "guidance") : null,
           view.assigned ? jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
             view.feedbackState === "validated" || view.feedbackState === "disputed" ? jsx.jsx(ui.Badge, { variant: "idle", children: t(view.feedbackState === "validated" ? "decisionFeedbackValidated" : "decisionFeedbackDisputed") }, "feedback-state") : null,
-            jsx.jsx("div", { className: "weir-da-actions", children: ratings.map(action => jsx.jsx(ui.Button, {
+            ratingsVisible ? jsx.jsx("div", { className: "weir-da-actions", children: ratings.map(action => jsx.jsx(ui.Button, {
               variant: "ghost", "data-feedback": action.verb, disabled: isPending,
               onClick: () => run("feedback", view.caseId, action.verb), children: t(action.labelKey),
-            }, action.verb)) }, "ratings"),
-            view.feedbackState === "none" ? jsx.jsx("p", { className: "weir-da-caption", children: t("decisionFeedbackHintShort") }, "rating-hint") : null,
+            }, action.verb)) }, "ratings") : null,
+            ratingsVisible && view.feedbackState === "none" ? jsx.jsx("p", { className: "weir-da-caption", children: t("decisionFeedbackHintShort") }, "rating-hint") : null,
             jsx.jsxs("div", { className: "weir-da-actions", children: [
               jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-comment", disabled: isPending, onClick: () => toggleEditor("comment"), children: t("decisionComment") }, "open-comment"),
               jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-correction", disabled: isPending, onClick: () => toggleEditor("correction"), children: t("decisionCorrect") }, "open-correction"),
@@ -267,7 +271,7 @@ window.__ModuleLoader__.load({
           jsx.jsx(ui.Disclosure, {
             id: `weir-da-card-more-${view.caseId}`, label: t("decisionMoreDetails"), revealOnOpen: "end",
             children: () => jsx.jsxs("div", { className: "weir-da-more-details", children: [
-              view.assigned && view.feedbackState === "none" ? jsx.jsxs("div", { className: "weir-da-caption", children: [
+              ratingsVisible && view.feedbackState === "none" ? jsx.jsxs("div", { className: "weir-da-caption", children: [
                 jsx.jsx("div", { children: t("decisionConfirmConsequence") }, "confirm-consequence"),
                 jsx.jsx("div", { children: t("decisionDisputeConsequence") }, "dispute-consequence"),
               ] }, "rating-consequences") : null,

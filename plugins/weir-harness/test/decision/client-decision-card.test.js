@@ -225,6 +225,11 @@ test('awaiting explicit consult leads with its only answer form and no duplicate
     secondaryContentAfterForm: true,
   })
   assert.deepEqual(forms[0].suggestions, waitingDetail.case.escalation.suggestion)
+  // No decision yet: ratings are premature and hidden, but note/correction
+  // entries stay available on the waiting card.
+  assert.equal(findAll(tree, node => node['data-feedback']).length, 0)
+  assert.ok(findAll(tree, node => node['data-action'] === 'open-comment')[0])
+  assert.ok(findAll(tree, node => node['data-action'] === 'open-correction')[0])
   assert.equal(textContent(tree).includes('decisionNoAnswer'), false)
 })
 
@@ -674,10 +679,12 @@ test('unified pending guard suppresses duplicate and competing writes', async ()
   const second = form.onSubmit(batch)
   const pendingTree = mounted.render()
   assert.equal(calls.filter(call => call[0] === 'decide').length, 1)
-  const rating = findAll(pendingTree, node => node.__type === mounted.ui.Button && node['data-feedback'] === 'rating_up')[0]
-  assert.equal(rating.disabled, true)
-  await rating.onClick()
-  await action(pendingTree, mounted.ui, 'open-comment').onClick()
+  // Ratings are hidden until a decision exists; assert the pending guard on
+  // the note entry instead (same section, same guard).
+  const commentEntry = action(pendingTree, mounted.ui, 'open-comment')
+  assert.equal(commentEntry.disabled, true)
+  await commentEntry.onClick()
+  assert.equal(findAll(mounted.render(), node => node['data-draft'] === 'comment').length, 0)
   assert.equal(calls.filter(call => call[0] === 'feedback').length, 0)
   assert.equal(findAll(mounted.render(), node => node.__type === mounted.ui.ConfirmDialog).length, 0)
   release()
