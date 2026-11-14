@@ -1,6 +1,8 @@
+/// <reference path="./node-contracts.d.ts" />
 // A single process owner serializes durable mutations AND volatile arbitration.
 // Candidate kernels have no timers/listeners with external effects; publication
 // happens only after the storage transaction commits. No async snapshot saving.
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createBlackboardKernel } from './kernel.js'
 import { createBlackboardStorage, sessionId } from './storage.js'
 
@@ -95,7 +97,7 @@ export function runtimeBlackboard(ctx) {
   let runtime = runtimes.get(home)
   if (!runtime) {
     const storage = createBlackboardStorage({ home })
-    runtime = { storage, kernel: createDurableBlackboard({ storage, warn: error => ctx.logger?.warn?.(String(error)) }), flushed: new WeakSet(), members: new Map() }
+    runtime = { storage, kernel: createDurableBlackboard({ storage, warn: error => ctx.logger?.warn?.(String(error)) }), flushed: new WeakSet(), members: new Map(), forkSources: new Map(), forkProvenance: { holders: 0, release: undefined, warned: false } }
     runtimes.set(home, runtime)
   }
   return runtime
@@ -161,6 +163,113 @@ export function createRuntimeMount(ctx, runtime) {
 }
 
 /**
+ * Capture the source Session of every ordinary fork the host performs.
+ *
+ * DSH records no provenance on an ordinary fork: the Session Controller builds
+ * the seed and calls agents.create() with meta { cwd, isSeeded } only — no
+ * parentSession, no replacement field (upgrade guide v0.2.1-rc.3, independent
+ * session forks). The source identity therefore exists only for the duration of
+ * the fork call, which makes intercepting that call the one reliable place to
+ * learn it.
+ *
+ * The wrapper parks the source id in an AsyncLocalStorage store for the call
+ * (concurrent forks never cross) and temporarily wraps agents.create to read
+ * the child identity from its options — synchronously, before the host creates
+ * the Session, hence before its agent/created hook can observe any board. The
+ * pair lands in runtime.forkSources, which the depth-zero branch of
+ * resolveDurableRoot consumes exactly once, ahead of the first ensure that
+ * would materialize an empty sidecar.
+ *
+ * Optional by construction: both services arrive through ctx.inject, so a
+ * composition without the Session Controller (headless, SDK) never runs the
+ * callback and fork boards keep their current behavior. A failure inside the
+ * wrapper is reported once and never changes the host's fork semantics. The
+ * returned disposer is idempotent and only the last holder restores the
+ * original methods (a preset remount keeps the capture installed).
+ * @param {any} ctx @param {any} runtime
+ * @returns {() => void}
+ */
+export function installForkProvenance(ctx, runtime) {
+  const state = runtime.forkProvenance ??= { holders: 0, release: undefined, warned: false }
+  runtime.forkSources ??= new Map()
+  state.holders += 1
+  const warnOnce = (message) => {
+    if (state.warned) return
+    state.warned = true
+    ctx.logger?.warn?.(message)
+  }
+  let disposed = false
+  let offScope = () => {}
+  try {
+    const off = ctx.inject?.(['sessionController', 'agents'], scope => {
+      if (disposed) return undefined
+      const controller = scope.sessionController
+      const agents = scope.agents
+      const fork = controller?.fork
+      const create = agents?.create
+      if (typeof fork !== 'function' || typeof create !== 'function') {
+        warnOnce('blackboard fork provenance unavailable: the host Session Controller exposes no callable fork')
+        return undefined
+      }
+      if (state.release !== undefined) return undefined
+      const ownFork = Object.prototype.hasOwnProperty.call(controller, 'fork')
+      const sink = new AsyncLocalStorage()
+      // The create patch is reference-counted across in-flight forks and chains to
+      // whatever it displaced, so another wrapper (a probe, a host decoration)
+      // installed before the fork still runs and is restored afterwards.
+      let inFlight = 0
+      let displacedCreate
+      /** @this {any} */
+      const createCapturing = async function createCapturing(options, ...rest) {
+        const store = sink.getStore()
+        if (store !== undefined && typeof options?.sessionId === 'string' && options.sessionId.length > 0) runtime.forkSources.set(options.sessionId, store.sourceId)
+        return displacedCreate.call(this, options, ...rest)
+      }
+      /** @this {any} */
+      const forkCapturing = async function forkCapturing(request, ...rest) {
+        const sourceId = typeof request?.sessionId === 'string' && request.sessionId.length > 0 ? request.sessionId : undefined
+        if (sourceId === undefined) return fork.call(this, request, ...rest)
+        if (inFlight === 0) {
+          displacedCreate = agents.create
+          agents.create = createCapturing
+        }
+        inFlight += 1
+        try {
+          return await sink.run({ sourceId }, () => fork.call(this, request, ...rest))
+        } catch (error) {
+          // Provenance is best-effort; the fork outcome belongs to the host.
+          warnOnce(`blackboard fork provenance failed: ${String(error)}`)
+          throw error
+        } finally {
+          inFlight -= 1
+          if (inFlight === 0 && agents.create === createCapturing) agents.create = displacedCreate
+        }
+      }
+      controller.fork = forkCapturing
+      state.release = () => {
+        if (controller.fork === forkCapturing) {
+          if (ownFork) controller.fork = fork
+          else delete controller.fork
+        }
+        if (agents.create === createCapturing) agents.create = displacedCreate ?? create
+        state.release = undefined
+      }
+      return undefined
+    })
+    offScope = typeof off === 'function' ? off : () => {}
+  } catch (error) {
+    warnOnce(`blackboard fork provenance unavailable: ${String(error)}`)
+  }
+  return () => {
+    if (disposed) return
+    disposed = true
+    state.holders = Math.max(0, state.holders - 1)
+    if (state.holders === 0) state.release?.()
+    try { offScope() } catch { /* disposal is best-effort */ }
+  }
+}
+
+/**
  * @param {any} ctx @param {any} agent @param {any} runtime @param {{ active: boolean }} [mount]
  * @returns {Promise<string>}
  */
@@ -198,12 +307,23 @@ export async function resolveDurableRoot(ctx, agent, runtime, mount = undefined)
         if (mount) mounts.add(mount)
         runtime.members.set(agent.id, { agent, root: id, mounts })
       }
-      // A fork (a depth-0 Session carrying parentSession) is its own board root,
-      // but its board starts as a one-time snapshot of the fork source's durable
-      // root board: seed before the first ensure can materialize an empty sidecar.
-      // Once per runtime; the no-sidecar disk check keeps it idempotent across
-      // restarts. Best-effort: a failed seed never blocks board availability.
-      const parentId = header.parentSession
+      // A fork is its own board root, but its board starts as a one-time
+      // snapshot of the fork source's durable root board: seed before the first
+      // ensure can materialize an empty sidecar. The source arrives from either
+      // the legacy header parentSession (old logs and old hosts still write it)
+      // or the fork-call capture (current hosts record no provenance at all —
+      // see installForkProvenance). Once per runtime; the no-sidecar disk check
+      // keeps it idempotent across restarts. Best-effort: a failed seed never
+      // blocks board availability.
+      const legacyParent = header.parentSession
+      const captured = runtime.forkSources?.get(id)
+      // The capture is one-shot: consume it whatever the outcome below.
+      if (captured !== undefined) runtime.forkSources?.delete(id)
+      // A captured source only counts for a genuinely seeded Session: a
+      // non-seeded header cannot be a fork, so a stale mapping seeds nothing.
+      const parentId = typeof legacyParent === 'string' && legacyParent.length > 0
+        ? legacyParent
+        : header.isSeeded === true ? captured : undefined
       if (typeof parentId === 'string' && parentId.length > 0) {
         runtime.forkSeeded ??= new Set()
         if (!runtime.forkSeeded.has(id)) {

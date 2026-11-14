@@ -1,11 +1,16 @@
 // Scenario: blackboard-fork — fork blackboard seeding end to end. The probe
 // seeds two entries on the main session's durable root board (one promoted,
-// both carrying usage counts), forks the session through the real
-// agents.create path with the exact meta shape DSH's fork produces, and
+// both carrying usage counts), forks the session through the real host path
+// (`session/fork` dispatched by the gateway into the Session Controller), and
 // asserts the fork's board opened as a one-time snapshot of the source root
 // board: entries, counts and the promotion marker cross; volatile tokens and
 // subscriptions never do; the source board keeps exactly its own entries and
 // the seeded fork board serves product reads.
+//
+// It also pins the host's actual fork shape, so a host change that drops
+// provenance again fails loudly here instead of silently emptying fork boards:
+// the child header carries no parentSession and agents.create receives meta
+// with only cwd/isSeeded (plus an optional agentPreset).
 import { lastOfRole, textChunks, toolCallChunks } from '../mock-kit.js'
 
 const id = 'blackboard-fork'
@@ -28,6 +33,9 @@ function assert(run) {
   run.check('no volatile authority or subscriptions cross the fork', row?.forkTokensEmpty === true && row?.forkSubscriptionsEmpty === true, JSON.stringify(row))
   run.check('the source board keeps exactly its own entries', JSON.stringify(row?.sourceKeys) === JSON.stringify(['editable', 'knowledge']), JSON.stringify(row))
   run.check('the seeded board serves product reads', row?.forkReadContent === 'durable body', JSON.stringify(row))
+  run.check('the host forked a parentless seeded Session', row?.childHeader?.parentSession === null && row?.childHeader?.isSeeded === true, JSON.stringify(row?.childHeader))
+  const metaKeys = row?.forkMeta?.metaKeys
+  run.check('the host fork passes no source field to agents.create', Array.isArray(metaKeys) && !metaKeys.includes('parentSession') && metaKeys.includes('cwd') && metaKeys.includes('isSeeded') && metaKeys.every(key => ['agentPreset', 'cwd', 'isSeeded'].includes(key)), JSON.stringify(row?.forkMeta))
 }
 
 // The observation key reuses the established `probeOk` convention (the
@@ -35,4 +43,4 @@ function assert(run) {
 // stays inside the pinned pre-migration set.
 const observe = obs => ({ probeOk: (obs?.transcript ?? '').includes('BLACKBOARD_FORK_CHECK') })
 
-export default { id, prompt, decide, observe, assert, env: { WEIR_IT_BLACKBOARD: '1' } }
+export default { id, prompt, decide, observe, assert, env: { WEIR_IT_BLACKBOARD: '1', WEIR_IT_BLACKBOARD_FORK: '1' } }

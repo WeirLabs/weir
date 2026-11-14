@@ -16,7 +16,7 @@
 // kernel + board resolution + TTL so the host-layer typert remote row can
 // serve the future side panel against the same arbitration kernel.
 
-import { runtimeBlackboard, createRuntimeMount } from './durable.js'
+import { runtimeBlackboard, createRuntimeMount, installForkProvenance } from './durable.js'
 import { ENTRY_TYPES, PROMOTION_DESTINATIONS } from './kernel.js'
 import { BLACKBOARD_RETRIEVAL_SECTION, BLACKBOARD_SECTION_NAME, BLACKBOARD_SECTION_ORDER_OFFSET, BLACKBOARD_VARIABLE_NAME, BLACKBOARD_WORKER_SECTION_NAME, BLACKBOARD_WORKER_SECTION_ORDER, BLACKBOARD_WORKER_VARIABLE_NAME, BLACKBOARD_WRITE_CONTRACT } from './contracts.js'
 import { createReleaseNotifier } from './notify.js'
@@ -220,6 +220,10 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
     const runtime = kernel ? null : runtimeBlackboard(ctx)
     const kernelInstance = kernel ? kernel() : runtime.kernel
     const lifecycle = runtime ? createRuntimeMount(ctx, runtime) : null
+    // Fork provenance capture: the host records no source on an ordinary fork,
+    // so the fork call itself is intercepted (see installForkProvenance). A
+    // composition without the Session Controller installs nothing.
+    const disposeForkProvenance = runtime ? installForkProvenance(ctx, runtime) : () => {}
 
     // Release delivery (design D3): every release with waiters becomes (a) a
     // cordis event in the audit-channel shape (no disk mirror, no session
@@ -465,7 +469,7 @@ export function createBlackboardPlugin({ kernel, resolveTtl = resolveWriteTokenT
     return () => {
       // Fence pending calls before removing the only disposal observer.
       const closed = lifecycle?.close()
-      offCreated?.(); offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.()
+      offCreated?.(); offTerminate?.(); offDisposed?.(); offRelease(); offBridge(); disposeRetrievalSection?.(); disposeRetrievalVariable?.(); disposeWorkerSection?.(); disposeWorkerVariable?.(); disposeForkProvenance()
       return closed?.catch(error => ctx.logger?.warn?.(String(error)))
     }
   }

@@ -335,3 +335,22 @@
         - id: weir-it-blackboard-provider
           name: 'weir-harness/blackboard'
           disabled: !!js process.env.WEIR_IT_BLACKBOARD !== '1'
+
+# Mirror the web-app bundle's Session Controller composition for the
+# blackboard-fork scenario only: the host's ordinary fork is a `session/fork`
+# Remote dispatched into this row, and it is the one place the fork source is
+# observable. `dsh-client-file-upload` cannot provide the `fileUploads` face this
+# row injects — it injects the web-only `connection` service and stays pending
+# headless — so the dev-only stub above supplies the four faces it uses. Order
+# matters: the stub row precedes the controller row. Never activate these rows
+# in a production profile.
+- insert:
+    - id: weir-it-fork-workspace
+      name: '@deepseek-ai/dsh-workspace'
+      disabled: !!js process.env.WEIR_IT_BLACKBOARD_FORK !== '1'
+    - id: weir-it-file-uploads-stub
+      name: './src/file-uploads-stub.js'
+      disabled: !!js process.env.WEIR_IT_BLACKBOARD_FORK !== '1'
+    - id: weir-it-session-controller
+      name: '@deepseek-ai/dsh-api-session-controller'
+      disabled: !!js process.env.WEIR_IT_BLACKBOARD_FORK !== '1'
