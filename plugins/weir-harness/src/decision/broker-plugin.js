@@ -18,7 +18,7 @@ function autoAnswerClasses(value) {
 export function decisionBrokerConfig(ctx) {
   const value = overlayConfig(ctx, 'decisionAgent', {}, { defaults: {
     enabled: false, answerTimeoutMs: 60000, maxAttemptsPerCase: 3,
-    contextBudgetTokens: 24000, maxOutputTokens: 1600, maxConcurrentAttempts: 4,
+    contextBudgetTokens: 24000, maxOutputTokens: 4096, maxConcurrentAttempts: 4,
     chains: {}, retentionDays: 0, storePath: '',
     selectorDefault: 'off', autoShadow: false, autoAnswerClasses: [],
   } })
