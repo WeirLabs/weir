@@ -14,6 +14,8 @@ window.__ModuleLoader__.load({
         decide: (caseId, answers) => call("decide", { caseId, answers }),
         reassign: (caseId, agentId) => call("reassign", { caseId, agentId }),
         cancel: caseId => call("cancel", { caseId }), retry: caseId => call("retry", { caseId }),
+        clarify: (caseId, question) => call("clarify", { caseId, question }),
+        returnToCaller: (caseId, note) => call("returnToCaller", { caseId, note }),
         feedback: (caseId, verb, text) => call("feedback", { caseId, verb, ...(text === undefined ? {} : { payload: { text } }) }),
         correction: (caseId, direction, scope, supersedes) => call("correction", { caseId, direction, scope, supersedes }),
         profileUpsert: value => call("profileUpsert", value), profileSetState: (agentId, state) => call("profileSetState", { agentId, state }),

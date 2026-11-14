@@ -161,6 +161,13 @@ window.__ModuleLoader__.load({
 .weir-da-more-details { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .weir-da-more-details > .weir-da-caption { padding: 0 4px 6px; }
 .weir-da-more-details > .weir-da-disclosure { flex: 0 0 auto; }
+.weir-da-user-tools { display: flex; flex-direction: column; gap: 6px; }
+.weir-da-clarification { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
+.weir-da-clarification strong { margin-inline-end: 6px; font-size: var(--weir-font-small-size, 12px); }
+.weir-da-clarification span { overflow-wrap: anywhere; }
+.weir-da-choice-custom { display: flex; flex-direction: column; gap: 6px; }
+.weir-da-choice-custom > label { display: flex; align-items: center; gap: 8px; }
+.weir-da-choice-custom .weir-da-answer-textarea { width: 100%; box-sizing: border-box; }
 .weir-da-suggestion-review ul, .weir-da-memory-summary { margin: 6px 0 0; padding-inline-start: 20px; }
 .weir-da-public-disclosure { min-width: 0; display: grid; gap: 6px; justify-items: start; }
 .weir-da-public-disclosure p { margin: 0; }
@@ -816,18 +823,24 @@ window.__ModuleLoader__.load({
       const pending = props.pending === true || submitting;
       const isAnswered = question => {
         const answer = answers[question.id];
+        const custom = typeof answer?.custom === "string" && answer.custom.trim().length > 0;
         return Array.isArray(question.options)
-          ? Array.isArray(answer?.selected) && answer.selected.length > 0
-          : typeof answer?.custom === "string" && answer.custom.length > 0;
+          ? (Array.isArray(answer?.selected) && answer.selected.length > 0) || custom
+          : custom;
       };
       const complete = questions.length > 0 && questions.every(isAnswered);
       const update = next => {
         setLocalAnswers(next);
         props.onChange?.(next);
       };
-      const answerFor = (question, value) => Array.isArray(question.options)
-        ? { selected: Array.isArray(value?.selected) ? value.selected.filter(item => typeof item === "string") : [] }
-        : { selected: [], ...(value?.custom === undefined ? {} : { custom: String(value.custom) }) };
+      const answerFor = (question, value) => {
+        const selected = Array.isArray(value?.selected) ? value.selected.filter(item => typeof item === "string") : [];
+        // A non-empty custom ruling replaces any option selection (single authority
+        // per question), on option questions and free-text questions alike.
+        const custom = typeof value?.custom === "string" && value.custom.trim().length > 0 ? value.custom : undefined;
+        if (!Array.isArray(question.options)) return { selected: [], ...(custom === undefined ? {} : { custom }) };
+        return custom === undefined ? { selected } : { selected: [], custom };
+      };
       const batch = () => questions.map(question => ({ id: question.id, ...answerFor(question, answers[question.id]) }));
       const fillSuggestions = () => {
         if (pending) return;
@@ -883,6 +896,27 @@ window.__ModuleLoader__.load({
                   ] }, "copy"),
                 ] }, `${value}:${index}`);
               }) }, "choices"),
+              // User authority is not limited to the offered options: a custom
+              // entry submits free text as the ruling instead of a selection.
+              jsx.jsxs("div", { className: "weir-da-choice weir-da-choice-custom", children: [
+                jsx.jsxs("label", { children: [
+                  jsx.jsx("input", {
+                    type: "checkbox", disabled: pending, "data-question-id": question.id,
+                    "aria-label": t("decisionCustomAnswer"), checked: typeof answer.custom === "string",
+                    onChange: event => update({
+                      ...answers,
+                      [question.id]: event.target.checked ? { selected: [], custom: "" } : { selected: Array.isArray(answer.selected) ? answer.selected : [] },
+                    }),
+                  }, "toggle"),
+                  jsx.jsx("span", { children: t("decisionCustomAnswer") }, "label"),
+                ] }, "toggle-label"),
+                typeof answer.custom === "string" ? jsx.jsx("textarea", {
+                  className: "weir-da-answer-textarea", rows: 2, disabled: pending,
+                  "aria-label": t("decisionCustomAnswer"), placeholder: t("decisionCustomAnswerPlaceholder"),
+                  value: answer.custom,
+                  onChange: event => update({ ...answers, [question.id]: { selected: [], custom: event.target.value } }),
+                }, "custom-text") : null,
+              ] }, "custom"),
             ] }, question.id);
           }),
           jsx.jsxs("div", { className: "weir-da-actions", children: [

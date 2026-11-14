@@ -19,6 +19,9 @@ export const AWAITING_REASONS = Object.freeze([
 ])
 export const FEEDBACK_KINDS = Object.freeze([
   'rating_up', 'rating_down', 'undo_rating_up', 'undo_rating_down', 'comment', 'correction',
+  // Read-only user→assistant clarification on a pending Case: no rating effect,
+  // no evidence eligibility, no answer authority.
+  'clarify',
 ])
 export const EVIDENCE_SOURCES = Object.freeze([
   'user_decision', 'user_correction', 'user_profile', 'agent_record', 'repo_doc', 'current_observation',

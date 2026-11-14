@@ -98,6 +98,13 @@ function decide(options, obs) {
   // The public consolidation contract reaches this brain through the generic
   // dispatcher (mock-llm only special-cases the private consolidation contract).
   if (obs.system.startsWith('Decision public consolidation contract v1')) return publicConsolidation(obs)
+  // Clarification contract: plain text only, echoing the asked question so the
+  // focused user-expression acceptance can assert the rendered answer.
+  if (obs.system.includes('clarify-contract/1')) {
+    const packed = (options.messages ?? []).map(message => typeof message.content === 'string' ? message.content : JSON.stringify(message.content ?? '')).join('\n')
+    const question = /QUESTION: ([^\n]*)/.exec(packed)?.[1] ?? ''
+    return textChunks(`现有依据只覆盖已提交的判断记录；关于「${question}」还需要新的裁决。`)
+  }
   const messages = options.messages ?? []
   if (messages.at(-1)?.role === 'tool') return textChunks('GUI_SCENARIO_DONE')
   const lastTool = messages.findLastIndex(message => message.role === 'tool')

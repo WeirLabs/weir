@@ -4,11 +4,11 @@ export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
 export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
   'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'routingReview', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
-  'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'profileUpsert', 'profileSetState', 'profileDeletePreview', 'profileDelete',
+  'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify', 'profileUpsert', 'profileSetState', 'profileDeletePreview', 'profileDelete',
   'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
   'publicMemoryRefresh', 'publicCandidate', 'exportData',
 ])
-const CASE_MUTATIONS = new Set(['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction'])
+const CASE_MUTATIONS = new Set(['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify'])
 const LEARNING_MUTATIONS = new Set(['learningStart', 'snapshotPublish', 'snapshotReject', 'snapshotRollback'])
 const PUBLIC_MEMORY_METHODS = new Set(['publicMemoryRefresh', 'publicCandidate'])
 // The export forwards one caller value, its session: the Host derives the root

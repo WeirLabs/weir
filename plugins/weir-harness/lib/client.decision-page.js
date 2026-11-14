@@ -134,7 +134,7 @@ window.__ModuleLoader__.load({
       const previous = (view?.history ?? []).filter(group => group.attempt?.attemptId !== view.currentAttempt?.attemptId);
       const pending = typeof props.pending === "string";
       const feedback = Array.isArray(detail.feedback) ? detail.feedback : [];
-      const feedbackKeys = { rating_up: "decisionUp", rating_down: "decisionDown", undo_rating_up: "decisionUndoUp", undo_rating_down: "decisionUndoDown", comment: "decisionComment", correction: "decisionCorrect" };
+      const feedbackKeys = { rating_up: "decisionUp", rating_down: "decisionDown", undo_rating_up: "decisionUndoUp", undo_rating_down: "decisionUndoDown", comment: "decisionComment", correction: "decisionCorrect", clarify: "decisionClarifyRecord" };
       return jsx.jsxs("article", { className: "weir-da-card weir-da-record-detail", "data-record-detail": current.caseId, children: [
         jsx.jsxs("header", { className: "weir-da-card-header", children: [
           jsx.jsxs("div", { children: [
@@ -193,6 +193,37 @@ window.__ModuleLoader__.load({
       ] });
     }
 
+    // User autonomy on a pending inbox item: clarify with the owning assistant
+    // (read-only, from the current evidence) or bounce the question back to its
+    // initiator with a required note.
+    function inboxUserTools(props, current, summary) {
+      const { t, ui, draft } = props;
+      const pending = typeof props.pending === "string";
+      const clarifyCount = (Array.isArray(props.evidence?.value?.feedback) ? props.evidence.value.feedback : []).filter(entry => entry?.kind === "clarify").length;
+      return [
+        jsx.jsxs("div", { className: "weir-da-actions weir-da-user-tools", children: [
+          summary?.assigned !== false && current.agentId ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-clarify", disabled: pending || clarifyCount >= 3, onClick: () => props.updateDraft("clarifyQuestion", draft.clarifyQuestion ?? ""), title: clarifyCount >= 3 ? t("decisionClarifyLimit") : undefined, children: t("decisionClarify") }, "open-clarify") : null,
+          jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-bounce", disabled: pending, onClick: () => props.updateDraft("bounceNote", draft.bounceNote ?? ""), children: t("decisionBounce") }, "open-bounce"),
+        ] }, "user-tools"),
+        draft.clarifyQuestion !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+          jsx.jsx(ui.Field, { id: `weir-da-inbox-clarify-${current.caseId}`, label: t("decisionClarify"), hint: t("decisionClarifyHint"), children: jsx.jsx("textarea", {
+            id: `weir-da-inbox-clarify-${current.caseId}`, "data-draft": "clarifyQuestion", "aria-label": t("decisionClarify"), value: draft.clarifyQuestion ?? "", disabled: pending,
+            placeholder: t("decisionClarifyPlaceholder"),
+            onChange: event => props.updateDraft("clarifyQuestion", event.target.value),
+          }) }, "clarify-field"),
+          jsx.jsx(ui.Button, { "data-action": "clarify", disabled: pending || !(draft.clarifyQuestion ?? "").trim(), onClick: () => props.run("clarify", current.caseId, (draft.clarifyQuestion ?? "").trim()), children: t("decisionClarifySubmit") }, "clarify"),
+        ] }, "clarify-editor") : null,
+        draft.bounceNote !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+          jsx.jsx(ui.Field, { id: `weir-da-inbox-bounce-${current.caseId}`, label: t("decisionBounce"), hint: t("decisionBounceHint"), children: jsx.jsx("textarea", {
+            id: `weir-da-inbox-bounce-${current.caseId}`, "data-draft": "bounceNote", "aria-label": t("decisionBounce"), value: draft.bounceNote ?? "", disabled: pending,
+            placeholder: t("decisionBouncePlaceholder"),
+            onChange: event => props.updateDraft("bounceNote", event.target.value),
+          }) }, "bounce-field"),
+          jsx.jsx(ui.Button, { variant: "secondary", "data-action": "bounce", disabled: pending || !(draft.bounceNote ?? "").trim(), onClick: () => props.run("returnToCaller", current.caseId, (draft.bounceNote ?? "").trim()), children: t("decisionBounceSubmit") }, "bounce"),
+        ] }, "bounce-editor") : null,
+      ];
+    }
+
     function InboxItem(props) {
       const current = props.item;
       const { t, ui, model, draft } = props;
@@ -231,6 +262,7 @@ window.__ModuleLoader__.load({
           questions, answers: draft.answers, suggestions, pending, collapseTitle: summary?.title,
           onChange: value => props.updateDraft("answers", value), onSubmit: value => props.run("decide", current.caseId, value), t,
         }, "answers"),
+        ...inboxUserTools(props, current, summary),
         jsx.jsx(ui.Disclosure, {
           id: `weir-da-evidence-${current.caseId}`, label: t("decisionEvidence"), onOpen: () => props.loadEvidence(false),
           revealOnOpen: "end", revealReady: evidenceRevealReady,
@@ -1059,7 +1091,7 @@ window.__ModuleLoader__.load({
         const epoch = epochRef.current;
         try {
           const result = await actions[method](...args);
-          if (["decide", "reassign", "retry", "cancel", "feedback", "correction"].includes(method)) {
+          if (["decide", "reassign", "retry", "cancel", "feedback", "correction", "clarify", "returnToCaller"].includes(method)) {
             const caseId = args[0];
             const authoritative = await actions.record(caseId);
             if (!authoritative?.case) throw new Error("Decision record reread returned no record");
@@ -1070,6 +1102,8 @@ window.__ModuleLoader__.load({
             if (method === "reassign") clearDraft(caseId, ["reassignTarget"]);
             if (method === "feedback" && args[1] === "comment") clearDraft(caseId, ["comment"]);
             if (method === "correction") clearDraft(caseId, ["correction"]);
+            if (method === "clarify") clearDraft(caseId, ["clarifyQuestion"]);
+            if (method === "returnToCaller") clearDraft(caseId, ["bounceNote"]);
           } else if (method === "profileUpsert" || method === "profileSetState") {
             const agentId = method === "profileUpsert" ? result?.agentId : args[0];
             if (typeof agentId !== "string" || !agentId) throw new Error("Assistant reread requires the saved assistant id");

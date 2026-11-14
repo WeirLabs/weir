@@ -22,7 +22,7 @@ const ALLOWED = {
   received: { evaluating: true, awaiting_user: true, closed: ['cancelled'] },
   evaluating: { awaiting_revision: true, awaiting_user: true, closed: ['answered', 'cancelled'] },
   awaiting_revision: { evaluating: true, closed: ['returned', 'cancelled'] },
-  awaiting_user: { evaluating: true, closed: ['escalated', 'cancelled'] },
+  awaiting_user: { evaluating: true, awaiting_revision: true, closed: ['escalated', 'cancelled'] },
   closed: {},
 }
 
