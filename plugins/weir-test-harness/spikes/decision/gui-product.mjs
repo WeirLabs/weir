@@ -767,7 +767,9 @@ async function cardState(caseId) {
       const content=[...card.children]
       const formIndex=content.indexOf(form)
       const secondary=content.filter(el=>el.classList.contains('weir-da-disclosure')||el.classList.contains('weir-da-feedback-editor')||el.matches('button.weir-da-button'))
-      return secondary.length===7&&secondary.every(el=>content.indexOf(el)>formIndex)
+      // Progressive disclosure: 3 top-level disclosures (evidence, more-details,
+      // recovery) + feedback row + ghost open-record button = 5 secondary blocks.
+      return secondary.length===5&&secondary.every(el=>content.indexOf(el)>formIndex)
     })
     return {cards:cards.length,forms,formImmediatelyAfterHeader,formBeforeSecondary,recordAnswerSummaries:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-record-answers').length,0),suggestionReviews:cards.reduce((sum,card)=>sum+card.querySelectorAll('.weir-da-suggestion-review').length,0),nativeHints:cards.reduce((sum,card)=>sum+card.querySelectorAll('[data-native-answer]').length,0),text:cards.map(card=>card.innerText).join('\\n---\\n')}
   })()`)
@@ -1245,7 +1247,9 @@ async function unownedInbox(sessionId, caseId, label, routeRequired = true) {
   await openIsolatedSession(sessionId, true)
   const authority = await record(sessionId, `${label}-unowned`, caseId)
   await waitFor(async () => { const value=await cardState(caseId); return value.cards===1?value:null }, 30_000)
-  if (routeRequired) await openDisclosure(`weir-da-card-routes-${caseId}`)
+  // Card diagnostics are grouped under the More-details disclosure: open the
+  // group first so the nested route-history trigger exists in the DOM.
+  if (routeRequired) { await openDisclosure(`weir-da-card-more-${caseId}`); await openDisclosure(`weir-da-card-routes-${caseId}`) }
   const card = await instance.cdp.evaluate(`(() => { const root=document.querySelector('[data-weir-decision-card=${JSON.stringify(caseId)}]'); return {text:root.innerText,routeText:root.querySelector('.weir-da-route-history')?.innerText??'',retry:root.querySelectorAll('[data-action="retry"]').length,feedback:root.querySelectorAll('[data-feedback]').length,nativeHint:root.querySelectorAll('[data-native-answer]').length} })()`)
   check(`${label}UnownedConversationRouteHistory`, card.retry === 0 && card.feedback === 0 && card.nativeHint === 1 && (!routeRequired || card.routeText.trim().length > 0) && (routeRequired || authority.routeDecisions.length === 0), { caseId, card })
   await openPage('inbox')
