@@ -634,7 +634,11 @@ window.__ModuleLoader__.load({
         const width = viewport?.width ?? view?.innerWidth ?? 0;
         const height = viewport?.height ?? view?.innerHeight ?? 0;
         if (!width || !height) return;
-        const panelWidth = Math.min(Math.max(rect.width, 320), Math.max(240, width - margin * 2), 360);
+        // Tiny visual viewports (e.g. 200% zoom on a 360 CSS px window leaves
+        // 180 px visible): the 240/320 px floors must yield to the viewport
+        // margins, or the panel overflows the visible area it is clamped to.
+        const fitWidth = Math.max(120, width - margin * 2);
+        const panelWidth = Math.min(Math.max(rect.width, 320), fitWidth, 360);
         dialog.style.position = "fixed";
         dialog.style.margin = "0";
         dialog.style.width = `${panelWidth}px`;
@@ -642,11 +646,11 @@ window.__ModuleLoader__.load({
         const spaceAbove = rect.top - top - gap - margin;
         const spaceBelow = top + height - rect.bottom - gap - margin;
         const placeAbove = spaceAbove >= Math.min(measured.height || 0, 240) || spaceAbove >= spaceBelow;
-        const available = Math.max(160, placeAbove ? spaceAbove : spaceBelow);
+        const available = Math.min(Math.max(120, height - margin * 2), Math.max(160, placeAbove ? spaceAbove : spaceBelow));
         dialog.style.maxHeight = `${Math.min(560, available)}px`;
         const clampedLeft = Math.max(left + margin, Math.min(rect.left, left + width - margin - panelWidth));
         const panelHeight = Math.min(dialog.getBoundingClientRect().height || 0, Math.min(560, available));
-        const positionedTop = placeAbove ? Math.max(top + margin, rect.top - gap - panelHeight) : rect.bottom + gap;
+        const positionedTop = placeAbove ? Math.max(top + margin, rect.top - gap - panelHeight) : Math.max(top + margin, Math.min(rect.bottom + gap, top + height - margin - panelHeight));
         dialog.style.left = `${clampedLeft}px`;
         dialog.style.top = `${positionedTop}px`;
         dialog.dataset.placement = placeAbove ? "above" : "below";
