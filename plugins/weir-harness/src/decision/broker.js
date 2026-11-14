@@ -14,6 +14,7 @@ import { canonicalJson, DecisionContractError, parseAnswerBatch } from './contra
 import { buildContextPack } from './evaluator/pack.js'
 import { runDecisionAttempt } from './evaluator/attempt-pipeline.js'
 import { resolveDecisionModelRoute, streamDecision } from './evaluator/sidecar.js'
+import { clarifyCase } from './evaluator/clarify.js'
 import {
   applyConsolidationOperations, buildConsolidationPack, parseConsolidationCandidate, replayOperations,
 } from './learning/consolidator.js'
@@ -363,7 +364,7 @@ export class DecisionBroker {
       return { outcome: 'answered', caseId: current.caseId, userDecided: true, answer: current.decision.answers[0], evidence, revision: current.revision }
     }
     if (current.state === 'awaiting_revision' || (current.state === 'closed' && current.closing === 'returned')) {
-      return { outcome: 'returned', caseId: current.caseId, code: current.decision?.code ?? latest?.reasonCode ?? verdict?.code, hint: current.decision?.hint ?? latest?.hint ?? verdict?.hint }
+      return { outcome: 'returned', caseId: current.caseId, code: current.decision?.code ?? latest?.reasonCode ?? verdict?.code, hint: current.decision?.hint ?? latest?.hint ?? verdict?.hint ?? current.escalation?.bounce }
     }
     if (current.state === 'closed' && current.closing === 'cancelled') throw new DecisionContractError('DECISION_CANCELLED', current.caseId)
     return { outcome: 'awaiting_user', caseId: current.caseId, state: current.state, reason: current.awaitingReason }
@@ -806,6 +807,17 @@ export class DecisionBroker {
     }
     switch (input.action) {
       case 'decide': return this.hookUserAnswer({ caseId: current.caseId, answer: { answers: input.answers } })
+      case 'returnToCaller': {
+        // The user bounces the question back to its initiator: the only new
+        // state transition is awaiting_user → awaiting_revision; the required
+        // note rides the repair-hint channel and turn-end closes as returned.
+        if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be returned to the caller')
+        const note = typeof input.note === 'string' ? input.note.trim() : ''
+        if (!note || note.length > 4000) throw new DecisionContractError('MISSING_CONTEXT', 'A bounce note of 1..4000 characters is required')
+        const revised = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'awaiting_revision', escalation: { ...(current.escalation ?? {}), bounce: note } })
+        this.audit('outcome', { caseId: current.caseId, action: 'returnToCaller' })
+        return revised
+      }
       case 'cancel': return this.hookUserAborted({ caseId: current.caseId })
       case 'reassign': {
         if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_RECOVERABLE', 'Only awaiting_user Cases can be reassigned')
@@ -864,6 +876,43 @@ export class DecisionBroker {
     return this.evaluateCase(evaluating, agent)
   }
 
+  // User bounces a pending question back to its initiator with a required note.
+  async returnToCaller(input) { return this.mutate({ ...input, action: 'returnToCaller' }) }
+
+  // Read-only user→assistant clarification on a pending Case (clarify-contract/1):
+  // the model explains the existing evidence pack; the record is appended as a
+  // 'clarify' feedback row (no rating effect, no evidence eligibility).
+  async clarify(input) {
+    await this.ensureStore()
+    const current = this.cases.getCase(input.caseId)
+    if ((input.sessionId !== undefined || input.workspaceKey !== undefined) && (input.sessionId !== current.rootSessionId || input.workspaceKey !== current.workspaceKey)) {
+      this.rejectBoundary({ caseId: current.caseId, rootSessionId: input.sessionId })
+    }
+    if (current.state !== 'awaiting_user' && current.state !== 'awaiting_revision') {
+      throw new DecisionContractError('NOT_RECOVERABLE', 'Only pending Cases accept clarifications')
+    }
+    if (typeof current.agentId !== 'string' || !current.agentId) {
+      throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Case has no assistant to clarify with')
+    }
+    const question = typeof input.question === 'string' ? input.question.trim() : ''
+    if (!question || question.length > 2000) throw new DecisionContractError('MISSING_CONTEXT', 'A clarification question of 1..2000 characters is required')
+    const prior = this.store.db.prepare("SELECT COUNT(*) AS n FROM feedback WHERE case_id=? AND kind='clarify'").get(current.caseId).n
+    if (prior >= 3) throw new DecisionContractError('CLARIFY_LIMIT', 'Clarification limit reached for this Case')
+    const cited = [...new Set(this.attempts.forCase(current.caseId).flatMap(attempt => Array.isArray(attempt.citedEvidenceIds) ? attempt.citedEvidenceIds : []))]
+    const evidence = cited.map(id => this.evidence.get(id)).filter(value => value && value.status === 'active').map(value => ({ excerpt: value.excerpt }))
+    const agent = await this.rootAgent(current.rootSessionId)
+    const result = await clarifyCase({
+      llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent),
+      timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
+      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
+      questions: current.request.questions ?? [], evidence, question,
+    })
+    if (result.kind !== 'ok') throw new DecisionContractError('CLARIFY_FAILED', `Clarification failed: ${result.reason}`)
+    await this.feedbackStore.append({ actor: { kind: 'user' }, caseId: current.caseId, kind: 'clarify', payload: { question, answer: result.text } })
+    this.audit('feedback', { caseId: current.caseId, kind: 'clarify', count: prior + 1 })
+    return this.cases.getCase(current.caseId)
+  }
+
   async turnStopping({ agent }) {
     if (!this.store) return { closed: 0 }
     const rows = this.store.db.prepare("SELECT case_id FROM cases WHERE state='awaiting_revision' AND origin_session_id=?").all(agent.id)
@@ -871,10 +920,13 @@ export class DecisionBroker {
     for (const row of rows) {
       const current = this.cases.getCase(row.case_id)
       const latest = this.attempts.forCase(current.caseId).at(-1)
-      if (!latest || latest.outcome !== 'return') continue
-      await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'closed', closing: 'returned', decision: { kind: 'return', attemptId: latest.attemptId, code: latest.reasonCode, hint: latest.hint, decidedAt: this.now() } })
+      // Bounced cases carry no 'return' attempt: the user's bounce note is the
+      // closing hint, so they close at turn end exactly like returned ones.
+      const bounce = current.escalation?.bounce
+      if (!latest || (latest.outcome !== 'return' && typeof bounce !== 'string')) continue
+      await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'closed', closing: 'returned', decision: latest?.outcome === 'return' ? { kind: 'return', attemptId: latest.attemptId, code: latest.reasonCode, hint: latest.hint, decidedAt: this.now() } : { kind: 'return', hint: bounce, decidedAt: this.now() } })
       closed++
-      this.audit('outcome', { caseId: current.caseId, closing: 'returned', attemptId: latest.attemptId })
+      this.audit('outcome', { caseId: current.caseId, closing: 'returned', attemptId: latest?.attemptId })
     }
     return { closed }
   }

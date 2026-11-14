@@ -102,6 +102,8 @@ window.__ModuleLoader__.load({
           if (method === "reassign") clearDraft(requestSession, targetCaseId, ["reassignTarget"]);
           if (method === "feedback" && args[1] === "comment") { clearDraft(requestSession, targetCaseId, ["comment"]); setEditor(null); }
           if (method === "correction") { clearDraft(requestSession, targetCaseId, ["correction"]); setEditor(null); }
+          if (method === "clarify") { clearDraft(requestSession, targetCaseId, ["clarifyQuestion"]); setEditor(null); }
+          if (method === "returnToCaller") { clearDraft(requestSession, targetCaseId, ["bounceNote"]); setEditor(null); }
         } catch (reason) {
           if (generation === generationRef.current) setError({ reason, kind: "action" });
         } finally { pendingRef.current = false; setPending(null); }
@@ -174,6 +176,8 @@ window.__ModuleLoader__.load({
       const moreDetailsHintKey = view.routeHistory.some(route => ["decisionRouteStatusAmbiguous", "decisionRouteStatusFailure"].includes(route?.statusKey))
         ? "decisionMoreDetailsRouteIssue"
         : view.history.some(group => group.attempt?.outcome === "failed") ? "decisionMoreDetailsFailedAttempt" : null;
+      const clarifications = (Array.isArray(detail.feedback) ? detail.feedback : []).filter(entry => entry?.kind === "clarify");
+      const latestClarify = clarifications.at(-1);
       const isPending = pending !== null;
       // Ratings answer "was this answer right", so they appear only once a
       // decision exists (or feedback was already recorded); notes/corrections
@@ -234,6 +238,35 @@ window.__ModuleLoader__.load({
               return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown")}` }, entry?.id ?? index);
             }) }, "per-question") : null,
           ] }, "guidance") : null,
+          // User autonomy on a pending decision: ask the owning assistant for
+          // more context (read-only clarification), or bounce the question back
+          // to its initiator with a required note.
+          waiting ? jsx.jsxs("section", { className: "weir-da-user-tools", children: [
+            latestClarify ? jsx.jsxs("div", { className: "weir-da-clarification", "data-clarification": true, children: [
+              jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyYouAsked") }, "q-label"), jsx.jsx("span", { children: latestClarify.payload?.question ?? "" }, "q")] }, "question"),
+              jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyAnswer") }, "a-label"), jsx.jsx("span", { children: latestClarify.payload?.answer ?? "" }, "a")] }, "answer"),
+            ] }, "latest-clarify") : null,
+            jsx.jsxs("div", { className: "weir-da-actions", children: [
+              view.assigned ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-clarify", disabled: isPending || clarifications.length >= 3, title: clarifications.length >= 3 ? t("decisionClarifyLimit") : undefined, onClick: () => toggleEditor("clarify"), children: t("decisionClarify") }, "open-clarify") : null,
+              jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-bounce", disabled: isPending, onClick: () => toggleEditor("bounce"), children: t("decisionBounce") }, "open-bounce"),
+            ] }, "entries"),
+            editor === "clarify" ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+              jsx.jsx(ui.Field, { id: `weir-da-card-clarify-${view.caseId}`, label: t("decisionClarify"), hint: t("decisionClarifyHint"), children: jsx.jsx("textarea", {
+                id: `weir-da-card-clarify-${view.caseId}`, "data-draft": "clarifyQuestion", "aria-label": t("decisionClarify"), value: draft.clarifyQuestion ?? "", disabled: isPending,
+                placeholder: t("decisionClarifyPlaceholder"),
+                onChange: event => updateDraft("clarifyQuestion", event.target.value),
+              }) }, "clarify-field"),
+              jsx.jsx(ui.Button, { "data-action": "clarify", disabled: isPending || !(draft.clarifyQuestion ?? "").trim(), onClick: () => run("clarify", view.caseId, draft.clarifyQuestion.trim()), children: t("decisionClarifySubmit") }, "clarify-action"),
+            ] }, "clarify-editor") : null,
+            editor === "bounce" ? jsx.jsxs("div", { className: "weir-da-feedback-editor", children: [
+              jsx.jsx(ui.Field, { id: `weir-da-card-bounce-${view.caseId}`, label: t("decisionBounce"), hint: t("decisionBounceHint"), children: jsx.jsx("textarea", {
+                id: `weir-da-card-bounce-${view.caseId}`, "data-draft": "bounceNote", "aria-label": t("decisionBounce"), value: draft.bounceNote ?? "", disabled: isPending,
+                placeholder: t("decisionBouncePlaceholder"),
+                onChange: event => updateDraft("bounceNote", event.target.value),
+              }) }, "bounce-field"),
+              jsx.jsx(ui.Button, { variant: "secondary", "data-action": "bounce", disabled: isPending || !(draft.bounceNote ?? "").trim(), onClick: () => run("returnToCaller", view.caseId, draft.bounceNote.trim()), children: t("decisionBounceSubmit") }, "bounce-action"),
+            ] }, "bounce-editor") : null,
+          ] }, "user-tools") : null,
           view.assigned ? jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
             view.feedbackState === "validated" || view.feedbackState === "disputed" ? jsx.jsx(ui.Badge, { variant: "idle", children: t(view.feedbackState === "validated" ? "decisionFeedbackValidated" : "decisionFeedbackDisputed") }, "feedback-state") : null,
             ratingsVisible ? jsx.jsx("div", { className: "weir-da-actions", children: ratings.map(action => jsx.jsx(ui.Button, {

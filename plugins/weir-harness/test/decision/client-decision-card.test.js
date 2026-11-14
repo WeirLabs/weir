@@ -888,6 +888,56 @@ test('unowned Auto consult and Hook cards retain their native answer paths but n
   }
 })
 
+test('waiting cards offer clarify and bounce, and the clarifications render', async () => {
+  let current = { ...waitingDetail }
+  const calls = []
+  const mounted = await mount(current, {
+    props: { toolName: 'decision_consult' },
+    decisionRpc: async (_connection, method, request) => {
+      calls.push([method, request])
+      if (method === 'overview') return { agents }
+      if (method === 'caseForToolCall' || method === 'record') return current
+      if (method === 'clarify') {
+        current = { ...current, feedback: [...(current.feedback ?? []), { feedbackId: 'fb-clarify', kind: 'clarify', actor: 'user', payload: { question: request.question, answer: 'The pack only covers the title.' } }] }
+        return current.case
+      }
+      return null
+    },
+  })
+  let tree = mounted.render()
+  action(tree, mounted.ui, 'open-clarify').onClick()
+  tree = mounted.render()
+  const clarifyField = draftInput(tree, 'clarifyQuestion')
+  clarifyField.onChange({ target: { value: '现有依据说了什么？' } })
+  tree = mounted.render()
+  await action(tree, mounted.ui, 'clarify').onClick()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.deepEqual(calls.filter(call => call[0] === 'clarify'), [['clarify', { sessionId: 'root', caseId: 'dc-current', question: '现有依据说了什么？' }]])
+  tree = mounted.render()
+  const block = findAll(tree, node => node['data-clarification'] === true)[0]
+  assert.ok(block)
+  assert.match(textContent(block), /decisionClarifyYouAsked/)
+  assert.match(textContent(block), /The pack only covers the title\./)
+
+  action(tree, mounted.ui, 'open-bounce').onClick()
+  tree = mounted.render()
+  draftInput(tree, 'bounceNote').onChange({ target: { value: '前提不对，请重新组织问题。' } })
+  tree = mounted.render()
+  await action(tree, mounted.ui, 'bounce').onClick()
+  for (let index = 0; index < 8; index++) await Promise.resolve()
+  assert.deepEqual(calls.filter(call => call[0] === 'returnToCaller'), [['returnToCaller', { sessionId: 'root', caseId: 'dc-current', note: '前提不对，请重新组织问题。' }]])
+  mounted.unmount()
+})
+
+test('the clarification entry disables itself once the per-case limit is used', async () => {
+  const used = { ...waitingDetail, feedback: [1, 2, 3].map(index => ({ feedbackId: `fb-${index}`, kind: 'clarify', actor: 'user', payload: { question: `q${index}`, answer: `a${index}` } })) }
+  const mounted = await mount(used, { props: { toolName: 'decision_consult' } })
+  const tree = mounted.render()
+  assert.equal(action(tree, mounted.ui, 'open-clarify').disabled, true)
+  assert.ok(action(tree, mounted.ui, 'open-bounce'))
+  mounted.unmount()
+})
+
 test('explicit reassign is single-flight and restores normal owned recovery and route history', async () => {
   let current = unownedAutoDetail
   let release

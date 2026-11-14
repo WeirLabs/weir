@@ -939,10 +939,12 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   let tree = render()
   assert.equal(findAll(tree, node => node.type === 'select').length, 0)
   assert.deepEqual(findAll(tree, node => node.type === 'legend').map(node => node.children), ['Choose one', 'Choose many'])
-  const actualRadios = findAll(tree, node => node.type === 'input' && node['data-question-id'] === 'single')
+  // Option controls only: the custom-answer toggle is a separate entry.
+  const actualRadios = findAll(tree, node => node.type === 'input' && node.inputType === 'radio' && node['data-question-id'] === 'single')
   assert.equal(actualRadios.length, 2)
+  assert.equal(findAll(tree, node => node.type === 'input' && node['data-question-id'] === 'single' && node['aria-label'] === 'decisionCustomAnswer').length, 1)
   assert.ok(actualRadios.every(node => node.inputType === 'radio' && node.name === 'weir-da-answer-single'))
-  const checkboxes = findAll(tree, node => node.type === 'input' && node['data-question-id'] === 'multi')
+  const checkboxes = findAll(tree, node => node.type === 'input' && node.name === 'weir-da-answer-multi')
   assert.equal(checkboxes.length, 2)
   assert.ok(checkboxes.every(node => node.inputType === 'checkbox'))
   const textarea = findAll(tree, node => node.type === 'textarea')[0]
@@ -992,6 +994,39 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   await Promise.resolve()
   tree = render()
   assert.equal(tree['aria-busy'], false)
+})
+
+test('option questions accept a custom ruling that replaces the selection', async () => {
+  const runtime = makeReact()
+  const ui = await load(runtime.react)
+  const submissions = []
+  const questions = [{ id: 'single', question: 'Choose one', options: [{ label: 'Alpha' }, { label: 'Beta' }] }]
+  const props = {
+    questions,
+    onChange: () => {},
+    onSubmit: value => { submissions.push(value); return Promise.resolve() },
+    t: key => key,
+  }
+  let tree
+  const render = () => { runtime.begin(); tree = ui.DecisionAnswers(props) }
+  render()
+  // Picking an option is the ordinary path…
+  findAll(tree, node => node.type === 'input' && node.inputType === 'radio')[0].onChange({ target: { checked: true } })
+  render()
+  assert.equal(findAll(tree, node => node.type === 'textarea' && node['aria-label'] === 'decisionCustomAnswer').length, 0)
+  // …and the custom entry replaces that selection once toggled on.
+  const toggle = findAll(tree, node => node.type === 'input' && node['aria-label'] === 'decisionCustomAnswer')[0]
+  assert.ok(toggle)
+  toggle.onChange({ target: { checked: true } })
+  render()
+  const textarea = findAll(tree, node => node.type === 'textarea' && node['aria-label'] === 'decisionCustomAnswer')[0]
+  assert.ok(textarea, 'toggling the custom entry reveals its textarea')
+  textarea.onChange({ target: { value: 'Neither; use a shorter label' } })
+  render()
+  assert.equal(findAll(tree, node => node.children === 'decisionDecide')[0].disabled, false)
+  await tree.onSubmit({ preventDefault() {} })
+  await Promise.resolve()
+  assert.deepEqual(submissions, [[{ id: 'single', selected: [], custom: 'Neither; use a shorter label' }]])
 })
 
 test('DecisionAnswers scopes accessible ids per form instance', async () => {

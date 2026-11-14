@@ -2418,6 +2418,7 @@ describe('weir settings client half', () => {
     'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecision',
     'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
     'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord', 'decisionMoreDetails', 'decisionMoreDetailsRouteIssue', 'decisionMoreDetailsFailedAttempt', 'decisionFeedbackHintShort',
+    'decisionCustomAnswer', 'decisionCustomAnswerPlaceholder', 'decisionClarify', 'decisionClarifyHint', 'decisionClarifyPlaceholder', 'decisionClarifySubmit', 'decisionClarifyLimit', 'decisionClarifyYouAsked', 'decisionClarifyAnswer', 'decisionClarifyRecord', 'decisionBounce', 'decisionBounceHint', 'decisionBouncePlaceholder', 'decisionBounceSubmit',
     'decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect', 'decisionDecide', 'decisionUseSuggestions', 'decisionAnswersIncomplete',
     'decisionSelectTitle', 'decisionSelectorSafety', 'decisionManageAgents', 'decisionCreateAgent', 'decisionGlobalOff', 'decisionGlobalOffHint',
     'decisionReassign', 'decisionCancel', 'decisionRetry', 'decisionSave',
