@@ -3228,6 +3228,10 @@ async function runColdRevealMatrix(sessionId, caseId) {
   const draftSelector = `${form} textarea`
   const draftBefore = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(draftSelector)})?.value`)
   requireEvidence(typeof draftBefore === 'string', 'the cold refresh draft is a real textarea value')
+  // Anchor focus on the draft field BEFORE the baseline: the round trip keeps
+  // focus on the same element, so browser focus-scroll cannot masquerade as a
+  // refresh-induced scroll jump between baseline and refreshed measurements.
+  await keyboardFocus('Anchor cold refresh focus on the draft field', draftSelector)
   const routeRefreshBaseline = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
   const evidenceRefreshBaseline = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
   const transientDraft = 'Transient cold refresh draft'
