@@ -1,13 +1,17 @@
 // Fork-seeding acceptance probe (dev-only, gated on the blackboard-fork
 // scenario): seeds the main session's durable board through the product
-// kernel, forks the session through the real agents.create path with the
-// exact meta shape DSH's session controller produces (depth stays 0,
-// parentSession lands in the v4 log header), then asserts the fork's board
-// opened as a one-time snapshot of the source root board — entries, counts
-// and promotion markers cross; volatile tokens/subscriptions never do — and
-// that the source board is left untouched.
+// kernel, forks the session through the REAL host path — a `session/fork`
+// Remote dispatched by the gateway into the Session Controller, which builds
+// the seed and calls agents.create — and asserts the fork's board opened as a
+// one-time snapshot of the source root board: entries, counts and promotion
+// markers cross; volatile tokens/subscriptions never do; the source board is
+// left untouched.
+//
+// The probe also pins the host's ACTUAL fork shape (no parentSession in the
+// header, meta carrying only cwd/isSeeded), because the previous version of
+// this file fabricated the old shape and stayed green through the host change
+// that silently disabled seeding.
 import { existsSync, readFileSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
 import { runtimeBlackboard, resolveDurableRoot } from '../../weir-harness/src/blackboard/durable.js'
 
 export function installBlackboardForkProbe(ctx, tap) {
@@ -30,12 +34,33 @@ export function installBlackboardForkProbe(ctx, tap) {
       await runtime.kernel.apply(id, { holderId: id, key: 'editable', ttlMs: 60000 })
       await runtime.kernel.apply(id, { holderId: 'probe-subscriber', key: 'editable', ttlMs: 60000 })
       await runtime.kernel.markPromoted(id, { key: 'knowledge', destination: 'runtime-map' })
-      // Fork through the real product path: the exact shape DSH's session
-      // controller produces for a fork (a seeded session requires an explicit
-      // constructor seed + inherited prefix length; an empty seed with a zero
-      // count is the minimal valid fork and lands the same header meta).
-      const forkId = `session-${randomUUID()}`
-      const fork = await ctx.agents.create({ sessionId: forkId, seed: [], inheritedEventCount: 0, meta: { cwd, parentSession: id, isSeeded: true } })
+      // Fork through the real host path: the GUI asks the gateway for
+      // `session/fork`, and the Session Controller resolves the source, builds
+      // the seed and calls agents.create with meta { cwd, isSeeded } — no
+      // parentSession, no replacement provenance field.
+      const gateway = ctx.get?.('typertGateway')
+      if (typeof gateway?.dispatchRpc !== 'function') throw new Error('blackboard fork: typertGateway is unavailable')
+      const agents = ctx.get?.('agents')
+      const originalCreate = agents.create
+      const creates = []
+      agents.create = async function (options, ...rest) {
+        const out = await originalCreate.call(this, options, ...rest)
+        creates.push({ sessionId: options?.sessionId, metaKeys: Object.keys(options?.meta ?? {}).sort(), inheritedEventCount: options?.inheritedEventCount ?? null })
+        return out
+      }
+      let forked
+      try {
+        const peer = { principal: { kind: 'owner' }, interactions: 'none', signal: new AbortController().signal }
+        const result = await gateway.dispatchRpc('session/fork', { args: { request: { sessionId: id, atSeq: 0 } } }, peer.signal, peer)
+        if (result?.ok !== true) throw new Error(`blackboard fork: session/fork failed (${result?.error?.code ?? 'unknown'}: ${result?.error?.message ?? ''})`)
+        forked = result.value?.sessionId
+      } finally {
+        if (agents.create !== originalCreate) agents.create = originalCreate
+      }
+      const forkId = forked
+      if (typeof forkId !== 'string' || forkId.length === 0) throw new Error('blackboard fork: session/fork returned no child session id')
+      const fork = ctx.get?.('agents')?.get?.(forkId)
+      const childHeader = fork?.session?.header
       try {
         // The product agent/created hook seeds and materializes the fork
         // board; wait for the canonical sidecar with a bounded deadline.
@@ -64,11 +89,14 @@ export function installBlackboardForkProbe(ctx, tap) {
           forkSubscriptionsEmpty: (await runtime.kernel.subscriptionsOf(forkId)).length === 0,
           sourceKeys,
           forkReadContent: forkRead.found[0]?.content ?? null,
+          // The host shape this probe exists to pin.
+          childHeader: childHeader ? { parentSession: childHeader.parentSession ?? null, isSeeded: childHeader.isSeeded ?? null } : null,
+          forkMeta: creates.find(row => row.sessionId === forkId) ?? null,
         }
         tap({ kind: 'blackboard-fork-check', ...report })
         return report
       } finally {
-        await fork.dispose().catch(() => {})
+        await fork?.dispose?.().catch?.(() => {})
       }
     },
   })
