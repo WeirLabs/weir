@@ -624,8 +624,8 @@ function renderDelegateResult(value) {
     })
     const failed = value.children.filter((child) => child.status === 'error').length
     const text = failed > 0
-      ? `Continuable batch: ${value.children.length - failed} child(ren) started and ${failed} item(s) failed; each started child's result arrives in a built-in settlement notice (no jobs wrapper):\n${lines.join('\n')}\n\nInspect every item above. Follow up started children with send_message({ agent_id, message }); interrupt_agent interrupts the current turn without destroying the child.`
-      : `Started ${value.children.length} continuable child(ren); each result arrives in a built-in settlement notice (no jobs wrapper — the notice IS the report channel):\n${lines.join('\n')}\n\nFollow up any of them with send_message({ agent_id, message }) — mid-course correction or post-settlement questions; interrupt_agent interrupts the current turn without destroying the child.`
+      ? `Continuable batch: ${value.children.length - failed} child(ren) started and ${failed} item(s) failed; each started child's result arrives in a built-in settlement notice (no jobs wrapper):\n${lines.join('\n')}\n\nInspect every item above. Follow up started children with send_message({ agent, message }) — the child's subagent name, as the settlement notice names it (or list_agents); interrupt_agent interrupts the current turn without destroying the child.`
+      : `Started ${value.children.length} continuable child(ren); each result arrives in a built-in settlement notice (no jobs wrapper — the notice IS the report channel):\n${lines.join('\n')}\n\nFollow up any of them with send_message({ agent, message }) — the child's subagent name, as the settlement notice names it (or list_agents); mid-course correction or post-settlement questions, and interrupt_agent interrupts the current turn without destroying the child.`
     // A mixed batch also has one-shot results, rendered after the childId list.
     if (!value.results) return text
     return `${text}\n\n---\n\n${renderForegroundResults(value.results)}`
