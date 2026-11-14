@@ -158,6 +158,19 @@ test('answered card presents real questions and answers with a lean static layer
   assert.match(textContent(advanced.children()), /dc-current/)
 })
 
+test('more-details entry previews substantive diagnostic signals only', async () => {
+  const plain = await mount()
+  assert.equal(moreDetails(plain.render(), plain.ui).label, 'decisionMoreDetails')
+
+  const failedDetail = { ...answeredDetail, attempts: [{ ...answeredDetail.attempts[0], outcome: 'failed' }, answeredDetail.attempts[1]] }
+  const failedMount = await mount(failedDetail)
+  assert.equal(moreDetails(failedMount.render(), failedMount.ui).label, 'decisionMoreDetails · decisionMoreDetailsFailedAttempt')
+
+  const routed = { ...answeredDetail, routeDecisions: [{ routeDecisionId: 'rd-1', mode: 'auto', chosen: null, reason: 'failure:model_error', createdAt: '2026-01-02T03:04:05.000Z' }] }
+  const routedMount = await mount(routed)
+  assert.equal(moreDetails(routedMount.render(), routedMount.ui).label, 'decisionMoreDetails · decisionMoreDetailsRouteIssue')
+})
+
 test('production card fallback uses the active locale for an unavailable assistant', async () => {
   const model = (await loadClientChunk('lib/client.decision-model.js')).exports
   const detail = {
@@ -471,7 +484,7 @@ function recovery(tree, ui) {
 }
 
 function moreDetails(tree, ui) {
-  return findAll(tree, node => node.__type === ui.Disclosure && node.label === 'decisionMoreDetails')[0]
+  return findAll(tree, node => node.__type === ui.Disclosure && String(node.label).startsWith('decisionMoreDetails'))[0]
 }
 
 function nestedDisclosure(tree, ui, label) {

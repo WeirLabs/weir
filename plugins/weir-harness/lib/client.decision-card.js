@@ -168,6 +168,12 @@ window.__ModuleLoader__.load({
       const suggestions = Array.isArray(view.escalation?.suggestion) ? view.escalation.suggestion : [];
       const perQuestion = Array.isArray(view.escalation?.perQuestion) ? view.escalation.perQuestion : [];
       const previous = view.history.filter(group => group.attempt?.attemptId !== view.currentAttempt?.attemptId);
+      // Dynamic summary for the More-details entry: preview only substantive
+      // diagnostic signals (routing disagreement/failure, failed evaluations);
+      // otherwise the trigger stays a plain label.
+      const moreDetailsHintKey = view.routeHistory.some(route => ["decisionRouteStatusAmbiguous", "decisionRouteStatusFailure"].includes(route?.statusKey))
+        ? "decisionMoreDetailsRouteIssue"
+        : view.history.some(group => group.attempt?.outcome === "failed") ? "decisionMoreDetailsFailedAttempt" : null;
       const isPending = pending !== null;
       // Ratings answer "was this answer right", so they appear only once a
       // decision exists (or feedback was already recorded); notes/corrections
@@ -269,7 +275,7 @@ window.__ModuleLoader__.load({
           // inside ONE grouped disclosure so the static card stays lean (the
           // group reveals once to its end; nested disclosures do not re-jump).
           jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-more-${view.caseId}`, label: t("decisionMoreDetails"), revealOnOpen: "end",
+            id: `weir-da-card-more-${view.caseId}`, label: moreDetailsHintKey ? `${t("decisionMoreDetails")} · ${t(moreDetailsHintKey)}` : t("decisionMoreDetails"), revealOnOpen: "end",
             children: () => jsx.jsxs("div", { className: "weir-da-more-details", children: [
               ratingsVisible && view.feedbackState === "none" ? jsx.jsxs("div", { className: "weir-da-caption", children: [
                 jsx.jsx("div", { children: t("decisionConfirmConsequence") }, "confirm-consequence"),

@@ -2417,7 +2417,7 @@ describe('weir settings client half', () => {
     'decisionAgentRetentionDays', 'decisionAgentRetentionDaysHint', 'decisionAgentStorePath', 'decisionAgentStorePathHint',
     'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecision',
     'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
-    'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord', 'decisionMoreDetails', 'decisionFeedbackHintShort',
+    'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord', 'decisionMoreDetails', 'decisionMoreDetailsRouteIssue', 'decisionMoreDetailsFailedAttempt', 'decisionFeedbackHintShort',
     'decisionUp', 'decisionDown', 'decisionUndo', 'decisionComment', 'decisionCorrect', 'decisionDecide', 'decisionUseSuggestions', 'decisionAnswersIncomplete',
     'decisionSelectTitle', 'decisionSelectorSafety', 'decisionManageAgents', 'decisionCreateAgent', 'decisionGlobalOff', 'decisionGlobalOffHint',
     'decisionReassign', 'decisionCancel', 'decisionRetry', 'decisionSave',
