@@ -3232,14 +3232,19 @@ async function runColdRevealMatrix(sessionId, caseId) {
   // focus on the same element, so browser focus-scroll cannot masquerade as a
   // refresh-induced scroll jump between baseline and refreshed measurements.
   await keyboardFocus('Anchor cold refresh focus on the draft field', draftSelector)
-  const routeRefreshBaseline = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
-  const evidenceRefreshBaseline = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
   const transientDraft = 'Transient cold refresh draft'
   await keyboardFill('Exercise cold refresh draft', draftSelector, transientDraft)
   await keyboardFill('Restore cold refresh draft', draftSelector, draftBefore)
   const restoredDraft = await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(draftSelector)})?.value`)
   writeJson(join(out, 'cold-refresh-draft.json'), { selector: draftSelector, before: draftBefore, transient: transientDraft, restored: restoredDraft })
   requireEvidence(restoredDraft === draftBefore, 'the cold refresh draft round-trip restored the exact input')
+  // Typing perturbs scroll natively (caret visibility, validation-hint layout
+  // shifts), so the refresh contract is isolated with a same-value fill: it
+  // forces a parent re-render with zero layout or caret effect, and the scroll
+  // comparison runs against the settled post-restore measurement.
+  const routeRefreshBaseline = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
+  const evidenceRefreshBaseline = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
+  await keyboardFill('No-op cold refresh draft', draftSelector, draftBefore)
   const routeRefreshed = await measureColdReveal(routeTarget, scroller, { status: 'ready', draftSelector: form })
   const evidenceRefreshed = await measureColdReveal(evidenceTarget, scroller, { status: 'ready', draftSelector: form })
   const errorEvidence = { kind: 'error', loading: routeLoading, ready: routeReady, refreshBaseline: routeRefreshBaseline, refreshed: routeRefreshed, control: await decisionControl(routeControl) }
