@@ -19,9 +19,11 @@ async function fixture(t) {
   }
   let evaluation = { outcome: 'escalate', missing: ['New judgment'] }
   let clarification = 'The pack only covers the title decision; the rollout window is genuinely open.'
+  const llmRequests = []
   const ctx = {
     agents: { get: id => id === 'root' ? agent : undefined },
     llm: { stream: options => (async function * () {
+      llmRequests.push(options)
       const isClarify = options.system.includes('clarify-contract/1')
       yield { type: 'text-delta', text: isClarify ? clarification : JSON.stringify(evaluation) }
       yield { type: 'finish', reason: { kind: 'stop' } }
@@ -39,7 +41,7 @@ async function fixture(t) {
     return { verdict, request, current: broker.cases.getCase(verdict.caseId) }
   }
   return {
-    broker, agent, a, workspace, audits, followups, open,
+    broker, agent, a, workspace, audits, followups, llmRequests, open,
     respond: value => { evaluation = value },
     clarifyWith: value => { clarification = value },
   }
@@ -99,6 +101,14 @@ test('bounced consult rereads as returned with the user note as the repair hint'
 test('clarify appends a rating-neutral read-only record and never touches gates or evidence', async t => {
   const f = await fixture(t)
   const { current } = await f.open('c1')
+  // Seed one attempt-linked evidence row: the clarification pack must use the
+  // same evidence the card shows under 判断依据, not only cited evidence.
+  const attempt = f.broker.store.db.prepare('SELECT attempt_id FROM attempts WHERE case_id=?').get(current.caseId)
+  const evidenceId = 'ev_clarify_fixture'
+  const now = Date.now()
+  f.broker.store.db.exec(`INSERT INTO evidence(evidence_id,agent_id,source,locator_json,excerpt,scope_json,status,schema_version,revision,created_at,updated_at)
+    VALUES('${evidenceId}','${f.a.agentId}','user_profile','{}','品牌标题偏好：简短优先。','{}','active',1,1,${now},${now})`)
+  f.broker.store.db.exec(`INSERT INTO attempt_evidence(attempt_id,ordinal,evidence_id) VALUES('${attempt.attempt_id}',1,'${evidenceId}')`)
   const evidenceBefore = f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM evidence').get().n
   const answered = await f.broker.clarify({ caseId: current.caseId, question: '现有依据讲了什么？' })
   assert.equal(answered.state, 'awaiting_user')
@@ -107,6 +117,8 @@ test('clarify appends a rating-neutral read-only record and never touches gates 
   const payload = JSON.parse(rows[0].payload_json)
   assert.equal(payload.question, '现有依据讲了什么？')
   assert.match(payload.answer, /genuinely open/)
+  const clarifyRequest = f.llmRequests.find(options => options.system.includes('clarify-contract/1'))
+  assert.match(JSON.stringify(clarifyRequest?.messages ?? []), /品牌标题偏好/)
   assert.equal(f.broker.store.db.prepare("SELECT feedback_state FROM cases WHERE case_id=?").get(current.caseId).feedback_state, 'none')
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM evidence').get().n, evidenceBefore)
   assert.ok(f.audits.some(entry => entry.kind === 'feedback' && entry.value.kind === 'clarify'))

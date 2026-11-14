@@ -199,8 +199,14 @@ window.__ModuleLoader__.load({
     function inboxUserTools(props, current, summary) {
       const { t, ui, draft } = props;
       const pending = typeof props.pending === "string";
-      const clarifyCount = (Array.isArray(props.evidence?.value?.feedback) ? props.evidence.value.feedback : []).filter(entry => entry?.kind === "clarify").length;
+      const clarifications = (Array.isArray(props.evidence?.value?.feedback) ? props.evidence.value.feedback : []).filter(entry => entry?.kind === "clarify");
+      const clarifyCount = clarifications.length;
+      const latestClarify = clarifications.at(-1);
       return [
+        latestClarify ? jsx.jsxs("div", { className: "weir-da-clarification", "data-clarification": true, children: [
+          jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyYouAsked") }, "q-label"), jsx.jsx("span", { children: latestClarify.payload?.question ?? "" }, "q")] }, "question"),
+          jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyAnswer") }, "a-label"), jsx.jsx("span", { children: latestClarify.payload?.answer ?? "" }, "a")] }, "answer"),
+        ] }, "latest-clarify") : null,
         jsx.jsxs("div", { className: "weir-da-actions weir-da-user-tools", children: [
           summary?.assigned !== false && current.agentId ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-clarify", disabled: pending || clarifyCount >= 3, onClick: () => props.updateDraft("clarifyQuestion", draft.clarifyQuestion ?? ""), title: clarifyCount >= 3 ? t("decisionClarifyLimit") : undefined, children: t("decisionClarify") }, "open-clarify") : null,
           jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-bounce", disabled: pending, onClick: () => props.updateDraft("bounceNote", draft.bounceNote ?? ""), children: t("decisionBounce") }, "open-bounce"),
