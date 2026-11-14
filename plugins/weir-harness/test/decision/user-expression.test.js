@@ -47,6 +47,17 @@ async function fixture(t) {
   }
 }
 
+test('a custom ruling is delivered to the caller with its text, not an empty label', async t => {
+  const f = await fixture(t)
+  const verdict = await f.broker.consult({ agent: f.agent, args: { question: 'Which?', options: [{ label: 'A' }], request_id: 'custom-delivery', authorization_class: 'A' } })
+  assert.equal(verdict.outcome, 'awaiting_user')
+  const closed = await f.broker.decide({ caseId: verdict.caseId, answers: [{ id: 'question', selected: [], custom: '测试通过' }] })
+  assert.equal(closed.closing, 'escalated')
+  const delivered = f.followups.map(item => JSON.stringify(item)).join('\n')
+  assert.match(delivered, /测试通过/)
+  assert.doesNotMatch(delivered, /resolved by the user: "/)
+})
+
 test('bounce moves awaiting_user to awaiting_revision with the note and turn-end closes returned', async t => {
   const f = await fixture(t)
   const { current } = await f.open('b1')
