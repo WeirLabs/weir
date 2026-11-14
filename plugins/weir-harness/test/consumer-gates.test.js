@@ -95,8 +95,8 @@ test('7.2 a passing preflight keeps the spawn contract (maxDepth 1, body prepend
   const tool = createDelegateTool(deps)
   const result = await tool.execute({ category: 'quick', prompt: 'TASK: fix', load_skills: ['alpha'] }, execOf())
   expect(result.background).toBe(false)
-  expect(deps.spawned[0].request.maxDepth).toBe(1)
-  expect(JSON.stringify(deps.spawned[0].request.prompt)).toContain('BODY_alpha')
+  expect(deps.spawned[0].maxDepth).toBe(1)
+  expect(JSON.stringify(deps.spawned[0].prompt)).toContain('BODY_alpha')
 })
 
 // ---------- 7.3 intent-gate eligibility ----------

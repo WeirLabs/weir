@@ -54,11 +54,12 @@ function harness() {
     resolveTarget: async () => ({ persona: 'p', label: 'quick', readOnly: false }),
     loadSkill: async () => '',
     subagents: {
-      // DSH 0.2.1 single start entry: delivery 'caller' is the one-shot lane,
-      // 'parent' the continuable/supervised lanes.
+      // DSH single start entry: delivery 'caller' is the one-shot lane,
+      // 'parent' the continuable/supervised lanes. The flat spec is the host
+      // contract (0.2.2-rc.2+); the nested envelope is a legacy mirror.
       async startActivation(spec) {
         if (spec.delivery === 'caller') {
-          spawned.push(spec.request)
+          spawned.push(spec)
           if (state.reclaimOnSpawn) await reclaimReservation()
           const id = `child-${spawned.length}`
           return {

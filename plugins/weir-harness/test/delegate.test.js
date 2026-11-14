@@ -422,7 +422,7 @@ describe('delegate tool', () => {
     expect(result.background).toBe(false)
     expect(result.results).toHaveLength(1)
     expect(result.results[0].text).toBe('done the thing')
-    expect(deps.spawned[0].request.maxDepth).toBe(1)
+    expect(deps.spawned[0].maxDepth).toBe(1)
     expect(deps.spawned[0].delivery).toBe('caller')
     expect(deps.spawned[0].childId).toBe('child-1')
     // The composition shim put the worker persona into the child's persona
@@ -483,7 +483,7 @@ describe('delegate tool', () => {
     expect(result.results[0].text).toBe('settled properly')
     expect(calls).toHaveLength(2)
     expect(calls[1].label).toContain('(escalated)')
-    expect(calls[1].request.prompt.at(-1).text).toContain('found the boundary')
+    expect(calls[1].prompt.at(-1).text).toContain('found the boundary')
   })
 })
 
@@ -600,7 +600,7 @@ describe('delegate continuable mode', () => {
     expect(spec.delivery).toBe('parent')
     expect('label' in spec.request).toBe(false)
     expect('signal' in spec.request).toBe(false)
-    expect(spec.request.maxDepth).toBe(1)
+    expect(spec.maxDepth).toBe(1)
     // worker + continuation contracts land as the child persona section;
     // NEVER the supervised terminal-status contract
     const section = deps.children[0].applied.sections.find((entry) => entry.name === 'deployment:persona-prefix')
@@ -944,7 +944,7 @@ describe('delegate plugin apply', () => {
     const settings = { delegate: { agentChains: { finder: [{ provider: 'routed', model: 'routed-1' }] } } }
     const { tool, spawned } = applyHarness({}, settings, undefined, routedLlm)
     await tool.execute({ agent: 'finder', prompt: 'TASK: find' }, execStub())
-    expect(spawned[0].request.agentOptions).toEqual({ provider: 'routed', model: 'routed-1' })
+    expect(spawned[0].agentOptions).toEqual({ provider: 'routed', model: 'routed-1' })
   })
 
   it('fails loud when a configured agent chain resolves no rung', async () => {
@@ -1348,7 +1348,7 @@ describe('supervised groups (mount layer)', () => {
     expect(result.members).toHaveLength(2)
     expect(continued).toHaveLength(2)
     expect(continued[0].delivery).toBe('parent')
-    expect(continued[0].request.maxDepth).toBe(1)
+    expect(continued[0].maxDepth).toBe(1)
     const persona = [...children.values()][0].applied.sections.find((section) => section.name === 'deployment:persona-prefix')
     expect(persona.text).toContain('STATUS: completed')
     expect(persona.text).toContain('Terminal status contract')

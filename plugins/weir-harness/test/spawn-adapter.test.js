@@ -47,7 +47,7 @@ function personaSectionOf(child) {
 }
 
 describe('spawn-adapter activation assembly', () => {
-  it('starts through startActivation with the reserved child id, a clean request, delivery caller and maxDepth 1', async () => {
+  it('starts through startActivation with the reserved child id, a flat spec plus the legacy request envelope, delivery caller and maxDepth 1', async () => {
     const h = createSpawnHarness({ label: 'child' })
     const assignment = assignmentOf(baseTarget())
     const started = await spawnGuardedChild(assignment, oneShotLane(), { ...h.deps, robash: enabledRobash })
@@ -58,7 +58,12 @@ describe('spawn-adapter activation assembly', () => {
     expect(spec.childId).toBe('child-1')
     expect(spec.delivery).toBe('caller')
     expect(spec.signal).toBe(assignment.signal)
-    // 0.2.1 request shape: label/signal/persona/toolFilter are NOT request fields.
+    // 0.2.2-rc.2+ host contract: the activation payload is FLAT — the host's
+    // live-parent guard reads `spec.parent.id` before anything else — and the
+    // 0.2.1-era `request` envelope is kept byte-identical for 0.2.2-rc.1.
+    expect(spec.parent).toBe(assignment.parent)
+    expect(spec.prompt).toEqual(assignment.prompt)
+    expect(spec.maxDepth).toBe(1)
     expect(spec.request).toEqual({ prompt: assignment.prompt, parent: assignment.parent, maxDepth: 1 })
     expect('label' in spec.request).toBe(false)
     expect('signal' in spec.request).toBe(false)
@@ -77,10 +82,11 @@ describe('spawn-adapter activation assembly', () => {
     const h = createSpawnHarness()
     await spawnGuardedChild(assignmentOf(baseTarget({ agentOptions })), oneShotLane(), h.deps)
     await spawnGuardedChild(assignmentOf(baseTarget(), { label: 'child-label (escalated)' }), oneShotLane(), h.deps)
+    expect(h.spawned[0].agentOptions).toEqual(agentOptions)
     expect(h.spawned[0].request.agentOptions).toEqual(agentOptions)
     expect(h.spawned[0].label).toBe('child-label')
     expect(h.spawned[1].label).toBe('child-label (escalated)')
-    expect(h.spawned[1].request.maxDepth).toBe(1)
+    expect(h.spawned[1].maxDepth).toBe(1)
   })
 })
 
