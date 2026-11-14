@@ -2696,7 +2696,10 @@ async function auditSelectorLayout(name, { scale = 1, scrollable = false, longSt
     return {panelOverflow:getComputedStyle(panel).overflow,bodyOverflow:getComputedStyle(body).overflowY,bodyOverscroll:getComputedStyle(body).overscrollBehavior,bodyScrollHeight:body.scrollHeight,bodyClientHeight:body.clientHeight,bodyScrollTop:body.scrollTop,header:rect(document.querySelector('.weir-da-selector-header')),footer:rect(document.querySelector('.weir-da-selector-footer')),horizontalOverflow:document.documentElement.scrollWidth>document.documentElement.clientWidth+1}
   })()`)
   const before = await read()
-  const point = await instance.cdp.evaluate(`(() => {const rect=document.querySelector('.weir-da-selector-body').getBoundingClientRect();return {x:rect.left+rect.width/2,y:rect.top+Math.min(rect.height/2,80)}})()`)
+  // CDP input coordinates are visual-viewport DIPs; getBoundingClientRect is in
+  // layout CSS px. Under page zoom (scale 2, nonzero offsets) convert, or the
+  // wheel misses the body and pans the visual viewport instead.
+  const point = await instance.cdp.evaluate(`(() => {const rect=document.querySelector('.weir-da-selector-body').getBoundingClientRect();const visual=visualViewport??{width:innerWidth,height:innerHeight,offsetLeft:0,offsetTop:0};return {x:Math.max(4,Math.min(visual.width-4,rect.left-visual.offsetLeft+rect.width/2)),y:Math.max(4,Math.min(visual.height-4,rect.top-visual.offsetTop+Math.min(rect.height/2,80)))}})()`)
   await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseWheel', x: point.x, y: point.y, deltaX: 0, deltaY: 180 })
   if (scrollable) await waitFor(() => instance.cdp.evaluate(`document.querySelector('.weir-da-selector-body').scrollTop>${before.bodyScrollTop}`), 10_000).catch(() => {})
   else await new Promise(resolve => setTimeout(resolve, 120))
