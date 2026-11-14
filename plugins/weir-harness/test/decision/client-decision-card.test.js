@@ -136,7 +136,7 @@ test('missing Case returns null and leaves native UI untouched', async () => {
   assert.equal(mounted.render(), null)
 })
 
-test('answered card presents real questions and answers with one primary action and lazy diagnostics', async () => {
+test('answered card presents real questions and answers with a lean static layer and grouped diagnostics', async () => {
   const mounted = await mount()
   const tree = mounted.render()
   const text = textContent(tree)
@@ -147,10 +147,12 @@ test('answered card presents real questions and answers with one primary action 
   assert.match(text, /Use concise wording/)
   assert.equal(text.includes('dc-current') || text.includes('da-new') || text.includes('decisionRevision'), false)
   const primary = findAll(tree, node => node.__type === mounted.ui.Button && node.variant === 'primary')
-  assert.equal(primary.length, 1)
+  assert.equal(primary.length, 0, 'a closed answered card has no primary action; open-record is a quiet ghost')
+  assert.equal(findAll(tree, node => node.__type === mounted.ui.Button && node.children === 'decisionHistory')[0].variant, 'ghost')
   const disclosures = findAll(tree, node => node.__type === mounted.ui.Disclosure)
   assert.ok(disclosures.some(node => node.label === 'decisionEvidence'))
-  const advanced = disclosures.find(node => node.label === 'decisionAdvancedDiagnostics')
+  assert.equal(disclosures.find(node => node.label === 'decisionEvaluationHistory' || node.label === 'decisionRouteHistory' || node.label === 'decisionAdvancedDiagnostics'), undefined, 'diagnostics are not static top-level rows')
+  const advanced = nestedDisclosure(tree, mounted.ui, 'decisionAdvancedDiagnostics')
   assert.ok(advanced)
   assert.equal(typeof advanced.children, 'function')
   assert.match(textContent(advanced.children()), /dc-current/)
@@ -168,7 +170,7 @@ test('production card fallback uses the active locale for an unavailable assista
   assert.equal(text.includes('Decision assistant'), false)
 })
 
-test('card status variants retain localized state and a single primary action', async () => {
+test('card status variants retain localized state without a static primary action', async () => {
   const variants = [
     [{ state: 'closed', closing: 'answered' }, 'answered', 'decisionStatusAnswered'],
     [{ state: 'awaiting_user', closing: undefined, awaitingReason: 'authority', decision: null }, 'pending', 'decisionStatusAwaitingUser'],
@@ -182,7 +184,7 @@ test('card status variants retain localized state and a single primary action', 
     const tree = mounted.render()
     assert.equal(tree['data-decision-variant'], variant)
     assert.ok(findAll(tree, node => node.__type === mounted.ui.Badge).some(node => node.children === statusKey))
-    assert.equal(findAll(tree, node => node.__type === mounted.ui.Button && node.variant === 'primary').length, 1)
+    assert.equal(findAll(tree, node => node.__type === mounted.ui.Button && node.variant === 'primary').length, 0)
   }
 })
 
@@ -205,7 +207,7 @@ test('awaiting explicit consult leads with its only answer form and no duplicate
   const content = tree.children.filter(Boolean)
   const forms = findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)
   const answerFormIndex = content.findIndex(node => node.__type === mounted.ui.DecisionAnswers)
-  const secondaryLabels = ['decisionEvidence', 'decisionEvaluationHistory', 'decisionRecoveryActions', 'decisionAdvancedDiagnostics']
+  const secondaryLabels = ['decisionEvidence', 'decisionMoreDetails', 'decisionRecoveryActions']
   const secondaryContentAfterForm = secondaryLabels.every(label => content.findIndex(node => node.__type === mounted.ui.Disclosure && node.label === label) > answerFormIndex)
     && content.findIndex(node => node.__type === mounted.ui.Button && node.children === 'decisionHistory') > answerFormIndex
     && content.findIndex(node => node.className === 'weir-da-feedback-editor') > answerFormIndex
@@ -293,7 +295,7 @@ test('evidence rereads once on open and earlier evaluations keep their own evide
   for (let index = 0; index < 8; index++) await Promise.resolve()
   assert.equal(mounted.calls.filter(call => call[0] === 'record').length, 1)
 
-  const history = findAll(mounted.render(), node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvaluationHistory')[0]
+  const history = nestedDisclosure(mounted.render(), mounted.ui, 'decisionEvaluationHistory')
   assert.ok(history)
   const historyText = textContent(history.children())
   assert.match(historyText, /Old rationale/)
@@ -326,13 +328,14 @@ test('cold card evidence and route disclosures become reveal-ready only after au
   tree = mounted.render()
   evidence = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')[0]
   assert.equal(evidence.revealReady, true)
-  const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
-  assert.equal(routes.revealOnOpen, 'end')
-  assert.equal(routes.revealReady, true)
+  const group = moreDetails(tree, mounted.ui)
+  assert.equal(group.revealOnOpen, 'end')
+  const routes = nestedDisclosure(tree, mounted.ui, 'decisionRouteHistory')
+  assert.equal(routes.revealOnOpen, undefined, 'nested disclosures do not re-jump')
   await routes.onOpen()
   assert.equal(coldReads, 1, 'route opening reuses the settled authoritative read')
   for (const label of ['decisionEvaluationHistory', 'decisionAdvancedDiagnostics']) {
-    assert.equal(findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === label)[0].revealOnOpen, 'end', label)
+    assert.equal(nestedDisclosure(tree, mounted.ui, label).revealOnOpen, undefined, label)
   }
   mounted.unmount()
 })
@@ -353,8 +356,7 @@ test('cold card evidence errors are settled reveal content and preserve retry se
   assert.equal(evidence.revealOnOpen, 'end')
   assert.equal(evidence.revealReady, true)
   assert.match(textContent(evidence.children()), /decisionReadFailed/)
-  const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
-  assert.equal(routes.revealReady, true)
+  const routes = nestedDisclosure(tree, mounted.ui, 'decisionRouteHistory')
   assert.match(textContent(routes.children()), /decisionReadFailed/)
   mounted.unmount()
 })
@@ -392,8 +394,10 @@ test('feedback actions follow rating state and dispute stays a single reason-fre
     assert.deepEqual(controls.map(node => node['data-feedback']), verbs)
     if (feedbackState === 'none') {
       assert.equal(controls.some(node => String(node['data-feedback']).startsWith('undo_')), false)
-      assert.match(textContent(tree), /decisionConfirmConsequence/)
-      assert.match(textContent(tree), /decisionDisputeConsequence/)
+      assert.match(textContent(tree), /decisionFeedbackHintShort/)
+      const detailGroup = moreDetails(tree, mounted.ui)
+      assert.match(textContent(detailGroup.children()), /decisionConfirmConsequence/)
+      assert.match(textContent(detailGroup.children()), /decisionDisputeConsequence/)
       const down = controls.find(node => node['data-feedback'] === 'rating_down')
       await down.onClick()
       for (let index = 0; index < 8; index++) await Promise.resolve()
@@ -459,6 +463,15 @@ function draftInput(tree, field) {
 
 function recovery(tree, ui) {
   return findAll(tree, node => node.__type === ui.Disclosure && node.label === 'decisionRecoveryActions')[0]
+}
+
+function moreDetails(tree, ui) {
+  return findAll(tree, node => node.__type === ui.Disclosure && node.label === 'decisionMoreDetails')[0]
+}
+
+function nestedDisclosure(tree, ui, label) {
+  const group = moreDetails(tree, ui)
+  return findAll(typeof group?.children === 'function' ? group.children() : null, node => node.__type === ui.Disclosure && node.label === label)[0]
 }
 
 async function flushCard() {
@@ -570,7 +583,7 @@ test('write and reread failures retain drafts; success clears only the relevant 
   assert.deepEqual(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers)[0].answers, answers)
   assert.match(textContent(tree), /decisionErrorConflict/)
   assert.equal(textContent(tree).includes('raw revision details'), false)
-  const advanced = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionAdvancedDiagnostics')[0]
+  const advanced = nestedDisclosure(tree, mounted.ui, 'decisionAdvancedDiagnostics')
   assert.match(textContent(advanced.children()), /REVISION_CONFLICT/)
   assert.match(textContent(advanced.children()), /raw revision details/)
 
@@ -845,7 +858,7 @@ test('unowned Auto consult and Hook cards retain their native answer paths but n
     assert.ok(findAll(recoveryTree, node => node['data-action'] === 'reassign')[0])
     assert.ok(findAll(recoveryTree, node => node['data-action'] === 'cancel')[0])
     assert.equal(findAll(recoveryTree, node => node['data-action'] === 'retry').length, 0)
-    const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+    const routes = nestedDisclosure(tree, mounted.ui, 'decisionRouteHistory')
     assert.ok(routes)
     const history = findAll(routes.children(), node => node.__type === mounted.ui.DecisionRouteHistory)[0]
     assert.equal(history.history.length, 1)
@@ -890,7 +903,7 @@ test('explicit reassign is single-flight and restores normal owned recovery and 
   assert.match(textContent(tree), /decisionRoutingManualReassign/)
   assert.ok(action(recovery(tree, mounted.ui).children(), mounted.ui, 'retry'))
   assert.ok(action(tree, mounted.ui, 'open-correction'))
-  const routes = findAll(tree, node => node.__type === mounted.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  const routes = nestedDisclosure(tree, mounted.ui, 'decisionRouteHistory')
   const history = findAll(routes.children(), node => node.__type === mounted.ui.DecisionRouteHistory)[0]
   assert.deepEqual(history.history.map(item => item.mode), ['auto', 'manual_reassign'])
   assert.equal(history.history[1].from, null)

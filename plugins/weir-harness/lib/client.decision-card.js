@@ -224,44 +224,13 @@ window.__ModuleLoader__.load({
               return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown")}` }, entry?.id ?? index);
             }) }, "per-question") : null,
           ] }, "guidance") : null,
-          error ? jsx.jsx(ui.ErrorState, { children: errorMessage }, "error") : null,
-          jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-evidence-${view.caseId}`, label: t("decisionEvidence"), onOpen: openEvidence,
-            revealOnOpen: "end", revealReady: evidenceReady,
-            children: () => evidenceFailed ? jsx.jsx(ui.ErrorState, { children: errorMessage }) : EvidenceList({ evidence: view.evidence, ui, t }),
-          }, "evidence"),
-          jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-history-${view.caseId}`, label: t("decisionEvaluationHistory"), revealOnOpen: "end",
-            children: () => previous.length ? previous.map((group, index) => EvaluationGroup({ group, index, model, ui, t })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEarlierEvaluations") }),
-          }, "evaluation-history"),
-          jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-routes-${view.caseId}`, label: t("decisionRouteHistory"), onOpen: openEvidence,
-            revealOnOpen: "end", revealReady: evidenceReady,
-            children: () => evidenceFailed ? jsx.jsx(ui.ErrorState, { children: errorMessage }) : jsx.jsx(ui.DecisionRouteHistory, { history: view.routeHistory, t }),
-          }, "route-history"),
-          jsx.jsx(ui.Button, { variant: waiting && props.toolName === "decision_consult" ? "secondary" : "primary", onClick: () => props.openRecord?.(view.caseId), children: t("decisionHistory") }, "history"),
-          waiting ? jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-recovery-${view.caseId}`, label: t("decisionRecoveryActions"), revealOnOpen: "end",
-            children: () => jsx.jsxs("div", { className: "weir-da-actions", children: [
-              jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => updateDraft("reassignTarget", event.target.value), "data-draft": "reassignTarget", "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: isPending, children: [
-                jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
-                ...agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId)),
-              ] }, "target"),
-              jsx.jsx(ui.Button, { "data-action": "reassign", disabled: !draft.reassignTarget || isPending, onClick: () => run("reassign", view.caseId, draft.reassignTarget), children: t("decisionReassign") }, "reassign"),
-              view.canRetry ? jsx.jsx(ui.Button, { "data-action": "retry", disabled: isPending, onClick: () => run("retry", view.caseId), children: t("decisionRetry") }, "retry") : null,
-              jsx.jsx(ui.Button, { variant: "danger", "data-action": "cancel", disabled: isPending, onClick: requestCancel, children: t("decisionCancel") }, "cancel"),
-            ] }),
-          }, "recovery") : null,
           view.assigned ? jsx.jsxs("section", { className: "weir-da-feedback-editor", children: [
             view.feedbackState === "validated" || view.feedbackState === "disputed" ? jsx.jsx(ui.Badge, { variant: "idle", children: t(view.feedbackState === "validated" ? "decisionFeedbackValidated" : "decisionFeedbackDisputed") }, "feedback-state") : null,
             jsx.jsx("div", { className: "weir-da-actions", children: ratings.map(action => jsx.jsx(ui.Button, {
               variant: "ghost", "data-feedback": action.verb, disabled: isPending,
               onClick: () => run("feedback", view.caseId, action.verb), children: t(action.labelKey),
             }, action.verb)) }, "ratings"),
-            view.feedbackState === "none" ? jsx.jsxs("div", { className: "weir-da-caption", children: [
-              jsx.jsx("div", { children: t("decisionConfirmConsequence") }, "confirm-consequence"),
-              jsx.jsx("div", { children: t("decisionDisputeConsequence") }, "dispute-consequence"),
-            ] }, "rating-consequences") : null,
+            view.feedbackState === "none" ? jsx.jsx("p", { className: "weir-da-caption", children: t("decisionFeedbackHintShort") }, "rating-hint") : null,
             jsx.jsxs("div", { className: "weir-da-actions", children: [
               jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-comment", disabled: isPending, onClick: () => toggleEditor("comment"), children: t("decisionComment") }, "open-comment"),
               jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-correction", disabled: isPending, onClick: () => toggleEditor("correction"), children: t("decisionCorrect") }, "open-correction"),
@@ -286,10 +255,49 @@ window.__ModuleLoader__.load({
               jsx.jsx(ui.Button, { "data-action": "correction", disabled: isPending || !draft.correction, onClick: () => run("correction", view.caseId, draft.correction, detail.case.scope, [view.caseId]), children: t("decisionSubmitCorrection") }, "correction-action"),
             ] }, "correction-editor") : null,
           ] }, "feedback") : null,
+          error ? jsx.jsx(ui.ErrorState, { children: errorMessage }, "error") : null,
           jsx.jsx(ui.Disclosure, {
-            id: `weir-da-card-advanced-${view.caseId}`, label: t("decisionAdvancedDiagnostics"), revealOnOpen: "end",
-            children: () => jsx.jsx("div", { className: "weir-da-advanced-record", children: jsx.jsx("pre", { children: JSON.stringify({ detail, error: rawError }, null, 2) }) }),
-          }, "advanced"),
+            id: `weir-da-card-evidence-${view.caseId}`, label: t("decisionEvidence"), onOpen: openEvidence,
+            revealOnOpen: "end", revealReady: evidenceReady,
+            children: () => evidenceFailed ? jsx.jsx(ui.ErrorState, { children: errorMessage }) : EvidenceList({ evidence: view.evidence, ui, t }),
+          }, "evidence"),
+          // Diagnostic tier: history, route history and raw diagnostics live
+          // inside ONE grouped disclosure so the static card stays lean (the
+          // group reveals once to its end; nested disclosures do not re-jump).
+          jsx.jsx(ui.Disclosure, {
+            id: `weir-da-card-more-${view.caseId}`, label: t("decisionMoreDetails"), revealOnOpen: "end",
+            children: () => jsx.jsxs("div", { className: "weir-da-more-details", children: [
+              view.assigned && view.feedbackState === "none" ? jsx.jsxs("div", { className: "weir-da-caption", children: [
+                jsx.jsx("div", { children: t("decisionConfirmConsequence") }, "confirm-consequence"),
+                jsx.jsx("div", { children: t("decisionDisputeConsequence") }, "dispute-consequence"),
+              ] }, "rating-consequences") : null,
+              jsx.jsx(ui.Disclosure, {
+                id: `weir-da-card-history-${view.caseId}`, label: t("decisionEvaluationHistory"),
+                children: () => previous.length ? previous.map((group, index) => EvaluationGroup({ group, index, model, ui, t })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoEarlierEvaluations") }),
+              }, "evaluation-history"),
+              jsx.jsx(ui.Disclosure, {
+                id: `weir-da-card-routes-${view.caseId}`, label: t("decisionRouteHistory"), onOpen: openEvidence,
+                children: () => evidenceFailed ? jsx.jsx(ui.ErrorState, { children: errorMessage }) : jsx.jsx(ui.DecisionRouteHistory, { history: view.routeHistory, t }),
+              }, "route-history"),
+              jsx.jsx(ui.Disclosure, {
+                id: `weir-da-card-advanced-${view.caseId}`, label: t("decisionAdvancedDiagnostics"),
+                children: () => jsx.jsx("div", { className: "weir-da-advanced-record", children: jsx.jsx("pre", { children: JSON.stringify({ detail, error: rawError }, null, 2) }) }),
+              }, "advanced"),
+            ] }),
+          }, "more-details"),
+          jsx.jsx(ui.Button, { variant: waiting && props.toolName === "decision_consult" ? "secondary" : "ghost", onClick: () => props.openRecord?.(view.caseId), children: t("decisionHistory") }, "history"),
+          waiting ? jsx.jsx(ui.Disclosure, {
+            id: `weir-da-card-recovery-${view.caseId}`, label: t("decisionRecoveryActions"), revealOnOpen: "end",
+            children: () => jsx.jsxs("div", { className: "weir-da-actions", children: [
+              jsx.jsxs("select", { value: draft.reassignTarget, onChange: event => updateDraft("reassignTarget", event.target.value), "data-draft": "reassignTarget", "aria-label": t("decisionReassign"), className: "weir-da-select", disabled: isPending, children: [
+                jsx.jsx("option", { value: "", children: t("decisionChooseAssistant") }, "empty"),
+                ...agents.filter(agent => agent.state === "enabled").map(agent => jsx.jsx("option", { value: agent.agentId, children: agent.name }, agent.agentId)),
+              ] }, "target"),
+              jsx.jsx(ui.Button, { "data-action": "reassign", disabled: !draft.reassignTarget || isPending, onClick: () => run("reassign", view.caseId, draft.reassignTarget), children: t("decisionReassign") }, "reassign"),
+              view.canRetry ? jsx.jsx(ui.Button, { "data-action": "retry", disabled: isPending, onClick: () => run("retry", view.caseId), children: t("decisionRetry") }, "retry") : null,
+              jsx.jsx(ui.Button, { variant: "danger", "data-action": "cancel", disabled: isPending, onClick: requestCancel, children: t("decisionCancel") }, "cancel"),
+            ] }),
+          }, "recovery") : null,
           confirm ? jsx.jsx(ui.ConfirmDialog, {
             id: `weir-da-card-cancel-${view.caseId}`, title: t("decisionCancelTitle"), body: t("decisionCancelConfirmation"),
             confirmLabel: t("decisionCancel"), cancelLabel: t("decisionKeepEditing"), danger: true, pending: isPending,

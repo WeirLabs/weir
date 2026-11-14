@@ -158,6 +158,9 @@ window.__ModuleLoader__.load({
 .weir-da-disclosure [role="region"] { min-width: 0; padding-top: 10px; }
 .weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
 .weir-da-suggestion-review { margin: 12px 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
+.weir-da-more-details { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.weir-da-more-details > .weir-da-caption { padding: 0 4px 6px; }
+.weir-da-more-details > .weir-da-disclosure { flex: 0 0 auto; }
 .weir-da-suggestion-review ul, .weir-da-memory-summary { margin: 6px 0 0; padding-inline-start: 20px; }
 .weir-da-public-disclosure { min-width: 0; display: grid; gap: 6px; justify-items: start; }
 .weir-da-public-disclosure p { margin: 0; }
@@ -385,6 +388,8 @@ window.__ModuleLoader__.load({
       return jsx.jsxs("div", { className: "weir-da-disclosure", onKeyDown: event => {
         if (event.key !== "Escape" || !open) return;
         event.preventDefault();
+        // Nested disclosures (grouped "More details"): close the innermost only.
+        event.stopPropagation?.();
         close();
       }, children: [
         jsx.jsx("button", {
