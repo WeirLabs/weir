@@ -3157,7 +3157,10 @@ async function runAgentResumeMatrix(sessionId, primary, secondary) {
 
 async function runLearningResumeMatrix(sessionId, primary, candidate) {
   await openAgent(sessionId, primary.agentId)
-  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  // The assistant detail merged all diagnostics into one disclosure (Nov-14
+  // hierarchy pass); open the merged entry, which contains the learning
+  // diagnostics (AgentLearningDiagnostics).
+  await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)
   await keyboardActivate('Select exact learning run for narrow resume', `[data-learning-run-id="${candidate.run.learningRunId}"]`)
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-learning-run-detail=${JSON.stringify(candidate.run.learningRunId)}]'))`), 30_000)
   await keyboardActivate('Select exact learning snapshot for narrow resume', `[data-snapshot-id="${candidate.snapshot.snapshotId}"]`)
@@ -3836,7 +3839,10 @@ try {
 
   const candidateV1 = await startCandidate(sessionId, primary, 1)
   requireEvidence(candidateV1.run.operations[0]?.sources?.[0] === learningCorrection.feedbackId && candidateV1.run.operations[0]?.text === 'Reviewed GUI correction principle: prefer the corrected cross-root answer.', 'v1 uses the actual correction Feedback and correction principle')
-  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  // The assistant detail merged all diagnostics into one disclosure (Nov-14
+  // hierarchy pass); open the merged entry, which contains the learning
+  // diagnostics (AgentLearningDiagnostics).
+  await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)
   const advancedLearning = await governanceState(primary.agentId)
   check('learningAdvancedDiagnosticsRetainIdsAndReplay', advancedLearning.advanced.includes(candidateV1.run.learningRunId) && advancedLearning.advanced.includes(candidateV1.snapshot.snapshotId) && advancedLearning.advanced.includes(candidateV1.run.inputFrozen.inputHash), { runId: candidateV1.run.learningRunId, snapshotId: candidateV1.snapshot.snapshotId })
   await shot('21-learning-v1-diagnostics')
@@ -3911,7 +3917,10 @@ try {
   const restartedRecord = await record(sessionId, 'restart', learned.caseId)
   check('restartPersistsLearningFeedbackSelectorAndRecords', restartedRun.outcome === 'rejected' && restartedRun.revision === rejectedV3.run.revision && restartedSnapshot.state === 'draft' && restartedSnapshot.revision === rejectedV3.snapshot.revision && restartedAgent.currentSnapshotId === candidateV1.snapshot.snapshotId && JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail))
   await openAgent(sessionId, primary.agentId)
-  await openDisclosure(`weir-da-learning-advanced-${primary.agentId}`)
+  // The assistant detail merged all diagnostics into one disclosure (Nov-14
+  // hierarchy pass); open the merged entry, which contains the learning
+  // diagnostics (AgentLearningDiagnostics).
+  await openDisclosure(`weir-da-agent-advanced-${primary.agentId}`)
   await shot('24-restart-learning-persisted')
   await openRecord(sessionId, learned.caseId)
   await compareRecord(sessionId, 'restart-record', learned.caseId, true)
