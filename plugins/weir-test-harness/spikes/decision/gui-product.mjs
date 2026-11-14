@@ -1006,8 +1006,13 @@ async function layoutAudit(name, theme = 'light', zoom = 1) {
     const probe=el=>{
       if(!el)return null
       const value=rect(el);const points=[]
+      // Master/detail layouts clip long cards to their inner scrollport: a
+      // card rect legitimately extends past it, and points beyond the clip
+      // belong to the container, not the card. Clamp samples to the clip band.
+      let clipTop=-Infinity,clipBottom=Infinity
+      for(let p=el.parentElement;p;p=p.parentElement){const s=getComputedStyle(p);if(['auto','scroll','overlay','hidden'].includes(s.overflowY)&&p.scrollHeight>p.clientHeight+1){const r=p.getBoundingClientRect();clipTop=Math.max(clipTop,r.top);clipBottom=Math.min(clipBottom,r.bottom)}}
       const left=Math.max(value.left+8,(visual.offsetLeft??0)+1);const right=Math.min(value.right-8,(visual.offsetLeft??0)+visual.width-1)
-      const top=Math.max(value.top+8,(visual.offsetTop??0)+1);const bottom=Math.min(value.bottom-8,(visual.offsetTop??0)+visual.height-1)
+      const top=Math.max(value.top+8,(visual.offsetTop??0)+1,clipTop+1);const bottom=Math.min(value.bottom-8,(visual.offsetTop??0)+visual.height-1,clipBottom-1)
       if(right<left||bottom<top)return {rect:value,hitTestSamples:0,occlusions:[]}
       const middleX=(left+right)/2;const middleY=(top+bottom)/2
       for(let x=left;x<=right;x+=8)points.push([x,middleY])
