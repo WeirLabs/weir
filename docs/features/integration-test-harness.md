@@ -151,6 +151,16 @@ profile 的 patch 层把部署级 `workspaceRoot` 钉到 `<IT_ROOT>/outside`，�
 
 patch 层把 compaction 子组嵌入 editing 组，在外层统一 isolate `compaction`、`toolResultPruner`、`weirCompactionCoordinator` 与 `weirEditLock`，让压缩提供者、guard 与 todo-driver 同 realm。两种生产预设相应嵌入 delegation。[AGENTS.md](../../AGENTS.md) §3.3 要求生产与镜像同步；真实预设另以 `preset-delegation-surface` 新会话验证，不能仅信 host 镜像。
 
+### 真实 fork 通道镜像（S51）
+
+`blackboard-fork` 必须走宿主**真实**的 fork RPC，否则这道门禁会在宿主改变 fork 形状后继续全绿（DSH 0.2.2 的独立 fork 就是这样静默失效的）。为此 patch 层按 `WEIR_IT_BLACKBOARD_FORK=1` 追加三条行，镜像 web-app 的 `session-controller` 组合：
+
+- `weir-it-fork-workspace`（`@deepseek-ai/dsh-workspace`）——提供控制器 inject 的 `workspaceRegistry`；
+- `weir-it-file-uploads-stub`（`src/file-uploads-stub.js`）——只实现 `registerAgentResolver`/`resolve`/`bindPrompt`/`retirePrompt` 的 dev-only `fileUploads` 桩。生产提供者 `dsh-client-file-upload` inject web-only 的 `connection`，headless 永远 pending，所以不能让那一行顶替；桩行必须排在控制器行之前；
+- `weir-it-session-controller`（`@deepseek-ai/dsh-api-session-controller`）——控制器本体。
+
+探针用 owner peer 调 `typertGateway.dispatchRpc('session/fork', { args: { request: { sessionId, atSeq } } }, peer.signal, peer)`，并断言宿主真实形状（子会话头部无 `parentSession`、`isSeeded` 为真、`agents.create` 的 `meta` 不含来源字段）。宿主下次改形状时这条断言会失败，而不是让 fork 黑板重新静默变空。
+
 ## 边界与失败语义
 
 - **mock 的严格供应商校验**：`mock-llm.js` 在每次请求前检查每个工具的 `parameters.type === 'object'`（`deferLoading` 的除外），不合规即抛 `Invalid schema for function '...'`。这是 S12 事故的防线——新工具 schema 不合规会让 headless 测试直接失败，而不是留到真实供应商那里才炸。

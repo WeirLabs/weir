@@ -42,6 +42,7 @@
 - **Decision Agent 模型采样参数兼容**：评估器不再固定发送 `temperature: 0`，所有模型路由统一沿用 DSH 与供应商默认值；修复 Kimi K3 路由因固定温度约束反复 `INVALID_REQUEST` 的问题。严格 JSON、证据资格、G1–G7、权限边界与失败分类保持不变。
 - **Decision L2 精确预算边界**：L2 被裁空后，后续 L5 预算判断统一按最终发送的空层长度计量，避免剩余 Pack 恰好可容纳时多裁 excerpt；真实集成预算构造固定覆盖 L5 excerpt 与整条证据裁剪，既有 L3→L2→L5 顺序、Snapshot pin、证据资格和 manifest/hash 语义不变。
 - **Decision 发布后的焦点与位置保持**：确认采用/发布、放弃或恢复后，焦点返回不再把决策页面滚到顶部，页面按内容收缩后的真实上限保留原位置；同一助手的权威刷新期间详情保持挂载，不再出现整页塌到视口的一帧。既有焦点目标、键盘/读屏语义、权限与不可变历史不变。
+- **DSH 0.2.2 独立 fork 下黑板不再随 fork 复制**：DSH 自 0.2.1-rc.3 起把普通 fork 改成独立 Session——`sessionController.fork()` 调 `agents.create` 时 `meta` 只有 `{cwd, isSeeded}`，子会话头部既无 `parentSession`，也没有替代来源字段。Weir 的 fork 播种只认 `parentSession`，于是 fork 出的会话静默得到空板（实测：源板 113 条 / revision 372，fork 出的子会话 `_bb` 为 `{revision: 0, entries: []}`）。现在在 fork 调用窗口内捕获来源（包装 `sessionController.fork` + `AsyncLocalStorage` + 窗口内临时包装 `agents.create` 读子会话 id），由 `resolveDurableRoot` 在首次建板前一次性消费；老日志/老宿主的 `parentSession` 路径保留，捕获不可用时退化空板并只告警一次，绝不覆盖任何已物化旁置。集成回归同时改为走真实 `session/fork` RPC，并钉住宿主真实形状（无 `parentSession`、`meta` 不含来源字段），宿主再次改形状会直接失败而非继续全绿。详见 [会话黑板](docs/features/blackboard.md)。
 
 ## [2.1.5] - 2026-11-08
 
