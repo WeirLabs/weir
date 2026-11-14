@@ -3333,7 +3333,10 @@ async function runSelectorZoomMatrix(sessionId) {
     uiuxEvidence.zoom.push(row)
     saveUiuxEvidence()
     check(`selectorRealBrowserZoom200At${width}`, row.zoomProblems.length === 0, { width, problems: row.zoomProblems, before: before.visualViewport, after: after.visualViewport, innerWidth: after.innerWidth, devicePixelRatio: after.devicePixelRatio, rect: after.rects.reference })
-    const scrollBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
+    // Page-zoom relayout settles asynchronously: an immediate baseline can
+    // capture a transient scrollHeight, which then reads as a content shrink
+    // at restore. Wait for two identical measurements instead.
+    const scrollBefore = (await selectorOpen({ scrollBaseline: 'stable' })).scrollBefore
     const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
     const audit = await beginModalAudit(`selector-zoom200-${width}`, '#weir-da-selector-panel', trigger, { before: scrollBefore, selector: { scale: 2, scrollable } })
     await keyboardKey(`Close 200 percent selector ${width}`, 'Escape')
