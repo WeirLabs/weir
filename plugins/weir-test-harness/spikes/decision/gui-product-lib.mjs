@@ -216,7 +216,9 @@ export function selectorCopyProblems(value, expected = {}) {
   const required = zh
     ? [{ label: 'off task label', pattern: /不启用助手/ }, { label: 'auto task label', pattern: /自动选择助手/ }]
     : [{ label: 'off task label', pattern: /Do not use an assistant/i }, { label: 'auto task label', pattern: /Automatically choose an assistant/i }]
-  if (expected.emptyScope) required.push({ label: 'empty scope and continued asking', pattern: zh ? /尚未允许自动回答[；;。\s]*新判断仍会询问你/ : /No decisions are currently allowed for automatic answers[;,.\s]*new decisions will still ask you/i })
+  if (expected.emptyScope) required.push(
+    { label: 'routes but does not auto-answer', pattern: zh ? /仍会自动选择助手/ : /still chosen to evaluate/i },
+    { label: 'empty scope and continued asking', pattern: zh ? /自动回答尚未允许[；;，,。\s]*新判断仍会询问你/ : /not allowed yet[;,.\s]*new decisions will still ask you/i })
   if (Number.isInteger(expected.allowedCount)) required.push({ label: `allowedCount ${expected.allowedCount}`, pattern: zh ? new RegExp(`当前允许自动回答\\s*${expected.allowedCount}\\s*类判断`) : new RegExp(`allowed for\\s*${expected.allowedCount}\\s*decision categories`, 'i') })
   if (expected.unknown) required.push({ label: 'unknown automatic-answer state', pattern: zh ? /自动回答状态未知/ : /Automatic-answer status is unknown/i }, { label: 'unknown comparison state', pattern: zh ? /选择对比状态未知/ : /Selection comparison status is unknown/i })
   if (expected.shadow === true) required.push({ label: 'comparison on', pattern: zh ? /选择对比已开启/ : /Selection comparison is on/i })

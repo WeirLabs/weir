@@ -525,10 +525,12 @@ export class DecisionBroker {
     const allowedClasses = Array.isArray(configured) && configured.every(value => ['A', 'B', 'C'].includes(value))
       ? [...new Set(configured)]
       : []
-    if (allowedClasses.length === 0) return authority()
-
+    // The whitelist gates only the ANSWER, never the route: class-integrity
+    // failures (unknown/explicit D-F) still bypass routing, but a denied or
+    // empty whitelist routes normally and parks the owned case afterwards, so
+    // the user's ruling accumulates evidence instead of vanishing unowned.
     const initial = autoAdmission(request, allowedClasses)
-    if (!initial.ok && initial.reason !== 'missing_class') return authority()
+    if (!initial.ok && initial.reason === 'unknown_class') return authority()
     const sidecar = {
       llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent), signal,
       timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
@@ -544,16 +546,25 @@ export class DecisionBroker {
       normalized = classified.request
       if (classified.kind === 'authority') return authority(normalized)
     }
-    if (!autoAdmission(normalized, allowedClasses).ok) return authority(normalized)
+    const admitted = autoAdmission(normalized, allowedClasses)
+    if (!admitted.ok && admitted.reason === 'unknown_class') return authority(normalized)
+    const answerAuthorized = admitted.ok
 
     const profiles = this.profiles.listProfiles()
     const route = await routeAuto({
       request: normalized, scope, profiles, ...sidecar,
     })
-    return this.commitAutoRoute({
+    const committed = await this.commitAutoRoute({
       current, request: normalized, scope, route,
       awaitingReason: route.kind === 'ambiguous' ? 'route_ambiguous' : 'no_route',
     })
+    if (route.kind === 'selected' && !answerAuthorized) {
+      const latest = this.cases.getCase(current.caseId)
+      if (latest.state === 'evaluating') {
+        return this.cases.transition({ caseId: latest.caseId, expectedState: 'evaluating', expectedRevision: latest.revision, state: 'awaiting_user', awaitingReason: 'authority' })
+      }
+    }
+    return committed
   }
 
   async commitAutoRoute({ current, request, scope, route, awaitingReason }) {
