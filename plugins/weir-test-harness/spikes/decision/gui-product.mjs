@@ -3185,7 +3185,17 @@ async function runColdRevealMatrix(sessionId, caseId) {
   const article = `article[data-case-id="${caseId}"]`
   const form = `${article} form.weir-da-answers`
   await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
-  const scroller = 'main.weir-da-page'
+  // The Decision page no longer scrolls as a whole (fixed master/detail
+  // regions): resolve the card's actual scrolling ancestor and measure the
+  // reveal against it instead of main.weir-da-page.
+  const scroller = await instance.cdp.evaluate(`(() => {
+    const start=document.querySelector(${JSON.stringify(article)})
+    for(let el=start?start.parentElement:null;el;el=el.parentElement){
+      const style=getComputedStyle(el)
+      if(['auto','scroll','overlay'].includes(style.overflowY)){el.setAttribute('data-weir-cold-scroller','1');return '[data-weir-cold-scroller="1"]'}
+    }
+    return 'main.weir-da-page'
+  })()`)
   const routeTarget = `#weir-da-inbox-routes-${caseId}-content`
   const routeControl = await holdDecision('record', { sessionId, caseId }, 'hold-fail')
   await openDisclosure(`weir-da-inbox-routes-${caseId}`)
