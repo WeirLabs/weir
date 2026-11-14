@@ -6,11 +6,15 @@
 // teardown, register ordering). Orchestration — escalation, job wrapping,
 // group two-phase/rollback/seal — stays in tool.js; this module only spawns.
 //
-// DSH 0.2.1 single start entry: subagents.startActivation(spec) with
-// { provider, label, childId?, request, signal, delivery }. The request no
-// longer carries label/signal/persona/toolFilter: the caller reserves the
-// childId, and the persona + tool filter ride the creation-window composition
-// shim (child-composition.js) registered synchronously before the start.
+// DSH single start entry: subagents.startActivation(spec). The spec carries
+// { provider, label, childId, signal, delivery } plus the activation payload —
+// which moved OUT of the 0.2.1-era `request` envelope to flat fields in
+// 0.2.2-rc.2 (`parent`/`prompt`/`maxDepth`/`agentOptions`). See the assembly
+// site below (S52): both envelopes are sent with identical values so one spec
+// serves every host in the declared band. The payload carries neither
+// label/signal/persona/toolFilter: the caller reserves the childId, and the
+// persona + tool filter ride the creation-window composition shim
+// (child-composition.js) registered synchronously before the start.
 //
 // Invariant: spawnGuardedChild returns only a started child whose composition
 // was applied and whose read-only guard is attached (or whose disabled-snapshot
@@ -84,18 +88,28 @@ export async function spawnGuardedChild(assignment, lane, deps) {
     persona,
     ...(toolFilter ? { toolFilter } : {}),
   })
+  // Activation spec shape (S52): DSH >= 0.2.2-rc.2 reads the FLAT spec
+  // (`spec.parent`, `spec.prompt`, `spec.maxDepth`, `spec.agentOptions`) and
+  // dereferences `spec.parent.id` in its live-parent guard before anything
+  // else; 0.2.2-rc.1 and 0.2.1 read the nested `request` envelope. A
+  // nested-only spec therefore dies on the running host as "Cannot read
+  // properties of undefined (reading 'id')" with no child created. Both
+  // envelopes carry the SAME values, so one spec satisfies every host in the
+  // declared band (engines.dsh `>=0.2.2-rc.1 <0.3.0`).
+  const activationRequest = {
+    prompt: assignment.prompt,
+    parent: assignment.parent,
+    ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
+    maxDepth: 1,
+  }
   let raw
   try {
     raw = await deps.subagents.startActivation({
       provider: 'spawn',
       label,
       childId,
-      request: {
-        prompt: assignment.prompt,
-        parent: assignment.parent,
-        ...(target.agentOptions ? { agentOptions: target.agentOptions } : {}),
-        maxDepth: 1,
-      },
+      ...activationRequest,
+      request: activationRequest,
       signal: assignment.signal,
       delivery: lane.delivery,
     })

@@ -130,6 +130,15 @@ export function createSpawnSurface(options = {}) {
 
   const subagents = {
     async startActivation(spec) {
+      // Real-host contract (DSH >= 0.2.2-rc.2): `startActivation` reads a FLAT
+      // spec and its first act is `spec.parent.id` inside the live-parent
+      // guard. A nested-only { request } envelope therefore fails here exactly
+      // as it fails live ("Cannot read properties of undefined (reading
+      // 'id')"), instead of passing silently against a double that only ever
+      // looked at delivery/label/childId.
+      if (!spec.parent || typeof spec.prompt === 'undefined') {
+        throw new TypeError(`startActivation: flat spec.parent/spec.prompt are required on DSH >= 0.2.2-rc.2 (got parent=${String(spec.parent)}, prompt=${typeof spec.prompt}); the nested { request } envelope is not read by the host`)
+      }
       const record = { ...spec }
       if (spec.delivery === 'caller') spawned.push(record)
       else continued.push(record)
