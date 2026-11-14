@@ -77,7 +77,12 @@ function assert(run) {
     const messages = records.filter(record => record.kind === 'session-event' && record.type === 'user/message')
     const child = messages.find(record => record.text?.startsWith('CONTINUABLE_CHILD\n'))?.session
     run.check(`${preset}: follow-up delivered to the same child session`, !!child && messages.some(record => record.session === child && record.source === 'agent-message' && record.text?.includes('CONTINUABLE_FOLLOWUP')))
-    run.check(`${preset}: both built-in settlements identify that child`, !!child && ['CONTINUABLE_FIRST_RESULT', 'CONTINUABLE_SECOND_RESULT'].every(marker => messages.some(record => record.session === selected?.session && record.source === 'subagent-settled' && record.text?.startsWith(`Background subagent ${child} finished`) && record.text.includes(marker))))
+    const notices = messages.filter(record => record.session === selected?.session && record.source === 'subagent-settled' && /^Background subagent \S+ finished/.test(record.text ?? ''))
+    // Since DSH 0.2.2 the settlement notice names the child by its subagent
+    // TREE NAME, not its session id — so the identity assertion reads the name
+    // out of the notices themselves and requires ONE stable child across both.
+    const noticeNames = new Set(notices.map(record => (record.text ?? '').match(/^Background subagent (\S+) finished/)?.[1]))
+    run.check(`${preset}: both built-in settlements identify that child`, notices.length >= 2 && noticeNames.size === 1 && ['CONTINUABLE_FIRST_RESULT', 'CONTINUABLE_SECOND_RESULT'].every(marker => notices.some(record => record.text.includes(marker))))
   }
 }
 

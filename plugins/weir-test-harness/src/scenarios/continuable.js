@@ -39,11 +39,14 @@ function decide(options, obs) {
     return textChunks('continuable follow-up sent; waiting for the second settlement notice')
   }
   // Parent: the first settlement notice arrived on the built-in channel —
-  // follow up with send_message to the child id the notice names.
+  // follow up with send_message. The notice names the child by its subagent
+  // TREE NAME (`Background subagent agent-1 finished …`), and since DSH 0.2.2
+  // the tool takes `agent` (a name resolved through the tree catalog), not the
+  // retired `agent_id` session-id parameter.
   if (history.includes('CONTINUABLE_FIRST_RESULT')) {
-    const match = history.match(/Background subagent ([0-9a-f-]{36}) finished/)
-    if (!match) return textChunks('continuable child id not found in the settlement notice')
-    return toolCallChunks('send_message', { agent_id: match[1], message: 'CONTINUABLE_FOLLOWUP: answer with the second marker' })
+    const match = history.match(/Background subagent (\S+) finished/)
+    if (!match) return textChunks('continuable child name not found in the settlement notice')
+    return toolCallChunks('send_message', { agent: match[1], message: 'CONTINUABLE_FOLLOWUP: answer with the second marker' })
   }
   // Parent: the delegation returned the child id — pad the busy window until
   // the first settlement notice lands. Bounded marker wait (design D1),
