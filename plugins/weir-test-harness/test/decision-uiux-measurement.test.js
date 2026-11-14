@@ -112,7 +112,7 @@ test('UIUX fixture provides independent bilingual long status names and cold con
 })
 
 test('selector default copy accepts approved bilingual task language and rejects legacy jargon', () => {
-  const emptyZh = '选择决策助手\n不启用助手\n自动选择助手\n尚未允许自动回答；新判断仍会询问你。\n选择对比未开启。'
+  const emptyZh = '选择决策助手\n不启用助手\n自动选择助手\n仍会自动选择助手并交由其评估；自动回答尚未允许，新判断仍会询问你。\n选择对比未开启。'
   assert.deepEqual(selectorCopyProblems(emptyZh, { language: 'zh', emptyScope: true, shadow: false }), [])
   const allowedEn = 'Choose a decision assistant\nDo not use an assistant\nAutomatically choose an assistant\nAutomatic answers are currently allowed for 2 decision categories.\nSelection comparison is on; it never changes the actual result.'
   assert.deepEqual(selectorCopyProblems(allowedEn, { language: 'en', allowedCount: 2, shadow: true }), [])

@@ -68,40 +68,50 @@ function attemptCount(f) {
   return f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM attempts').get().n
 }
 
-test('empty Auto whitelist short-circuits both entries and settled replay stays idempotent', async t => {
+test('empty Auto whitelist still routes and parks an owned authority pending that accumulates evidence', async t => {
   const f = await fixture(t)
   f.config.decisionAgentAutoAnswerClasses = []
-  let profileReads = 0
+  const only = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
   let evaluations = 0
-  const listProfiles = f.broker.profiles.listProfiles.bind(f.broker.profiles)
-  f.broker.profiles.listProfiles = (...args) => { profileReads++; return listProfiles(...args) }
   f.broker.evaluateCase = (...args) => { evaluations++; throw new Error('domain evaluation must not run') }
   const request = hookRequest('empty-whitelist')
   const snapshot = structuredClone(request)
+  f.classifyWith({ contract: 'router-classification-contract/1', classes: [{ id: 'empty-whitelist', authorizationClass: 'A' }] })
 
   const hooked = await f.broker.hook({ agent: f.agent, request })
   assert.equal(hooked.why, 'awaiting_user')
   const hookedCase = f.broker.cases.getCase(hooked.caseId)
-  assert.equal(hookedCase.agentId, null)
+  assert.equal(hookedCase.agentId, only.agentId)
   assert.equal(hookedCase.awaitingReason, 'authority')
-  assert.equal(routeFor(f, hooked.caseId).mode, 'auto')
-  assert.equal(routeFor(f, hooked.caseId).reason, 'admission:authority')
+  const hookedRoute = routeFor(f, hooked.caseId)
+  assert.equal(hookedRoute.mode, 'auto')
+  assert.equal(hookedRoute.chosen, only.agentId)
+  assert.equal(hookedRoute.reason, 'deterministic:single_candidate')
   assert.deepEqual(request, snapshot)
+  assert.equal(evaluations, 0)
+  assert.equal(attemptCount(f), 0)
+  assert.equal(callsOf(f, 'router-contract/1').length, 0)
 
+  // The consult entry ids its question 'question'; re-arm the classifier mock
+  // for it (the contract rejects ids that do not exactly cover the missing set).
+  f.classifyWith({ contract: 'router-classification-contract/1', classes: [{ id: 'question', authorizationClass: 'A' }] })
   const args = { question: 'Consult with an empty whitelist?', request_id: 'empty-whitelist' }
   const consulted = await f.broker.consult({ agent: f.agent, args })
   assert.deepEqual(consulted, { outcome: 'awaiting_user', caseId: consulted.caseId, state: 'awaiting_user', reason: 'authority' })
-  assert.equal(f.broker.cases.getCase(consulted.caseId).agentId, null)
-  assert.equal(routeFor(f, consulted.caseId).reason, 'admission:authority')
+  assert.equal(f.broker.cases.getCase(consulted.caseId).agentId, only.agentId)
+  assert.equal(routeFor(f, consulted.caseId).chosen, only.agentId)
 
   assert.deepEqual(await f.broker.hook({ agent: f.agent, request }), hooked)
   assert.deepEqual(await f.broker.consult({ agent: f.agent, args }), consulted)
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, 2)
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions').get().n, 2)
-  assert.equal(profileReads, 0)
-  assert.equal(evaluations, 0)
-  assert.equal(f.calls.length, 0)
-  assert.equal(attemptCount(f), 0)
+
+  // The flywheel: the user's ruling on the owned pending writes user_decision evidence.
+  const closed = await f.broker.decide({ caseId: hooked.caseId, answers: [{ id: 'empty-whitelist', selected: ['A'] }] })
+  assert.equal(closed.state, 'closed')
+  assert.equal(closed.closing, 'escalated')
+  const evidence = f.broker.store.db.prepare("SELECT * FROM evidence WHERE agent_id=? AND source='user_decision'").all(only.agentId)
+  assert.equal(evidence.length, 1)
 })
 
 test('supplied invalid classes fail closed and Hook exclusion precedes Case while consult authority follows it', async t => {
@@ -159,11 +169,15 @@ test('classifier unknown, D/E/F, unallowed, and mixed-batch classes become autho
   assert.equal(mixedCase.request.questions[1].authorizationClassSource, 'auto_classifier')
   assert.deepEqual(mixed, mixedSnapshot)
 
+  // Whitelist denial no longer blocks routing: classes outside the whitelist
+  // still classify and route; with zero candidates the case deterministically
+  // lands no_route (an owned authority park needs a routed agent).
   f.config.decisionAgentAutoAnswerClasses = ['A']
   const unallowed = hookRequest('unallowed-c')
   f.classifyWith({ contract: 'router-classification-contract/1', classes: [{ id: 'unallowed-c', authorizationClass: 'C' }] })
   const unallowedResult = await f.broker.hook({ agent: f.agent, request: unallowed })
-  assert.equal(f.broker.cases.getCase(unallowedResult.caseId).awaitingReason, 'authority')
+  assert.equal(f.broker.cases.getCase(unallowedResult.caseId).awaitingReason, 'no_route')
+  assert.equal(routeFor(f, unallowedResult.caseId).reason, 'none:no_candidates')
   assert.equal(callsOf(f, 'router-contract/1').length, 0)
   assert.equal(callsOf(f, 'router-classification-contract/1').length, 6)
   assert.equal(attemptCount(f), 0)

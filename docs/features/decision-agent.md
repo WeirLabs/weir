@@ -23,7 +23,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - Hook 只处理宿主原生的结构化提问，不拦截正文里的反问。回答保持原 `questionId`、顺序、选项和 `multiSelect` 形状；多题批次全有或全无，部分可答时整批交回用户，逐题结论仅作建议。
 - `approval`、`plan-review`、不可逆/高风险操作和执行授权请求在语义评估前完全走原生确认，不创建 Case，也不会把其答案变成可复用证据。Decision 回答永远不是执行、合并、发布、删除或其他权限。
 - 根选择器为 Auto 时，`decision_consult` 仍优先使用本次显式 `agent_id`；显式目标不可用会明确失败，不回退到 Auto 或钉选 Agent。Hook 的 approval/plan-review/D/E/F/高风险排除仍在建 Case 前旁路；consult 则保留建 Case 后进入 `authority` 待办的既有不对称语义。
-- `decision_consult` 新增可选 `authorization_class`，只复制到该次标准化问题。Active Auto 要求每题最终都有白名单允许的 A/B/C；空白名单直接形成 `authority` 待办，不读取候选、不调用分类器/Router 或领域评估。stock Hook 缺类时只调用有界分类器，非法/unknown/D/E/F/未允许类别整批失败关闭；派生字段标为 `authorizationClassSource='auto_classifier'`，原始 Hook request 不变。
+- `decision_consult` 新增可选 `authorization_class`，只复制到该次标准化问题。Active Auto 要求每题最终都有可核验的 A/B/C 授权类；**白名单只约束回答放行，不再阻止分类与路由**：类别未获允许的请求照常分类、路由并固定选中助手，随后 Case 进入**有归属的** `authority` 待办（不消耗领域 Attempt），用户裁决按有归属语义沉淀 `user_decision` 证据。stock Hook 缺类时只调用有界分类器，非法/unknown/D/E/F 类别仍在路由前整批失败关闭；派生字段标为 `authorizationClassSource='auto_classifier'`，原始 Hook request 不变。选择器文案如实区分「仍会自动选择助手并评估」与「自动回答尚未允许」。
 - Auto 候选来自当前 profile 内全部 enabled、未归档助手（身份不按工作区过滤），经 paths/tags 与类别过滤；Case、证据与授权检查仍只使用当前工作区；零候选不调用模型，唯一候选确定性选择，多候选才进入受限 Router。RouteDecision、规范化 request、Case 归属与状态经 `transitionWithRoute()` 原子提交，选中目标在事务内重新校验；提交失败或目标失效不会进入领域 Attempt。无匹配、歧义、准入拒绝和分类/Router 失败分别持久化为 `no_route`、`route_ambiguous` 或 `authority` 待办，Hook 只在持久提交后交还原生 `next()`。路由提交前同键 Hook/consult 加入同一 `autoFlights` Promise，不提前发布或交还；已结算重放也不增加 RouteDecision 或 Attempt。
 - `decision_consult` 支持 `answered`、`returned`、`awaiting_user`：带 `caseId` 的答案与出处、封闭原因码与修复提示，或持久用户待办。`awaiting_revision` 中只有内容实际改变的咨询才产生新 Attempt，未修订重放保持幂等。Auto 使用 `callerRevisionFingerprint`，仅剥离成对的 `auto_classifier` 派生类别与来源标记；题面、选项、context、evidence、scope 或调用方类别变化仍是真修订。未显式传 `agent_id` 的 Auto 修订和 retry 固定当前 Agent，选择器或 Router 结果变化只影响新请求。
 - 新判断升级后，用户在原生问题或收件箱作出的选择成为带 scope 的权威 `user_decision`。有归属 Case 的同一 Agent、同 scope 后续问题可直接引用该记录，不需要语义整合；裁决后的咨询凭 `caseId` 重读可取得真实用户答案与出处。无归属 Auto 待办也可直接回答并如实关闭，但最终 `agentId=null`，不创建 Evidence；同一咨询重读返回真实选择与空 `evidence`，该记录不会进入任何 Agent 的后续 L3/L5 检索。
@@ -87,7 +87,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 | `decisionAgentsEnabled` | `false` | 总开关；关闭等价于所有会话 `Off` |
 | `decisionAgentSelectorDefault` | `'off'` | 仅允许 `off\|auto`，默认 Off。只有之后真正新建的根会话在全局启用、`source=startup`、root guard 通过且尚无 selector 行时才持久化 Auto；恢复、旧版无行、startup 子会话及非法存储值均保持 Off |
 | `decisionAgentAutoShadow` | `false` | 非权威 Shadow 诊断开关；仅布尔 `true` 启用。只对新建且合格的 pinned Hook/非显式咨询在真实 pinned 路由后追加至多一条 `auto_shadow`，默认关闭 |
-| `decisionAgentAutoAnswerClasses` | `'[]'` | Active Auto 的 A/B/C JSON 白名单；保存时校验、有效值去重，非法存储值运行时归为空。默认空，Active Auto 对新请求直接形成 `authority` 待办且不调用分类/Router |
+| `decisionAgentAutoAnswerClasses` | `'[]'` | Active Auto 的 A/B/C JSON 白名单；保存时校验、有效值去重，非法存储值运行时归为空。默认空：照常分类与路由并固定助手，但结论不自动回答——Case 进入有归属 `authority` 待办由你裁决 |
 | `decisionAgentAnswerTimeoutMs` | `60000` | 每次 Auto 分类、Router 或领域评估 sidecar 调用的硬超时 |
 | `decisionAgentMaxAttemptsPerCase` | `3` | 自动评估、修订与重试的默认合计上限；用户显式恢复每次只追加一次 |
 | `decisionAgentContextBudgetTokens` | `24000` | 当前 Case 与证据包的有界预算 |
