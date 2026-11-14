@@ -3177,6 +3177,10 @@ async function runLearningResumeMatrix(sessionId, primary, candidate) {
 }
 
 async function runColdRevealMatrix(sessionId, caseId) {
+  // The reveal-to-end assertion is only meaningful when the revealed content
+  // actually starts below the fold; compact cards fit a 900px viewport, so
+  // this matrix runs against a short viewport and restores afterwards.
+  await instance.cdp.setViewport(1280, 560, false)
   await openPage('inbox')
   const article = `article[data-case-id="${caseId}"]`
   const form = `${article} form.weir-da-answers`
@@ -3233,6 +3237,7 @@ async function runColdRevealMatrix(sessionId, caseId) {
   await shot('uiux-cold-refresh-stable', { kind: 'cold-reveal-refresh', error: routeRefreshed, success: evidenceRefreshed })
   check('coldErrorRevealsActualEndOnceWithoutFocusDraftTheft', errorEvidence.problems.length === 0, { problems: errorEvidence.problems, loading: routeLoading, ready: routeReady, refreshBaseline: routeRefreshBaseline, refreshed: routeRefreshed, control: errorEvidence.control })
   check('coldSuccessRevealsActualEndOnceAndRefreshDoesNotJump', successEvidence.problems.length === 0, { problems: successEvidence.problems, loading: evidenceLoading, ready: evidenceReady, refreshBaseline: evidenceRefreshBaseline, refreshed: evidenceRefreshed })
+  await instance.cdp.setViewport(1440, 900, false)
 }
 
 async function setGuiLanguage(language) {
