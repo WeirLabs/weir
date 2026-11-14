@@ -128,7 +128,7 @@ export const FIELD_DEFAULTS = Object.freeze({
   decisionAgentAnswerTimeoutMs: 60000,
   decisionAgentMaxAttemptsPerCase: 3,
   decisionAgentContextBudgetTokens: 24000,
-  decisionAgentMaxOutputTokens: 1600,
+  decisionAgentMaxOutputTokens: 4096,
   decisionAgentMaxConcurrentAttempts: 4,
   decisionAgentChains: '',
   decisionAgentRetentionDays: 0,

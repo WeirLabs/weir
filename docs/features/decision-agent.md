@@ -91,7 +91,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 | `decisionAgentAnswerTimeoutMs` | `60000` | 每次 Auto 分类、Router 或领域评估 sidecar 调用的硬超时 |
 | `decisionAgentMaxAttemptsPerCase` | `3` | 自动评估、修订与重试的默认合计上限；用户显式恢复每次只追加一次 |
 | `decisionAgentContextBudgetTokens` | `24000` | 当前 Case 与证据包的有界预算 |
-| `decisionAgentMaxOutputTokens` | `1600` | 分类、Router 与评估器的单次输出上限 |
+| `decisionAgentMaxOutputTokens` | `4096` | 分类、Router 与评估器的单次输出上限 |
 | `decisionAgentMaxConcurrentAttempts` | `4` | 并发评估上限；Auto 从 intake 到分类/路由和后续评估持有同一许可，超限 Hook 直接走原生提问 |
 | `decisionAgentChains` | `''` | 按 Agent id 配置有序模型链；空链继承会话路由，显式不可用路由不静默换模型 |
 | `decisionAgentRetentionDays` | `0` | 仅启动时清理无裁决/反馈的旧关闭记录；0 表示永久保留 |

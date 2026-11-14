@@ -485,7 +485,7 @@ export class DecisionBroker {
     const sidecar = {
       llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent), signal,
       timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
-      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 1600,
+      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
       contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
     }
     try {
@@ -532,7 +532,7 @@ export class DecisionBroker {
     const sidecar = {
       llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent), signal,
       timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
-      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 1600,
+      maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
       contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
     }
     let normalized = request
@@ -668,7 +668,7 @@ export class DecisionBroker {
         result = await runDecisionAttempt({
         ctx: this.ctx, profile, request: current.request, evidence: candidates, packed,
         modelRoute, budgetTokens: packed.pins.budgetTokens,
-        maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 1600,
+        maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
         timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000, signal: controller.signal,
         workspaceKey: current.workspaceKey, scope: current.scope,
         questions: current.request.questions, attemptStartedAt,
