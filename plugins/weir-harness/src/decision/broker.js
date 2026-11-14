@@ -943,7 +943,9 @@ export class DecisionBroker {
   async deliverDecision(current) {
     try {
       const agent = await this.rootAgent(current.rootSessionId)
-      const labels = current.decision.answers.flatMap(answer => answer.selected).join(', ')
+      // A custom ruling carries no option label, so the delivery message must
+      // include the custom text too — otherwise it reads as an empty answer.
+      const labels = current.decision.answers.flatMap(answer => [...(Array.isArray(answer.selected) ? answer.selected : []), ...(typeof answer.custom === 'string' && answer.custom ? [answer.custom] : [])]).join(', ')
       await agent.followup(userTextMessage(`Decision ${current.caseId} was resolved by the user: ${labels}`, 'weir-decision'))
       this.audit('deliver', { caseId: current.caseId, ok: true })
     } catch (error) {
