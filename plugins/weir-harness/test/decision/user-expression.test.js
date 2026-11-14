@@ -11,7 +11,12 @@ async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), 'weir-decision-expr-'))
   const workspace = realpathSync(dir)
   const audits = []
-  const agent = { id: 'root', session: { header: { id: 'root', cwd: dir, delegationDepth: 0 }, requestContext: () => ({ provider: 'p', model: 'm' }) } }
+  const followups = []
+  const agent = {
+    id: 'root',
+    session: { header: { id: 'root', cwd: dir, delegationDepth: 0 }, requestContext: () => ({ provider: 'p', model: 'm' }) },
+    followup: async message => { followups.push(message) },
+  }
   let evaluation = { outcome: 'escalate', missing: ['New judgment'] }
   let clarification = 'The pack only covers the title decision; the rollout window is genuinely open.'
   const ctx = {
@@ -34,7 +39,7 @@ async function fixture(t) {
     return { verdict, request, current: broker.cases.getCase(verdict.caseId) }
   }
   return {
-    broker, agent, a, workspace, audits, open,
+    broker, agent, a, workspace, audits, followups, open,
     respond: value => { evaluation = value },
     clarifyWith: value => { clarification = value },
   }
@@ -49,6 +54,12 @@ test('bounce moves awaiting_user to awaiting_revision with the note and turn-end
   assert.equal(bounced.state, 'awaiting_revision')
   assert.equal(bounced.escalation.bounce, '这个问题的前提是错的，请回到任务背景重新组织。')
   assert.ok(f.audits.some(entry => entry.kind === 'outcome' && entry.value.action === 'returnToCaller'))
+  // The initiator is woken with one user-role followup carrying the note.
+  assert.equal(f.followups.length, 1)
+  const text = JSON.stringify(f.followups[0])
+  assert.match(text, /returned to you by the user/)
+  assert.match(text, /这个问题的前提是错的/)
+  assert.match(text, new RegExp(current.caseId))
   // The escalate evaluation produced one attempt; the bounce adds none.
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM attempts').get().n, 1)
 
@@ -56,6 +67,15 @@ test('bounce moves awaiting_user to awaiting_revision with the note and turn-end
   const closed = await f.broker.turnStopping({ agent: f.agent })
   assert.equal(closed.closed, 1)
   assert.equal(f.broker.cases.getCase(current.caseId).closing, 'returned')
+})
+
+test('bounce delivery failure is audited and never rolls back the transition', async t => {
+  const f = await fixture(t)
+  delete f.agent.followup
+  const { current } = await f.open('b-delivery-fail')
+  const bounced = await f.broker.mutate({ action: 'returnToCaller', caseId: current.caseId, note: '没有投递通道也要完成打回' })
+  assert.equal(bounced.state, 'awaiting_revision')
+  assert.ok(f.audits.some(entry => entry.kind === 'deliver' && entry.value.ok === false && entry.value.kind === 'bounce'))
 })
 
 test('bounce requires a note and a pending case', async t => {

@@ -816,6 +816,7 @@ export class DecisionBroker {
         if (!note || note.length > 4000) throw new DecisionContractError('MISSING_CONTEXT', 'A bounce note of 1..4000 characters is required')
         const revised = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'awaiting_revision', escalation: { ...(current.escalation ?? {}), bounce: note } })
         this.audit('outcome', { caseId: current.caseId, action: 'returnToCaller' })
+        await this.deliverBounce(revised, note)
         return revised
       }
       case 'cancel': return this.hookUserAborted({ caseId: current.caseId })
@@ -939,6 +940,23 @@ export class DecisionBroker {
       this.audit('deliver', { caseId: current.caseId, ok: true })
     } catch (error) {
       this.audit('deliver', { caseId: current.caseId, ok: false, code: error?.code ?? 'DELIVERY_FAILED' })
+    }
+  }
+
+  // A bounce must reach its initiator, or nothing continues: deliver one
+  // followup into the originating session so the agent can revise the question
+  // (same request_id, better wording/context) or drop it. Delivery failures are
+  // audited and never roll back the authoritative transition.
+  async deliverBounce(current, note) {
+    try {
+      const agent = await this.rootAgent(current.rootSessionId)
+      const question = (current.request?.questions ?? []).map(item => item?.question).filter(Boolean).join(' | ')
+      await agent.followup(userTextMessage(`Decision ${current.caseId} was returned to you by the user with this note: ${note}
+Original question: ${question}
+Revise the question (consult again with the same request_id and better wording or context) or drop it.`, 'weir-decision'))
+      this.audit('deliver', { caseId: current.caseId, ok: true, kind: 'bounce' })
+    } catch (error) {
+      this.audit('deliver', { caseId: current.caseId, ok: false, kind: 'bounce', code: error?.code ?? 'DELIVERY_FAILED' })
     }
   }
 
