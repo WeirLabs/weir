@@ -110,6 +110,7 @@ describe('weir settings client half', () => {
     const chainEditorChunk = { ChainEditorField: (props) => ({ __chainEditor: props }) }
     const robashEditorChunk = { RobashListEditorField: (props) => ({ __robashEditor: props }) }
     const disabledCategoriesEditorChunk = { DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }) }
+    const decisionClassEditorChunk = { ClassSetEditorField: (props) => ({ __classSetEditor: props }), dictionaries: markerDict('classSet') }
     const lspPanelChunk = { LspManagerField: (props) => ({ __lspPanel: props }) }
     const modelPickerChunk = { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: (props) => ({ __pickerBoundary: props }) }
     const chainModelChunk = { marker: 'chain-model', dictionaries: markerDict('chain') }
@@ -159,6 +160,7 @@ describe('weir settings client half', () => {
       './client.chain-editor.js': chainEditorChunk,
       './client.robash-editor.js': robashEditorChunk,
       './client.disabled-categories-editor.js': disabledCategoriesEditorChunk,
+      './client.decision-class-editor.js': decisionClassEditorChunk,
       './client.lsp-panel.js': lspPanelChunk,
       './client.chain-model.js': chainModelChunk,
       './client.robash-model.js': robashModelChunk,
@@ -207,6 +209,7 @@ describe('weir settings client half', () => {
       modelPickerChunk,
       chainEditorChunk,
       disabledCategoriesEditorChunk,
+      decisionClassEditorChunk,
       chainModelChunk,
       lspToggleChunk,
       hashEditViewChunk,
@@ -328,6 +331,7 @@ describe('weir settings client half', () => {
     './client.robash-model.js',
     './client.lsp-model.js',
     './client.notify-permissions.js',
+    './client.decision-class-editor.js',
   ]
 
   it('loads, exposes the plugin surface, and registers the page chain', async () => {
@@ -573,7 +577,7 @@ describe('weir settings client half', () => {
   })
 
   it('fans out the settings chunks plus the picker, constructs both page controllers on arrival, and renders loading/arrived states', async () => {
-    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
+    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk, decisionClassEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
@@ -616,6 +620,11 @@ describe('weir settings client half', () => {
     const boundDisabled = settled.editors.DisabledCategoriesEditorField({ text: 'x' })
     expect(boundDisabled.__type).toBe(disabledCategoriesEditorChunk.DisabledCategoriesEditorField)
     expect(boundDisabled.text).toBe('x')
+    // the A/B/C class-set editor arrives bound to its chunk
+    const boundClassSet = settled.editors.ClassSetEditorField({ text: '["A"]', rows: ['A', 'B', 'C'] })
+    expect(boundClassSet.__type).toBe(decisionClassEditorChunk.ClassSetEditorField)
+    expect(boundClassSet.text).toBe('["A"]')
+    expect(boundClassSet.rows).toEqual(['A', 'B', 'C'])
     // the picker chunk arrives on its OWN arrival state and reaches the card as
     // a prop — never through the settings-chunk Promise.all
     expect(settled.modelPicker).toBe(modelPickerChunk)
@@ -1786,7 +1795,7 @@ describe('weir settings client half', () => {
     await flush()
     expect(events).toEqual(['register:settings.weir', 'register:settings.weir.page'])
     const pageRegistration = registrations.find((registration) => registration.ns === 'settings.weir.page')
-    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions']) {
+    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions', 'classSet']) {
       expect(pageRegistration.dicts.en[`pageSentinel.${slice}`], `page merge carries the ${slice} slice`).toBe(`${slice} en`)
       expect(pageRegistration.dicts.zh[`pageSentinel.${slice}`], `page merge carries the ${slice} zh slice`).toBe(`${slice} zh`)
     }
@@ -2621,6 +2630,9 @@ describe('weir settings client half', () => {
     'decisionAgentRetentionDays', 'decisionAgentRetentionDaysHint',
     'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecisionBasics', 'groupDecisionAdvanced', 'decisionAdvancedHint',
     'decisionDescription', 'decisionTitle',
+    // the A/B/C whitelist editor's own copy (client.decision-class-editor.js
+    // data face, merged into the same settings.weir.page registration)
+    'decisionClassNone', 'decisionClassCount', 'decisionClassInvalid',
     'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
     'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord', 'decisionMoreDetails', 'decisionMoreDetailsRouteIssue', 'decisionMoreDetailsFailedAttempt', 'decisionFeedbackHintShort',
     'decisionCustomAnswer', 'decisionCustomAnswerPlaceholder', 'decisionClarify', 'decisionClarifyHint', 'decisionClarifyPlaceholder', 'decisionClarifySubmit', 'decisionClarifyLimit', 'decisionClarifyYouAsked', 'decisionClarifyAnswer', 'decisionClarifyRecord', 'decisionBounce', 'decisionBounceHint', 'decisionBouncePlaceholder', 'decisionBounceSubmit',
@@ -2765,6 +2777,7 @@ describe('weir settings client half', () => {
       ['lib/client.robash-model.js', undefined],
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
+      ['lib/client.decision-class-editor.js', chunkRequire],
       ['lib/client.decision-model.js', undefined],
       ['lib/client.notify-permissions.js', chunkRequire],
       ['lib/client.file-lease-badge.js', chunkRequire],

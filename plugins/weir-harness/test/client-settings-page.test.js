@@ -149,6 +149,7 @@ describe('client.settings-page chunk', () => {
       ['lib/client.robash-model.js', undefined],
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
+      ['lib/client.decision-class-editor.js', chunkRequire],
       ['lib/client.notify-permissions.js', chunkRequire],
     ]) {
       slices.push(await loadClientChunk(spec, ...(stub ? [stub] : [])))
@@ -376,6 +377,32 @@ describe('client.settings-page chunk', () => {
       env: { status: 'ready', facts: { platform: 'darwin' } },
     }, { page: 'decision' }))
     expect(Object.keys(unset)).toEqual(['decisionBasics'])
+  })
+
+  it('renders the Auto whitelist row through the A/B/C chip editor with its form wiring', async () => {
+    const { exports, editors } = await loadPage()
+    // the closed class set is declared once and exported for the parity pin
+    expect(exports.CLASS_SET_ROWS).toEqual(['A', 'B', 'C'])
+    const edits = []
+    const resets = []
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({ decisionAgentsEnabled: { text: 'true' }, decisionAgentAutoAnswerClasses: { text: '["A"]', overridden: true } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }, { page: 'decision', edit: (name, text) => edits.push([name, text]), resetField: (name) => resets.push(name) })
+    const row = findAll(rendered.children, (node) => node.__type === editors.ClassSetEditorField)
+    expect(row).toHaveLength(1)
+    expect(row[0].field).toBe('decisionAgentAutoAnswerClasses')
+    expect(row[0].rows).toEqual(['A', 'B', 'C'])
+    expect(row[0].text).toBe('["A"]')
+    expect(row[0].overridden).toBe(true)
+    expect(row[0].disabled).toBe(false)
+    expect(typeof row[0].edit).toBe('function')
+    expect(typeof row[0].onReset).toBe('function')
+    expect(typeof row[0].t).toBe('function')
+    row[0].edit('decisionAgentAutoAnswerClasses', '["B"]')
+    expect(edits).toEqual([['decisionAgentAutoAnswerClasses', '["B"]']])
+    row[0].onReset()
+    expect(resets).toEqual(['decisionAgentAutoAnswerClasses'])
   })
 
   it('saves staged advanced rows while the fold is closed — the fold is not a form boundary', async () => {
@@ -1692,6 +1719,12 @@ describe('client.settings-page chunk', () => {
       for (const key of ['disabledCategoriesCount', 'disabledCategoriesPanelHint', 'disabledCategoriesInvalid']) {
         expectResolved(dict, key)
       }
+      // the A/B/C whitelist editor's own summary/invalid copy resolves too
+      // (its {classes} placeholder stays for the locale's vars interpolation)
+      for (const key of ['decisionClassNone', 'decisionClassCount', 'decisionClassInvalid']) {
+        expectResolved(dict, key)
+      }
+      expect(dict.decisionClassCount).toContain('{classes}')
       // the LSP manager's malformed-JSON hint resolves too (the folded
       // lspServers row's error state)
       for (const key of ['lspManagerInvalidJson']) {
