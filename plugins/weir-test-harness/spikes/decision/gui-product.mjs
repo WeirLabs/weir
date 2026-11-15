@@ -836,6 +836,9 @@ async function responseToolsDom(caseId) {
     })
     const form=card.querySelector(':scope > form.weir-da-answers')
     const submitRow=form?form.querySelector(':scope > .weir-da-actions'):null
+    // The fill helper moved into the tentative-suggestion block, so the block's
+    // secondary button is the measured weight reference the entries must match.
+    const suggestionFill=form?form.querySelector('[data-suggestion-review] button[data-variant="secondary"]'):null
     return {
       present:true,caseId:${JSON.stringify(caseId)},cardCount:cards.length,formPresent:Boolean(form),
       wrapperCount:wrappers.length,
@@ -844,6 +847,7 @@ async function responseToolsDom(caseId) {
       strip:strip?{className:strip.className,directChildOfGroup:strip.parentElement===wrapper,borderTopWidth:px(getComputedStyle(strip).borderTopWidth)}:null,
       entries,utilities,
       submitRow:submitRow?{secondary:[...submitRow.querySelectorAll('[data-variant="secondary"]')].map(weight),primary:[...submitRow.querySelectorAll('[data-variant="primary"]')].map(weight)}:{secondary:[],primary:[]},
+      suggestionFill:weight(suggestionFill),
       primaryCount:card.querySelectorAll('[data-variant="primary"]').length,
     }
   })()`)
@@ -887,7 +891,9 @@ function responseToolsWeightProblems(snapshot) {
   const problems=[]
   if(!snapshot.present)return ['the decision card is not rendered']
   const submit=snapshot.submitRow.primary[0]??null
-  const secondary=snapshot.submitRow.secondary[0]??null
+  // The measured secondary reference is the block's own fill helper: the submit
+  // row keeps only the primary submit button now.
+  const secondary=snapshot.suggestionFill??snapshot.submitRow.secondary[0]??null
   for(const entry of snapshot.entries){
     if(!entry.visibleChrome)problems.push(`${entry.action} renders without button chrome (background ${entry.background})`)
     if(submit&&entry.background===submit.background)problems.push(`${entry.action} shares the primary fill ${entry.background}`)
@@ -895,7 +901,7 @@ function responseToolsWeightProblems(snapshot) {
   }
   if(submit){
     if(snapshot.primaryCount!==1)problems.push(`${snapshot.primaryCount} primary buttons exist; the submit must stay the only one`)
-    if(!secondary)problems.push('the answer form lost its secondary suggestion button')
+    if(!secondary)problems.push('the answer form lost its secondary fill helper inside the suggestion block')
   }
   return problems
 }
@@ -919,6 +925,106 @@ async function frameResponseTools(name, caseId) {
   })()`)
   requireEvidence(rendered.present, `${name} needs a rendered response-tools group`)
   await shot(name, {kind:'response-tools',caseId,rendered})
+  await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(card)})?.scrollIntoView({block:'start',inline:'nearest'})`)
+  return rendered
+}
+
+/**
+ * DOM truth for one pending card's tentative-suggestion block: exactly one
+ * labeled block lives INSIDE the answer form, after the questions and before the
+ * submit row; the fill helper sits in the block's heading row as a secondary
+ * `type="button"`; and the submit row keeps only the single decision submit.
+ * @param caseId - Case whose pending card is measured.
+ * @param surface - 'card' for the transcript card, 'inbox' for the inbox article.
+ * @returns one serializable snapshot of block placement, header, and submit row.
+ */
+async function suggestionBlockDom(caseId, surface = 'card') {
+  const selector = surface === 'inbox' ? `article[data-case-id="${caseId}"]` : `[data-weir-decision-card="${caseId}"]`
+  return instance.cdp.evaluate(`(() => {
+    const candidates=[...document.querySelectorAll(${JSON.stringify(selector)})]
+    const scope=candidates.find(el=>el.offsetParent!==null)??candidates[0]??null
+    const empty={present:false,caseId:${JSON.stringify(caseId)},surface:${JSON.stringify(surface)},cardCount:candidates.length,blockCount:0,blockInForm:false,blockDirectChildOfForm:false,afterQuestions:false,beforeActionsRow:false,headerText:null,fillPresent:false,fillInBlock:false,fillInHeader:false,fillType:null,fillVariant:null,fillText:null,actionButtons:[],listItems:[],text:null}
+    if(!scope)return empty
+    const form=scope.querySelector('form.weir-da-answers')
+    const blocks=[...scope.querySelectorAll('[data-suggestion-review]')]
+    const block=blocks[0]??null
+    if(!form||!block)return {...empty,formPresent:Boolean(form),blockCount:blocks.length}
+    const order=[...form.children]
+    const header=block.querySelector('.weir-da-suggestion-header')
+    const title=header?.querySelector('strong')??null
+    const fill=header?.querySelector('button')??null
+    const actionsRow=form.querySelector(':scope > .weir-da-actions')
+    const questions=[...form.querySelectorAll(':scope > fieldset, :scope > .weir-da-field')]
+    return {
+      present:true,caseId:${JSON.stringify(caseId)},surface:${JSON.stringify(surface)},cardCount:candidates.length,
+      blockCount:blocks.length,
+      blockInForm:form.contains(block),
+      blockDirectChildOfForm:block.parentElement===form,
+      afterQuestions:questions.length>0&&questions.every(el=>order.indexOf(el)<order.indexOf(block)),
+      beforeActionsRow:Boolean(actionsRow)&&order.indexOf(block)<order.indexOf(actionsRow),
+      headerText:title?.textContent?.trim()??null,
+      fillPresent:Boolean(fill),
+      fillInBlock:Boolean(fill)&&block.contains(fill),
+      fillInHeader:Boolean(fill)&&header.contains(fill),
+      fillType:fill?.getAttribute('type')??null,
+      fillVariant:fill?.getAttribute('data-variant')??null,
+      fillText:fill?.textContent?.trim()??null,
+      actionButtons:actionsRow?[...actionsRow.querySelectorAll('button')].map(el=>({label:el.textContent.trim(),type:el.getAttribute('type'),variant:el.getAttribute('data-variant'),inBlock:block.contains(el)})):[],
+      listItems:block?[...block.querySelectorAll('li')].map(el=>el.textContent.trim()):[],
+      text:block.innerText??null,
+    }
+  })()`)
+}
+
+/**
+ * Blocking problems for one tentative-suggestion snapshot.
+ * @param snapshot - suggestionBlockDom output.
+ * @param options - `expectFill: false` for a read-only block.
+ * @returns human-readable problems; empty means the block contract holds.
+ */
+function suggestionBlockProblems(snapshot, options = {}) {
+  const expectFill = options.expectFill !== false
+  const problems = []
+  if (!snapshot.present) return ['the pending card renders no tentative-suggestion block inside its answer form']
+  if (snapshot.blockCount !== 1) problems.push(`${snapshot.blockCount} tentative-suggestion blocks exist; exactly one is required`)
+  if (!snapshot.blockInForm) problems.push('the block is not inside the answer form')
+  if (!snapshot.afterQuestions) problems.push('the block does not follow the questions')
+  if (!snapshot.beforeActionsRow) problems.push('the block does not precede the submit row')
+  if (!snapshot.headerText) problems.push('the block has no heading text')
+  if (expectFill) {
+    if (!snapshot.fillPresent) problems.push('the fill helper is missing from the block')
+    if (!snapshot.fillInBlock) problems.push('the fill helper is outside the block')
+    if (!snapshot.fillInHeader) problems.push('the fill helper is not in the block heading row')
+    if (snapshot.fillType !== 'button') problems.push(`the fill helper is type ${JSON.stringify(snapshot.fillType)}, not type="button"`)
+    if (snapshot.fillVariant !== 'secondary') problems.push(`the fill helper variant is ${JSON.stringify(snapshot.fillVariant)}, not secondary`)
+  } else if (snapshot.fillPresent) problems.push('a read-only block still renders the fill helper')
+  const row = Array.isArray(snapshot.actionButtons) ? snapshot.actionButtons : []
+  if (row.length !== 1) problems.push(`${row.length} buttons exist in the submit row; only the decision submit belongs there`)
+  else if (row[0].type !== 'submit') problems.push(`the submit row button is type ${JSON.stringify(row[0].type)}, not the form submit`)
+  else if (!/提交决定|Submit decision/i.test(row[0].label)) problems.push(`the submit row button reads ${JSON.stringify(row[0].label)}`)
+  if (row.some(button => button.inBlock)) problems.push('a block button leaked into the submit row')
+  return problems
+}
+
+/**
+ * Frame one card's tentative-suggestion block for its screenshot, then hand the
+ * card back to the `block: 'start'` seat every later step expects.
+ * @param name - Screenshot name.
+ * @param caseId - Case whose suggestion block is centered.
+ * @returns the scroll measurement recorded as screenshot evidence.
+ */
+async function frameSuggestionBlock(name, caseId) {
+  const card=`[data-weir-decision-card=${JSON.stringify(caseId)}]`
+  const rendered=await instance.cdp.evaluate(`(() => {
+    const card=document.querySelector(${JSON.stringify(card)})
+    const block=card?.querySelector('[data-suggestion-review]')??null
+    if(!card||!block)return {present:false}
+    block.scrollIntoView({block:'center',inline:'nearest'})
+    const box=block.getBoundingClientRect()
+    return {present:true,top:box.top,bottom:box.bottom,height:box.height,viewport:innerHeight,fullyVisible:box.top>=0&&box.bottom<=innerHeight}
+  })()`)
+  requireEvidence(rendered.present, `${name} needs a rendered tentative-suggestion block`)
+  await shot(name, {kind:'suggestion-block',caseId,rendered})
   await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(card)})?.scrollIntoView({block:'start',inline:'nearest'})`)
   return rendered
 }
@@ -1633,14 +1739,26 @@ async function askLongNative(sessionId) {
   return waitCase(sessionId, 'product-long-choice', current => current.state === 'awaiting_user')
 }
 
-async function answerInboxWithSuggestions(sessionId, caseId, shotName) {
+async function answerInboxWithSuggestions(sessionId, caseId, shotName, options = {}) {
   await openPage('inbox')
   const article = `article[data-case-id="${caseId}"]`
   await waitFor(() => instance.cdp.evaluate(answerFormExpression(caseId)), 30_000)
+  // The inbox card groups its tentative suggestions in the same labeled block as
+  // the transcript card, so the fill helper is measured where it now lives.
+  const inboxBlock = await suggestionBlockDom(caseId, 'inbox')
+  writeJson(join(out, `suggestion-block-${shotName}.json`), inboxBlock)
   await keyboardActivate('Use inbox suggestions', 'button', { scope: article, labels: ['使用建议', 'Use suggestions'] })
   const filled = await instance.cdp.evaluate(`(() => { const article=document.querySelector(${JSON.stringify(article)}); return {checked:[...article.querySelectorAll('input[type="radio"],input[type="checkbox"]')].filter(el=>el.checked).map(el=>el.value),texts:[...article.querySelectorAll('textarea')].map(el=>el.value),busy:article.querySelector('form')?.getAttribute('aria-busy')} })()`)
   const stillPending = await record(sessionId, 'suggestion-fill', caseId)
   check(`${shotName}SuggestionOnlyFills`, stillPending.case.state === 'awaiting_user' && filled.checked.length > 0 && filled.busy !== 'true', filled)
+  // Filling drafts never submits: the block is measured again after the fill and
+  // the case is still awaiting the user, so the helper only ever fills drafts.
+  const filledBlock = await suggestionBlockDom(caseId, 'inbox')
+  writeJson(join(out, `suggestion-block-${shotName}-filled.json`), filledBlock)
+  if (options.checkBlock) {
+    const blockIssues = [...suggestionBlockProblems(inboxBlock).map(issue => `before fill: ${issue}`), ...suggestionBlockProblems(filledBlock).map(issue => `after fill: ${issue}`)]
+    check(options.checkBlock, blockIssues.length === 0 && stillPending.case.state === 'awaiting_user', { before: inboxBlock, after: filledBlock, filled, stillPending: stillPending.case.state, problems: blockIssues })
+  }
   await shot(`${shotName}-suggestion-filled`)
   await keyboardActivate('Submit inbox decision', 'button', { scope: article, labels: ['提交决定', 'Submit decision'] })
   const closed = await waitFor(async () => { const value = await record(sessionId, 'inbox-decide', caseId); return value.case.state === 'closed' ? value : null }, 30_000)
@@ -4231,7 +4349,9 @@ try {
   }
   check('consultSingleWritableCardBeforeToolResult', !beforeResult.events.some(event => event.type === 'tool/result' && event.callId === held.callId) && beforeCard.cards === 1 && beforeCard.forms === 1, { held, card: beforeCard })
   beforeCard = await revealCard(consult.caseId)
-  check('consultWaitingCardPutsDecisionFirst', beforeCard.cards === 1 && beforeCard.forms === 1 && beforeCard.formImmediatelyAfterHeader && beforeCard.formBeforeSecondary && beforeCard.recordAnswerSummaries === 0 && beforeCard.suggestionReviews === 0 && beforeCard.text.includes('GUI_B_DECIDE'), beforeCard)
+  // The consult card now owns ONE tentative-suggestion block, and it lives inside
+  // its answer form rather than beside the decision.
+  check('consultWaitingCardPutsDecisionFirst', beforeCard.cards === 1 && beforeCard.forms === 1 && beforeCard.formImmediatelyAfterHeader && beforeCard.formBeforeSecondary && beforeCard.recordAnswerSummaries === 0 && beforeCard.suggestionReviews === 1 && beforeCard.text.includes('GUI_B_DECIDE'), beforeCard)
   check('consultCardVisibleWithProcessCollapsed', beforeCard.dom.count === 1 && !beforeCard.dom.inProcess && beforeCard.dom.visible && beforeCard.dom.turnControl?.expanded !== 'true', beforeCard.dom)
   await shot('10-consult-before-tool-result')
   // Both response entries now sit on the answer-form side of ONE hairline and
@@ -4243,12 +4363,21 @@ try {
   const consultWeightProblems = responseToolsWeightProblems(consultTools)
   check('consultResponseToolsSecondaryWeight', consultWeightProblems.length === 0, { ...consultTools, problems: consultWeightProblems })
   await frameResponseTools('10a-consult-response-tools', consult.caseId)
+  // The tentative suggestions are one labeled block INSIDE the answer form; the
+  // fill helper sits in the block's heading row and never in the submit row.
+  const consultBlock = await suggestionBlockDom(consult.caseId)
+  writeJson(join(out, 'consult-suggestion-block.json'), consultBlock)
+  const consultBlockProblems = suggestionBlockProblems(consultBlock)
+  check('consultSuggestionBlockGroupsFillAction', consultBlockProblems.length === 0, { ...consultBlock, problems: consultBlockProblems })
+  // The title is the short label on every surface: no "· 尚未提交" suffix left.
+  check('suggestionTitleIsShort', consultBlock.headerText === '暂定建议', { headerText: consultBlock.headerText, headerHasNoSeparator: !(consultBlock.headerText ?? '').includes('·'), headerHasNoSuffix: !/尚未提交|Not submitted/.test(consultBlock.headerText ?? ''), listItems: consultBlock.listItems })
+  await frameSuggestionBlock('10b-consult-suggestion-block', consult.caseId)
   writeFileSync(join(out, 'consult-result.release'), `${JSON.stringify({ at: Date.now() })}\n`)
   const afterResult = await waitFor(async () => { const scan = await scanSession(sessionId, 'consult-after-result-session.json'); return scan.events.some(event => event.type === 'tool/result' && event.callId === held.callId) ? scan : null }, 30_000)
   const afterCard = await waitFor(async () => { const value = await cardState(consult.caseId); return value.cards === 1 && value.forms === 1 ? value : null }, 30_000)
   check('consultSingleWritableCardAfterToolResult', afterResult.events.some(event => event.type === 'tool/result' && event.callId === held.callId) && afterCard.cards === 1 && afterCard.forms === 1, { card: afterCard })
   await shot('11-consult-after-tool-result')
-  const consulted = await answerInboxWithSuggestions(sessionId, consult.caseId, '12-consult-inbox')
+  const consulted = await answerInboxWithSuggestions(sessionId, consult.caseId, '12-consult-inbox', { checkBlock: 'inboxSuggestionBlockGroupsFillAction' })
   comparisons.push({ phase: 'consult', caseId: consult.caseId, authority: consulted.case })
 
   // Consult path: the Turn that asked the question is now closed, so its process

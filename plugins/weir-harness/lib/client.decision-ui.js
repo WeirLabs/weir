@@ -158,6 +158,13 @@ window.__ModuleLoader__.load({
 .weir-da-disclosure [role="region"] { min-width: 0; padding-top: 10px; }
 .weir-da-suggestion-review, .weir-da-feedback-editor, .weir-da-agent-editor, .weir-da-agent-advanced, .weir-da-agent-diagnostics, .weir-da-advanced-record { min-width: 0; display: grid; gap: 10px; }
 .weir-da-suggestion-review { margin: 12px 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
+/* Inside the answer form the block is one grid row, so its own margin would
+   double the form gap: the row gap already separates it from its neighbours. */
+.weir-da-answers > .weir-da-suggestion-review { margin: 0; }
+/* The heading row carries the short title and the draft helper: the fill action
+   reads as part of the block, never as a submit-row variant. */
+.weir-da-suggestion-header { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.weir-da-suggestion-header > strong { font-size: var(--weir-font-caption-size, 13px); line-height: var(--weir-font-caption-line, 18px); font-weight: 600; }
 .weir-da-more-details { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .weir-da-more-details > .weir-da-caption { padding: 0 4px 6px; }
 .weir-da-more-details > .weir-da-disclosure { flex: 0 0 auto; }
@@ -818,11 +825,24 @@ window.__ModuleLoader__.load({
       });
     }
 
+    // Suggestions are rendered with the same reading order the record uses:
+    // the chosen options, then the custom ruling, joined as one sentence.
+    function answerText(answer) {
+      if (!answer) return "";
+      return [...(Array.isArray(answer.selected) ? answer.selected : []), ...(typeof answer.custom === "string" && answer.custom ? [answer.custom] : [])].join(", ");
+    }
+
     function DecisionAnswers(props) {
       const t = props.t ?? (key => key);
       const instanceId = react.useId();
       const incompleteId = `weir-da-answers-${instanceId}-incomplete`;
       const questions = Array.isArray(props.questions) ? props.questions : [];
+      // Tentative suggestions: `suggestions` are answer-shaped drafts the fill
+      // action can copy into the form, `perQuestion` are pre-translated reasons.
+      const suggestionItems = Array.isArray(props.suggestions) ? props.suggestions : [];
+      const perQuestion = Array.isArray(props.perQuestion) ? props.perQuestion : [];
+      const suggestionsTitleId = `weir-da-suggestions-${instanceId}-title`;
+      const questionText = id => questions.find(item => item.id === id)?.question ?? t("decisionRecord");
       // A single question identical to the card title keeps its legend for
       // assistive technology but does not print the same sentence twice.
       const collapseTitle = typeof props.collapseTitle === "string" && props.collapseTitle.length > 0 ? props.collapseTitle : null;
@@ -856,7 +876,7 @@ window.__ModuleLoader__.load({
       const fillSuggestions = () => {
         if (pending) return;
         const next = { ...answers };
-        for (const suggestion of Array.isArray(props.suggestions) ? props.suggestions : []) {
+        for (const suggestion of suggestionItems) {
           const question = questions.find(item => item.id === suggestion?.id);
           if (question) next[question.id] = answerFor(question, suggestion);
         }
@@ -930,8 +950,21 @@ window.__ModuleLoader__.load({
               ] }, "custom"),
             ] }, question.id);
           }),
-          jsx.jsxs("div", { className: "weir-da-actions", children: [
-            Array.isArray(props.suggestions) && props.suggestions.length > 0 ? jsx.jsx(Button, { variant: "secondary", disabled: pending, onClick: fillSuggestions, children: t("decisionUseSuggestions") }, "suggestions") : null,
+          // The tentative suggestions belong to the answer form: they sit after
+          // the questions and before the submit row, so the fill action reads as
+          // a draft helper instead of a second way to submit the decision.
+          suggestionItems.length || perQuestion.length ? jsx.jsxs("section", {
+            className: "weir-da-suggestion-review", "data-suggestion-review": true, "aria-labelledby": suggestionsTitleId,
+            children: [
+              jsx.jsxs("div", { className: "weir-da-suggestion-header", children: [
+                jsx.jsx("strong", { id: suggestionsTitleId, children: t("decisionSuggestions") }, "title"),
+                suggestionItems.length ? jsx.jsx(Button, { variant: "secondary", disabled: pending, onClick: fillSuggestions, children: t("decisionUseSuggestions") }, "fill") : null,
+              ] }, "header"),
+              suggestionItems.length ? jsx.jsx("ul", { children: suggestionItems.map((answer, index) => jsx.jsx("li", { children: `${questionText(answer?.id)}: ${answerText(answer)}` }, answer?.id ?? index)) }, "suggestions") : null,
+              perQuestion.length ? jsx.jsx("ul", { children: perQuestion.map((entry, index) => jsx.jsx("li", { children: `${questionText(entry?.id)}: ${entry?.reason ?? t("decisionReasonUnknown")}` }, entry?.id ?? index)) }, "per-question") : null,
+            ],
+          }, "suggestion-review") : null,
+          jsx.jsx("div", { className: "weir-da-actions", children: [
             jsx.jsx(Button, { type: "submit", variant: "primary", disabled: !complete || pending, "aria-describedby": !complete ? incompleteId : undefined, children: pending ? t("decisionSaving") : t("decisionDecide") }, "submit"),
           ] }, "actions"),
           !complete ? jsx.jsx("div", { id: incompleteId, role: "alert", className: "weir-da-caption", children: t("decisionAnswersIncomplete") }, "incomplete") : null,

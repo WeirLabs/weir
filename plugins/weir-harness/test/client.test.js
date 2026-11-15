@@ -2484,7 +2484,7 @@ describe('weir settings client half', () => {
     'decisionPageDescription', 'decisionPendingReview', 'decisionPinnedEmpty', 'decisionPrimaryNavigation',
     'decisionPrincipleDetailsOnOpen', 'decisionProfileHistory', 'decisionRawMetrics', 'decisionReasonSummary',
     'decisionRecordFilters', 'decisionRecoveryActions', 'decisionReviewedPrinciplesUsed', 'decisionSelectRecord',
-    'decisionStatusClosed', 'decisionSubmitCorrection', 'decisionSuggestionNotSubmitted', 'decisionVersionUnavailable', 'decisionViewAssistant',
+    'decisionStatusClosed', 'decisionSubmitCorrection', 'decisionVersionUnavailable', 'decisionViewAssistant',
     'decisionAuto', 'decisionAutoEmptyWhitelist', 'decisionAutoReadinessUnknown', 'decisionAutoShadowOff', 'decisionAutoShadowOn', 'decisionAutoShadowUnknown', 'decisionAutoWhitelist',
     'decisionNoAssignedAgent', 'decisionNoRouteHistory', 'decisionReasonUnownedNoRoute',
     'decisionRouteHistory', 'decisionRouteModeAuto', 'decisionRouteModeExplicit', 'decisionRouteModeManual', 'decisionRouteModeNone',

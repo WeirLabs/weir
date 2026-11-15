@@ -367,8 +367,20 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   const release = driver.indexOf("writeFileSync(join(out, 'consult-result.release')")
   assert.ok(held >= 0 && reveal > held && focused > reveal && release > focused, 'the held card is revealed and asserted before tool result release')
   const acceptance = driver.slice(reveal, release)
-  for (const condition of ['beforeCard.cards === 1', 'beforeCard.forms === 1', 'beforeCard.formImmediatelyAfterHeader', 'beforeCard.formBeforeSecondary', 'beforeCard.recordAnswerSummaries === 0', 'beforeCard.suggestionReviews === 0', "beforeCard.text.includes('GUI_B_DECIDE')"]) assert.ok(acceptance.includes(condition), condition)
+  for (const condition of ['beforeCard.cards === 1', 'beforeCard.forms === 1', 'beforeCard.formImmediatelyAfterHeader', 'beforeCard.formBeforeSecondary', 'beforeCard.recordAnswerSummaries === 0', 'beforeCard.suggestionReviews === 1', "beforeCard.text.includes('GUI_B_DECIDE')"]) assert.ok(acceptance.includes(condition), condition)
   assert.ok(acceptance.includes('beforeCard = await revealCard(consult.caseId)'), 'the held card is scrolled into view and must expose non-empty rendered text before its screenshot')
+  // The tentative-suggestion block is measured where it now lives: inside the
+  // answer form, with the fill helper in its heading row and a submit-only row.
+  const blockProbe = driver.match(/async function suggestionBlockDom\(caseId[^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(blockProbe, 'suggestionBlockDom exists')
+  for (const token of ['[data-suggestion-review]', '.weir-da-suggestion-header', 'blockInForm', 'beforeActionsRow', 'afterQuestions', 'fillType', "getAttribute('type')", 'actionButtons']) assert.ok(blockProbe.includes(token), token)
+  assert.ok(!/\.click\(|\.focus\(/.test(blockProbe), 'the probe measures the block without activating it')
+  assert.ok(acceptance.includes("check('consultSuggestionBlockGroupsFillAction'"), 'the consult card asserts its block before the tool result is released')
+  assert.ok(acceptance.includes("check('suggestionTitleIsShort'"), 'the short-title assertion belongs to the same held-card window')
+  assert.ok(acceptance.includes("await frameSuggestionBlock('10b-consult-suggestion-block'"), 'the block screenshot is taken inside the held-card window')
+  assert.ok(driver.includes("answerInboxWithSuggestions(sessionId, consult.caseId, '12-consult-inbox', { checkBlock: 'inboxSuggestionBlockGroupsFillAction' })"), 'the inbox card records the block check while proving the fill never submits')
+  const inboxWindow = driver.slice(driver.indexOf('async function answerInboxWithSuggestions('), driver.indexOf('async function skipLongNativeStep('))
+  assert.ok(inboxWindow.includes('options.checkBlock') && inboxWindow.includes("stillPending.case.state === 'awaiting_user'"), 'the inbox block check re-proves the case stays awaiting the user after the fill')
 })
 
 test('Decision settings navigation tolerates the Host settings page it restores', () => {

@@ -93,7 +93,12 @@ async function setup() {
   const card = (await loadClientChunk('lib/client.decision-card.js', name => name === 'react' ? runtime.react : { jsx, jsxs: jsx })).exports
   const ui = Object.fromEntries(['DecisionStyles', 'DecisionIcon', 'Button', 'Badge', 'Field', 'LoadingState', 'EmptyState', 'ErrorState', 'Disclosure', 'ConfirmDialog', 'DecisionAnswers', 'DecisionRouteHistory'].map(name => [name, `ui.${name}`]))
   const render = props => { runtime.begin(); return card.DecisionCard(props) }
-  return { model, actions, render, ui, unmount: runtime.unmount }
+  // The card hands its answer form a plain element, so the shared form is mounted
+  // separately here: its own hooks must not collide with the card's hook cursor.
+  const formRuntime = makeReact()
+  const formUi = (await loadClientChunk('lib/client.decision-ui.js', name => name === 'react' ? formRuntime.react : { jsx, jsxs: jsx })).exports
+  const renderAnswerForm = node => { formRuntime.begin(); return formUi.DecisionAnswers(node) }
+  return { model, actions, render, ui, renderAnswerForm, formUi, unmount: runtime.unmount }
 }
 
 async function mount(detail = answeredDetail, options = {}) {
@@ -229,20 +234,42 @@ test('awaiting explicit consult leads with its only answer form and no duplicate
   const secondaryContentAfterForm = secondaryLabels.every(label => content.findIndex(node => node.__type === mounted.ui.Disclosure && node.label === label) > answerFormIndex)
     && content.findIndex(node => node.__type === mounted.ui.Button && node.children === 'decisionHistory') > answerFormIndex
     && content.findIndex(node => node.className === 'weir-da-feedback-editor') > answerFormIndex
+  // The tentative suggestions now live inside the shared answer form: rendering
+  // that form is the only way to see the block the card never hosts itself.
+  const renderedForm = forms[0] ? mounted.renderAnswerForm(forms[0]) : null
+  const formChildren = renderedForm ? renderedForm.children.filter(Boolean) : []
+  const suggestionReviews = findAll(renderedForm, node => node.className === 'weir-da-suggestion-review')
   assert.deepEqual({
     formCount: forms.length,
     answerFormImmediatelyAfterHeader: content[0]?.__type === mounted.ui.DecisionStyles && content[1]?.className === 'weir-da-card-header' && answerFormIndex === 2,
     recordAnswerSummaries: findAll(tree, node => node.className === 'weir-da-record-answers').length,
-    suggestionReviews: findAll(tree, node => node.className === 'weir-da-suggestion-review').length,
+    suggestionReviews: suggestionReviews.length,
+    standaloneSuggestionReviews: findAll(tree, node => node.className === 'weir-da-suggestion-review').length,
     secondaryContentAfterForm,
   }, {
     formCount: 1,
     answerFormImmediatelyAfterHeader: true,
     recordAnswerSummaries: 0,
-    suggestionReviews: 0,
+    suggestionReviews: 1,
+    standaloneSuggestionReviews: 0,
     secondaryContentAfterForm: true,
   })
+  // The block is a direct child of the answer form, between the question fieldset
+  // and the submit row, and its heading is the short title only.
+  const actionsRows = formChildren.filter(node => node.className === 'weir-da-actions')
+  assert.equal(actionsRows.length, 1, 'the form keeps one action row')
+  assert.equal(formChildren.indexOf(suggestionReviews[0]), formChildren.findIndex(node => node.type === 'fieldset') + 1, 'the block follows the questions')
+  assert.equal(formChildren.indexOf(suggestionReviews[0]) + 1, formChildren.indexOf(actionsRows[0]), 'the block precedes the submit row')
+  const header = findAll(suggestionReviews[0], node => node.className === 'weir-da-suggestion-header')[0]
+  assert.equal(findAll(header, node => node.type === 'strong')[0].children, 'decisionSuggestions')
+  const fillActions = findAll(header, node => node.__type === mounted.formUi.Button && node.children === 'decisionUseSuggestions')
+  assert.equal(fillActions.length, 1, 'the fill action lives inside the block header')
+  assert.equal(fillActions[0].variant, 'secondary')
+  assert.equal(fillActions[0].disabled, false)
+  assert.notEqual(fillActions[0].type, 'submit', 'the fill action is never the submit control')
+  assert.deepEqual(findAll(actionsRows[0], node => node.__type === mounted.formUi.Button).map(node => [node.children, node.type]), [['decisionDecide', 'submit']], 'the submit row holds only the submit button')
   assert.deepEqual(forms[0].suggestions, waitingDetail.case.escalation.suggestion)
+  assert.deepEqual(forms[0].perQuestion, [{ id: 'q-title', reason: 'decisionReasonMissingContext' }], 'the form receives already-translated per-question reasons')
   // No decision yet: ratings are premature and hidden, but note/correction
   // entries stay available on the waiting card.
   assert.equal(findAll(tree, node => node['data-feedback']).length, 0)
@@ -294,8 +321,11 @@ test('Hook pending card defers to the native question and never duplicates its a
   assert.match(text, /decisionNativeAnswerHint/)
   assert.match(text, /A new title judgment is required/)
   assert.match(text, /Use Short/)
-  assert.match(text, /decisionSuggestionNotSubmitted/)
+  assert.match(text, /decisionSuggestions/)
+  assert.equal(text.includes('decisionSuggestionNotSubmitted'), false, 'the native block title is the short label only')
   assert.match(text, /decisionReasonMissingContext/)
+  // The native card has no card form, so its block is read-only: no fill action.
+  assert.equal(findAll(tree, node => node.children === 'decisionUseSuggestions').length, 0)
   assert.equal(text.includes('MISSING_CONTEXT'), false)
   assert.equal(findAll(tree, node => node.__type === mounted.ui.DecisionAnswers).length, 0)
   assert.equal(findAll(tree, node => node.__type === 'input' || node.__type === 'textarea' || node.__type === 'select').length, 0)
