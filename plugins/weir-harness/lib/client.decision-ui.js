@@ -161,10 +161,15 @@ window.__ModuleLoader__.load({
 .weir-da-more-details { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .weir-da-more-details > .weir-da-caption { padding: 0 4px 6px; }
 .weir-da-more-details > .weir-da-disclosure { flex: 0 0 auto; }
-.weir-da-user-tools { display: flex; flex-direction: column; gap: 8px; }
-/* Secondary tools read as one compact left-aligned strip under a hairline,
-   never as full-width floating labels. */
-.weir-da-user-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; padding-top: 10px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+/* The response-tools group holds the response entries, the clarification block and
+   their editors, so the hairline closes the whole group AFTER it and separates
+   the record utilities that follow (notes, corrections, evidence, the open-record
+   entry, recovery). The line must never sit between the entries and the primary
+   action above them: both belong to the same answer group. */
+.weir-da-user-tools { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
+/* The entries stay one compact left-aligned row of real buttons, never
+   full-width floating labels. */
+.weir-da-user-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .weir-da-user-actions .weir-da-button { flex: 0 0 auto; }
 .weir-da-feedback-editor.weir-da-user-editor { gap: 6px; }
 .weir-da-user-editor > .weir-da-button { align-self: flex-start; }

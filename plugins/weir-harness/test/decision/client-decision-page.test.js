@@ -238,6 +238,38 @@ test('inbox renders the latest clarification from the loaded record detail', asy
   assert.equal(open.disabled, true)
 })
 
+test('inbox response tools group both entries inside one secondary hairline wrapper', async () => {
+  const harness = await createPageHarness({ actions: {} })
+  const item = waitingFixture()
+  const detail = {
+    case: item,
+    attempts: [],
+    feedback: [{ feedbackId: 'fb-c', kind: 'clarify', actor: 'user', payload: { question: '这条判断引用了哪些依据？', answer: '现有依据只覆盖已提交的判断记录。' } }],
+    routeDecisions: [],
+  }
+  const card = harness.page.InboxItem({
+    item, agents: [{ agentId: 'a', name: 'Tone', state: 'enabled' }], run: () => {}, pending: null,
+    model: harness.model, ui: harness.ui, t: key => key,
+    draft: { answers: {}, reassignTarget: '', clarifyQuestion: undefined, bounceNote: undefined },
+    updateDraft: () => {}, evidence: { status: 'ready', value: detail }, loadEvidence: () => {}, requestCancel: () => {},
+  })
+  const wrappers = findAll(card, node => node['data-user-tools'] === true)
+  assert.equal(wrappers.length, 1, 'the inbox card exposes exactly one response-tools group')
+  const wrapper = wrappers[0]
+  assert.equal(wrapper.className, 'weir-da-user-tools')
+  assert.ok(card.children.filter(Boolean).includes(wrapper), 'the group is a direct child of the inbox card')
+  const strip = findAll(wrapper, node => node.className === 'weir-da-actions weir-da-user-actions')[0]
+  assert.ok(strip, 'the entry strip renders inside the group')
+  assert.ok(wrapper.children.filter(Boolean).includes(strip), 'the entry strip is a direct child of the group')
+  assert.deepEqual(
+    findAll(wrapper, node => node.type === harness.ui.Button && ['open-clarify', 'open-bounce'].includes(node['data-action'])).map(node => [node['data-action'], node.variant]),
+    [['open-clarify', 'secondary'], ['open-bounce', 'secondary']],
+    'both inbox response entries carry the subordinate button variant',
+  )
+  assert.equal(findAll(wrapper, node => node['data-clarification'] === true).length, 1, 'the clarification block belongs to the same group')
+  assert.equal(findAll(card, node => ['open-clarify', 'open-bounce'].includes(node['data-action'])).length, 2, 'no entry copy escapes the group')
+})
+
 test('inbox uses shared answers, readable tentative guidance, on-demand current evidence, and secondary recovery', async () => {
   const item = waitingFixture()
   const detail = {
