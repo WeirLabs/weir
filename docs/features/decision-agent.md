@@ -12,7 +12,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ### Agent 与选择器
 
-- 管理页可创建、编辑、停用和归档 Agent。默认表单只需名称与可选的普通语言判断偏好，创建继承会话模型；完整 paths/tags 专长提示、授权类、模型路由和 `userDescription` 版本历史在高级设置/诊断中维护。助手身份对整个 DSH profile 唯一：名称大小写不敏感全 profile 唯一，没有工作区归属设置；在任一工作区创建后，同一 profile 的其它工作区都看到并可选到同一助手。
+- 管理页可创建、编辑、停用和归档 Agent。默认表单只需名称与可选的普通语言判断偏好，创建继承会话模型；完整 paths/tags 专长范围、授权类与模型路由在「高级设置」里用普通控件维护（路径/标签是可增删的单行清单，授权类别是 A/B/C 芯片，模型路由是有序模型档位），`userDescription` 版本历史在诊断中维护。助手身份对整个 DSH profile 唯一：名称大小写不敏感全 profile 唯一，没有工作区归属设置；在任一工作区创建后，同一 profile 的其它工作区都看到并可选到同一助手。
 - `generatedDescription` 在当前 P0–P3 恒为 `{revision: 0, text: ''}`，只读且没有生成或写入入口；它为空不妨碍决策。P3 只把用户裁决、有效纠正和已赞回答整合为可审阅原则，不生成画像。
 - 会话输入框右侧使用紧凑触发器与专用选择面板，不再是原生下拉框。默认文案为“不启用助手”“自动选择助手”和该 profile 中全部已启用的具体 Agent（不按工作区过滤），选择即保存并关闭，没有额外确认；底层 `off|auto|agent` 三态仍按根会话持久化，子会话解析到同一根会话。自动选择根据只读 `overview.auto` 用普通语言说明真实允许类别数量、空范围、未知状态与“选择对比”状态，A/B/C、Shadow 和原始值只留在高级诊断。面板分为固定头部、独立滚动内容区和固定底部管理入口；宽度不超过 360 CSS px，并按真实动态/可视视口限制高度和位置，长名称与长状态自然换行。读取中不会伪装成未启用，保存失败保留先前有效选择，重复提交受 pending guard 约束，成功后焦点返回已启用的触发器。
 - 总开关 `decisionAgentsEnabled` 默认关闭。全局关闭或会话 `Off` 时，Hook 不拦截、咨询明确失败，不创建 Case、路由样本或数据库文件。
@@ -83,7 +83,9 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ## 配置
 
-全部位于「设置 → Weir → 决策 Agent」。除存储目录外均调用时读取；`decisionAgentStorePath` 标为需重启。
+全部位于「设置 → 决策助手」。除存储目录外均调用时读取；`decisionAgentStorePath` 标为需重启。
+
+决策助手的设置位于全局设置面板的独立「决策助手」页面（与「Weir」主页面、「Weir 模型路由」并列），不再混在主页面里：基本设置只有总开关、新根会话的默认选择与允许自动回答的授权类别（A/B/C 三枚可独立切换的控件，保存时合成既有 JSON 数组，不再要求手写 JSON）；`decisionAgentAnswerTimeoutMs` 等运行参数与 Shadow 诊断收在默认折叠的「高级设置」，总开关关闭时整个高级区不渲染。`decisionAgentChains` 与 `decisionAgentStorePath` 是**配置文件面键**（`page: false`）：设置页没有它们的行，也没有替代的 JSON 文本框；每助手路由改由助手编辑器维护，全局链与存储目录仍只从配置文件设置并照常生效。
 
 | 键 | 默认值 | 说明 |
 |---|---|---|
@@ -96,9 +98,11 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 | `decisionAgentContextBudgetTokens` | `24000` | 当前 Case 与证据包的有界预算 |
 | `decisionAgentMaxOutputTokens` | `4096` | 分类、Router 与评估器的单次输出上限 |
 | `decisionAgentMaxConcurrentAttempts` | `4` | 并发评估上限；Auto 从 intake 到分类/路由和后续评估持有同一许可，超限 Hook 直接走原生提问 |
-| `decisionAgentChains` | `''` | 按 Agent id 配置有序模型链；空链继承会话路由，显式不可用路由不静默换模型 |
+| `decisionAgentChains` | `''` | 配置文件面键：按 Agent id 配置有序模型链；空链继承会话路由，显式不可用路由不静默换模型；设置页不提供行或替代文本框 |
 | `decisionAgentRetentionDays` | `0` | 仅启动时清理无裁决/反馈的旧关闭记录；0 表示永久保留 |
-| `decisionAgentStorePath` | `''` | 绝对路径覆盖目录；留空使用 profile 私有存储 |
+| `decisionAgentStorePath` | `''` | 配置文件面键：绝对路径覆盖目录；留空使用 profile 私有存储（需重启） |
+
+页面归属：`decisionAgentsEnabled`、`decisionAgentSelectorDefault` 与 `decisionAgentAutoAnswerClasses` 在「基本设置」；`decisionAgentAnswerTimeoutMs`、`decisionAgentMaxAttemptsPerCase`、`decisionAgentContextBudgetTokens`、`decisionAgentMaxOutputTokens`、`decisionAgentMaxConcurrentAttempts`、`decisionAgentRetentionDays`、`decisionAgentAutoShadow` 在默认折叠的「高级设置」；`decisionAgentChains` 与 `decisionAgentStorePath` 不在任何设置页。三页（主页面、模型路由、决策助手）编辑同一个 `weir-settings` 域，各自只暂存与保存本页字段。
 
 `decisionAgentSelectorDefault` 已接入上述 fresh-root 初始化，`decisionAgentAutoAnswerClasses` 已接入 Active Auto 准入；`decisionAgentAutoShadow` 已接入 pinned-only 非权威观察，Shadow 不读取 Active 白名单。只读 `overview.auto` 暴露实际清理后的 `{answerClasses,shadow}`，全局可用性仍由 `overview.status` 单独表达，不虚构 readiness；选择器只把该投影用于真实白名单/Shadow 说明，不把 Auto 伪装成 Agent。不存在整合计划、公共记忆专用或自动画像学习设置键：公共记忆随助手身份共享，没有工作区归属或公共/私有开关。
 
@@ -130,6 +134,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - 复盘窗口为 `24h|7d|30d|all`，按 `createdAt DESC, routeDecisionId DESC` 稳定排序并固定每页 20 条；opaque cursor 绑定根会话、窗口和最后一条的位置，重复翻页不重复，非法窗口/游标分别抛 `INVALID_ROUTING_WINDOW`/`INVALID_ROUTING_CURSOR`。`summary` 覆盖整个窗口而非当前页。`metrics.routing` 与复盘 summary 来自同一次纯投影规则，`reassignments` 复用 `routing.manualReassign`，`selectorOffBypasses` 仍是诚实常量 0。Broker 与 `/api/weirDecision/routingReview` 都先经 `sessionContext` 解析真实根/workspace，记录导航继续调用既有授权 `record`；全局关闭仍只有 `overview` 获得只读降级，空存储读不会为复盘创建数据库。
 - `overview` 的 `auto.answerClasses` 只投影当前经过封闭校验和去重的 A/B/C 白名单，`auto.shadow` 只投影布尔开关；二者不推断 Active Auto 是否就绪，也不取代 `status.enabled/available`。
 - Client 由包内共享视觉组件、纯投影模型和选择器/页面/会话卡/学习 chunk 组成，所有 chunk 在组合根并行加载。界面使用宿主主题 token、locale 和响应式/键盘/读屏契约；诊断、指标与路由复盘按需读取。共享模态使用原生 top layer、按 visualViewport 实际宽度/高度/偏移及 scale 约束尺寸和位置，并监听 resize/scroll 后精确清理；普通窄屏为宿主返回控件保留顶部空间，真实缩放时启用紧凑钻取布局。滚动锁按 Document 可重入，覆盖两个滚动条方向、保存打开前位置并精确恢复 inline 样式。复盘追加使用请求 token、会话与窗口/epoch guard，迟到响应不会覆盖新会话、窗口或筛选；追加失败保留已有项目，真实空数据、初始错误和追加错误分别呈现。会话卡、收件箱与记录详情的 RouteDecision 历史均只读，无归属记录不开放 Agent 命名空间反馈或 retry。决策卡不写自定义 Session 事件、不使用 `session.append` 或 `commands.execute`，不靠定时轮询刷新。审计镜像尽力而为，不含题面、证据正文或用户画像正文。
+助手编辑器的高级区不再出现原始 JSON：专长范围是路径前缀与标签的可增删行清单加 A/B/C 授权类别芯片（取消最后一个选中类别被拒绝并给出提示；合成 scope 只含非空 paths/tags 与 authorizationClasses，不写 `workspaces`），模型路由是按顺序排列的模型档位（复用 composer 风格选择器，picker chunk 未到达或失败时每档降级为 provider/model/reasoningEffort 三个输入框，仍未选完的档位不写入并以提示告知）；两处控件的变更立即回写 `scopeText`/`routeText`，这两个文本仍是唯一暂存值，脏检查、保存校验与“空链继承会话模型”语义不变。
 
 ## 边界与失败语义
 
@@ -153,6 +158,8 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 ## 测试
 
 - 单元与契约测试：`plugins/weir-harness/test/decision/` 覆盖既有状态机/迁移/检索/反馈/G1–G7/Client、P3 严格 LearningRun/Snapshot reader、冻结输入、并发幂等、结构 replay、来源发布栅栏和真实 pins/manifest/hash，同时覆盖普通语言投影、专用选择面板、共享回答控件、当前证据、按 Case 草稿、筛选/分页竞态、候选 readiness、真实无候选结局和跨根来源。本轮新增版本化 Router 枚举、不可变 `auto`/`auto_shadow` RouteDecision、Broker 保守配置解析与 `router.test.js` 的受限路由契约；`selector-default.test.js` 和 `legacy-v1.test.js` 覆盖三态、fresh-root/legacy 恢复与 v1 不变。`broker-auto.test.js`/`broker-auto-flight.test.js` 覆盖 Active Auto 准入、严格路由、原子提交、single-flight、修订指纹、并发许可和取消/flush；`broker-shadow.test.js` 覆盖 pinned Hook/consult、Shadow-off 对照、none/ambiguous/failure、全部排除入口、幂等/恢复和领域副作用计数；`cases.test.js`、`broker-actions.test.js`、`broker-consult.test.js` 与 `broker-lifecycle.test.js` 覆盖无 Evidence 的无归属回答/重读/检索、取消/拒绝 retry、原子改派回滚与不可变链，以及 received-null 中断恢复。`routing-review.test.js` 与 `remote.test.js` 覆盖纯链分类、历史不回写、完整链窗口化、20 条稳定游标分页、root/workspace 隔离、同源 metrics、Broker 授权和 bare-args remote/endpointsLive。P4 Client 公共契约另覆盖 Auto 白名单/Shadow 说明、保存/失败/焦点与 root/child 恢复、复盘 summary/普通语言 outcome、20 条追加与 RouteDecision 去重、迟到会话/窗口响应、授权记录导航，以及无归属卡/收件箱/记录的反馈和 retry 边界。最终聚焦 Client **109/109**、完整 Decision **503/503**、测试装置 **453/453**、Client/settings **100/100**、preset/composition **97/97** 与 checkJs 全部通过，33 个 Client chunks 已重建 digest；Weir 全包最终 **3614 PASS / 0 FAIL / 1 既有平台跳过**（共 3615 项）。新增真实 headless 与 Desktop 证据见下。
+
+- 可视化编辑（设置页拆分与助手编辑器）的覆盖：`test/decision/client-decision-page.test.js` 覆盖路径/标签增删与删除、空行不写入 JSON 也不丢行、合成 scope 不含 `workspaces`、拒绝取消最后一个授权类、模型档位增删与有序合成、未选完的档位不写入且给出提示、空链仍写 `{"chain":[]}` / 未动时为继承会话模型、picker 到达时每档渲染选择器、未到达时降级为 provider/model/reasoningEffort 三个输入框，以及编辑器内不再存在 scope/modelRoute 文本域；`test/client-settings-page.test.js` 与 `test/client-decision-class-editor.test.js` 覆盖设置页侧的 A/B/C 白名单控件（切换即合成、空选写 `[]`、非法存储值全关 + 提示、覆盖/重置）；`test/client.test.js` 钉住决策页拿到 picker chunk 与惰性 getSession时三个设置页控制器/分区的注册与词典并集。
 - 跨工作区共享身份与公共/私有记忆（P5，schema v2）的实施证据：`test/decision/remote-public-memory.test.js` 覆盖 bare-args 公共刷新/候选读取、调用方工作区/归属字段被丢弃、只返回 opaque 别名、披露门、公共生命周期与越权审计；`public-retry.test.js` 覆盖失败后仅由显式用户动作重试一次、助手读模型按工作区隔离私有区；`client-decision-public-memory.test.js` 覆盖两个分区、精确“公共记忆/当前工作区经验”标签、每次打开恰好一次自动读取、披露确认、显式采用/放弃/回滚、候选正文与已发布原则只读可读、pending/失败重试、焦点返回与 200% 视口；`client-decision-memory-partitions.test.js` 覆盖记录详情默认普通语言、高级诊断双分区 pin/原则/来源映射/层大小/省略项、旧 Attempt 仅私有 pin 的兼容，以及公共区无外来记录导航。门禁结果（最终候选）：完整 Decision **614/614**、驱动单测 **77/77**、Client digest 契约 **28/28**、Client/settings **377/377**、测试装置单测 **548/548**、checkJs PASS、Weir 全包 **3725 PASS / 0 FAIL / 1 既有平台跳过**（共 3726 项）；最终候选重跑真实 headless 矩阵 **47/47** 与迁移验收 **8/8**。公共记忆契约的 5 个变异点（remote 白名单、失败重试门、公共 L2 分区、两分区标签、驱动分区守卫）均取得 RED→字节恢复→GREEN 证据。
 - 真实 Desktop 验收：同一隔离 profile 的 W1/W2/W3 共享身份与两区、披露→候选→显式采用、发布后在无本地合格 L5 的 W4 产生真实 Attempt（固定已发布公共 Snapshot、公共原则非空、证据映射为空、`escalate` 且零引用）、第二候选显式放弃后公共版本不变、回滚为空；候选审阅渲染拟定原则正文与适用范围，采用后公共区只读展示已发布原则；私有记录双向拒绝与 `learningRun`/`memorySnapshot` 的 ids-only 审计；迁移旧 profile 的 boot/restart 身份与历史不变；覆盖 360/768/1440、真实 200%、明暗、中英、键盘/AX。最终接受 run `zNOCf5` **265/265** 检查通过，172 张截图记录/168 个文件、2776 条 RPC、6 组 owned PID/端口精确清理，运行时异常/console/slot/log 全 0；更早的失败与被取代 PASS run 仅作诊断保留，不并入最终证据。
 - 数据导出的实施与复审证据：`export-assembly.test.js` 覆盖真实 Attempt/Evidence/Feedback/RouteDecision 分区、file locator 路径脱敏与其他工作区别名移除；`export-writer.test.js` 覆盖 0700/0600、重命名前 chmod 的失败零残留；`broker-export.test.js`/`remote-export.test.js` 覆盖授权、封闭错误码与只提交 `sessionId`；`client-decision-export.test.js` 覆盖确认、pending、成功、失败、重试与焦点返回。独立复审曾以真实导出文件为证判定 B1：公共 L2 的 `items[].sources` 携带两个其他工作区别名；修复后真实 headless 验收 **36/36**，真实导出文件只剩一个 `origin_` token（即 `scope.workspaceAlias`），`publicL2` 不再有 `sources`。合并后门禁：完整 Decision **643/643**、Weir 全包 **3754 pass / 0 fail / 1 既有平台跳过**（共 3755）、client digest **28/28**（33 chunks）、测试装置 **557/557**、checkJs exit 0；变异控制覆盖 workspace 过滤、私有 zone 过滤、审计、校验和、原子重命名、空分区、locator 脱敏与别名规则（均 RED→字节恢复→GREEN）。真实隔离 Desktop UI 验收仍以 `P0rv46` **274/274**（8 项 export 检查）为证，但这 8 项覆盖可见性、确认、零写入、成功字节/校验和、失败与重试，未检查来源谱系，因此不替修复后的载荷背书；B1 修复后的 Desktop 重跑在本机受远程桌面/屏幕捕获进程导致 CDP 截图/输入超时阻塞（共 8 次，均未到 export leg 且无 export 断言失败），已提交 `exportFileCarriesNoForeignWorkspaceAlias` 驱动守卫，待下次空载真实运行证明。
