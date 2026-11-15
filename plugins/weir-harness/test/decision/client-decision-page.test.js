@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { loadClientChunk } from '../helpers/load-client-chunk.js'
-import { createPageHarness, deferred, findAll, textOf } from './page-test-helpers.js'
+import { createPageHarness, deferred, findAll, makeReactRuntime, textOf } from './page-test-helpers.js'
 
 test('management page registers the existing left-panel and keyed main without polling', async () => {
   const { exports } = await loadClientChunk('lib/client.decision-page.js', () => ({}));
@@ -207,6 +207,16 @@ function renderedInboxCard(harness, tree = harness.render(), caseId = 'dc-waitin
   return harness.page.InboxItem(element)
 }
 
+// The inbox card hands the shared answer form a plain element, so the block the
+// form renders is only visible by mounting that form on its own hook runtime.
+async function mountedAnswerForm(node) {
+  const runtime = makeReactRuntime()
+  const jsx = (type, props) => ({ type, ...(props ?? {}) })
+  const ui = (await loadClientChunk('lib/client.decision-ui.js', name => name === 'react' ? runtime.react : { jsx, jsxs: jsx })).exports
+  runtime.begin()
+  return { tree: ui.DecisionAnswers(node), ui }
+}
+
 test('inbox renders the latest clarification from the loaded record detail', async () => {
   const harness = await createPageHarness({ actions: {} })
   const item = waitingFixture()
@@ -291,8 +301,26 @@ test('inbox uses shared answers, readable tentative guidance, on-demand current 
   assert.ok(answers)
   assert.deepEqual(answers.questions, item.request.questions)
   assert.deepEqual(answers.suggestions, item.escalation.suggestion)
+  assert.deepEqual(answers.perQuestion, [{ id: 'q2', reason: 'decisionReasonMissingContext' }], 'the form receives already-translated per-question reasons')
+  // The tentative suggestions render inside the form, once: the inbox card hosts
+  // no second copy above it any more.
+  assert.equal(findAll(card, node => node.className === 'weir-da-suggestion-review').length, 0, 'no standalone suggestion block precedes the form')
+  const form = await mountedAnswerForm(answers)
+  const formChildren = form.tree.children.filter(Boolean)
+  const blocks = findAll(form.tree, node => node.className === 'weir-da-suggestion-review')
+  assert.equal(blocks.length, 1, 'the answer form renders the suggestion block exactly once')
+  assert.ok(formChildren.includes(blocks[0]), 'the block is a direct child of the answer form')
+  const actionsIndex = formChildren.findIndex(node => node.className === 'weir-da-actions')
+  assert.equal(formChildren.indexOf(blocks[0]) + 1, actionsIndex, 'the block sits right before the submit row')
+  assert.equal(formChildren.indexOf(blocks[0]) > formChildren.findIndex(node => node.type === 'fieldset' || node.className === 'weir-da-field'), true, 'the block follows the questions')
+  const header = findAll(blocks[0], node => node.className === 'weir-da-suggestion-header')[0]
+  assert.ok(header, 'the block has its own heading row')
+  assert.equal(textOf(findAll(header, node => node.type === 'strong')[0]), 'decisionSuggestions')
+  assert.deepEqual(findAll(header, node => node.type === form.ui.Button).map(node => node.children), ['decisionUseSuggestions'], 'the fill action is the only action inside the block')
+  assert.deepEqual(formChildren[actionsIndex].children.filter(Boolean).map(node => [node.children, node.type]), [['decisionDecide', 'submit']], 'the submit row holds only the submit button')
+  assert.equal(textOf(form.tree).includes('Use Short'), true, 'the block lists the fillable suggestion')
+  assert.equal(textOf(form.tree).includes('decisionReasonMissingContext'), true, 'the block lists the per-question reason')
   const text = textOf(card)
-  assert.equal(text.includes('Use Short'), true)
   assert.equal(text.includes('MISSING_CONTEXT'), false)
   assert.equal(text.includes('dc-waiting'), false)
   const disclosures = findAll(card, node => node.type === harness.ui.Disclosure)

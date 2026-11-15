@@ -242,6 +242,9 @@ window.__ModuleLoader__.load({
       const pending = typeof props.pending === "string";
       const suggestions = Array.isArray(current.escalation?.suggestion) ? current.escalation.suggestion : [];
       const perQuestion = Array.isArray(current.escalation?.perQuestion) ? current.escalation.perQuestion : [];
+      // The shared answer form owns the tentative-suggestion block now, so its
+      // per-question reasons arrive already translated from the decision model.
+      const suggestionReasons = perQuestion.map(entry => ({ id: entry?.id, reason: t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown") }));
       const detail = props.evidence?.value;
       const evidenceView = detail ? model.cardView(detail, props.agents, t) : null;
       const evidenceRevealReady = props.evidence?.status === "ready" || props.evidence?.status === "error";
@@ -257,19 +260,10 @@ window.__ModuleLoader__.load({
         // The escalation reason is the one thing the user must not miss: it is
         // an accent-barred notice, not another flat paragraph.
         jsx.jsx(ui.Notice, { tone: "warn", children: current.escalation?.missing?.[0] ?? t(summary?.reasonKey ?? "decisionReasonUnknown") }, "reason"),
-        suggestions.length || perQuestion.length ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [
-          jsx.jsxs("strong", { children: [t("decisionSuggestions"), " · ", t("decisionSuggestionNotSubmitted")] }, "title"),
-          suggestions.length ? jsx.jsx("ul", { children: suggestions.map((answer, index) => {
-            const question = questions.find(item => item.id === answer?.id);
-            return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${answerText(answer)}` }, answer?.id ?? index);
-          }) }, "suggestions") : null,
-          perQuestion.length ? jsx.jsx("ul", { children: perQuestion.map((entry, index) => {
-            const question = questions.find(item => item.id === entry?.id);
-            return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown")}` }, entry?.id ?? index);
-          }) }, "per-question") : null,
-        ] }, "guidance") : null,
+        // The tentative suggestions are rendered once, inside the shared answer
+        // form, so the inbox card hosts no second copy above it.
         jsx.jsx(ui.DecisionAnswers, {
-          questions, answers: draft.answers, suggestions, pending, collapseTitle: summary?.title,
+          questions, answers: draft.answers, suggestions, perQuestion: suggestionReasons, pending, collapseTitle: summary?.title,
           onChange: value => props.updateDraft("answers", value), onSubmit: value => props.run("decide", current.caseId, value), t,
         }, "answers"),
         inboxUserTools(props, current, summary),

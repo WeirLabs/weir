@@ -169,6 +169,9 @@ window.__ModuleLoader__.load({
       const directConsultAnswer = waiting && props.toolName === "decision_consult";
       const suggestions = Array.isArray(view.escalation?.suggestion) ? view.escalation.suggestion : [];
       const perQuestion = Array.isArray(view.escalation?.perQuestion) ? view.escalation.perQuestion : [];
+      // The answer form has no decision model, so its per-question reasons are
+      // translated here and handed over as already-readable text.
+      const suggestionReasons = perQuestion.map(entry => ({ id: entry?.id, reason: t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown") }));
       const previous = view.history.filter(group => group.attempt?.attemptId !== view.currentAttempt?.attemptId);
       // Dynamic summary for the More-details entry: preview only substantive
       // diagnostic signals (routing disagreement/failure, failed evaluations);
@@ -211,7 +214,7 @@ window.__ModuleLoader__.load({
             jsx.jsx(ui.Badge, { variant: badgeVariant, children: t(view.statusKey) }, "status"),
           ] }, "header"),
           directConsultAnswer ? jsx.jsx(ui.DecisionAnswers, {
-            questions, answers: draft.answers, suggestions, pending: isPending,
+            questions, answers: draft.answers, suggestions, perQuestion: suggestionReasons, pending: isPending,
             onChange: value => updateDraft("answers", value), onSubmit: value => run("decide", view.caseId, value), t,
           }, "answer-form") : null,
           !directConsultAnswer ? jsx.jsx("section", { className: "weir-da-record-answers", "aria-label": t("decisionRecord"), children: questions.map((question, index) => {
@@ -228,14 +231,15 @@ window.__ModuleLoader__.load({
           ] }, "reason") : null,
           nativeAnswer ? jsx.jsx("p", { className: "weir-da-state", "data-native-answer": true, children: t("decisionNativeAnswerHint") }, "native-answer") : null,
           waiting && !directConsultAnswer && (suggestions.length || perQuestion.length) ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [
-            jsx.jsx("strong", { children: [t("decisionSuggestions"), " · ", t("decisionSuggestionNotSubmitted")] }, "title"),
+            // The native card has no card form to host the block, so it keeps the
+            // tentative suggestions read-only under the same short title.
+            jsx.jsx("strong", { children: t("decisionSuggestions") }, "title"),
             suggestions.length ? jsx.jsx("ul", { children: suggestions.map((answer, index) => {
               const question = questions.find(item => item.id === answer?.id);
               return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${answerText(answer)}` }, answer?.id ?? index);
             }) }, "suggestions") : null,
-            perQuestion.length ? jsx.jsx("ul", { children: perQuestion.map((entry, index) => {
-              const question = questions.find(item => item.id === entry?.id);
-              return jsx.jsx("li", { children: `${question?.question ?? t("decisionRecord")}: ${t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown")}` }, entry?.id ?? index);
+            perQuestion.length ? jsx.jsx("ul", { children: suggestionReasons.map((entry, index) => {
+              return jsx.jsx("li", { children: `${questions.find(item => item.id === entry?.id)?.question ?? t("decisionRecord")}: ${entry?.reason ?? t("decisionReasonUnknown")}` }, entry?.id ?? index);
             }) }, "per-question") : null,
           ] }, "guidance") : null,
           // User autonomy on a pending decision: ask the owning assistant for

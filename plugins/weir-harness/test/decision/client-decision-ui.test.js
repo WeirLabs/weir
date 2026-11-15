@@ -960,7 +960,15 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   assert.equal(submit.disabled, true)
   assert.ok(findAll(tree, node => node.role === 'alert').some(node => node.children === 'decisionAnswersIncomplete'))
 
+  // The fill action lives inside the tentative-suggestion block, never in the
+  // submit row: it must never read as a second way to submit the decision.
+  const suggestionBlock = findAll(tree, node => node.className === 'weir-da-suggestion-review')[0]
+  assert.ok(suggestionBlock, 'the form renders its tentative-suggestion block')
+  const actionsRow = findAll(tree, node => node.className === 'weir-da-actions')[0]
   const fill = findAll(tree, node => node.type === ui.Button && node.children === 'decisionUseSuggestions')[0]
+  assert.equal(findAll(suggestionBlock, node => node === fill).length, 1, 'the fill action sits inside the suggestion block')
+  assert.equal(findAll(actionsRow, node => node === fill).length, 0, 'the fill action is not a submit-row button')
+  assert.deepEqual(actionsRow.children.filter(Boolean).map(node => [node.children, node.inputType]), [['decisionDecide', 'submit']], 'the submit row holds only the submit button')
   fill.onClick()
   assert.equal(submissions.length, 0)
   assert.deepEqual(changes.at(-1), { single: { selected: ['Alpha'] }, multi: { selected: ['One', 'Two'] }, free: { selected: [], custom: 'Because' } })
@@ -994,6 +1002,67 @@ test('DecisionAnswers fills suggestions locally and submits one complete origina
   await Promise.resolve()
   tree = render()
   assert.equal(tree['aria-busy'], false)
+})
+
+test('DecisionAnswers keeps tentative suggestions in one labeled block between the questions and the submit row', async () => {
+  const runtime = makeReact()
+  const ui = await load(runtime.react)
+  const questions = [
+    { id: 'q1', question: 'Choose a title', options: [{ label: 'Short' }, { label: 'Long' }] },
+    { id: 'q2', question: 'Explain the choice' },
+  ]
+  const render = overrides => {
+    runtime.begin()
+    return ui.DecisionAnswers({
+      questions, onChange: () => {}, onSubmit: () => {}, t: key => key,
+      suggestions: [{ id: 'q1', selected: ['Short'] }, { id: 'q2', custom: 'Because' }],
+      perQuestion: [{ id: 'q2', reason: 'decisionReasonMissingContext' }],
+      ...overrides,
+    })
+  }
+  const tree = render()
+  const children = tree.children.filter(Boolean)
+  const blocks = findAll(tree, node => node.className === 'weir-da-suggestion-review')
+  assert.equal(blocks.length, 1, 'the form renders exactly one tentative-suggestion block')
+  const block = blocks[0]
+  assert.equal(block.type, 'section')
+  assert.equal(block['data-suggestion-review'], true)
+  assert.equal(children.filter(node => node === block).length, 1, 'the block is a direct child of the form')
+  // Order inside the form: questions, block, submit row, incompleteness note.
+  const blockIndex = children.indexOf(block)
+  const actionsIndex = children.findIndex(node => node.className === 'weir-da-actions')
+  assert.equal(blockIndex, actionsIndex - 1, 'the block sits directly before the submit row')
+  assert.ok(children.slice(0, blockIndex).some(node => node.type === 'fieldset'), 'the questions stay above the block')
+  // Heading: the short title owns the row and the fill action sits on its right side.
+  const header = findAll(block, node => node.className === 'weir-da-suggestion-header')[0]
+  assert.ok(header, 'the block has a heading row')
+  assert.equal(header.type, 'div')
+  assert.equal(block.children.filter(Boolean)[0], header, 'the heading row leads the block')
+  const title = findAll(header, node => node.type === 'strong')[0]
+  assert.equal(title.children, 'decisionSuggestions', 'the title is the short label, with no long suffix')
+  assert.equal(typeof title.children, 'string')
+  const fill = findAll(header, node => node.type === ui.Button)
+  assert.deepEqual(fill.map(node => node.children), ['decisionUseSuggestions'], 'the fill action is the only action in the block')
+  assert.equal(fill[0].inputType, undefined, 'the fill action never passes a submit type')
+  assert.equal(fill[0].variant, 'secondary')
+  // Both suggestion sources are listed with their question text.
+  const lists = findAll(block, node => node.type === 'ul')
+  assert.deepEqual(lists.map(list => list.children.map(item => item.children)), [
+    ['Choose a title: Short', 'Explain the choice: Because'],
+    ['Explain the choice: decisionReasonMissingContext'],
+  ])
+  // The submit row keeps only the primary submit control.
+  const actionsRow = children[actionsIndex]
+  assert.deepEqual(actionsRow.children.filter(Boolean).map(node => [node.children, node.inputType]), [['decisionDecide', 'submit']])
+  // A read-only block (per-question reasons only) still renders, with no fill action.
+  const readOnly = render({ suggestions: [] })
+  const readOnlyHeader = findAll(readOnly, node => node.className === 'weir-da-suggestion-header')[0]
+  assert.ok(readOnlyHeader, 'the block also renders without fillable suggestions')
+  assert.equal(findAll(readOnlyHeader, node => node.type === ui.Button).length, 0, 'a read-only block offers no fill action')
+  assert.equal(findAll(readOnly, node => node.className === 'weir-da-suggestion-review').length, 1)
+  // No suggestions at all means no block.
+  const empty = render({ suggestions: [], perQuestion: [] })
+  assert.equal(findAll(empty, node => node.className === 'weir-da-suggestion-review').length, 0, 'an empty block is not rendered')
 })
 
 test('option questions accept a custom ruling that replaces the selection', async () => {
