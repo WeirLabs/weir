@@ -27,7 +27,141 @@ window.__ModuleLoader__.load({
         nextCursor: typeof value?.nextCursor === "string" ? value.nextCursor : null,
       };
     }
-    function narrowInbox(payload) { return array(okValue(payload)); }
+    // A pending Case is one item on the sidebar bubble, the navigation count and
+    // the inbox list. The Remote projection names no workspace (a path or raw
+    // workspace key never reaches the page), so the page maps the source session
+    // to a workspace locally and this projection only carries what the Host owns.
+    const INBOX_ROUTE_STATUSES = ["selected", "failure", "ambiguous", "none"];
+    function updatedAtMs(value) {
+      if (typeof value === "number" && Number.isFinite(value)) return value;
+      if (typeof value === "string" && value) {
+        const parsed = Date.parse(value);
+        return Number.isNaN(parsed) ? 0 : parsed;
+      }
+      return 0;
+    }
+    function narrowInbox(payload) {
+      return array(okValue(payload)).filter(item => item && typeof item === "object" && typeof item.caseId === "string" && item.caseId !== "").map(item => {
+        const projection = {
+          ...item,
+          caseId: text(item.caseId), sessionId: text(item.rootSessionId),
+          // An absent flag is "unknown", never "not running": only an explicit
+          // false earns the source-session label, and that label never disables
+          // an action (delivery resumes a stopped session).
+          sourceActive: item.sourceActive !== false,
+          updatedAt: updatedAtMs(item.updatedAt),
+        };
+        if (INBOX_ROUTE_STATUSES.includes(item.routeStatus)) projection.routeStatus = item.routeStatus;
+        else delete projection.routeStatus;
+        if (object(item.delivery)) projection.delivery = item.delivery;
+        else delete projection.delivery;
+        return projection;
+      });
+    }
+
+    // Workspaces and sessions reach the page as host snapshots whose shape
+    // differs between hosts (an array, {items}, or a byId map). One tolerant
+    // index answers both the group header and the per-item source label; a
+    // session that maps to nothing falls back to the "other workspace" bucket
+    // instead of blocking the page.
+    function snapshotRows(value, kind) {
+      const rows = [];
+      const idOf = kind === "session"
+        ? row => text(row.sessionId) || text(row.id)
+        : row => text(row.workspaceId) || text(row.id);
+      const push = (row, key) => {
+        if (!row || typeof row !== "object" || Array.isArray(row)) return;
+        rows.push({
+          key: idOf(row) || text(key),
+          title: text(row.title) || text(row.name),
+          path: text(row.path) || text(row.cwd),
+          workspaceId: text(row.workspaceId),
+          sessionIds: array(row.sessionIds ?? row.sessions).filter(id => typeof id === "string"),
+        });
+      };
+      if (Array.isArray(value)) for (const row of value) push(row);
+      else if (value && typeof value === "object") {
+        if (Array.isArray(value.items)) for (const row of value.items) push(row);
+        else if (value.byId && typeof value.byId === "object") for (const [key, row] of Object.entries(value.byId)) push(row, key);
+        else for (const [key, row] of Object.entries(value)) push(row, key);
+      }
+      return rows.filter(row => row.key !== "");
+    }
+    const comparablePath = (value) => text(value).replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+    function workspaceIndex(workspaces, sessions) {
+      const rows = snapshotRows(workspaces, "workspace");
+      const labeled = new Map(rows.map(row => [row.key, row.title || row.path]));
+      const bySession = new Map();
+      for (const row of rows) for (const sessionId of row.sessionIds) bySession.set(sessionId, row.key);
+      const sessionWorkspace = new Map();
+      const sessionPath = new Map();
+      for (const row of snapshotRows(sessions, "session")) {
+        if (row.workspaceId) sessionWorkspace.set(row.key, row.workspaceId);
+        if (row.path) sessionPath.set(row.key, row.path);
+      }
+      return { rows, labeled, bySession, sessionWorkspace, sessionPath };
+    }
+    function workspaceKeyOf(index, sessionId) {
+      const id = text(sessionId);
+      if (!id) return "";
+      const direct = index.sessionWorkspace.get(id) ?? index.bySession.get(id);
+      if (direct) return direct;
+      const path = comparablePath(index.sessionPath.get(id));
+      if (!path) return "";
+      return index.rows.find(row => comparablePath(row.path) === path)?.key ?? "";
+    }
+
+    /**
+     * Group pending Cases for display. Pure: the page passes the host snapshots
+     * it already holds, so grouping never needs a second read and the same items
+     * drive every dimension.
+     * @param {any[]} items projection from narrowInbox.
+     * @param {{by?:'workspace'|'agent',workspaces?:any,sessions?:any,agents?:any,t?:any,currentSessionId?:string|null}} [options]
+     */
+    function groupInbox(items, options = {}) {
+      const input = object(options) ?? {};
+      const t = translator(input.t);
+      const index = workspaceIndex(input.workspaces, input.sessions);
+      const by = input.by === "agent" ? "agent" : "workspace";
+      const agentNames = new Map();
+      for (const agent of array(input.agents)) {
+        const agentId = text(agent?.agentId);
+        if (agentId) agentNames.set(agentId, text(agent?.name) || agentId);
+      }
+      const currentWorkspace = workspaceKeyOf(index, input.currentSessionId);
+      const currentSession = text(input.currentSessionId);
+      const otherLabel = t("decisionInboxOtherWorkspace");
+      const rows = array(items).filter(item => item && typeof item === "object").map(item => {
+        const workspaceId = workspaceKeyOf(index, item.sessionId);
+        const sourceSessionId = text(item.sessionId);
+        return {
+          ...item,
+          workspaceId: workspaceId || null,
+          workspaceLabel: index.labeled.get(workspaceId) || otherLabel,
+          // Only a known pair of different workspaces is cross-workspace; an
+          // unmapped session stays unlabelled rather than guessed.
+          crossWorkspace: Boolean(currentWorkspace) && Boolean(workspaceId) && workspaceId !== currentWorkspace,
+          openSourceSession: sourceSessionId !== "" && sourceSessionId !== currentSession,
+        };
+      });
+      const groups = new Map();
+      for (const row of rows) {
+        const agentId = text(row.agentId);
+        const head = by === "agent"
+          ? { key: agentId ? `agent:${agentId}` : "agent:none", label: agentId ? agentNames.get(agentId) || t("decisionInboxAssistantFallback") : t("decisionInboxUnownedAgent") }
+          : { key: row.workspaceId ? `workspace:${row.workspaceId}` : "workspace:other", label: row.workspaceLabel };
+        const group = groups.get(head.key) ?? { key: head.key, label: head.label, count: 0, items: [] };
+        group.items.push(row);
+        group.count += 1;
+        groups.set(head.key, group);
+      }
+      // Newest decision first, inside a group and between groups: the group's
+      // own order is its newest item's order.
+      const ordered = [...groups.values()].map(group => ({ ...group, items: group.items.sort((left, right) => updatedAtMs(right.updatedAt) - updatedAtMs(left.updatedAt)) }))
+        .sort((left, right) => updatedAtMs(right.items[0]?.updatedAt) - updatedAtMs(left.items[0]?.updatedAt) || String(left.label).localeCompare(String(right.label)));
+      const workspaceCount = new Set(rows.map(row => row.workspaceId ?? "")).size;
+      return { by, groups: ordered, workspaceCount, switchable: workspaceCount >= 2 };
+    }
 
     function selectorOptions(payload) {
       const value = okValue(payload) ?? payload;
@@ -714,6 +848,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionMetricActivity: "Activity", decisionMetricReturns: "Returns by reason", decisionMetricEvidenceFailures: "Evidence issues", decisionMetricFeedback: "Feedback", decisionMetricCasesOpened: "Decisions opened", decisionMetricAttemptsTotal: "Evaluations", decisionMetricAutoAnswered: "Automatically answered", decisionMetricAutoAnswerRate: "Automatic answer rate", decisionMetricEscalated: "Decided by you", decisionMetricExhausted: "Needs attention", decisionMetricCancelled: "Cancelled", decisionMetricInterrupted: "Interrupted evaluations", decisionMetricCorrections: "Corrections", decisionMetricReassignments: "Reassignments", decisionMetricFeedbackParticipation: "Records with feedback", decisionMetricSelectorOffBypasses: "Off bypasses (not sampled)", decisionMetricMeanLatency: "Mean evaluation latency", decisionMetricEvidenceStale: "Stale evidence", decisionMetricEvidenceConflicting: "Conflicting evidence", decisionMetricEvidenceDeleted: "Deleted evidence", decisionMetricRatingsUp: "Confirmations", decisionMetricRatingsDown: "Disputes", decisionMetricRatingsUndone: "Undone ratings", decisionMetricWindow: "Window", decisionMetricWindowAll: "All time", decisionMetricWindow24h: "Last 24 hours", decisionMetricWindow7d: "Last 7 days", decisionMetricWindow30d: "Last 30 days", decisionRawMetrics: "Raw metric values",
         decisionSelector: "Decision assistant", decisionOff: "Do not use an assistant", decisionAgents: "Assistants", decisionRecords: "Decision records",
         decisionInbox: "Needs your decision", decisionMetrics: "Metrics", decisionLoading: "Loading decisions…", decisionLoadingShort: "Loading…", decisionSaving: "Saving…", decisionFailed: "The decision information could not be read, or the requested action could not be completed. Existing page content is preserved. Review the current status and retry when ready; this failure does not confirm a new selection, enable automatic answers, or change approval and permission boundaries. The Advanced diagnostics section retains the original error for troubleshooting.",
+        decisionInboxGrouping: "Group decisions by", decisionInboxGroupByWorkspace: "By workspace", decisionInboxGroupByAgent: "By assistant", decisionInboxOtherWorkspace: "Other workspace", decisionInboxUnownedAgent: "No assistant yet", decisionInboxAssistantFallback: "An assistant", decisionInboxSourceWorkspace: "Workspace", decisionInboxOpenSourceSession: "Open source session", decisionInboxSourceInactive: "The source session is not running. A ruling is still saved and delivered to it.", decisionDeliveryUnavailableTitle: "Ruling saved, not delivered", decisionDeliveryUnavailable: "Your ruling was saved, but the conclusion could not reach the source session. The decision record keeps it.", decisionDeliveryDismiss: "Dismiss",
         decisionEvidence: "Rationale", decisionSuggestions: "Suggestions", decisionPerQuestion: "Per-question conclusions", decisionRevision: "Revision", decisionHistory: "Open record", decisionNoRecord: "No decision records.", decisionMoreDetails: "More details", decisionMoreDetailsRouteIssue: "routing disagreement or failure", decisionMoreDetailsFailedAttempt: "a failed evaluation",
         decisionRecord: "Decision record", decisionNoSession: "Open a session to view decision records.", decisionReadFailed: "Decision records could not be loaded. Retry the read.",
         decisionNoPermission: "You do not have permission to read these decision records.", decisionRecordsCleaned: "Decision records were cleaned up.", decisionNoFilteredRecords: "No decision records match these filters.", decisionNoAgents: "No assistants yet. Create an assistant to get started.",
@@ -788,6 +923,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionMetricActivity: "活动", decisionMetricReturns: "按原因返回", decisionMetricEvidenceFailures: "依据问题", decisionMetricFeedback: "反馈", decisionMetricCasesOpened: "已开启判断", decisionMetricAttemptsTotal: "处理次数", decisionMetricAutoAnswered: "自动回答", decisionMetricAutoAnswerRate: "自动回答率", decisionMetricEscalated: "由你决定", decisionMetricExhausted: "需要处理", decisionMetricCancelled: "已取消", decisionMetricInterrupted: "中断的处理", decisionMetricCorrections: "纠正", decisionMetricReassignments: "改派", decisionMetricFeedbackParticipation: "有反馈的记录", decisionMetricSelectorOffBypasses: "关闭旁路（不采样）", decisionMetricMeanLatency: "平均处理耗时", decisionMetricEvidenceStale: "依据过期", decisionMetricEvidenceConflicting: "依据冲突", decisionMetricEvidenceDeleted: "依据已删除", decisionMetricRatingsUp: "认可", decisionMetricRatingsDown: "不认可", decisionMetricRatingsUndone: "撤销评分", decisionMetricWindow: "时间范围", decisionMetricWindowAll: "全部时间", decisionMetricWindow24h: "最近 24 小时", decisionMetricWindow7d: "最近 7 天", decisionMetricWindow30d: "最近 30 天", decisionRawMetrics: "原始指标值",
         decisionSelector: "决策助手", decisionOff: "不启用助手", decisionAgents: "助手管理", decisionRecords: "判断记录",
         decisionInbox: "待你决定", decisionMetrics: "指标", decisionLoading: "正在加载判断记录…", decisionLoadingShort: "读取中…", decisionSaving: "保存中…", decisionFailed: "暂时无法读取决策信息或完成请求的操作。已有页面内容不会被清除。请核对当前状态并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。",
+        decisionInboxGrouping: "分组方式", decisionInboxGroupByWorkspace: "按工作区", decisionInboxGroupByAgent: "按助手", decisionInboxOtherWorkspace: "其他工作区", decisionInboxUnownedAgent: "尚未选择助手", decisionInboxAssistantFallback: "某位助手", decisionInboxSourceWorkspace: "工作区", decisionInboxOpenSourceSession: "打开来源会话", decisionInboxSourceInactive: "来源会话未运行；裁决仍会保存并送达。", decisionDeliveryUnavailableTitle: "已裁决，未送达", decisionDeliveryUnavailable: "裁决已保存，但结论未能送达来源会话。判断记录仍会保留。", decisionDeliveryDismiss: "关闭",
         decisionEvidence: "判断依据", decisionSuggestions: "暂定建议", decisionPerQuestion: "逐题结论", decisionRevision: "记录版本", decisionHistory: "打开记录", decisionNoRecord: "暂无判断记录。", decisionMoreDetails: "更多细节", decisionMoreDetailsRouteIssue: "路由存在分歧或失败", decisionMoreDetailsFailedAttempt: "有失败的处理",
         decisionRecord: "判断记录", decisionNoSession: "打开会话后可查看判断记录。", decisionReadFailed: "判断记录读取失败，请重试。",
         decisionNoPermission: "你没有读取这些判断记录的权限。", decisionRecordsCleaned: "判断记录已清理。", decisionNoFilteredRecords: "没有符合筛选条件的判断记录。", decisionNoAgents: "暂无助手，请先新建助手。",
@@ -857,6 +993,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
     exports.dictionaries = dictionaries;
     exports.narrowRecords = narrowRecords;
     exports.narrowInbox = narrowInbox;
+    exports.groupInbox = groupInbox;
     exports.reasonKey = reasonKey;
     exports.errorKey = errorKey;
     exports.selectorOptions = selectorOptions;

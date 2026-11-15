@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"6f6cbeb83d23c30bf68810572e932a6ef1c9aac3fdaa0c845bf5a7fd01eb2c94","client.capability-badge.js":"9d7d0564dc10378e44b1c90095055a9dc0ff787073029dad68d98d0f3c250e7b","client.capability-manager.js":"8bac2944eb109a8d88e554934f84e791065eda158f9bcf02065fbfc72cc9a5f3","client.capability-model.js":"6bc91433669cfe62b2018a2cfd241a72470d4edaa8bb5830edcc309fca2b695e","client.capability-presets.js":"11898f8b4d1827e77184a02cee989d10a74e07f07960a0f5f3c4482ad4b01852","client.chain-editor.js":"5c60932c9e91dfd74bc995c1acb6d053213e4a017242b39e922ee1747ad0b5b5","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.decision-actions.js":"7cc838c3dc766de8d75bf972be13a438e2000ca64fa701d1c44e5020f6b394b8","client.decision-card.js":"55683a59ac9626f6e93b2e3751bcb3a8feac10666f7dbb0897790f60ee85f530","client.decision-learning.js":"0d35477e039c1a16731efa7c94a0f003a03b1df29fe640c2c55eb5e662cca320","client.decision-model.js":"f55832731d8c39db9a05cf25f659075b389fb901a5085743cf23a41c0732dc27","client.decision-page.js":"a7dd18ad4f12327377f1ca12cddf85d4914898636c47788792a65daa216b673f","client.decision-selector.js":"cfbeb9b13f1c7f6ffbafa9eb0397e2bf1124f18f7a6f36781520b70f52320929","client.decision-ui.js":"de2bfd68f146bae198d1e89508288b21d6d9ea40ad9031855e990d6d6f6a07ca","client.disabled-categories-editor.js":"e41783d740be5f444e03572fc42e8e5336ff459a2a7d0e3415cfbd5fc7b2a2e9","client.file-lease-badge.js":"b48b77c28d55fa7f5072201c1f50372ab957609c835122db23edca740ee36533","client.file-lease-tool-model.js":"f72d87b049454ec489b4dffac1f32dabc273947b8a4c55fe07c91ddf320bd899","client.file-lease-tool-view.js":"04364925aff70be05cc21276e81974e778f1e73ae9a426231b5187266d18198f","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"a005c1c5bd3c918ffb5014d7f626ce3de4bc28136a40ccddafe7abbee6a472b5","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"269fa95270d7b37f740db031e9357faa4ff79871014ea174a925319b7cd05ac1","client.lsp-toggle.js":"ff0b09643a5dda934093821ddbb5c3978709e5fe01cf0a65c1beeea05eaec907","client.mcp-manager.js":"570572c1cdc6d2dff81846a80a1ff5e69e11ee53d186b1f789d2bc51fd57d03b","client.model-picker.js":"2fcaaa59b8759c160b41d954edf9b38bdf9fff760bf4b73152b17605904efaad","client.notify-permissions.js":"c2fdfbc57de06ac943bcc5cd554ba3c2fd61c8715b5ade9646900bdf55f06b85","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"4304e1b27b62563ddef083fc049c1b919cb531364c3c4104d1f99321d13bb7a8","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f2aa66558b15f3249e1cf55feb365e16b68459bba2b6b21c1a141390e2f9f2c8","client.worktree-model.js":"38530670aa6eedd5a8123007705b9a618da2fa01e3b03a5c8e6118c971280e8f","client.worktree-view.js":"3ec739ed42890efe3130b9fa8810b8e00e54ab323891c88fd074c7e92d1c09dd"}
+// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"6f6cbeb83d23c30bf68810572e932a6ef1c9aac3fdaa0c845bf5a7fd01eb2c94","client.capability-badge.js":"9d7d0564dc10378e44b1c90095055a9dc0ff787073029dad68d98d0f3c250e7b","client.capability-manager.js":"8bac2944eb109a8d88e554934f84e791065eda158f9bcf02065fbfc72cc9a5f3","client.capability-model.js":"6bc91433669cfe62b2018a2cfd241a72470d4edaa8bb5830edcc309fca2b695e","client.capability-presets.js":"11898f8b4d1827e77184a02cee989d10a74e07f07960a0f5f3c4482ad4b01852","client.chain-editor.js":"5c60932c9e91dfd74bc995c1acb6d053213e4a017242b39e922ee1747ad0b5b5","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.decision-actions.js":"7cc838c3dc766de8d75bf972be13a438e2000ca64fa701d1c44e5020f6b394b8","client.decision-card.js":"2ea1639bac6a115286b59a148b11c05b6bd53f2849f8ab046d3f46f7db17c274","client.decision-learning.js":"0d35477e039c1a16731efa7c94a0f003a03b1df29fe640c2c55eb5e662cca320","client.decision-model.js":"907e9b016cf7299e0afc39f282d1f96bdd7b15b8b5ada68bd5dd2851598b5aef","client.decision-page.js":"e3132bf24df278af85221ad9b45ed17de5a16e81f07e08f7bac3b412065b01dd","client.decision-selector.js":"cfbeb9b13f1c7f6ffbafa9eb0397e2bf1124f18f7a6f36781520b70f52320929","client.decision-ui.js":"67e80257a97fe20844b675409f08224982e772b74485d77be54d846a676b77cc","client.disabled-categories-editor.js":"e41783d740be5f444e03572fc42e8e5336ff459a2a7d0e3415cfbd5fc7b2a2e9","client.file-lease-badge.js":"b48b77c28d55fa7f5072201c1f50372ab957609c835122db23edca740ee36533","client.file-lease-tool-model.js":"f72d87b049454ec489b4dffac1f32dabc273947b8a4c55fe07c91ddf320bd899","client.file-lease-tool-view.js":"04364925aff70be05cc21276e81974e778f1e73ae9a426231b5187266d18198f","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"a005c1c5bd3c918ffb5014d7f626ce3de4bc28136a40ccddafe7abbee6a472b5","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"269fa95270d7b37f740db031e9357faa4ff79871014ea174a925319b7cd05ac1","client.lsp-toggle.js":"ff0b09643a5dda934093821ddbb5c3978709e5fe01cf0a65c1beeea05eaec907","client.mcp-manager.js":"570572c1cdc6d2dff81846a80a1ff5e69e11ee53d186b1f789d2bc51fd57d03b","client.model-picker.js":"2fcaaa59b8759c160b41d954edf9b38bdf9fff760bf4b73152b17605904efaad","client.notify-permissions.js":"c2fdfbc57de06ac943bcc5cd554ba3c2fd61c8715b5ade9646900bdf55f06b85","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"4304e1b27b62563ddef083fc049c1b919cb531364c3c4104d1f99321d13bb7a8","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f2aa66558b15f3249e1cf55feb365e16b68459bba2b6b21c1a141390e2f9f2c8","client.worktree-model.js":"38530670aa6eedd5a8123007705b9a618da2fa01e3b03a5c8e6118c971280e8f","client.worktree-view.js":"3ec739ed42890efe3130b9fa8810b8e00e54ab323891c88fd074c7e92d1c09dd"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -38,6 +38,11 @@ window.__ModuleLoader__.load({
 			decisionLoading: "Loading decisions…",
 			decisionLoadingShort: "Loading…",
 			decisionReadFailed: "Decision records could not be loaded. Retry the read.",
+			// The sidebar entry's pending bubble and its polite live region render
+			// synchronously, so their two strings live here, next to the other
+			// decision shells.
+			decisionPendingBubbleTitle: "{count} need your decision",
+			decisionPendingAnnounce: "Decision assistant: {count} need your decision",
 			// Worktree lanes: only the strings the entry’s own synchronous surfaces
 			// read stay in this namespace — the sidebar tab type’s title/guide thunks
 			// and the lanes panel’s pre-arrival loading state. Every lazily rendered
@@ -88,6 +93,8 @@ window.__ModuleLoader__.load({
 			decisionLoading: "正在加载判断记录…",
 			decisionLoadingShort: "读取中…",
 			decisionReadFailed: "判断记录读取失败，请重试。",
+			decisionPendingBubbleTitle: "{count} 项待你决定",
+			decisionPendingAnnounce: "决策助手：{count} 项待你决定",
 			// Worktree lanes: only the strings the entry’s own synchronous surfaces
 			// read stay in this namespace — the sidebar tab type’s title/guide thunks
 			// and the lanes panel’s pre-arrival loading state. Every lazily rendered
@@ -1358,6 +1365,128 @@ window.__ModuleLoader__.load({
 				registerChunkDictionaries("settings.weir.decision", chunks[0].dictionaries);
 				return chunks;
 			}));
+			// One metadata-only read of the model chunk: the pending count needs the
+			// same envelope unfolding and the same registered data face as every
+			// other decision surface, without waiting for the page to mount.
+			let decisionModelPromise = null;
+			const loadDecisionModel = () => {
+				if (decisionModelPromise) return decisionModelPromise;
+				decisionModelPromise = require.async("./client.decision-model.js").then((module) => {
+					registerChunkDictionaries("settings.weir.decision", module.dictionaries);
+					return module;
+				}, (error) => { decisionModelPromise = null; throw error; });
+				return decisionModelPromise;
+			};
+			// The polite live region the bubble announces through. The host marks the
+			// icon container aria-hidden, so the number alone can never carry state.
+			const DECISION_LIVE_STYLE = "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0";
+			let decisionLiveNode = null;
+			const announceDecisionPending = (text) => {
+				const hostDocument = globalThis.document;
+				if (!hostDocument?.body || typeof hostDocument.createElement !== "function") return;
+				if (!decisionLiveNode || decisionLiveNode.isConnected === false) {
+					decisionLiveNode = hostDocument.createElement("div");
+					decisionLiveNode.setAttribute("role", "status");
+					decisionLiveNode.setAttribute("aria-live", "polite");
+					decisionLiveNode.setAttribute("data-weir-decision-live", "");
+					decisionLiveNode.setAttribute("style", DECISION_LIVE_STYLE);
+					hostDocument.body.appendChild(decisionLiveNode);
+				}
+				decisionLiveNode.textContent = text;
+			};
+			// Local bus: any decision surface that completes an action bumps it so the
+			// entry's count converges immediately instead of on the next poll.
+			const decisionPendingBus = (() => {
+				const listeners = new Set();
+				return {
+					subscribe(callback) {
+						listeners.add(callback);
+						return () => listeners.delete(callback);
+					},
+					notify() {
+						for (const callback of listeners) callback();
+					}
+				};
+			})();
+			// The pending count store. The page publishes every inbox read it makes,
+			// so the bubble, the navigation count and the list total are one number;
+			// the entry's own reads (mount, focus, visibility, 30s poll) only keep it
+			// converged. A failed read keeps the last known value and says nothing.
+			const decisionPendingStore = (() => {
+				const POLL_INTERVAL_MS = 30_000;
+				const listeners = new Set();
+				let count = 0;
+				let inFlight = null;
+				let queued = false;
+				let started = false;
+				let pollTimer = null;
+				let onFocus = null;
+				let onVisibility = null;
+				const format = (key, value) => String(t(key)).replace(/\{count\}/g, String(value));
+				const apply = (next) => {
+					const value = Number.isInteger(next) && next > 0 ? next : 0;
+					if (value === count) return;
+					const grew = value > count;
+					count = value;
+					for (const listener of listeners) listener(count);
+					if (grew) announceDecisionPending(format("decisionPendingAnnounce", value));
+				};
+				const read = () => {
+					inFlight = loadDecisionModel()
+						.then((module) => module.decisionRpc(decisionConnection, "inbox", {}))
+						.then((payload) => {
+							// A malformed payload is a failed read, not an empty inbox.
+							if (Array.isArray(payload)) apply(payload.length);
+						})
+						.catch(() => {})
+						.then(() => {
+							inFlight = null;
+							if (queued) { queued = false; read(); }
+						});
+				};
+				const refresh = () => {
+					if (inFlight) { queued = true; return; }
+					read();
+				};
+				const visible = () => {
+					const hostDocument = globalThis.document;
+					return !hostDocument || hostDocument.visibilityState === undefined || hostDocument.visibilityState === "visible";
+				};
+				return {
+					getSnapshot: () => count,
+					subscribe(callback) {
+						listeners.add(callback);
+						return () => listeners.delete(callback);
+					},
+					publish(value) { apply(value); },
+					refresh,
+					start() {
+						if (started) return;
+						started = true;
+						refresh();
+						onFocus = () => refresh();
+						onVisibility = () => { if (visible()) refresh(); };
+						globalThis.window?.addEventListener?.("focus", onFocus);
+						const hostDocument = globalThis.document;
+						if (hostDocument?.addEventListener) hostDocument.addEventListener("visibilitychange", onVisibility);
+						if (hostDocument?.addEventListener && typeof globalThis.setInterval === "function") {
+							pollTimer = globalThis.setInterval(() => { if (visible()) refresh(); }, POLL_INTERVAL_MS);
+						}
+					},
+					stop() {
+						if (!started) return;
+						started = false;
+						globalThis.window?.removeEventListener?.("focus", onFocus);
+						const hostDocument = globalThis.document;
+						if (onVisibility) hostDocument?.removeEventListener?.("visibilitychange", onVisibility);
+						if (pollTimer !== null) globalThis.clearInterval?.(pollTimer);
+						pollTimer = null;
+					}
+				};
+			})();
+			const refreshDecisionPending = () => decisionPendingBus.notify();
+			decisionPendingBus.subscribe(() => decisionPendingStore.refresh());
+			ctx.effect(() => () => decisionPendingStore.stop(), "ui-weir-settings: pending decisions");
 			function DecisionSelectorWrapper(props) {
 				const arrival = useChunkArrival(loadDecisionChunks, typeof props.sessionId === "string" && props.sessionId !== "");
 				if (!arrival?.chunks) return react_jsx_runtime.jsx("button", { type: "button", disabled: true, role: arrival?.error ? "alert" : "status", className: "weir-da-selector-trigger", "aria-label": t("decisionSelector"), style: { color: "var(--dsw-alias-label-secondary)", background: "var(--dsw-alias-bg-layer-1)", border: "0.5px solid var(--dsw-alias-border-l2)" }, children: t(arrival?.error ? "decisionReadFailed" : "decisionLoadingShort") });
@@ -1377,7 +1506,7 @@ window.__ModuleLoader__.load({
 				const baseProps = { ...props, sessionId };
 				const conversation = props.node?.data?.callId ? props.node.data : null;
 				const cardProps = conversation ? { ...baseProps, toolName: conversation.toolName, callId: conversation.callId, questions: conversation.questions, refreshKey: conversation.settledSeq } : baseProps;
-				return react_jsx_runtime.jsx(cards.DecisionCard, { ...cardProps, connection: decisionConnection, decisionRpc: model.decisionRpc, waitForDecisionCase, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, cardView: model.cardView, decisionModel: model, ui, t: decisionT, openRecord: caseId => { decisionSession.openCaseId = caseId; ctx.layout.selectPanel("weir-decisions"); } });
+				return react_jsx_runtime.jsx(cards.DecisionCard, { ...cardProps, connection: decisionConnection, decisionRpc: model.decisionRpc, waitForDecisionCase, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, cardView: model.cardView, decisionModel: model, ui, t: decisionT, refreshPending: refreshDecisionPending, openRecord: caseId => { decisionSession.openCaseId = caseId; ctx.layout.selectPanel("weir-decisions"); } });
 			}
 			// The card is owned by the Turn-layer chat node registered below
 			// (`groupTree: "turn"` keeps it outside the Turn's process disclosure, so a
@@ -1418,17 +1547,55 @@ window.__ModuleLoader__.load({
 				name: "conversation.chat.node", key: "weir-decision",
 				inject: sessionId => { if (sessionId) decisionSession.current = sessionId; return sessionId ? { sessionId } : {}; },
 			}, DecisionCardWrapper)), "ui-weir-settings: decision chat card");
+			// The entry's icon plus its pending bubble. The host wraps this icon surface
+			// in an aria-hidden container, so the number is decoration: the polite live
+			// region above carries the state, and the title serves mouse users.
+			function DecisionPendingBadge(props) {
+				const count = Number.isInteger(props.count) && props.count > 0 ? props.count : 0;
+				if (count === 0) return null;
+				// The count rides the host's warn fill with the on-colour label token and a
+				// ring in the sidebar's own surface colour, so it separates from the icon
+				// without spelling a colour or depending on the light/dark variant.
+				return react_jsx_runtime.jsx("span", {
+					"data-weir-decision-bubble": "true", "aria-hidden": "true",
+					title: String(t("decisionPendingBubbleTitle")).replace(/\{count\}/g, String(count)),
+					style: {
+						position: "absolute", top: "-5px", insetInlineEnd: "-6px", boxSizing: "border-box",
+						minWidth: "14px", height: "14px", padding: "0 3px", borderRadius: "var(--dsw-radius-lg)",
+						background: "var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-label-on-color)",
+						boxShadow: "0 0 0 1.5px var(--dsw-specific-selector)",
+						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
+						textAlign: "center", pointerEvents: "none",
+					},
+					children: count > 9 ? "9+" : String(count),
+				});
+			}
 			function DecisionPanelIcon(props) {
 				const size = props.size ?? 16;
-				return react_jsx_runtime.jsxs("svg", {
-					width: size, height: size, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true",
-					className: props.className, style: props.style, stroke: "currentColor", strokeLinecap: "round", strokeLinejoin: "round",
-					"data-active": props.active === true, "data-decision-icon": "branch-check",
+				const [pending, setPending] = react.useState(decisionPendingStore.getSnapshot());
+				// The entry's own mount is the store's mount: the count is read, kept
+				// fresh while the page is visible, and released with the component.
+				react.useEffect(() => {
+					const unsubscribe = decisionPendingStore.subscribe(setPending);
+					decisionPendingStore.start();
+					return () => { unsubscribe(); decisionPendingStore.stop(); };
+				}, []);
+				return react_jsx_runtime.jsxs("span", {
+					"data-decision-entry": "true",
+					style: { position: "relative", display: "inline-flex", width: size, height: size, flex: "none" },
 					children: [
-						react_jsx_runtime.jsx("circle", { cx: 3.2, cy: 3, r: 1.3 }, "branch-top"),
-						react_jsx_runtime.jsx("circle", { cx: 3.2, cy: 13, r: 1.3 }, "branch-bottom"),
-						react_jsx_runtime.jsx("path", { d: "M3.2 4.3v7.4M3.2 7.8h2.5c1.6 0 2.2-.8 2.2-2.1v-.4" }, "branch"),
-						react_jsx_runtime.jsx("path", { d: "m8.5 10.7 1.8 1.8 3.2-4" }, "check"),
+						react_jsx_runtime.jsxs("svg", {
+							width: size, height: size, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true",
+							className: props.className, style: props.style, stroke: "currentColor", strokeLinecap: "round", strokeLinejoin: "round",
+							"data-active": props.active === true, "data-decision-icon": "branch-check",
+							children: [
+								react_jsx_runtime.jsx("circle", { cx: 3.2, cy: 3, r: 1.3 }, "branch-top"),
+								react_jsx_runtime.jsx("circle", { cx: 3.2, cy: 13, r: 1.3 }, "branch-bottom"),
+								react_jsx_runtime.jsx("path", { d: "M3.2 4.3v7.4M3.2 7.8h2.5c1.6 0 2.2-.8 2.2-2.1v-.4" }, "branch"),
+								react_jsx_runtime.jsx("path", { d: "m8.5 10.7 1.8 1.8 3.2-4" }, "check"),
+							],
+						}, "icon"),
+						react_jsx_runtime.jsx(DecisionPendingBadge, { count: pending }, "pending"),
 					],
 				});
 			}
@@ -1436,7 +1603,7 @@ window.__ModuleLoader__.load({
 				const arrival = useChunkArrival(loadDecisionChunks, true);
 				if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { role: arrival?.error ? "alert" : "status", style: settingsLoadingStyle, children: t(arrival?.error ? "decisionReadFailed" : "decisionLoading") });
 				const [model, actions, , , page, ui, learning] = arrival.chunks;
-				return react_jsx_runtime.jsx(page.DecisionPage, { ...props, connection: decisionConnection, decisionRpc: model.decisionRpc, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, decisionModel: model, pageView: model.pageView, narrowRecords: model.narrowRecords, narrowInbox: model.narrowInbox, ui, learning, t: decisionT, getSessionId: () => decisionSession.current, consumeOpenCase: () => { const caseId = decisionSession.openCaseId; decisionSession.openCaseId = null; return caseId; }, consumeAgentDestination: () => { const destination = decisionSession.agentDestination; decisionSession.agentDestination = null; return destination; }, panelInfo: ctx.layout.panelInfo });
+				return react_jsx_runtime.jsx(page.DecisionPage, { ...props, connection: decisionConnection, decisionRpc: model.decisionRpc, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, decisionModel: model, pageView: model.pageView, narrowRecords: model.narrowRecords, narrowInbox: model.narrowInbox, ui, learning, t: decisionT, getSessionId: () => decisionSession.current, consumeOpenCase: () => { const caseId = decisionSession.openCaseId; decisionSession.openCaseId = null; return caseId; }, consumeAgentDestination: () => { const destination = decisionSession.agentDestination; decisionSession.agentDestination = null; return destination; }, panelInfo: ctx.layout.panelInfo, publishPendingCount: count => decisionPendingStore.publish(count), refreshPending: refreshDecisionPending, openSession: sessionId => ctx.get?.("uiWorkspace")?.openSession?.(sessionId) });
 			}
 			ctx.effect(() => ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: "weir-decisions", order: 12, label: () => t("decisionSelector") }, DecisionPanelIcon)), "ui-weir-settings: decision panel entry");
 			ctx.effect(() => ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "weir-decisions", children: { "weir-decisions.tab": { kind: "list", scope: "root" } } }, DecisionPageWrapper)), "ui-weir-settings: decision page");

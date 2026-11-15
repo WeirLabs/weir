@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
 import decisionGui from '../src/scenarios/decision-gui.js'
 import { extract } from '../src/mock-kit.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
@@ -1985,4 +1985,102 @@ test('the injected page probes compile before the real run reaches them', () => 
   const recordExpression = new Function('w4Case', 'w4Attempt', `return \`${recordProbe}\``)({ caseId: 'dc_compile_check' }, { attemptId: 'at_compile_check' })
   assert.ok(recordExpression.includes('dc_compile_check') && recordExpression.includes('at_compile_check'), 'the record probe interpolates its case and attempt ids')
   assert.doesNotThrow(() => new Function('document', `return (${recordExpression})`), 'the record probe is valid page source')
+})
+
+// decision-pending-overview 5.1: the bubble and the grouped inbox are judged by
+// pure guards, and the driver probes that feed them must stay compilable and
+// structurally honest about what they prove.
+test('pending bubble guard accepts a real count and rejects a fake one', () => {
+  const state = (patch = {}) => ({
+    present: true, text: '2', title: '2 项待你决定', svg: true,
+    entry: { left: 0, top: 0, width: 16, height: 16, right: 16, bottom: 16 },
+    bubble: { left: 10, top: -5, width: 14, height: 14, right: 24, bottom: 9 },
+    background: 'rgb(255, 149, 0)', color: 'rgb(0, 0, 0)',
+    live: { role: 'status', ariaLive: 'polite', text: '决策助手：2 项待你决定', rect: { width: 1, height: 1 } },
+    ...patch,
+  })
+  assert.deepEqual(pendingBubbleProblems(state(), { count: 2 }), [])
+  assert.deepEqual(pendingBubbleProblems(state({ present: false, text: null }), { count: 0 }), [])
+  assert.ok(pendingBubbleProblems(state(), { count: 0 }).length > 0, 'a stale bubble cannot claim an empty inbox')
+  assert.ok(pendingBubbleProblems(state({ present: false }), { count: 2 }).length > 0, 'a missing bubble fails a non-zero count')
+  assert.ok(pendingBubbleProblems(state({ text: '9' }), { count: 12 }).some(problem => problem.includes('9+')), 'above nine truncates')
+  assert.deepEqual(pendingBubbleProblems(state({ text: '9+', title: '12 项待你决定' }), { count: 12 }), [])
+  assert.ok(pendingBubbleProblems(state({ title: '' }), { count: 2 }).some(problem => problem.includes('title')))
+  assert.ok(pendingBubbleProblems(state({ title: 'Needs review' }), { count: 2, language: 'en' }).length > 0, 'the title must be the localized sentence')
+  assert.deepEqual(pendingBubbleProblems(state({ text: '2', title: '2 need your decision' }), { count: 2, language: 'en' }), [])
+  assert.ok(pendingBubbleProblems(state({ bubble: { left: -2, top: 12, width: 14, height: 14, right: 12, bottom: 26 } }), { count: 2 }).length > 0, 'a bottom-left or clipped badge fails')
+  assert.ok(pendingBubbleProblems(state({ live: null }), { count: 2 }).some(problem => problem.includes('live region')))
+  assert.ok(pendingBubbleProblems(state({ live: { role: 'alert', ariaLive: 'assertive', text: 'x', rect: { width: 1, height: 1 } } }), { count: 2 }).length > 0)
+  assert.ok(pendingBubbleProblems(state({ live: { role: 'status', ariaLive: 'polite', text: 'x', rect: { width: 120, height: 20 } } }), { count: 2 }).length > 0, 'the live region must be visually hidden')
+  assert.ok(pendingBubbleProblems(state({ svg: false }), { count: 2 }).length > 0)
+})
+
+test('pending overview guard requires one group per source and a switch only across workspaces', () => {
+  const groups = [
+    { key: 'workspace:w1', label: 'Orrery', count: 1, caseIds: ['dc-1'], heading: 'H2' },
+    { key: 'workspace:w2', label: 'Atlas', count: 2, caseIds: ['dc-2', 'dc-3'], heading: 'H2' },
+  ]
+  const state = (patch = {}) => ({
+    groups, switchButtons: [{ by: 'workspace', pressed: 'true', label: '按工作区' }, { by: 'agent', pressed: 'false', label: '按助手' }],
+    switchAria: '分组方式', navCount: 3, total: 3, sourceLabels: ['工作区：Orrery', '工作区：Atlas'], horizontalScroll: 0,
+    ...patch,
+  })
+  assert.deepEqual(pendingOverviewProblems(state()), [])
+  assert.ok(pendingOverviewProblems(state({ groups: [] })).some(problem => problem.includes('no group')))
+  assert.ok(pendingOverviewProblems(state({ switchButtons: [] })).length > 0, 'two workspaces need the switch')
+  assert.ok(pendingOverviewProblems({ groups: [groups[0]], switchButtons: [{ by: 'workspace', pressed: 'true', label: '按工作区' }], total: 1, navCount: 1, switchAria: '分组方式' }).some(problem => problem.includes('must not offer')), 'one workspace must not offer the switch')
+  assert.deepEqual(pendingOverviewProblems({ groups: [groups[0]], switchButtons: [], total: 1, navCount: 1, sourceLabels: ['工作区：Orrery'], horizontalScroll: 0 }), [])
+  assert.ok(pendingOverviewProblems(state({ total: 2 })).some(problem => problem.includes('sum to 3')))
+  assert.ok(pendingOverviewProblems(state({ navCount: 5 })).some(problem => problem.includes('navigation count')))
+  assert.ok(pendingOverviewProblems(state({ groups: [groups[0], groups[0].key === 'workspace:w1' ? { ...groups[0], caseIds: ['dc-9'] } : groups[0]], switchButtons: [], total: 2, navCount: 2 })).some(problem => problem.includes('share one key')))
+  assert.ok(pendingOverviewProblems(state({ groups: [{ ...groups[0], count: 2 }] })).length > 0, 'a count must match its cards')
+  assert.ok(pendingOverviewProblems(state({ horizontalScroll: 24 })).some(problem => problem.includes('horizontal scroll')))
+  assert.ok(pendingOverviewProblems(state({ sourceLabels: ['工作区：/Users/young/project'] })).some(problem => problem.includes('path')))
+  assert.ok(pendingOverviewProblems(state({ switchButtons: [{ by: 'workspace', pressed: 'true', label: '按工作区' }] })).length > 0, 'both dimensions must render')
+  assert.ok(pendingOverviewProblems(state({ switchButtons: [{ by: 'workspace', pressed: 'false', label: '按工作区' }, { by: 'agent', pressed: 'false', label: '按助手' }] })).some(problem => problem.includes('pressed')))
+})
+
+test('the pending-overview driver probes exist, stay compiled, and pin the real surfaces', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  for (const token of [
+    'async function runPendingOverviewMatrix(', 'async function pendingBubbleDom(',
+    'data-weir-decision-bubble', 'data-decision-entry', 'data-weir-decision-live', 'data-inbox-group',
+    'data-inbox-group-count', 'data-group-by', 'data-inbox-workspace', 'data-delivery-notice',
+    "controlDecision(${JSON.stringify({ method: 'decide', action: 'delivery-unavailable' })}",
+    "message.source === 'weir-decision'", 'pendingBubbleProblems(twoPending', 'pendingOverviewProblems(twoGroups)',
+    'pendingOverviewCrossWorkspaceNeedsNoConfirmation', 'pendingOverviewCrossWorkspaceRulingDelivered',
+    'pendingOverviewConclusionReachesSourceSession', 'pendingBubbleDisappearsWhenNothingIsPending',
+  ]) assert.ok(driver.includes(token), token)
+  assert.ok(driver.includes('await runPendingOverviewMatrix(primary)'), 'the probe runs inside the product matrix')
+  // The injected page probes are compiled here: a stray backtick or an
+  // unescaped quote only surfaces mid-run otherwise.
+  const templateAfter = marker => {
+    const from = driver.indexOf('instance.cdp.evaluate(`', driver.indexOf(marker))
+    assert.ok(from > 0, `${marker}: an injected expression exists`)
+    const to = driver.indexOf('`)', from)
+    assert.ok(to > from, `${marker}: the injected expression closes`)
+    return driver.slice(from + 'instance.cdp.evaluate(`'.length, to)
+  }
+  const bubbleProbe = templateAfter('async function pendingBubbleDom(')
+  const bubbleExpression = new Function(`return \`${bubbleProbe}\``)()
+  assert.ok(bubbleExpression.includes('data-weir-decision-bubble'))
+  assert.doesNotThrow(() => new Function('document', `return (${bubbleExpression})`), 'the bubble probe is valid page source')
+  const inboxProbe = templateAfter('async function pendingInboxDom(')
+  const inboxExpression = new Function(`return \`${inboxProbe}\``)()
+  assert.ok(inboxExpression.includes('data-inbox-group-count'))
+  assert.doesNotThrow(() => new Function('document', `return (${inboxExpression})`), 'the inbox probe is valid page source')
+  const noticeProbe = driver.match(/const notice = await waitFor\(\(\) => instance\.cdp\.evaluate\(`([\s\S]*?)`\), 30_000\)/)?.[1]
+  assert.ok(noticeProbe, 'the undelivered-notice probe exists')
+  assert.doesNotThrow(() => new Function('document', `return (${noticeProbe.replace(/\\`/g, '`')})`), 'the notice probe is valid page source')
+  // The stub is honest: the fixture rewrites only the reported delivery, and the
+  // run records it as a stub rather than as the Host's own unavailable branch.
+  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  assert.ok(fixture.includes("'delivery-unavailable'"), 'the fixture owns the delivery stub')
+  assert.ok(fixture.includes("closed.delivery = { state: 'unavailable' }"), 'the stub rewrites only the reported delivery')
+  assert.ok(driver.includes('stub: true'), 'the evidence names the delivery stub')
+  const fixtureHost = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  assert.ok(fixtureHost.includes('userMessages'), 'the session scan exposes bounded user messages')
+  assert.ok(fixtureHost.includes("event.type === 'user/message'"), 'the scan reads the real user-message event type')
+  const guiB = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-b.mjs'), 'utf8')
+  assert.ok(guiB.includes('finalInbox.every(item => !scenarioCaseIds.includes(item.caseId))'), 'gui-b scopes its clean-end assertion to its own Cases')
 })

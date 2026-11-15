@@ -46,6 +46,19 @@ window.__ModuleLoader__.load({
                 return { ok: false, error: { code: 'WEIR_UIUX_INJECTED_FAILURE', message: `Isolated UIUX ${method} failure` } }
               }
               const result = await pending
+              if (control.action==='delivery-unavailable') {
+                // The undelivered branch is the Host's terminal answer for an
+                // unresumable source session; this stub keeps the real Case action
+                // and rewrites only the reported delivery, so the page's inline
+                // notice is exercised on a real Desktop surface.
+                const clone = structuredClone(result)
+                const service = clone?.value
+                const closed = service?.ok === true ? service.value : service
+                if (!closed || typeof closed !== 'object') throw new Error('delivery-unavailable control requires a Case payload')
+                closed.delivery = { state: 'unavailable' }
+                control.settled = true
+                return clone
+              }
               if (control.action==='unknown-auto') {
                 const clone = structuredClone(result)
                 const service = clone?.value
@@ -68,7 +81,7 @@ window.__ModuleLoader__.load({
         }
         function controlDecision(spec) {
           ensureDecisionControls()
-          if (!spec || typeof spec.method !== 'string' || !['fail', 'hold', 'hold-fail', 'unknown-auto'].includes(spec.action)) throw new Error('Invalid isolated Decision RPC control')
+          if (!spec || typeof spec.method !== 'string' || !['fail', 'hold', 'hold-fail', 'unknown-auto', 'delivery-unavailable'].includes(spec.action)) throw new Error('Invalid isolated Decision RPC control')
           const control = { id: `uiux-rpc-${++controlSequence}`, method: spec.method, args: spec.args, action: spec.action, used: false, started: false, released: false, settled: false, release: null }
           decisionControls.push(control)
           return control.id

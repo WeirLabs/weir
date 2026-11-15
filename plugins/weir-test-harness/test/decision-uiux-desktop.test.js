@@ -73,7 +73,7 @@ test('Desktop UIUX preflight uses native dialog capabilities without running the
 
 test('isolated UIUX fixture controls real Decision RPC settlement without product changes', () => {
   const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
-  for (const token of ['controlDecision', 'releaseDecisionControl', 'decisionControlState', "action==='fail'", "action==='hold'", "action==='unknown-auto'", 'originalRpcCall', 'JSON.stringify(control.args)']) assert.ok(fixture.includes(token), token)
+  for (const token of ['controlDecision', 'releaseDecisionControl', 'decisionControlState', "action==='fail'", "action==='hold'", "action==='unknown-auto'", "action==='delivery-unavailable'", 'originalRpcCall', 'JSON.stringify(control.args)']) assert.ok(fixture.includes(token), token)
   assert.ok(fixture.includes('connection.rpc.call=controlledCall'), 'the isolated client wraps the live RPC method')
   assert.match(fixture, /controlledConnection\.rpc\.call=originalRpcCall/, 'fixture disposal restores the exact original RPC method')
   assert.ok(!fixture.includes('weir-harness/lib'), 'the fixture does not patch product chunks')

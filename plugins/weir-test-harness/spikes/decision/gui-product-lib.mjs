@@ -1153,3 +1153,95 @@ export function publicPublishedPrinciplesProblems(audit = {}) {
   if (!readableText(section.text)) problems.push('the published-principles section rendered nothing')
   return problems
 }
+
+/**
+ * The sidebar entry's pending bubble: a decorative number inside the icon's box,
+ * a localized title for mouse users, and a polite live region that carries the
+ * count for assistive technology (the host marks the icon container hidden).
+ * @param {{present?:boolean,text?:string,title?:string,bubble?:any,entry?:any,live?:any,background?:string,color?:string,svg?:boolean}} state
+ * @param {{count?:number,language?:'en'|'zh',liveText?:string}} [expected]
+ */
+export function pendingBubbleProblems(state = {}, expected = {}) {
+  const problems = []
+  const count = Number.isInteger(expected.count) ? expected.count : null
+  const bubble = state.bubble ?? null
+  const entry = state.entry ?? null
+  if (!state.svg) problems.push('the entry no longer renders the decision branch-check icon')
+  if (!entry || entry.width <= 0 || entry.height <= 0) problems.push('the entry icon box has no measurable size')
+  if (count === 0) {
+    if (state.present) problems.push(`a zero count rendered a bubble reading ${shortenedText(state.text)}`)
+    return problems
+  }
+  if (state.present !== true) return [...problems, 'the pending bubble is not rendered']
+  const expectedText = count === null ? null : count > 9 ? '9+' : String(count)
+  if (expectedText !== null && state.text !== expectedText) problems.push(`the bubble reads ${shortenedText(state.text)} instead of ${expectedText}`)
+  if (count !== null) {
+    const language = expected.language === 'zh' || expected.language === 'en' ? expected.language : null
+    const title = readableText(state.title)
+    if (!title) problems.push('the bubble carries no title for mouse users')
+    else if (!/\d/.test(title)) problems.push(`the bubble title ${shortenedText(title)} names no count`)
+    else if (language === 'zh' && !/待你决定/.test(title)) problems.push(`the bubble title ${shortenedText(title)} is not the localized sentence`)
+    else if (language === 'en' && !/your decision/i.test(title)) problems.push(`the bubble title ${shortenedText(title)} is not the localized sentence`)
+    else if (language === null && !/待你决定|your decision/i.test(title)) problems.push(`the bubble title ${shortenedText(title)} is not the localized sentence`)
+  }
+  if (!bubble || bubble.width <= 0 || bubble.height <= 0) problems.push('the bubble has no measurable size')
+  else {
+    // The badge must sit on the icon's top-right corner, and it must stay on
+    // screen at every width instead of being clipped by the sidebar rail.
+    if (!entry) problems.push('the bubble has no entry box to position against')
+    else if (!(bubble.left + bubble.width / 2 > entry.left + entry.width / 2 && bubble.top + bubble.height / 2 < entry.top + entry.height / 2)) problems.push('the bubble is not on the icon\u2019s top-right corner')
+    if (bubble.left < -1) problems.push(`the bubble is clipped on the left at x=${bubble.left}`)
+  }
+  if (readableText(state.background) === '' || readableText(state.background) === 'rgba(0, 0, 0, 0)') problems.push('the bubble has no warning fill')
+  if (readableText(state.color) === '') problems.push('the bubble has no readable digit colour')
+  if (bubble && state.color && state.background && state.color === state.background) problems.push('the bubble digits use the fill colour')
+  const live = state.live ?? null
+  if (!live) problems.push('the entry registers no polite live region')
+  else {
+    if (live.role !== 'status') problems.push(`the live region role is ${live.role} instead of status`)
+    if (live.ariaLive !== 'polite') problems.push(`the live region is ${live.ariaLive} instead of polite`)
+    if (!live.text) problems.push('the live region is empty')
+    else if (expected.liveText !== undefined && readableText(live.text) !== readableText(expected.liveText)) problems.push(`the live region says ${shortenedText(live.text)} instead of ${shortenedText(expected.liveText)}`)
+    if (live.rect && live.rect.width > 2 && live.rect.height > 2) problems.push('the live region is visible instead of visually hidden')
+  }
+  return problems
+}
+
+/**
+ * The grouped pending inbox: one block per source workspace (or assistant),
+ * counts on the group heads, one switch offered only when the pending items
+ * really span two or more workspaces, and no page-level horizontal scroll.
+ * @param {{groups?:any[],switchButtons?:any[],navCount?:number,total?:number,switchAria?:string,horizontalScroll?:number,sourceLabels?:string[]}} state
+ */
+export function pendingOverviewProblems(state = {}) {
+  const problems = []
+  const groups = (Array.isArray(state.groups) ? state.groups : []).filter(group => group && typeof group === 'object')
+  const total = groups.reduce((sum, group) => sum + (Number.isInteger(group.count) ? group.count : 0), 0)
+  if (groups.length === 0) problems.push('the pending inbox renders no group')
+  for (const group of groups) {
+    if (!readableText(group.label)) problems.push(`the group ${shortenedText(group.key)} carries no readable name`)
+    if (!Number.isInteger(group.count) || group.count < 1) problems.push(`the group ${shortenedText(group.label)} carries no positive count`)
+    if (!Array.isArray(group.caseIds) || group.caseIds.length !== group.count) problems.push(`the group ${shortenedText(group.label)} shows ${Array.isArray(group.caseIds) ? group.caseIds.length : 0} cards for a count of ${group.count}`)
+    if (group.heading !== 'H2' && group.heading !== 'H3') problems.push(`the group ${shortenedText(group.label)} heading is ${group.heading || 'missing'} instead of a heading element`)
+  }
+  const keys = new Set(groups.map(group => group.key))
+  if (keys.size !== groups.length) problems.push('two rendered groups share one key')
+  if (Number.isInteger(state.total) && state.total !== total) problems.push(`the rendered groups hold ${state.total} items but their counts sum to ${total}`)
+  if (Number.isInteger(state.navCount) && Number.isInteger(state.total) && state.navCount !== state.total && state.total > 0) problems.push(`the navigation count ${state.navCount} differs from the grouped total ${state.total}`)
+  const controls = (Array.isArray(state.switchButtons) ? state.switchButtons : []).filter(item => item && typeof item.by === 'string')
+  if (groups.length >= 2) {
+    if (controls.length !== 2) problems.push(`two grouping dimensions exist but ${controls.length} switch controls render`)
+    if (!readableText(state.switchAria)) problems.push('the grouping switch carries no accessible name')
+    for (const control of controls) if (!readableText(control.label)) problems.push(`the ${control.by} switch carries no readable label`)
+    if (controls.length === 2 && controls.filter(control => control.pressed === 'true').length !== 1) problems.push('exactly one grouping dimension must be pressed')
+  } else if (controls.length > 0) problems.push('one grouping source must not offer a switch')
+  if (Number.isFinite(state.horizontalScroll) && state.horizontalScroll > 0) problems.push(`the inbox introduces ${state.horizontalScroll}px of horizontal scroll`)
+  for (const label of Array.isArray(state.sourceLabels) ? state.sourceLabels : []) {
+    const text = readableText(label)
+    if (!text) problems.push('an inbox card shows no source workspace')
+    // A workspace *name* is the only thing the card may show: a path segment
+    // anywhere in the label means the page leaked the source directory.
+    if (/(^|[\s:：])(?:[A-Za-z]:[\\/]|~[\\/]|\/)/.test(text)) problems.push(`an inbox card shows a path instead of a workspace name: ${shortenedText(label)}`)
+  }
+  return problems
+}

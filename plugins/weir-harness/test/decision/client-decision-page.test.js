@@ -1505,13 +1505,22 @@ test('inbox loading, failure, retry, and empty states are local to the inbox vie
   harness.unmount()
 })
 
-test('records and advanced metrics use the no-session empty state without issuing reads', async () => {
+test('the inbox loads without an open session while records and advanced metrics keep their gate', async () => {
   const calls = []
+  const published = []
   const harness = await createPageHarness({ sessionId: null, actions: {
     agents: async () => { calls.push('agents'); return [] }, inbox: async () => { calls.push('inbox'); return [] },
     records: async () => { calls.push('records'); return { records: [], nextCursor: null } }, metrics: async () => { calls.push('metrics'); return {} },
   } })
+  harness.update({ publishPendingCount: count => published.push(count), refreshPending: () => calls.push('refresh') })
   await harness.settle()
+  // The profile-wide inbox is the one read that needs no session; it publishes
+  // its total to the entry's bubble.
+  assert.deepEqual(calls, ['inbox'])
+  assert.deepEqual(published, [0])
+  const inbox = findAll(harness.render(), node => node.type === 'section' && node['data-view'] === 'inbox')[0]
+  assert.equal(textOf(inbox).includes('decisionInboxEmpty'), true)
+  assert.equal(textOf(inbox).includes('decisionNoSession'), false)
   for (const view of ['records', 'metrics']) {
     findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === view)[0].onClick()
     await harness.flush()
@@ -1519,7 +1528,7 @@ test('records and advanced metrics use the no-session empty state without issuin
     assert.equal(textOf(section).includes('decisionNoSession'), true, view)
     assert.equal(findAll(section, node => node.type === harness.ui.LoadingState).length, 0, view)
   }
-  assert.deepEqual(calls, [])
+  assert.deepEqual(calls, ['inbox'])
   harness.unmount()
 })
 function routingSummary(patch = {}) {
@@ -2195,6 +2204,241 @@ test('a failed snapshot action holds the assistant detail pane scroll across the
     assert.deepEqual(removals, ['overflow-anchor'])
     assert.ok(actionError(), 'the failure still surfaces the same actionable error')
     delete pane.ownerDocument
+  } finally {
+    harness.unmount()
+  }
+})
+
+// The inbox is one profile-wide list: grouping is display only, and the counts
+// on the page come from the same read the entry's bubble publishes.
+function pendingItem(caseId, sessionId, patch = {}) {
+  return {
+    caseId, rootSessionId: sessionId, agentId: 'a', state: 'awaiting_user', awaitingReason: 'partial_batch', feedbackState: 'none',
+    request: { questions: [{ id: 'q', question: `Question ${caseId}`, options: [{ label: 'Yes' }] }] },
+    ...patch,
+  }
+}
+const TWO_WORKSPACES = {
+  useWorkspaces: () => ({ items: [
+    { workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] },
+    { workspaceId: 'w2', title: 'Atlas', path: '/work/atlas', sessionIds: ['s-w2'] },
+  ] }),
+  useSessions: () => ({ byId: {
+    's-w1': { sessionId: 's-w1', cwd: '/work/orrery', workspaceId: 'w1' },
+    's-w2': { sessionId: 's-w2', cwd: '/work/atlas', workspaceId: 'w2' },
+  } }),
+}
+function inboxGroupKeys(tree) {
+  return findAll(tree, node => node['data-inbox-group']).map(node => node['data-inbox-group'])
+}
+function inboxGroupCounts(tree) {
+  return findAll(tree, node => node['data-inbox-group-count']).map(node => node['data-inbox-group-count'])
+}
+function groupCaseIds(tree, key, InboxItem) {
+  const group = findAll(tree, node => node['data-inbox-group'] === key)[0]
+  assert.ok(group, `group ${key}`)
+  return findAll(group, node => node.type === InboxItem).map(node => node.item.caseId)
+}
+
+test('pending decisions group by source workspace, newest first, with one total for nav and bubble', async () => {
+  const published = []
+  const inbox = [
+    pendingItem('dc-w1', 's-w1', { updatedAt: 100 }),
+    pendingItem('dc-w2-new', 's-w2', { updatedAt: 300 }),
+    pendingItem('dc-w2-old', 's-w2', { updatedAt: 200, agentId: 'b' }),
+  ]
+  const harness = await createPageHarness({ sessionId: 's-w1', actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }, { agentId: 'b', name: 'Quill', state: 'enabled' }],
+    inbox: async () => inbox,
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  harness.update({ ...TWO_WORKSPACES, publishPendingCount: count => published.push(count) })
+  try {
+    await harness.settle()
+    assert.deepEqual(published, [3], 'one read publishes the same total to the bubble')
+    let tree = harness.render()
+    assert.deepEqual(inboxGroupKeys(tree), ['workspace:w2', 'workspace:w1'], 'groups follow their newest pending decision')
+    assert.deepEqual(inboxGroupCounts(tree), [2, 1])
+    assert.deepEqual(groupCaseIds(tree, 'workspace:w2', harness.page.InboxItem), ['dc-w2-new', 'dc-w2-old'], 'inside a group the newest is first')
+    assert.deepEqual(groupCaseIds(tree, 'workspace:w1', harness.page.InboxItem), ['dc-w1'])
+    assert.equal(findAll(tree, node => node['data-inbox-count'] === 3).length, 1, 'navigation carries the same total')
+
+    // The group header is the workspace name, and the switch is named, grouped and
+    // pressed as the accessible dimensions it toggles.
+    const header = findAll(tree, node => node.className === 'weir-da-inbox-group-header')[0]
+    assert.ok(textOf(header).includes('Atlas'))
+    assert.deepEqual(findAll(tree, node => node.className === 'weir-da-inbox-group-header').map(node => node.type), ['h2', 'h2'], 'each group head is a real heading')
+    const grouping = findAll(tree, node => node.className === 'weir-da-inbox-grouping')[0]
+    assert.equal(grouping.role, 'group')
+    assert.equal(grouping['aria-label'], 'decisionInboxGrouping')
+    const toggles = findAll(tree, node => node['data-group-by'])
+    assert.deepEqual(toggles.map(node => node['data-group-by']), ['workspace', 'agent'])
+    assert.deepEqual(toggles.map(node => node['aria-pressed']), [true, false])
+    assert.equal(textOf(toggles[0]).includes('decisionInboxGroupByWorkspace'), true)
+    assert.equal(textOf(toggles[1]).includes('decisionInboxGroupByAgent'), true)
+
+    // Switching to assistants regroups the same items and is reversible.
+    toggles[1].onClick()
+    await harness.flush()
+    tree = harness.render()
+    assert.deepEqual(inboxGroupKeys(tree), ['agent:a', 'agent:b'])
+    assert.deepEqual(inboxGroupCounts(tree), [2, 1])
+    assert.deepEqual(findAll(tree, node => node.type === harness.page.InboxItem).map(node => node.item.caseId).sort(), ['dc-w1', 'dc-w2-new', 'dc-w2-old'])
+    assert.deepEqual(findAll(tree, node => node['data-group-by']).map(node => node['aria-pressed']), [false, true])
+    const agentHead = findAll(tree, node => node.className === 'weir-da-inbox-group-header' && textOf(node).includes('Tone'))[0]
+    assert.ok(agentHead, 'the assistant group is named after the assistant')
+    findAll(tree, node => node['data-group-by'] === 'workspace')[0].onClick()
+    await harness.flush()
+    tree = harness.render()
+    assert.deepEqual(inboxGroupKeys(tree), ['workspace:w2', 'workspace:w1'])
+    assert.equal(findAll(tree, node => node['data-inbox-group-count']).length, 2, 'no empty group renders')
+  } finally {
+    harness.unmount()
+  }
+})
+
+test('a single workspace renders no grouping switch, and an unmapped session reads as another workspace', async () => {
+  const single = await createPageHarness({ sessionId: 's-w1', actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => [pendingItem('dc-same', 's-w1')],
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  single.update({
+    useWorkspaces: () => ({ items: [{ workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] }] }),
+    useSessions: () => ({ byId: { 's-w1': { sessionId: 's-w1', cwd: '/work/orrery' } } }),
+  })
+  try {
+    await single.settle()
+    const tree = single.render()
+    assert.deepEqual(inboxGroupKeys(tree), ['workspace:w1'])
+    assert.equal(findAll(tree, node => node['data-group-by']).length, 0, 'one workspace offers nothing to switch')
+  } finally {
+    single.unmount()
+  }
+
+  const harness = await createPageHarness({ sessionId: 's-w1', actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => [pendingItem('dc-same', 's-w1'), pendingItem('dc-unknown', 's-lost')],
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  harness.update({
+    useWorkspaces: () => ({ items: [{ workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] }] }),
+    useSessions: () => ({ byId: { 's-w1': { sessionId: 's-w1', cwd: '/work/orrery' } } }),
+  })
+  try {
+    await harness.settle()
+    const tree = harness.render()
+    // A session no snapshot maps falls into one labelled fallback bucket — never
+    // a path, and never mistaken for the workspace the user is already in.
+    assert.deepEqual(inboxGroupKeys(tree).sort(), ['workspace:other', 'workspace:w1'])
+    assert.equal(textOf(findAll(tree, node => node['data-inbox-group'] === 'workspace:other')[0]).includes('decisionInboxOtherWorkspace'), true)
+    assert.equal(findAll(tree, node => node['data-group-by']).length, 2, 'two display buckets are switchable')
+    const other = findAll(tree, node => node.type === harness.page.InboxItem && node.item.caseId === 'dc-unknown')[0]
+    assert.equal(other.item.workspaceId, null)
+    assert.equal(other.item.crossWorkspace, false, 'an unmapped source is not guessed cross-workspace')
+    assert.equal(other.workspaceLabel, 'decisionInboxOtherWorkspace')
+    // The card shows the workspace and offers the jump to another session.
+    const card = harness.page.InboxItem(other)
+    assert.equal(textOf(card).includes('decisionInboxSourceWorkspace'), true)
+    assert.equal(findAll(card, node => node['data-action'] === 'open-source-session').length, 1)
+  } finally {
+    harness.unmount()
+  }
+})
+
+test('a cross-workspace ruling needs no confirmation and reports an undelivered conclusion once', async () => {
+  const calls = []
+  const refreshed = []
+  const item = pendingItem('dc-cross', 's-w2', { escalation: { suggestion: [{ id: 'q', selected: ['Yes'] }] } })
+  let delivery = { state: 'unavailable' }
+  const harness = await createPageHarness({ sessionId: 's-w1', actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => (calls.includes('decide') ? [] : [item]),
+    decide: async (caseId, batch) => { calls.push('decide'); return { ...item, state: 'closed', closing: 'escalated', delivery } },
+    record: async () => ({ case: { ...item, state: 'closed', closing: 'escalated', decision: { answers: [{ id: 'q', selected: ['Yes'] }] } }, attempts: [], feedback: [], routeDecisions: [] }),
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  harness.update({ ...TWO_WORKSPACES, refreshPending: () => refreshed.push(1) })
+  try {
+    await harness.settle()
+    let tree = harness.render()
+    assert.equal(findAll(tree, node => node['data-delivery-notice']).length, 0, 'nothing is shown before an action')
+    // The cross-workspace card shows its source and the jump, and its answer form
+    // submits directly: no confirmation dialog is opened first.
+    const cardElement = findAll(tree, node => node.type === harness.page.InboxItem)[0]
+    assert.equal(cardElement.workspaceLabel, 'Atlas')
+    assert.equal(cardElement.item.crossWorkspace, true)
+    assert.equal(cardElement.openSourceSession, true)
+    // The card is rendered by calling InboxItem with the grouped entry, and its
+    // answer form submits directly: no confirmation dialog is opened first.
+    const card = harness.page.InboxItem(cardElement)
+    const answers = findAll(card, node => node.type === harness.ui.DecisionAnswers)[0]
+    assert.ok(answers, 'the cross-workspace card answers in place')
+    await answers.onSubmit([{ id: 'q', selected: ['Yes'] }])
+    await harness.flush()
+    tree = harness.render()
+    assert.deepEqual(calls, ['decide'])
+    assert.deepEqual(refreshed, [1], 'the entry is told to re-read the count')
+    const notice = findAll(tree, node => node['data-delivery-notice'] === 'unavailable')
+    assert.equal(notice.length, 1)
+    assert.equal(textOf(notice[0]).includes('decisionDeliveryUnavailableTitle'), true)
+    assert.equal(textOf(notice[0]).includes('decisionDeliveryUnavailable'), true)
+    // No dialog was involved, and the notice is dismissible once.
+    assert.equal(findAll(tree, node => node.type === harness.ui.ConfirmDialog).length, 0)
+    findAll(tree, node => node['data-action'] === 'dismiss-delivery-notice')[0].onClick()
+    await harness.flush()
+    assert.equal(findAll(harness.render(), node => node['data-delivery-notice']).length, 0, 'the inline notice closes for good')
+
+    // A delivered ruling shows nothing at all.
+    delivery = { state: 'delivered' }
+    const second = await createPageHarness({ sessionId: 's-w1', actions: {
+      agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [item],
+      decide: async () => ({ ...item, state: 'closed', closing: 'escalated', delivery }),
+      record: async () => ({ case: { ...item, state: 'closed', closing: 'escalated', decision: { answers: [] } }, attempts: [], feedback: [], routeDecisions: [] }),
+      records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    } })
+    second.update(TWO_WORKSPACES)
+    try {
+      await second.settle()
+      const answerCard = second.page.InboxItem(findAll(second.render(), node => node.type === second.page.InboxItem)[0])
+      const answersAgain = findAll(answerCard, node => node.type === second.ui.DecisionAnswers)[0]
+      await answersAgain.onSubmit([{ id: 'q', selected: ['Yes'] }])
+      await second.flush()
+      assert.equal(findAll(second.render(), node => node['data-delivery-notice']).length, 0)
+    } finally {
+      second.unmount()
+    }
+  } finally {
+    harness.unmount()
+  }
+})
+
+test('an inactive source session is labelled and never disables a recovery action', async () => {
+  const item = pendingItem('dc-cold', 's-w2', { sourceActive: false, agentId: 'a' })
+  const harness = await createPageHarness({ sessionId: 's-w1', actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => [item],
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  harness.update(TWO_WORKSPACES)
+  try {
+    await harness.settle()
+    const element = findAll(harness.render(), node => node.type === harness.page.InboxItem)[0]
+    const card = harness.page.InboxItem(element)
+    const inactive = findAll(card, node => node['data-inbox-source-inactive'] === true)
+    assert.equal(inactive.length, 1, 'the source session is labelled')
+    assert.equal(textOf(inactive[0]).includes('decisionInboxSourceInactive'), true)
+    // Delivery resumes a stopped session, so nothing is disabled because of it.
+    const recovery = findAll(card, node => node.type === harness.ui.Button)
+    assert.ok(recovery.length > 0, 'recovery actions still render')
+    assert.equal(recovery.some(button => button.disabled === true && button.title === 'decisionInboxSourceInactive'), false)
+    // Retry is available on an owned pending Case and the reassign target stays
+    // editable: the cold-session label gates neither of them.
+    const retry = findAll(card, node => node.type === harness.ui.Button && textOf(node) === 'decisionRetry')[0]
+    assert.ok(retry, 'retry is offered for an owned pending Case')
+    assert.notEqual(retry.disabled, true, 'the cold-session label never gates retry')
+    const select = findAll(card, node => node.type === 'select')[0]
+    assert.notEqual(select.disabled, true, 'the reassign target stays editable')
   } finally {
     harness.unmount()
   }

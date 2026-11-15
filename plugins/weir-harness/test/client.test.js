@@ -55,10 +55,17 @@ describe('weir settings client half', () => {
   }
   async function loadEntry() {
     const loaded = []
+    // The entry's own listeners (window focus) are driven from the tests.
+    const windowListeners = new Map()
     globalThis.window = {
       __ModuleLoader__: {
         load: (definition) => loaded.push(definition),
       },
+      addEventListener: (event, listener) => {
+        if (!windowListeners.has(event)) windowListeners.set(event, new Set())
+        windowListeners.get(event).add(listener)
+      },
+      removeEventListener: (event, listener) => { windowListeners.get(event)?.delete(listener) },
     }
     await import(`../lib/client.js?composition=${Math.random()}`)
 
@@ -194,6 +201,8 @@ describe('weir settings client half', () => {
       notifyWebStops,
       controllerConstructed,
       sentinelSnapshot,
+      decisionModelChunk,
+      dispatchWindowEvent: (event) => { for (const listener of [...(windowListeners.get(event) ?? [])]) listener() },
       settingsPageChunk,
       modelPickerChunk,
       chainEditorChunk,
@@ -1303,11 +1312,22 @@ describe('weir settings client half', () => {
     expect(main.definition.children).toEqual({ 'weir-decisions.tab': { kind: 'list', scope: 'root' } })
 
     const icon = panel.component({ size: 20, active: true })
-    expect(icon.__type).toBe('svg')
-    expect(icon.width).toBe(20)
-    expect(icon['data-active']).toBe(true)
-    expect(icon['data-decision-icon']).toBe('branch-check')
-    expect(icon.children).not.toBe('DA')
+    // The entry is the icon plus its pending bubble inside one relative box.
+    expect(icon.__type).toBe('span')
+    expect(icon['data-decision-entry']).toBe('true')
+    expect(icon.style.position).toBe('relative')
+    const glyph = icon.children[0]
+    expect(glyph.__type).toBe('svg')
+    expect(glyph.width).toBe(20)
+    expect(glyph['data-active']).toBe(true)
+    expect(glyph['data-decision-icon']).toBe('branch-check')
+    expect(glyph.children).not.toBe('DA')
+    // Nothing pending: the bubble component renders nothing and the entry has
+    // already pulled the model chunk for its own count read.
+    const badge = icon.children[1]
+    expect(badge.count).toBe(0)
+    expect(badge.__type(badge)).toBe(null)
+    expect(asyncCalls.filter(spec => spec.startsWith('./client.decision-'))).toEqual(['./client.decision-model.js'])
 
     reactStub.reset()
     reactStub.begin()
@@ -1317,7 +1337,7 @@ describe('weir settings client half', () => {
     expect(loading.children).toBe('decisionLoadingShort')
     expect(loading.role).toBe('status')
     expect(asyncCalls.filter(spec => spec.startsWith('./client.decision-'))).toEqual([
-      './client.decision-model.js', './client.decision-actions.js', './client.decision-selector.js',
+      './client.decision-model.js', './client.decision-model.js', './client.decision-actions.js', './client.decision-selector.js',
       './client.decision-card.js', './client.decision-page.js', './client.decision-ui.js', './client.decision-learning.js',
     ])
     await flush()
@@ -1342,7 +1362,9 @@ describe('weir settings client half', () => {
     expect(page.learning).toBeTruthy()
     expect(page.pageView).toBe('page-view')
     expect(page.decisionModel.decisionRpc).toBe('decision-rpc')
-    expect(asyncCalls.filter(spec => spec === './client.decision-model.js')).toHaveLength(1)
+    // One pull from the entry's pending-count read and one from the page batch;
+    // the ModuleLoader hands back the same module and registers its data face once.
+    expect(asyncCalls.filter(spec => spec === './client.decision-model.js')).toHaveLength(2)
     // The card is rendered by the Turn-layer chat node only: the keyed tool view
     // for the same call renders nothing, so the node is the single card surface.
     const decisionToolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
@@ -1376,6 +1398,120 @@ describe('weir settings client half', () => {
     arrived.onManage()
     expect(page.consumeAgentDestination()).toBe('manage')
     expect(selectedPanels).toEqual(['weir-decisions', 'weir-decisions'])
+  })
+
+  it('the sidebar entry owns the pending count: one read, a visible-only poll, silent failures, and one announcement per increase', async (t) => {
+    const { surface, reactStub, decisionModelChunk, dispatchWindowEvent } = await loadEntry()
+    // A browser-ish document: the live region is a real node under body, and the
+    // 30s poll is captured instead of scheduled (a real timer would outlive the
+    // test process).
+    const polls = []
+    const pollDelays = []
+    const realSetInterval = globalThis.setInterval
+    const realClearInterval = globalThis.clearInterval
+    const documentListeners = new Map()
+    const body = {
+      childNodes: [],
+      appendChild(node) { node.isConnected = true; this.childNodes.push(node); return node },
+    }
+    const documentStub = {
+      visibilityState: 'visible',
+      body,
+      createElement: () => ({
+        attributes: {}, textContent: '', isConnected: false,
+        setAttribute(name, value) { this.attributes[name] = value },
+      }),
+      addEventListener: (event, listener) => documentListeners.set(event, listener),
+      removeEventListener: (event) => documentListeners.delete(event),
+    }
+    globalThis.document = documentStub
+    globalThis.setInterval = (fn, delay) => { polls.push(fn); pollDelays.push(delay); return polls.length }
+    globalThis.clearInterval = () => {}
+    t.after(() => {
+      globalThis.document = undefined
+      globalThis.setInterval = realSetInterval
+      globalThis.clearInterval = realClearInterval
+    })
+    let inbox = [{ caseId: 'dc-1' }, { caseId: 'dc-2' }]
+    let failure = null
+    decisionModelChunk.decisionRpc = async () => { if (failure) throw failure; return inbox }
+
+    const registered = new Map()
+    const base = makeCtx()
+    base.ctx.locale.register = (ns, dicts) => { registered.set(ns, dicts); base.localeRegistrations.push({ ns, dicts }); return () => {} }
+    base.ctx.locale.bind = ns => key => registered.get(ns)?.en?.[key] ?? key
+    surface.apply(base.ctx)
+    for (const inject of base.slotInjects) inject.fn()
+    const panel = base.slotRegistrations.find(item => item.definition.id === 'weir-decisions')
+
+    reactStub.begin()
+    panel.component({ size: 16 })
+    await flush()
+    reactStub.begin()
+    const counted = panel.component({ size: 16 })
+    const badge = counted.children[1]
+    expect(badge.count).toBe(2)
+    const rendered = badge.__type(badge)
+    expect(rendered.__type).toBe('span')
+    expect(rendered['data-weir-decision-bubble']).toBe('true')
+    expect(rendered['aria-hidden']).toBe('true')
+    expect(rendered.children).toBe('2')
+    expect(rendered.title).toBe('2 need your decision')
+    expect(rendered.style.position).toBe('absolute')
+    expect(rendered.style.background).toBe('var(--dsw-alias-state-warn-primary)')
+    expect(rendered.style.color).toBe('var(--dsw-alias-label-on-color)')
+    expect(rendered.style.boxShadow).toContain('var(--dsw-specific-selector)')
+    expect(rendered.style.borderRadius).toBe('var(--dsw-radius-lg)')
+    // Exactly one visually hidden polite region: the icon container is
+    // decorative, so the sentence — not the number — carries the state.
+    expect(body.childNodes).toHaveLength(1)
+    const live = body.childNodes[0]
+    expect(live.attributes.role).toBe('status')
+    expect(live.attributes['aria-live']).toBe('polite')
+    expect(live.attributes['data-weir-decision-live']).toBe('')
+    expect(live.attributes.style).toContain('clip:rect(0 0 0 0)')
+    expect(live.textContent).toBe('Decision assistant: 2 need your decision')
+    // The poll is visibility-gated and cannot be shorter than the spec floor.
+    expect(polls).toHaveLength(1)
+    expect(pollDelays[0]).toBeGreaterThanOrEqual(20_000)
+
+    // Above nine the number truncates; the sentence and title keep the truth.
+    inbox = Array.from({ length: 12 }, (_, index) => ({ caseId: `dc-${index}` }))
+    dispatchWindowEvent('focus')
+    await flush()
+    reactStub.begin()
+    const many = panel.component({ size: 16 }).children[1]
+    expect(many.count).toBe(12)
+    expect(many.__type(many).children).toBe('9+')
+    expect(many.__type(many).title).toBe('12 need your decision')
+    expect(live.textContent).toBe('Decision assistant: 12 need your decision')
+
+    // A failed read keeps the last known number, announces nothing, and never
+    // renders an error into the entry.
+    failure = Object.assign(new Error('offline'), { code: 'NETWORK' })
+    dispatchWindowEvent('focus')
+    await flush()
+    reactStub.begin()
+    expect(panel.component({ size: 16 }).children[1].count).toBe(12)
+    expect(live.textContent).toBe('Decision assistant: 12 need your decision')
+
+    // A hidden page skips the poll; becoming visible reads again, and a drop is
+    // silent (only increases announce).
+    failure = null
+    inbox = []
+    documentStub.visibilityState = 'hidden'
+    polls[0]()
+    await flush()
+    reactStub.begin()
+    expect(panel.component({ size: 16 }).children[1].count).toBe(12)
+    documentStub.visibilityState = 'visible'
+    documentListeners.get('visibilitychange')()
+    await flush()
+    reactStub.begin()
+    const cleared = panel.component({ size: 16 }).children[1]
+    expect(cleared.count).toBe(0)
+    expect(cleared.__type(cleared)).toBe(null)
+    expect(live.textContent).toBe('Decision assistant: 12 need your decision')
   })
 
   it('renders an explicit consult as a visible turn-layer node while its tool slot stays empty', async () => {
@@ -2531,7 +2667,15 @@ describe('weir settings client half', () => {
     'decisionExportTooLarge',
     'decisionExportUnavailable',
     'decisionExportWriteFailed',
-    'decisionExporting'
+    'decisionExporting',
+    // Pending overview: the sidebar bubble and its live region live in the entry
+    // NS; the grouped inbox and the undelivered-ruling notice live in the
+    // decision model's data face.
+    'decisionPendingBubbleTitle', 'decisionPendingAnnounce',
+    'decisionInboxGrouping', 'decisionInboxGroupByWorkspace', 'decisionInboxGroupByAgent',
+    'decisionInboxOtherWorkspace', 'decisionInboxUnownedAgent', 'decisionInboxAssistantFallback',
+    'decisionInboxSourceWorkspace', 'decisionInboxOpenSourceSession', 'decisionInboxSourceInactive',
+    'decisionDeliveryUnavailableTitle', 'decisionDeliveryUnavailable', 'decisionDeliveryDismiss'
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

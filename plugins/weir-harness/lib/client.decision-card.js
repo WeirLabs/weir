@@ -96,6 +96,8 @@ window.__ModuleLoader__.load({
         try {
           await actions[method](...args);
           if (generation !== generationRef.current) return;
+          // A completed card action converges the sidebar count immediately.
+          props.refreshPending?.();
           const authoritative = await load(true, targetCaseId, true);
           if (!authoritative?.case || authoritative.case.caseId !== targetCaseId) throw Object.assign(new Error("Decision record reread returned no matching record"), { code: "DECISION_REREAD_FAILED" });
           if (method === "decide") clearDraft(requestSession, targetCaseId, ["answers"]);
