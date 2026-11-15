@@ -114,6 +114,10 @@ export async function createPageHarness(options = {}) {
     consumeOpenCase: options.consumeOpenCase,
     consumeAgentDestination: options.consumeAgentDestination,
     panelInfo: options.panelInfo,
+    // The model picker arrives on its own chunk's arrival state; absent means the
+    // route editor renders its three plain inputs (never a JSON box).
+    modelPicker: options.modelPicker,
+    getSession: options.getSession ?? (() => undefined),
   }
   const render = () => {
     runtime.begin()

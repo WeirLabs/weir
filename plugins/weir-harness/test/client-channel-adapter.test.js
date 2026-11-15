@@ -101,6 +101,7 @@ describe('client channel adapters (composition root)', () => {
       './client.robash-model.js': {},
       './client.lsp-model.js': {},
       './client.notify-permissions.js': {},
+      './client.decision-class-editor.js': {},
       './client.model-picker.js': {},
       './client.notify-web.js': { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => {} } } },
     }
@@ -386,7 +387,8 @@ describe('client channel adapters (composition root)', () => {
     reactStub.begin()
     item.component({ view: 'form', t: (key) => key })
     await flush()
-    expect(controllerConstructed).toHaveLength(2)
+    // Three page controllers share the arrival (main, routing, decision).
+    expect(controllerConstructed).toHaveLength(3)
     const fetchEnv = controllerConstructed[0].deps.fetchEnv
     expect(typeof fetchEnv).toBe('function')
 

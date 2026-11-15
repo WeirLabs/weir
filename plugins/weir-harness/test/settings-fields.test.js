@@ -62,17 +62,18 @@ describe('settings field-key parity (FIELDS ↔ patch row ↔ settings page)', (
 })
 
 describe('CONFIG_FACE_ONLY_KEYS (config-face-only settings declaration)', () => {
-  // 8 把高级/调试旋钮只在配置面出现：两个 robash defaults 键、todo 退避、
-  // LSP 三个计时器、黑板写入权 TTL。唯一声明是 FIELDS 的 page:false 标记；
-  // 本清单是全量对拍，增删即红。
+  // 10 把高级/调试旋钮只在配置面出现：todo 退避两项、决策助手的全局模型链与
+  // 存储目录、两个 robash defaults 键、LSP 三个计时器、黑板写入权 TTL。唯一声明
+  // 是 FIELDS 的 page:false 标记；本清单是全量对拍，增删即红。
   const EXPECTED = [
     'todoErrorBackoffBaseMs', 'todoErrorBackoffCapMs',
+    'decisionAgentChains', 'decisionAgentStorePath',
     'robashDefaultsPath', 'robashDefaultsReload',
     'lspIdleMs', 'lspRequestTimeoutMs', 'lspDiagnosticsWaitMs',
     'blackboardWriteTokenTtlMinutes',
   ]
 
-  it('contains exactly the 8 config-face-only keys in declaration order', () => {
+  it('contains exactly the 10 config-face-only keys in declaration order', () => {
     expect([...CONFIG_FACE_ONLY_KEYS]).toEqual(EXPECTED)
   })
 

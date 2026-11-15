@@ -225,6 +225,23 @@ window.__ModuleLoader__.load({
   .weir-da-agent-back { display: inline-flex; }
 }
 .weir-da-agent-editor .weir-da-field textarea, .weir-da-agent-advanced textarea { resize: vertical; max-height: 40vh; overflow: auto; overflow-wrap: normal; }
+/* Visual scope and model-route editors: one real input per entry with a quiet
+   action beside it; the A/B/C chips read as toggles, never as a second primary
+   action next to the editor's save. */
+.weir-da-scope-editor, .weir-da-route-editor { min-width: 0; display: grid; gap: 10px; }
+.weir-da-scope-list { min-width: 0; display: grid; gap: 6px; }
+.weir-da-scope-list > .weir-da-button, .weir-da-route-editor > .weir-da-button { justify-self: start; }
+.weir-da-scope-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.weir-da-scope-row input, .weir-da-route-fallback input { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 5px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; }
+.weir-da-scope-row .weir-da-button { flex: 0 0 auto; }
+.weir-da-scope-class-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.weir-da-scope-class-row button { min-width: 34px; min-height: 28px; padding: 0 10px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; cursor: pointer; }
+.weir-da-scope-class-row button[aria-pressed="true"] { background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-primary); }
+.weir-da-scope-class-row button[aria-disabled="true"] { cursor: not-allowed; }
+.weir-da-route-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.weir-da-route-row > .weir-da-caption:first-child { flex: 0 0 16px; text-align: end; }
+.weir-da-route-fallback { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; }
+.weir-da-route-row .weir-da-button { flex: 0 0 auto; }
 .weir-da-correction-preview { padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-base); }
 .weir-da-evaluation { min-width: 0; display: grid; gap: 8px; padding: 12px 0; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-learning { min-width: 0; display: grid; gap: 12px; padding-top: 16px; border-top: 0.5px solid var(--dsw-alias-border-l1); }

@@ -41,6 +41,12 @@ window.__ModuleLoader__.load({
 		// Object.keys(DEFAULT_CATEGORIES) from src/delegate/categories.js, so a
 		// registry change cannot drift the two sides.
 		const CATEGORY_NAMES = ["quick", "deep", "deep-plus", "visual", "writing", "general-low", "general-high", "artistry", "architect"];
+		// The closed Auto authorization-class set, in canonical order — the SINGLE
+		// client-side source for the A/B/C chip editors (settings whitelist and
+		// assistant scope alike). The server accepts exactly these three values
+		// (src/settings/sections.js parseAutoAnswerClasses) and this order is the
+		// one the synthesized JSON arrays use.
+		const CLASS_SET_ROWS = ["A", "B", "C"];
 		// Restart-required settings keys, in registry order — the SINGLE
 		// client-side source for the post-save restart reminder AND the
 		// always-on inline restart tag (same list, one source; do not
@@ -105,19 +111,29 @@ window.__ModuleLoader__.load({
 				{ field: "guardSoftThreshold", kind: "number", parent: "guardEnabled", when: enabledWhen("guardEnabled") },
 				{ field: "guardHardThreshold", kind: "number", parent: "guardEnabled", when: enabledWhen("guardEnabled") }
 			] },
-			{ id: "decision", fields: [
+			// The decision page's two halves (D3): the everyday policy stays visible,
+			// the runtime knobs live behind one group-level fold. The advanced rows
+			// condition on the master switch instead of parenting to it — a parent
+			// would have to cross the group boundary, which validation forbids. The
+			// global chain map and the store directory are config-face-only
+			// (src/settings/sections.js page:false): the per-assistant route in the
+			// decision page is the visible routing entry, and neither page offers a
+			// substitute JSON box for either key.
+			{ id: "decisionBasics", page: "decision", fields: [
 				{ field: "decisionAgentsEnabled", kind: "boolean" },
 				{ field: "decisionAgentSelectorDefault", kind: "enum", values: ["off", "auto"], parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentAutoShadow", kind: "boolean", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentAutoAnswerClasses", kind: "text", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentAnswerTimeoutMs", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentMaxAttemptsPerCase", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentContextBudgetTokens", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentMaxOutputTokens", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentMaxConcurrentAttempts", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentChains", kind: "text", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentRetentionDays", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentStorePath", kind: "text", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") }
+				{ field: "decisionAgentAutoAnswerClasses", kind: "custom", slot: "classSet", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") }
+			] },
+			{ id: "decisionAdvanced", page: "decision", advanced: true, fields: [
+				{ field: "decisionAgentAnswerTimeoutMs", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
+				{ field: "decisionAgentMaxAttemptsPerCase", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
+				{ field: "decisionAgentContextBudgetTokens", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
+				{ field: "decisionAgentMaxOutputTokens", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
+				{ field: "decisionAgentMaxConcurrentAttempts", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
+				{ field: "decisionAgentRetentionDays", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
+				// Kept in the fold on purpose: a live diagnostic switch stays
+				// reachable in the real settings page, out of the everyday view.
+				{ field: "decisionAgentAutoShadow", kind: "boolean", when: enabledWhen("decisionAgentsEnabled") }
 			] },
 			{ id: "editing", fields: [
 				{ field: "hashlineHideStockEdit", kind: "boolean" },
@@ -379,7 +395,7 @@ window.__ModuleLoader__.load({
 		 * offending key or group. */
 		function validateLayout(groups) {
 			for (const group of groups) {
-				if (group.page !== void 0 && group.page !== "main" && group.page !== "routing") {
+				if (group.page !== void 0 && !["main", "routing", "decision"].includes(group.page)) {
 					throw settingsLayoutError(`group '${String(group.id)}' declares an invalid page '${String(group.page)}'`);
 				}
 			}
@@ -438,7 +454,7 @@ window.__ModuleLoader__.load({
 					for (const child of node.children) assignDepth(child, depth + 1);
 				};
 				for (const root of roots) assignDepth(root, 0);
-				return { id: group.id, page: group.page ?? "main", roots };
+				return { id: group.id, page: group.page ?? "main", advanced: group.advanced === true, roots };
 			});
 		}
 		// Declaration-time validation (D4): a bad GROUPS table fails chunk load
@@ -503,10 +519,10 @@ window.__ModuleLoader__.load({
 			form;
 			store;
 			constructor(scope, deps, page) {
-				// page: "main" (default) or "routing" — the form model tracks only
-				// that page's fields, so one scope hosts two independent forms (the
-				// routing page edits the same namespace, disjoint key set).
-				this.page = page === "routing" ? "routing" : "main";
+				// page: "main" (default), "routing" or "decision" — the form model
+				// tracks only that page's fields, so one scope hosts three independent
+				// forms (every page edits the same namespace, disjoint key sets).
+				this.page = page === "routing" || page === "decision" ? page : "main";
 				this.fields = fieldsForPage(this.page);
 				// Prop-injected dependencies: the entry-owned settings bus (save →
 				// toggle re-check) and a getSession closure resolving the
@@ -626,6 +642,13 @@ window.__ModuleLoader__.load({
 		// outline around every group (visible in the captured settings screenshot).
 		const cardStyle = { display: "grid", gap: "2px", padding: "0" };
 		const cardTitleStyle = { fontSize: "var(--dsw-font-base-16-font-size)", fontWeight: 600, lineHeight: "var(--dsw-font-base-16-line-height)", padding: "0 0 4px", color: "var(--dsw-alias-label-primary)" };
+		// Group-level fold (D2): the toggle IS the group title row — a transparent
+		// button that reads like the other card titles, with the group hint as its
+		// subtitle and a chevron marking the state. Colors only theme tokens.
+		const advancedToggleStyle = { display: "flex", flexDirection: "column", alignItems: "stretch", gap: "2px", width: "100%", margin: 0, padding: 0, border: "none", background: "none", cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" };
+		const advancedToggleTitleStyle = { display: "flex", alignItems: "center", gap: "6px" };
+		const advancedChevronStyle = { fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "var(--dsw-font-xxs-12-line-height)", color: "var(--dsw-alias-label-secondary)" };
+		const advancedBodyStyle = { display: "grid", gap: "2px" };
 		const cardsColumnStyle = { display: "flex", flexDirection: "column", gap: "28px" };
 		const valueFieldStyle = { maxWidth: "320px", minWidth: 0 };
 		const controlsStyle = { display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 };
@@ -848,13 +871,17 @@ window.__ModuleLoader__.load({
 			] });
 		}
 		function WeirCard(props) {
+			// The fold state lives at the card level (D2): group ids are static, so
+			// the same card instance keeps one stable hook whatever the page; a new
+			// mount starts collapsed.
+			const [advancedOpen, setAdvancedOpen] = react.useState({});
 			const state = props.useWeirSettingsCard((snapshot) => snapshot);
 			const { t } = props;
-			// Dual-page card: props.page ("main" default, "routing") selects the
-			// summary text and the rendered group subset; conditions/restartTag/
-			// displayText are page-independent.
-			const page = props.page === "routing" ? "routing" : "main";
-			if (props.view === "summary") return t(page === "routing" ? "routingDescription" : "description");
+			// Multi-page card: props.page ("main" default, "routing", "decision")
+			// selects the summary text and the rendered group subset; conditions/
+			// restartTag/displayText are page-independent.
+			const page = props.page === "routing" || props.page === "decision" ? props.page : "main";
+			if (props.view === "summary") return t(page === "routing" ? "routingDescription" : page === "decision" ? "decisionDescription" : "description");
 			const disabled = !state.writable;
 			// env three-state (D6): pending/failed hide env-gated rows only.
 			const env = state.env ?? { status: "ready", facts: {} };
@@ -959,6 +986,23 @@ window.__ModuleLoader__.load({
 						const MaintenanceField = props.editors?.EditLockMaintenanceField;
 						return typeof MaintenanceField === "function" ? wrap(react_jsx_runtime.jsx(MaintenanceField, { t })) : null;
 					}
+					if (node.slot === "classSet") {
+						// The Auto whitelist is a CLOSED A/B/C set: three chips synthesize
+						// the stored JSON array, never a hand-typed box. An unbound editor
+						// (chunk still in flight) leaves the card intact.
+						const ClassSetField = props.editors?.ClassSetEditorField;
+						if (typeof ClassSetField !== "function") return null;
+						return wrap(react_jsx_runtime.jsx(ClassSetField, {
+							field: node.field,
+							rows: CLASS_SET_ROWS,
+							text: field?.text ?? "",
+							overridden: field?.overridden ?? false,
+							edit: (name, text) => props.edit(name, text),
+							onReset: () => props.resetField(node.field),
+							t,
+							disabled
+						}));
+					}
 					// notifyPermissions: the macOS-only permission entry
 					return wrap(react_jsx_runtime.jsx(props.editors.NotifyPermissionsField, { t }));
 				}
@@ -992,7 +1036,50 @@ window.__ModuleLoader__.load({
 			};
 			// Card sections: the tree walk prunes hidden subtrees wholesale (a
 			// hidden parent hides every descendant), and children land directly
-			// under their parent's subtree in DFS order.
+			// under their parent's subtree in DFS order. An `advanced` group is a
+			// group-level fold: the same rows through the same form, but behind a
+			// toggle that starts closed on every mount. A group with no visible
+			// row disappears outright — fold title included.
+			const renderGroup = (groupLayout, rows) => {
+				const key = `group-${groupLayout.id}`;
+				if (groupLayout.advanced !== true) {
+					return react_jsx_runtime.jsxs("div", {
+						style: cardStyle,
+						"data-group": groupLayout.id,
+						children: [
+							react_jsx_runtime.jsx("div", { style: cardTitleStyle, children: t(`group${groupLayout.id.charAt(0).toUpperCase()}${groupLayout.id.slice(1)}`) }),
+							...rows
+						],
+						key
+					});
+				}
+				const bodyId = `${WEIR_NS}-group-${groupLayout.id}`;
+				const expanded = advancedOpen[groupLayout.id] === true;
+				// The body is only mounted while expanded: a collapsed fold holds no
+				// rows at all (nothing hidden, nothing focusable behind a closed title).
+				const cardChildren = [react_jsx_runtime.jsxs("button", {
+					type: "button",
+					style: advancedToggleStyle,
+					"data-advanced-toggle": true,
+					"aria-expanded": expanded,
+					"aria-controls": bodyId,
+					onClick: () => setAdvancedOpen((current) => ({ ...current, [groupLayout.id]: current[groupLayout.id] !== true })),
+					children: [
+						react_jsx_runtime.jsxs("span", { style: advancedToggleTitleStyle, children: [
+							react_jsx_runtime.jsx("span", { style: cardTitleStyle, children: t(`group${groupLayout.id.charAt(0).toUpperCase()}${groupLayout.id.slice(1)}`) }),
+							react_jsx_runtime.jsx("span", { style: advancedChevronStyle, "aria-hidden": "true", children: expanded ? "\u25be" : "\u25b8" })
+						] }),
+						react_jsx_runtime.jsx("span", { style: hintStyle, children: t(`${groupLayout.id}Hint`) })
+					]
+				})];
+				if (expanded) cardChildren.push(react_jsx_runtime.jsx("div", { style: advancedBodyStyle, id: bodyId, "data-advanced-body": true, children: rows }));
+				return react_jsx_runtime.jsxs("div", {
+					style: cardStyle,
+					"data-group": groupLayout.id,
+					children: cardChildren,
+					key
+				});
+			};
 			const cards = LAYOUT.filter((groupLayout) => groupLayout.page === page).map((groupLayout) => {
 				const rows = [];
 				const walk = (node, ancestorsVisible) => {
@@ -1002,16 +1089,11 @@ window.__ModuleLoader__.load({
 					for (const child of node.children) walk(child, isVisible);
 				};
 				for (const root of groupLayout.roots) walk(root, true);
-				return react_jsx_runtime.jsxs("div", {
-					style: cardStyle,
-					"data-group": groupLayout.id,
-					children: [
-						react_jsx_runtime.jsx("div", { style: cardTitleStyle, children: t(`group${groupLayout.id.charAt(0).toUpperCase()}${groupLayout.id.slice(1)}`) }),
-						...rows
-					],
-					key: `group-${groupLayout.id}`
-				});
-			});
+				// No visible row at all (master switch off): the whole group — fold
+				// title included — must not render.
+				if (rows.length === 0) return null;
+				return renderGroup(groupLayout, rows);
+			}).filter((card) => card !== null);
 			const children = [react_jsx_runtime.jsx("div", { style: cardsColumnStyle, children: cards, key: "groups" })];
 			// Restart reminder: a landed save that touched restart-required
 			// keys raises a centered warning Modal (portal-mounted over a page
@@ -1064,6 +1146,7 @@ window.__ModuleLoader__.load({
 			en: {
 				description: "One-stop configuration for the Weir preset: intent classification, auto-continuation, context pressure, file editing, worktree lanes, read-only shell, LSP, and notifications; model routing is a separate page.",
 				routingDescription: "Which models delegated children run on: per task category or curated agent, with ordered fallbacks.",
+				decisionDescription: "The decision assistant's everyday policy: the master switch, the default for new root sessions, and which authorization classes Auto may answer; runtime limits and the Auto Shadow diagnostic live in the collapsed advanced section.",
 				unavailable: "This plugin is not loaded, so it cannot be configured right now.",
 				readOnly: "This deployment stores settings read-only.",
 				saveFailed: "The deployment did not accept these values; they were left for you to correct.",
@@ -1090,7 +1173,9 @@ window.__ModuleLoader__.load({
 				groupIntent: "Intent",
 				groupTodo: "Auto-continuation",
 				groupGuard: "Context pressure",
-				groupDecision: "Decision Agents",
+				groupDecisionBasics: "Basics",
+				groupDecisionAdvanced: "Advanced",
+				decisionAdvancedHint: "Runtime limits and diagnostics; rarely changed.",
 				groupEditing: "File editing",
 				groupWorktree: "Worktree lanes",
 				groupRobash: "Read-only shell",
@@ -1150,8 +1235,8 @@ window.__ModuleLoader__.load({
 				decisionAgentSelectorDefaultOptionAuto: "Auto",
 				decisionAgentAutoShadow: "Auto Shadow diagnostics",
 				decisionAgentAutoShadowHint: "Observe eligible pinned Cases without changing their Agent, answer, evidence, Attempts, or delivery (default off).",
-				decisionAgentAutoAnswerClasses: "Auto answer classes (JSON)",
-				decisionAgentAutoAnswerClassesHint: "JSON array containing only A/B/C. Empty disables Active Auto; invalid saves are rejected and malformed stored values disable admission.",
+				decisionAgentAutoAnswerClasses: "Auto answer classes",
+				decisionAgentAutoAnswerClassesHint: "Authorization classes Auto may answer. Classes you leave off are still classified, routed, and evaluated, but the conclusion waits for you; an invalid stored value opens with every class off.",
 				decisionAgentAnswerTimeoutMs: "Attempt timeout (ms)",
 				decisionAgentAnswerTimeoutMsHint: "Hard deadline for one evaluation before native user escalation (default 60000).",
 				decisionAgentMaxAttemptsPerCase: "Attempt budget",
@@ -1162,12 +1247,8 @@ window.__ModuleLoader__.load({
 				decisionAgentMaxOutputTokensHint: "Maximum evaluator output per Attempt (default 4096).",
 				decisionAgentMaxConcurrentAttempts: "Concurrent Attempt limit",
 				decisionAgentMaxConcurrentAttemptsHint: "Excess Hook requests use the native question path instead of queueing (default 4).",
-				decisionAgentChains: "Agent model chains (JSON)",
-				decisionAgentChainsHint: "Map Agent ids to ordered model rungs; an empty chain inherits the session route and an unavailable explicit route fails.",
 				decisionAgentRetentionDays: "Retention days",
 				decisionAgentRetentionDaysHint: "Startup-only cleanup of closed records without user decisions or feedback; 0 keeps them permanently.",
-				decisionAgentStorePath: "Decision store directory",
-				decisionAgentStorePathHint: "Absolute override directory; empty uses the profile-private store. Restart required.",
 				hashlineHideStockEdit: "Anchor editing only",
 				hashlineHideStockEditHint: "Hides the built-in edit tool; file edits go through hash_edit anchors only.",
 				worktreeEnabled: "Worktree lanes",
@@ -1219,6 +1300,7 @@ window.__ModuleLoader__.load({
 			zh: {
 				description: "Weir 预设的一站式配置：意图分类、自动续推、上下文压力、文件编辑、Worktree 车道、只读命令行、LSP 与系统通知；模型路由为独立页面。",
 				routingDescription: "委派给子代理的模型：按任务类别或精选代理指定，可设备选按序回退。",
+				decisionDescription: "决策助手的日常策略：总开关、新根会话的默认选择，以及 Auto 可自动回答的授权类别；运行参数与 Auto Shadow 诊断收在默认折叠的高级设置里。",
 				unavailable: "此插件未加载，当前无法配置。",
 				readOnly: "此部署的设置为只读。",
 				saveFailed: "部署未接受这些值，已保留供你修正。",
@@ -1245,7 +1327,9 @@ window.__ModuleLoader__.load({
 				groupIntent: "意图分类",
 				groupTodo: "自动续推",
 				groupGuard: "上下文压力",
-				groupDecision: "决策 Agent",
+				groupDecisionBasics: "基本设置",
+				groupDecisionAdvanced: "高级设置",
+				decisionAdvancedHint: "运行参数与诊断，平时很少改动。",
 				groupEditing: "文件编辑",
 				groupWorktree: "Worktree 车道",
 				groupRobash: "只读命令行",
@@ -1305,8 +1389,8 @@ window.__ModuleLoader__.load({
 				decisionAgentSelectorDefaultOptionAuto: "Auto",
 				decisionAgentAutoShadow: "Auto Shadow 诊断",
 				decisionAgentAutoShadowHint: "只观察合格的钉选 Case，不改变其 Agent、答案、证据、Attempt 或投递（默认关闭）。",
-				decisionAgentAutoAnswerClasses: "Auto 可回答类别（JSON）",
-				decisionAgentAutoAnswerClassesHint: "仅含 A/B/C 的 JSON 数组。空数组关闭 Active Auto；非法保存会被拒绝，非法存储值会关闭准入。",
+				decisionAgentAutoAnswerClasses: "自动回答类别",
+				decisionAgentAutoAnswerClassesHint: "允许 Auto 自动回答的授权类别。未允许的类别仍会分类、路由并评估，但结论交给你；存储值非法时以全部关闭打开。",
 				decisionAgentAnswerTimeoutMs: "Attempt 超时（毫秒）",
 				decisionAgentAnswerTimeoutMsHint: "单次评估的硬期限，超时后走原生用户升级（默认 60000）。",
 				decisionAgentMaxAttemptsPerCase: "Attempt 次数上限",
@@ -1317,12 +1401,8 @@ window.__ModuleLoader__.load({
 				decisionAgentMaxOutputTokensHint: "每次 Attempt 的评估器输出上限（默认 4096）。",
 				decisionAgentMaxConcurrentAttempts: "并发 Attempt 上限",
 				decisionAgentMaxConcurrentAttemptsHint: "超限 Hook 直接走原生提问，不排队（默认 4）。",
-				decisionAgentChains: "Agent 模型链（JSON）",
-				decisionAgentChainsHint: "按 Agent id 配置有序模型链；空链继承会话路由，显式路由不可用时显式失败。",
 				decisionAgentRetentionDays: "保留天数",
 				decisionAgentRetentionDaysHint: "仅在启动时清理无用户裁决或反馈的已关闭记录；0 表示永久保留。",
-				decisionAgentStorePath: "决策库目录",
-				decisionAgentStorePathHint: "绝对路径覆盖目录；留空使用 profile 私有存储。需重启。",
 				hashlineHideStockEdit: "仅用锚点编辑",
 				hashlineHideStockEditHint: "隐藏内置 edit 工具，文件修改一律走 hash_edit 锚点编辑。",
 				worktreeEnabled: "Worktree 车道",
@@ -1380,6 +1460,7 @@ window.__ModuleLoader__.load({
 		exports.displayText = displayText;
 		exports.CURATED_AGENT_NAMES = CURATED_AGENT_NAMES;
 		exports.CATEGORY_NAMES = CATEGORY_NAMES;
+		exports.CLASS_SET_ROWS = CLASS_SET_ROWS;
 		exports.RESTART_FIELDS = RESTART_FIELDS;
 		exports.FIELDS = FIELDS;
 		exports.fieldsForPage = fieldsForPage;

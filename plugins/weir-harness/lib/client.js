@@ -1,4 +1,4 @@
-// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"6f6cbeb83d23c30bf68810572e932a6ef1c9aac3fdaa0c845bf5a7fd01eb2c94","client.capability-badge.js":"9d7d0564dc10378e44b1c90095055a9dc0ff787073029dad68d98d0f3c250e7b","client.capability-manager.js":"8bac2944eb109a8d88e554934f84e791065eda158f9bcf02065fbfc72cc9a5f3","client.capability-model.js":"6bc91433669cfe62b2018a2cfd241a72470d4edaa8bb5830edcc309fca2b695e","client.capability-presets.js":"11898f8b4d1827e77184a02cee989d10a74e07f07960a0f5f3c4482ad4b01852","client.chain-editor.js":"5c60932c9e91dfd74bc995c1acb6d053213e4a017242b39e922ee1747ad0b5b5","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.decision-actions.js":"7cc838c3dc766de8d75bf972be13a438e2000ca64fa701d1c44e5020f6b394b8","client.decision-card.js":"2ea1639bac6a115286b59a148b11c05b6bd53f2849f8ab046d3f46f7db17c274","client.decision-learning.js":"0d35477e039c1a16731efa7c94a0f003a03b1df29fe640c2c55eb5e662cca320","client.decision-model.js":"907e9b016cf7299e0afc39f282d1f96bdd7b15b8b5ada68bd5dd2851598b5aef","client.decision-page.js":"2bebbd10da1d2716a2300a16f11e4331841aaa9c32d45938e9bfbc3672bb7ead","client.decision-selector.js":"cfbeb9b13f1c7f6ffbafa9eb0397e2bf1124f18f7a6f36781520b70f52320929","client.decision-ui.js":"67e80257a97fe20844b675409f08224982e772b74485d77be54d846a676b77cc","client.disabled-categories-editor.js":"e41783d740be5f444e03572fc42e8e5336ff459a2a7d0e3415cfbd5fc7b2a2e9","client.file-lease-badge.js":"b48b77c28d55fa7f5072201c1f50372ab957609c835122db23edca740ee36533","client.file-lease-tool-model.js":"f72d87b049454ec489b4dffac1f32dabc273947b8a4c55fe07c91ddf320bd899","client.file-lease-tool-view.js":"04364925aff70be05cc21276e81974e778f1e73ae9a426231b5187266d18198f","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"a005c1c5bd3c918ffb5014d7f626ce3de4bc28136a40ccddafe7abbee6a472b5","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"269fa95270d7b37f740db031e9357faa4ff79871014ea174a925319b7cd05ac1","client.lsp-toggle.js":"ff0b09643a5dda934093821ddbb5c3978709e5fe01cf0a65c1beeea05eaec907","client.mcp-manager.js":"570572c1cdc6d2dff81846a80a1ff5e69e11ee53d186b1f789d2bc51fd57d03b","client.model-picker.js":"2fcaaa59b8759c160b41d954edf9b38bdf9fff760bf4b73152b17605904efaad","client.notify-permissions.js":"c2fdfbc57de06ac943bcc5cd554ba3c2fd61c8715b5ade9646900bdf55f06b85","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"4304e1b27b62563ddef083fc049c1b919cb531364c3c4104d1f99321d13bb7a8","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"f2aa66558b15f3249e1cf55feb365e16b68459bba2b6b21c1a141390e2f9f2c8","client.worktree-model.js":"38530670aa6eedd5a8123007705b9a618da2fa01e3b03a5c8e6118c971280e8f","client.worktree-view.js":"3ec739ed42890efe3130b9fa8810b8e00e54ab323891c88fd074c7e92d1c09dd"}
+// Weir client chunks: {"client.blackboard-model.js":"2e5abdd44edb599d10d9d547fa07133e84250d6007161c2c8704b58151896f93","client.blackboard-panel.js":"6f6cbeb83d23c30bf68810572e932a6ef1c9aac3fdaa0c845bf5a7fd01eb2c94","client.capability-badge.js":"9d7d0564dc10378e44b1c90095055a9dc0ff787073029dad68d98d0f3c250e7b","client.capability-manager.js":"8bac2944eb109a8d88e554934f84e791065eda158f9bcf02065fbfc72cc9a5f3","client.capability-model.js":"6bc91433669cfe62b2018a2cfd241a72470d4edaa8bb5830edcc309fca2b695e","client.capability-presets.js":"11898f8b4d1827e77184a02cee989d10a74e07f07960a0f5f3c4482ad4b01852","client.chain-editor.js":"5c60932c9e91dfd74bc995c1acb6d053213e4a017242b39e922ee1747ad0b5b5","client.chain-model.js":"2e885922cf8c2972725c6eef8bf20c7d1202d961edfb8ad41574dac062d74371","client.decision-actions.js":"7cc838c3dc766de8d75bf972be13a438e2000ca64fa701d1c44e5020f6b394b8","client.decision-card.js":"2ea1639bac6a115286b59a148b11c05b6bd53f2849f8ab046d3f46f7db17c274","client.decision-class-editor.js":"abcff09993a5422a6eb6243cd1b30fab1a3bf4db5b2b04574eaf8c1dac1e9db3","client.decision-learning.js":"0d35477e039c1a16731efa7c94a0f003a03b1df29fe640c2c55eb5e662cca320","client.decision-model.js":"0d5a60510ee216b90e226367e8eec6840ddb1e83db95e966e7bc55db7f10b1df","client.decision-page.js":"5c0ef6283de7ff6f36f22994139ae55ab52e5c7ab7e749e2f5c3d1169770caae","client.decision-selector.js":"cfbeb9b13f1c7f6ffbafa9eb0397e2bf1124f18f7a6f36781520b70f52320929","client.decision-ui.js":"92a2ce9dfc8fee3c5d9a78a55f06d4159fb805166b6417b7e444a028c69f31ab","client.disabled-categories-editor.js":"e41783d740be5f444e03572fc42e8e5336ff459a2a7d0e3415cfbd5fc7b2a2e9","client.file-lease-badge.js":"b48b77c28d55fa7f5072201c1f50372ab957609c835122db23edca740ee36533","client.file-lease-tool-model.js":"f72d87b049454ec489b4dffac1f32dabc273947b8a4c55fe07c91ddf320bd899","client.file-lease-tool-view.js":"04364925aff70be05cc21276e81974e778f1e73ae9a426231b5187266d18198f","client.hash-edit-model.js":"71727d47a6ef32ebd2abfb063fa93499a5e607d6716e3ec8983ae056c4fb317f","client.hash-edit-view.js":"a005c1c5bd3c918ffb5014d7f626ce3de4bc28136a40ccddafe7abbee6a472b5","client.lsp-model.js":"30943ed1ed11c1f2770a724da855ea2417c11566c2778c79e17cfc2de499cd80","client.lsp-panel.js":"269fa95270d7b37f740db031e9357faa4ff79871014ea174a925319b7cd05ac1","client.lsp-toggle.js":"ff0b09643a5dda934093821ddbb5c3978709e5fe01cf0a65c1beeea05eaec907","client.mcp-manager.js":"570572c1cdc6d2dff81846a80a1ff5e69e11ee53d186b1f789d2bc51fd57d03b","client.model-picker.js":"2fcaaa59b8759c160b41d954edf9b38bdf9fff760bf4b73152b17605904efaad","client.notify-permissions.js":"c2fdfbc57de06ac943bcc5cd554ba3c2fd61c8715b5ade9646900bdf55f06b85","client.notify-web.js":"0943f67d5526ff0fb7cb4f69580e0a9ea54ed06465c513afc51a5a7fb1c55ccf","client.robash-editor.js":"4304e1b27b62563ddef083fc049c1b919cb531364c3c4104d1f99321d13bb7a8","client.robash-model.js":"f4395338a773e8bb48e4f96aeb737cd634edcca0b90af992a7dbbe47be42e451","client.settings-page.js":"01bf9a3a9741bf49aaef094cd9d6ab24e76206636ec5fc5bfcda3548939ae186","client.worktree-model.js":"38530670aa6eedd5a8123007705b9a618da2fa01e3b03a5c8e6118c971280e8f","client.worktree-view.js":"3ec739ed42890efe3130b9fa8810b8e00e54ab323891c88fd074c7e92d1c09dd"}
 window.__ModuleLoader__.load({
 	id: "weir-harness",
 	factory: (require) => {
@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
 		const en = {
 			title: "Weir",
 			routingTitle: "Weir Model Routing",
+			decisionTitle: "Decision assistant",
 			loading: "Loading Weir settings…",
 			loadFailed: "Weir settings could not be loaded:",
 			decisionSelector: "Decision assistant",
@@ -87,6 +88,7 @@ window.__ModuleLoader__.load({
 		const zh = {
 			title: "Weir",
 			routingTitle: "Weir 模型路由",
+			decisionTitle: "决策助手",
 			loading: "正在加载 Weir 设置…",
 			loadFailed: "Weir 设置加载失败：",
 			decisionSelector: "决策助手",
@@ -138,6 +140,11 @@ window.__ModuleLoader__.load({
 		// settings-page chunk.
 		const ROUTING_SECTION_ID = "weir-model-routing";
 		const ROUTING_ITEM_SLOT = "settings.weir-routing.item";
+		// The decision assistant settings are the third page of the same form
+		// mechanism (order 42): same chunk, same controller class with the
+		// "decision" page, its own section and item slot.
+		const DECISION_SECTION_ID = "weir-decision";
+		const DECISION_ITEM_SLOT = "settings.weir-decision.item";
 		// ---- Chunk-carried dictionaries ----
 		// Every lazily delivered feature chunk carries a pure { en, zh } data
 		// face (NO ctx calls inside a chunk: the factory re-executes under HMR,
@@ -1168,9 +1175,11 @@ window.__ModuleLoader__.load({
 				// stable deferred store plus delegating actions.
 				let controller = null;
 				let routingController = null;
+				let decisionController = null;
 				let serving = true;
 				const deferredStore = createDeferredStore();
 				const routingDeferredStore = createDeferredStore();
+				const decisionDeferredStore = createDeferredStore();
 				const routingCardFace = {
 					hooks: { weirSettingsCard: routingDeferredStore },
 					edit: (field, text) => routingController?.inject().edit(field, text),
@@ -1178,6 +1187,15 @@ window.__ModuleLoader__.load({
 					save: (...args) => routingController?.inject().save(...args),
 					discard: () => routingController?.inject().discard(),
 					dismissRestartReminder: () => routingController?.inject().dismissRestartReminder(),
+					getSession: () => ctx.remote.session
+				};
+				const decisionCardFace = {
+					hooks: { weirSettingsCard: decisionDeferredStore },
+					edit: (field, text) => decisionController?.inject().edit(field, text),
+					resetField: (field) => decisionController?.inject().resetField(field),
+					save: (...args) => decisionController?.inject().save(...args),
+					discard: () => decisionController?.inject().discard(),
+					dismissRestartReminder: () => decisionController?.inject().dismissRestartReminder(),
 					getSession: () => ctx.remote.session
 				};
 				const cardFace = {
@@ -1206,14 +1224,15 @@ window.__ModuleLoader__.load({
 							require.async("./client.chain-model.js"),
 							require.async("./client.robash-model.js"),
 							require.async("./client.lsp-model.js"),
-							require.async("./client.notify-permissions.js")
-						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel, notifyPermissions]) => {
+							require.async("./client.notify-permissions.js"),
+							require.async("./client.decision-class-editor.js")
+						]).then(([settingsPage, chainEditor, robashEditor, disabledCategoriesEditor, lspPanel, chainModel, robashModel, lspModel, notifyPermissions, classEditor]) => {
 							// The whole settings card tree shares one t (the page
 							// namespace): every batch chunk's data face merges into ONE
 							// registration — a duplicate (namespace, locale) pair would
 							// throw, so per-feature namespaces are not an option here.
 							const pageDictionaries = { en: {}, zh: {} };
-							for (const chunk of [settingsPage, chainModel, robashModel, lspModel, disabledCategoriesEditor, notifyPermissions]) {
+							for (const chunk of [settingsPage, chainModel, robashModel, lspModel, disabledCategoriesEditor, notifyPermissions, classEditor]) {
 								Object.assign(pageDictionaries.en, chunk.dictionaries?.en);
 								Object.assign(pageDictionaries.zh, chunk.dictionaries?.zh);
 							}
@@ -1223,6 +1242,8 @@ window.__ModuleLoader__.load({
 								deferredStore.attach(controller.store);
 								routingController = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session, fetchEnv: fetchEnvFacts }, "routing");
 								routingDeferredStore.attach(routingController.store);
+								decisionController = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session, fetchEnv: fetchEnvFacts }, "decision");
+								decisionDeferredStore.attach(decisionController.store);
 							}
 							// Editor components pre-bound with their model chunks,
 							// created once per arrival so their identity is stable
@@ -1231,6 +1252,7 @@ window.__ModuleLoader__.load({
 								ChainEditorField: (editorProps) => react_jsx_runtime.jsx(chainEditor.ChainEditorField, { ...editorProps, model: chainModel }),
 								RobashListEditorField: (editorProps) => react_jsx_runtime.jsx(robashEditor.RobashListEditorField, { ...editorProps, model: robashModel }),
 								DisabledCategoriesEditorField: (editorProps) => react_jsx_runtime.jsx(disabledCategoriesEditor.DisabledCategoriesEditorField, editorProps),
+								ClassSetEditorField: (editorProps) => react_jsx_runtime.jsx(classEditor.ClassSetEditorField, editorProps),
 								LspManagerField: (editorProps) => react_jsx_runtime.jsx(lspPanel.LspManagerField, { ...editorProps, model: lspModel, channel: httpChannel }),
 								// The HTTP channel adapter reaches every fetch-talking editor
 								// through the same prop (composition-root injection: a chunk
@@ -1266,11 +1288,32 @@ window.__ModuleLoader__.load({
 					}
 					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
 				}
+				function DecisionSectionWrapper(props) {
+					const sectionArrival = useChunkArrival(ensureSettingsChunks);
+					if (sectionArrival?.chunks) {
+						return react_jsx_runtime.jsx(sectionArrival.chunks.settingsPage.WeirSection, { renderSlot: props.renderSlot, slot: DECISION_ITEM_SLOT });
+					}
+					if (sectionArrival?.error) {
+						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(sectionArrival.error)}` });
+					}
+					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
+				}
 				function RoutingCardWrapper(props) {
 					const cardArrival = useChunkArrival(ensureSettingsChunks);
 					const pickerArrival = useChunkArrival(loadModelPickerChunk);
 					if (cardArrival?.chunks) {
 						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.WeirCard, { ...props, t: pageT, page: "routing", editors: cardArrival.chunks.editors, modelPicker: pickerArrival?.chunks });
+					}
+					if (cardArrival?.error) {
+						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(cardArrival.error)}` });
+					}
+					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
+				}
+				function DecisionCardWrapper(props) {
+					const cardArrival = useChunkArrival(ensureSettingsChunks);
+					const pickerArrival = useChunkArrival(loadModelPickerChunk);
+					if (cardArrival?.chunks) {
+						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.WeirCard, { ...props, t: pageT, page: "decision", editors: cardArrival.chunks.editors, modelPicker: pickerArrival?.chunks });
 					}
 					if (cardArrival?.error) {
 						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(cardArrival.error)}` });
@@ -1324,14 +1367,35 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: () => routingCardFace
 				}, RoutingCardWrapper));
+				const offDecisionSection = ctx.slots.inject("settings.section", () => ctx.slots.register({
+					name: "settings.section",
+					id: DECISION_SECTION_ID,
+					order: 42,
+					label: () => t("decisionTitle"),
+					locale: NS,
+					children: { [DECISION_ITEM_SLOT]: {
+						kind: "list",
+						scope: "root"
+					} }
+				}, DecisionSectionWrapper));
+				const offDecisionItem = ctx.slots.inject(DECISION_ITEM_SLOT, () => ctx.slots.register({
+					name: DECISION_ITEM_SLOT,
+					id: "weir-decision-config",
+					order: 0,
+					locale: NS,
+					inject: () => decisionCardFace
+				}, DecisionCardWrapper));
 				return () => {
 					serving = false;
 					controller?.dispose();
 					routingController?.dispose();
+					decisionController?.dispose();
 					offSection();
 					offItem();
 					offRoutingSection();
 					offRoutingItem();
+					offDecisionSection();
+					offDecisionItem();
 				};
 			}), "ui-weir-settings: page");
 			// Decision Agents: synchronous slot shells; chunks load only on first render.
@@ -1365,6 +1429,11 @@ window.__ModuleLoader__.load({
 				registerChunkDictionaries("settings.weir.decision", chunks[0].dictionaries);
 				return chunks;
 			}));
+			// The assistant editor's ordered model rungs use the same composer-style
+			// picker as the settings page. Its own arrival state keeps a picker
+			// failure local: the route editor degrades to three plain inputs instead
+			// of losing the assistant editor.
+			const loadDecisionPickerChunk = lazyChunks(() => require.async("./client.model-picker.js"));
 			// One metadata-only read of the model chunk: the pending count needs the
 			// same envelope unfolding and the same registered data face as every
 			// other decision surface, without waiting for the page to mount.
@@ -1617,9 +1686,10 @@ window.__ModuleLoader__.load({
 			}
 			function DecisionPageWrapper(props) {
 				const arrival = useChunkArrival(loadDecisionChunks, true);
+				const pickerArrival = useChunkArrival(loadDecisionPickerChunk, true);
 				if (!arrival?.chunks) return react_jsx_runtime.jsx("div", { role: arrival?.error ? "alert" : "status", style: settingsLoadingStyle, children: t(arrival?.error ? "decisionReadFailed" : "decisionLoading") });
 				const [model, actions, , , page, ui, learning] = arrival.chunks;
-				return react_jsx_runtime.jsx(page.DecisionPage, { ...props, connection: decisionConnection, decisionRpc: model.decisionRpc, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, decisionModel: model, pageView: model.pageView, narrowRecords: model.narrowRecords, narrowInbox: model.narrowInbox, ui, learning, t: decisionT, getSessionId: () => decisionSession.current, consumeOpenCase: () => { const caseId = decisionSession.openCaseId; decisionSession.openCaseId = null; return caseId; }, consumeAgentDestination: () => { const destination = decisionSession.agentDestination; decisionSession.agentDestination = null; return destination; }, panelInfo: ctx.layout.panelInfo, publishPendingCount: count => decisionPendingStore.publish(count), refreshPending: refreshDecisionPending, openSession: sessionId => ctx.get?.("uiWorkspace")?.openSession?.(sessionId) });
+				return react_jsx_runtime.jsx(page.DecisionPage, { ...props, connection: decisionConnection, decisionRpc: model.decisionRpc, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, decisionModel: model, pageView: model.pageView, narrowRecords: model.narrowRecords, narrowInbox: model.narrowInbox, ui, learning, t: decisionT, getSessionId: () => decisionSession.current, modelPicker: pickerArrival?.chunks, getSession: () => ctx.remote.session, consumeOpenCase: () => { const caseId = decisionSession.openCaseId; decisionSession.openCaseId = null; return caseId; }, consumeAgentDestination: () => { const destination = decisionSession.agentDestination; decisionSession.agentDestination = null; return destination; }, panelInfo: ctx.layout.panelInfo, publishPendingCount: count => decisionPendingStore.publish(count), refreshPending: refreshDecisionPending, openSession: sessionId => ctx.get?.("uiWorkspace")?.openSession?.(sessionId) });
 			}
 			ctx.effect(() => ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({ name: "sidebar.panellist", id: "weir-decisions", order: 12, label: () => t("decisionSelector") }, DecisionPanelIcon)), "ui-weir-settings: decision panel entry");
 			ctx.effect(() => ctx.slots.inject("main", () => ctx.slots.register({ name: "main", key: "weir-decisions", children: { "weir-decisions.tab": { kind: "list", scope: "root" } } }, DecisionPageWrapper)), "ui-weir-settings: decision page");

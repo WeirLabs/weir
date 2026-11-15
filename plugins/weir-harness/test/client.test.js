@@ -110,6 +110,7 @@ describe('weir settings client half', () => {
     const chainEditorChunk = { ChainEditorField: (props) => ({ __chainEditor: props }) }
     const robashEditorChunk = { RobashListEditorField: (props) => ({ __robashEditor: props }) }
     const disabledCategoriesEditorChunk = { DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }) }
+    const decisionClassEditorChunk = { ClassSetEditorField: (props) => ({ __classSetEditor: props }), dictionaries: markerDict('classSet') }
     const lspPanelChunk = { LspManagerField: (props) => ({ __lspPanel: props }) }
     const modelPickerChunk = { ModelPickerField: (props) => ({ __picker: props }), ModelPickerBoundary: (props) => ({ __pickerBoundary: props }) }
     const chainModelChunk = { marker: 'chain-model', dictionaries: markerDict('chain') }
@@ -159,6 +160,7 @@ describe('weir settings client half', () => {
       './client.chain-editor.js': chainEditorChunk,
       './client.robash-editor.js': robashEditorChunk,
       './client.disabled-categories-editor.js': disabledCategoriesEditorChunk,
+      './client.decision-class-editor.js': decisionClassEditorChunk,
       './client.lsp-panel.js': lspPanelChunk,
       './client.chain-model.js': chainModelChunk,
       './client.robash-model.js': robashModelChunk,
@@ -207,6 +209,7 @@ describe('weir settings client half', () => {
       modelPickerChunk,
       chainEditorChunk,
       disabledCategoriesEditorChunk,
+      decisionClassEditorChunk,
       chainModelChunk,
       lspToggleChunk,
       hashEditViewChunk,
@@ -328,6 +331,7 @@ describe('weir settings client half', () => {
     './client.robash-model.js',
     './client.lsp-model.js',
     './client.notify-permissions.js',
+    './client.decision-class-editor.js',
   ]
 
   it('loads, exposes the plugin surface, and registers the page chain', async () => {
@@ -356,6 +360,9 @@ describe('weir settings client half', () => {
     expect(localeRegistrations[0].ns).toBe('settings.weir')
     expect(localeRegistrations[0].dicts.en.title).toBe('Weir')
     expect(localeRegistrations[0].dicts.zh.title).toBe('Weir')
+    // the third settings page carries its own navigation label
+    expect(localeRegistrations[0].dicts.en.decisionTitle).toBe('Decision assistant')
+    expect(localeRegistrations[0].dicts.zh.decisionTitle).toBe('决策助手')
     // the chunk arrival states carry dictionary entries (templates in English)
     expect(localeRegistrations[0].dicts.en.loading).toBe('Loading Weir settings…')
     expect(localeRegistrations[0].dicts.en.loadFailed).toBe('Weir settings could not be loaded:')
@@ -413,6 +420,8 @@ describe('weir settings client half', () => {
       'settings.section', 'settings.weir.item',
       // the model-routing page: its own section + item slot registrations
       'settings.section', 'settings.weir-routing.item',
+      // the decision page: its own section + item slot registrations
+      'settings.section', 'settings.weir-decision.item',
     ])
     expect(conversationDefinitions).toHaveLength(1)
     const decisionDefinition = conversationDefinitions[0]
@@ -484,18 +493,32 @@ describe('weir settings client half', () => {
       expect(typeof registration.component).toBe('function')
     }
 
-    // the top-level settings section registrations: the main page (order 40)
-    // and the model-routing page (order 41)
+    // the top-level settings section registrations: the main page (order 40),
+    // the model-routing page (order 41) and the decision page (order 42)
     slotInjects[26].fn()
     slotInjects[28].fn()
+    slotInjects[30].fn()
     const sectionEntries = slotRegistrations.filter((registration) => registration.definition.name === 'settings.section')
-    expect(sectionEntries).toHaveLength(2)
+    expect(sectionEntries).toHaveLength(3)
     const { definition: sectionDef, component: sectionComponent } = sectionEntries.find((registration) => registration.definition.id === 'weir-settings')
     const routingSectionEntry = sectionEntries.find((registration) => registration.definition.id === 'weir-model-routing')
     expect(routingSectionEntry).toBeTruthy()
     expect(routingSectionEntry.definition.order).toBe(41)
     expect(routingSectionEntry.definition.children['settings.weir-routing.item']).toEqual({ kind: 'list', scope: 'root' })
     expect(routingSectionEntry.definition.label()).toBe('routingTitle')
+    const decisionSectionEntry = sectionEntries.find((registration) => registration.definition.id === 'weir-decision')
+    expect(decisionSectionEntry).toBeTruthy()
+    expect(decisionSectionEntry.definition.order).toBe(42)
+    expect(decisionSectionEntry.definition.children['settings.weir-decision.item']).toEqual({ kind: 'list', scope: 'root' })
+    expect(decisionSectionEntry.definition.locale).toBe('settings.weir')
+    expect(decisionSectionEntry.definition.label()).toBe('decisionTitle')
+    reactStub.begin()
+    decisionSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })
+    await flush()
+    reactStub.begin()
+    const decisionSectionRendered = decisionSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })
+    expect(decisionSectionRendered.slot).toBe('settings.weir-decision.item')
+    expect(typeof decisionSectionRendered.renderSlot).toBe('function')
     reactStub.begin()
     expect(routingSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
     expect(sectionDef.name).toBe('settings.section')
@@ -510,12 +533,18 @@ describe('weir settings client half', () => {
     // per page: no plugins.item registration anymore)
     slotInjects[27].fn()
     slotInjects[29].fn()
+    slotInjects[31].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const routingItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
     expect(routingItemEntry).toBeTruthy()
     expect(routingItemEntry.definition.id).toBe('weir-routing-config')
     expect(routingItemEntry.definition.order).toBe(0)
     expect(itemEntry.definition.id).toBe('weir-config')
+    const decisionItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-decision.item')
+    expect(decisionItemEntry).toBeTruthy()
+    expect(decisionItemEntry.definition.id).toBe('weir-decision-config')
+    expect(decisionItemEntry.definition.order).toBe(0)
+    expect(decisionItemEntry.definition.locale).toBe('settings.weir')
     expect(slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')).toBeUndefined()
 
     // the session capability Badge slot registration (12.1)
@@ -547,8 +576,8 @@ describe('weir settings client half', () => {
     expect(sessionAccesses()).toBe(0)
   })
 
-  it('fans out the settings chunks plus the picker, constructs both page controllers on arrival, and renders loading/arrived states', async () => {
-    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk } = await loadEntry()
+  it('fans out the settings chunks plus the picker, constructs all three page controllers on arrival, and renders loading/arrived states', async () => {
+    const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk, decisionClassEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)
     whileServedCalls[0].register(new Set(['weir-settings']))
@@ -591,17 +620,23 @@ describe('weir settings client half', () => {
     const boundDisabled = settled.editors.DisabledCategoriesEditorField({ text: 'x' })
     expect(boundDisabled.__type).toBe(disabledCategoriesEditorChunk.DisabledCategoriesEditorField)
     expect(boundDisabled.text).toBe('x')
+    // the A/B/C class-set editor arrives bound to its chunk
+    const boundClassSet = settled.editors.ClassSetEditorField({ text: '["A"]', rows: ['A', 'B', 'C'] })
+    expect(boundClassSet.__type).toBe(decisionClassEditorChunk.ClassSetEditorField)
+    expect(boundClassSet.text).toBe('["A"]')
+    expect(boundClassSet.rows).toEqual(['A', 'B', 'C'])
     // the picker chunk arrives on its OWN arrival state and reaches the card as
     // a prop — never through the settings-chunk Promise.all
     expect(settled.modelPicker).toBe(modelPickerChunk)
 
-    // both page controllers were constructed on arrival with the served
+    // all three page controllers were constructed on arrival with the served
     // scope and the prop-injected deps; each deferred store now serves its
     // controller's snapshot
-    expect(controllerConstructed).toHaveLength(2)
-    expect(controllerConstructed.map((c) => c.page)).toEqual(['main', 'routing'])
+    expect(controllerConstructed).toHaveLength(3)
+    expect(controllerConstructed.map((c) => c.page)).toEqual(['main', 'routing', 'decision'])
     expect(controllerConstructed[0].scope).toBe(scope)
     expect(controllerConstructed[1].scope).toBe(scope)
+    expect(controllerConstructed[2].scope).toBe(scope)
     expect(typeof controllerConstructed[0].deps.getSession).toBe('function')
     expect(typeof controllerConstructed[0].deps.settingsBus.notify).toBe('function')
     expect(injected.hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
@@ -620,6 +655,21 @@ describe('weir settings client half', () => {
     expect(routingSettled.__type).toBe(settingsPageChunk.WeirCard)
     expect(routingSettled.page).toBe('routing')
     expect(routingSettled.modelPicker).toBe(modelPickerChunk)
+
+    // the decision item renders WeirCard on the decision page against the third
+    // controller's store (its own section, same scope)
+    slotInjects[31].fn()
+    const decisionItem = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-decision.item')
+    expect(decisionItem.definition.inject().hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
+    reactStub.reset()
+    reactStub.begin()
+    decisionItem.component(formProps)
+    await flush()
+    reactStub.begin()
+    const decisionSettled = decisionItem.component(formProps)
+    expect(decisionSettled.__type).toBe(settingsPageChunk.WeirCard)
+    expect(decisionSettled.page).toBe('decision')
+    expect(decisionSettled.modelPicker).toBe(modelPickerChunk)
 
     // settingsBus 贯通: the composer toggle wrapper receives the same bus object
     slotInjects[0].fn()
@@ -1361,6 +1411,12 @@ describe('weir settings client half', () => {
     expect(page.ui).toBeTruthy()
     expect(page.learning).toBeTruthy()
     expect(page.pageView).toBe('page-view')
+    // The assistant editor's route rungs reuse the composer-style picker: the
+    // page gets the picker chunk on its own arrival state plus a lazy session
+    // accessor (S17: apply never dereferences remote.session).
+    expect(page.modelPicker).toBeTruthy()
+    expect(typeof page.modelPicker.ModelPickerField).toBe('function')
+    expect(typeof page.getSession).toBe('function')
     expect(page.decisionModel.decisionRpc).toBe('decision-rpc')
     // One pull from the entry's pending-count read and one from the page batch;
     // the ModuleLoader hands back the same module and registers its data face once.
@@ -1745,7 +1801,7 @@ describe('weir settings client half', () => {
     await flush()
     expect(events).toEqual(['register:settings.weir', 'register:settings.weir.page'])
     const pageRegistration = registrations.find((registration) => registration.ns === 'settings.weir.page')
-    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions']) {
+    for (const slice of ['settingsPage', 'chain', 'robash', 'lsp', 'notifyPermissions', 'classSet']) {
       expect(pageRegistration.dicts.en[`pageSentinel.${slice}`], `page merge carries the ${slice} slice`).toBe(`${slice} en`)
       expect(pageRegistration.dicts.zh[`pageSentinel.${slice}`], `page merge carries the ${slice} zh slice`).toBe(`${slice} zh`)
     }
@@ -2574,11 +2630,15 @@ describe('weir settings client half', () => {
     'leaseToolWatchWaiting',
     'decisionAgentAutoAnswerClasses', 'decisionAgentAutoAnswerClassesHint', 'decisionAgentAutoShadow', 'decisionAgentAutoShadowHint',
     'decisionAgentSelectorDefault', 'decisionAgentSelectorDefaultHint', 'decisionAgentSelectorDefaultOptionAuto', 'decisionAgentSelectorDefaultOptionOff',
-    'decisionAgentAnswerTimeoutMs', 'decisionAgentAnswerTimeoutMsHint', 'decisionAgentChains', 'decisionAgentChainsHint',
+    'decisionAgentAnswerTimeoutMs', 'decisionAgentAnswerTimeoutMsHint',
     'decisionAgentContextBudgetTokens', 'decisionAgentContextBudgetTokensHint', 'decisionAgentMaxAttemptsPerCase', 'decisionAgentMaxAttemptsPerCaseHint',
     'decisionAgentMaxConcurrentAttempts', 'decisionAgentMaxConcurrentAttemptsHint', 'decisionAgentMaxOutputTokens', 'decisionAgentMaxOutputTokensHint',
-    'decisionAgentRetentionDays', 'decisionAgentRetentionDaysHint', 'decisionAgentStorePath', 'decisionAgentStorePathHint',
-    'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecision',
+    'decisionAgentRetentionDays', 'decisionAgentRetentionDaysHint',
+    'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecisionBasics', 'groupDecisionAdvanced', 'decisionAdvancedHint',
+    'decisionDescription', 'decisionTitle',
+    // the A/B/C whitelist editor's own copy (client.decision-class-editor.js
+    // data face, merged into the same settings.weir.page registration)
+    'decisionClassNone', 'decisionClassCount', 'decisionClassInvalid',
     'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
     'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord', 'decisionMoreDetails', 'decisionMoreDetailsRouteIssue', 'decisionMoreDetailsFailedAttempt', 'decisionFeedbackHintShort',
     'decisionCustomAnswer', 'decisionCustomAnswerPlaceholder', 'decisionClarify', 'decisionClarifyHint', 'decisionClarifyPlaceholder', 'decisionClarifySubmit', 'decisionClarifyLimit', 'decisionClarifyYouAsked', 'decisionClarifyAnswer', 'decisionClarifyRecord', 'decisionBounce', 'decisionBounceHint', 'decisionBouncePlaceholder', 'decisionBounceSubmit',
@@ -2609,8 +2669,8 @@ describe('weir settings client half', () => {
     'decisionSnapshotPin', 'decisionNoSnapshotPin', 'decisionReviewedPrinciples', 'decisionL5Mappings', 'decisionExclusions', 'decisionNoExclusions',
     'decisionLearningOutcome_running', 'decisionLearningOutcome_candidate', 'decisionLearningOutcome_published', 'decisionLearningOutcome_rejected',
     'decisionLearningOutcome_rolled_back', 'decisionLearningOutcome_failed', 'decisionSnapshotState_draft', 'decisionSnapshotState_published', 'decisionSnapshotState_rolled_back',
-    'decisionAddNote', 'decisionAdvancedSettings', 'decisionAdvancedSettingsHint', 'decisionAgentModelRouteJson',
-    'decisionAgentName', 'decisionAgentPreference', 'decisionAgentPreferenceHint', 'decisionAgentScopeJson',
+    'decisionAddNote', 'decisionAdvancedSettings', 'decisionAdvancedSettingsHint',
+    'decisionAgentName', 'decisionAgentPreference', 'decisionAgentPreferenceHint',
     'decisionAgentStateArchived', 'decisionAgentStateDisabled', 'decisionAgentStateEnabled',
     'decisionAllAssistants', 'decisionAllFeedback', 'decisionAllOutcomes', 'decisionAllReasons', 'decisionAllStates',
     'decisionApplyFilters', 'decisionArchiveAgent', 'decisionArchiveConfirmation', 'decisionArchiveTitle',
@@ -2633,7 +2693,7 @@ describe('weir settings client half', () => {
     'decisionMetricMeanLatency', 'decisionMetricRatingsDown', 'decisionMetricRatingsUndone', 'decisionMetricRatingsUp',
     'decisionMetricReassignments', 'decisionMetricReturns', 'decisionMetricSelectorOffBypasses', 'decisionMetricWindow',
     'decisionMetricWindow24h', 'decisionMetricWindow30d', 'decisionMetricWindow7d', 'decisionMetricWindowAll',
-    'decisionModelInheritanceHint', 'decisionMoreFilters', 'decisionNativeAnswerHint', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
+    'decisionMoreFilters', 'decisionNativeAnswerHint', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
     'decisionNoEvidence', 'decisionNoFeedback', 'decisionNoHistoricalContext', 'decisionNoPreference', 'decisionNoReviewedPrinciples',
     'decisionNoteNoEffect', 'decisionOutcomeAnswer', 'decisionOutcomeEscalate', 'decisionOutcomeFailed', 'decisionOutcomeReturn',
     'decisionPageDescription', 'decisionPendingReview', 'decisionPinnedEmpty', 'decisionPrimaryNavigation',
@@ -2665,6 +2725,12 @@ describe('weir settings client half', () => {
     'decisionPublicStatusFailed', 'decisionPublicStatusIdle', 'decisionPublicStatusLoading', 'decisionPublicStatusPublished',
     'decisionPublicStatusRejected', 'decisionPublicStatusRolledBack', 'decisionPublicStatusRunning', 'decisionPublicStatusUpToDate',
     'decisionPublicWorkspaces', 'decisionScopeCurrentWorkspace', 'decisionWorkspaceExperience',
+    // The assistant editor's visual scope/route controls (client.decision-model.js
+    // data face): ordinary-language labels, never JSON-box copy.
+    'decisionScopeTitle', 'decisionScopeHint', 'decisionScopePaths', 'decisionScopeTags', 'decisionScopeClasses',
+    'decisionScopeAdd', 'decisionScopeRemove', 'decisionScopeClassMinimum',
+    'decisionRouteTitle', 'decisionRouteHint', 'decisionRouteProvider', 'decisionRouteModel', 'decisionRouteEffort',
+    'decisionRouteAdd', 'decisionRouteRemove', 'decisionRouteIncomplete', 'decisionRouteEmpty',
     'decisionPublicCurrentPrinciples', 'decisionPublicCurrentText', 'decisionPublicFrozenInput',
     'decisionPublicOpAdd', 'decisionPublicOpMerge', 'decisionPublicOpNarrow', 'decisionPublicOpRefine', 'decisionPublicOpRetire',
     'decisionPublicProposedText', 'decisionPublicScope',
@@ -2723,6 +2789,7 @@ describe('weir settings client half', () => {
       ['lib/client.robash-model.js', undefined],
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
+      ['lib/client.decision-class-editor.js', chunkRequire],
       ['lib/client.decision-model.js', undefined],
       ['lib/client.notify-permissions.js', chunkRequire],
       ['lib/client.file-lease-badge.js', chunkRequire],

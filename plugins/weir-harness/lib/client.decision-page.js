@@ -382,6 +382,85 @@ window.__ModuleLoader__.load({
     function agentStateKey(state) {
       return state === "enabled" ? "decisionAgentStateEnabled" : state === "disabled" ? "decisionAgentStateDisabled" : state === "archived" ? "decisionAgentStateArchived" : "decisionStatusUnknown";
     }
+    // ---- assistant expertise scope and model route (visual editing) ----
+    // The closed authorization class set, in canonical order: the same three
+    // values the settings whitelist accepts. The generated scope arrays follow
+    // this order, never the click order.
+    const AGENT_SCOPE_CLASSES = ["A", "B", "C"];
+
+    /** Trimmed, de-duplicated, non-empty entries — empty rows stay in the local
+     * row list (so the user keeps their unfinished line) but never enter JSON. */
+    function nonEmptyRows(rows) {
+      return [...new Set((Array.isArray(rows) ? rows : []).map(row => row.trim()).filter(row => row.length > 0))];
+    }
+
+    /** The staged scope JSON as local editor state: paths/tags as typed rows and
+     * the selected authorization classes. A missing `authorizationClasses` key
+     * (the create form's empty text, or a legacy text without the key) opens
+     * with every class selected — the server's own default; an EXPLICIT empty
+     * array stays empty, because that stored profile answers nothing and the
+     * editor must not silently grant classes on an unrelated row edit. */
+    function parseScopeText(text) {
+      let value = null;
+      try { value = JSON.parse(text); } catch { value = null; }
+      const readList = key => Array.isArray(value?.[key]) ? value[key].filter(entry => typeof entry === "string") : [];
+      const classes = Array.isArray(value?.authorizationClasses)
+        ? [...new Set(value.authorizationClasses.filter(entry => AGENT_SCOPE_CLASSES.includes(entry)))]
+        : [...AGENT_SCOPE_CLASSES];
+      return { paths: readList("paths"), tags: readList("tags"), classes };
+    }
+
+    /** The visual scope state as the staged JSON text — paths/tags only when
+     * actually filled, authorization classes always, and NEVER `workspaces`
+     * (an assistant is profile-global; workspace membership is not its setting). */
+    function composeScopeText(visual) {
+      const scope = {};
+      const paths = nonEmptyRows(visual.paths);
+      if (paths.length > 0) scope.paths = paths;
+      const tags = nonEmptyRows(visual.tags);
+      if (tags.length > 0) scope.tags = tags;
+      scope.authorizationClasses = AGENT_SCOPE_CLASSES.filter(entry => (visual.classes ?? []).includes(entry));
+      return JSON.stringify(scope);
+    }
+
+    /** The staged route JSON as an ordered rung list; malformed text and a
+     * missing chain both open as an empty list (the session route). */
+    function parseRouteText(text) {
+      let value = null;
+      try { value = JSON.parse(text); } catch { value = null; }
+      const chain = Array.isArray(value?.chain) ? value.chain : [];
+      return chain.filter(rung => rung && typeof rung === "object").map(rung => ({
+        provider: typeof rung.provider === "string" ? rung.provider : "",
+        model: typeof rung.model === "string" ? rung.model : "",
+        reasoningEffort: typeof rung.reasoningEffort === "string" ? rung.reasoningEffort : "",
+      }));
+    }
+
+    /** A rung is saveable only when both provider and model are filled. */
+    function rungComplete(rung) {
+      return typeof rung?.provider === "string" && rung.provider.trim() !== "" && typeof rung?.model === "string" && rung.model.trim() !== "";
+    }
+
+    /** The visual route state as the staged JSON text, rungs in order; an empty
+     * chain still means "inherit the session model". */
+    function composeRouteText(visual) {
+      const chain = (visual.rungs ?? []).filter(rungComplete).map(rung => ({
+        provider: rung.provider.trim(),
+        model: rung.model.trim(),
+        ...(rung.reasoningEffort.trim() ? { reasoningEffort: rung.reasoningEffort.trim() } : {}),
+      }));
+      return JSON.stringify({ chain });
+    }
+
+    /** Local visual state for one editor target: re-initialized from the staged
+     * text whenever the target changes (or the text no longer matches the value
+     * this state produced) — the local row list is never authoritative. */
+    function agentVisualState(editor, current) {
+      if (!editor) return null;
+      const key = editor.agentId ?? "create";
+      if (current && current.key === key && current.scopeText === editor.scopeText && current.routeText === editor.routeText) return current;
+      return { key, scopeText: editor.scopeText, routeText: editor.routeText, ...parseScopeText(editor.scopeText), rungs: parseRouteText(editor.routeText) };
+    }
 
     function newAgentEditor(agent) {
       const value = agent ? {
@@ -404,6 +483,89 @@ window.__ModuleLoader__.load({
         jsx.jsx(props.ui.Button, { ref: props.openRef, "data-action": "open-agent", "data-agent-id": props.agent.agentId, onClick: () => props.onOpen(props.agent.agentId), children: props.t("decisionViewAssistant") }, "open"),
       ] });
     }
+    /** Path/tag rows: one single-line input per entry plus its remove action,
+     * and one add action per list. Empty rows stay visible (an unfinished line
+     * is not silently dropped) but never reach the staged JSON. */
+    function AgentScopeRowList(props) {
+      const { kind, labelKey, values, ui, t, pending, onChange } = props;
+      const dataKey = kind === "path" ? "data-scope-path" : "data-scope-tag";
+      const removeKey = kind === "path" ? "data-scope-remove-path" : "data-scope-remove-tag";
+      const addKey = kind === "path" ? "data-scope-add-path" : "data-scope-add-tag";
+      return jsx.jsxs("div", { className: "weir-da-scope-list", "data-scope-list": kind, children: [
+        jsx.jsx("p", { className: "weir-da-caption", children: t(labelKey) }, "label"),
+        ...values.map((value, index) => jsx.jsxs("div", { className: "weir-da-scope-row", children: [
+          jsx.jsx("input", {
+            type: "text", id: `weir-da-agent-scope-${kind}-${index}`, [dataKey]: true, "data-row-index": index,
+            "aria-label": t(labelKey), value, disabled: pending,
+            onChange: event => onChange(values.map((entry, at) => at === index ? event.target.value : entry)),
+          }, "input"),
+          jsx.jsx(ui.Button, { variant: "ghost", size: "sm", [removeKey]: true, disabled: pending, onClick: () => onChange(values.filter((entry, at) => at !== index)), children: t("decisionScopeRemove") }, "remove"),
+        ] }, `${kind}-${index}`)),
+        jsx.jsx(ui.Button, { variant: "ghost", size: "sm", [addKey]: true, disabled: pending, onClick: () => onChange([...values, ""]), children: t("decisionScopeAdd") }, "add"),
+      ] });
+    }
+
+    /** The assistant's expertise scope: path prefixes, tags and the A/B/C
+     * authorization classes. Every change re-synthesizes scopeText; at least
+     * one class always stays selected (the profile has no "no class" state). */
+    function AgentScopeEditor(props) {
+      const { visual, ui, t, pending } = props;
+      const classes = visual.classes ?? [];
+      const toggleClass = entry => {
+        if (classes.includes(entry)) {
+          if (classes.length === 1) return;
+          props.onPatch({ classes: classes.filter(value => value !== entry) });
+          return;
+        }
+        props.onPatch({ classes: AGENT_SCOPE_CLASSES.filter(value => value === entry || classes.includes(value)) });
+      };
+      return jsx.jsxs("div", { className: "weir-da-scope-editor", "data-scope-editor": true, children: [
+        AgentScopeRowList({ kind: "path", labelKey: "decisionScopePaths", values: visual.paths ?? [], ui, t, pending, onChange: paths => props.onPatch({ paths }) }),
+        AgentScopeRowList({ kind: "tag", labelKey: "decisionScopeTags", values: visual.tags ?? [], ui, t, pending, onChange: tags => props.onPatch({ tags }) }),
+        jsx.jsxs("div", { className: "weir-da-scope-classes", children: [
+          jsx.jsx("p", { className: "weir-da-caption", children: t("decisionScopeClasses") }, "label"),
+          jsx.jsx("div", { className: "weir-da-scope-class-row", role: "group", "aria-label": t("decisionScopeClasses"), "data-scope-class-set": true, children: AGENT_SCOPE_CLASSES.map(entry => {
+            const selected = classes.includes(entry);
+            return jsx.jsx("button", {
+              type: "button", id: `weir-da-agent-scope-class-${entry}`, "data-scope-class": entry, "aria-pressed": selected,
+              "aria-disabled": selected && classes.length === 1, disabled: pending, onClick: () => toggleClass(entry), children: entry,
+            }, entry);
+          }) }),
+          jsx.jsx("p", { className: "weir-da-caption", "data-scope-class-minimum": true, children: t("decisionScopeClassMinimum") }, "minimum"),
+        ] }, "classes"),
+      ] });
+    }
+
+    /** Ordered model rungs: the composer-style picker when its chunk arrived,
+     * otherwise the three plain inputs (still never a JSON box). A rung without
+     * both provider and model is not saved and says so. */
+    function AgentRouteEditor(props) {
+      const { visual, ui, t, pending, modelPicker } = props;
+      const rungs = visual.rungs ?? [];
+      const patchRung = (index, patch) => props.onPatch({ rungs: rungs.map((rung, at) => at === index ? { ...rung, ...patch } : rung) });
+      const pickerField = modelPicker && typeof modelPicker.ModelPickerField === "function" ? modelPicker.ModelPickerField : null;
+      return jsx.jsxs("div", { className: "weir-da-route-editor", "data-route-editor": true, children: [
+        jsx.jsx("p", { className: "weir-da-caption", children: t("decisionRouteHint") }, "hint"),
+        ...rungs.map((rung, index) => jsx.jsxs("div", { className: "weir-da-route-row", "data-route-index": index, children: [
+          jsx.jsx("span", { className: "weir-da-caption", children: String(index + 1) }, "index"),
+          pickerField
+            ? jsx.jsx(pickerField, {
+                value: { provider: rung.provider, model: rung.model, reasoningEffort: rung.reasoningEffort },
+                onChange: selection => patchRung(index, { provider: selection?.provider ?? "", model: selection?.model ?? "", reasoningEffort: selection?.reasoningEffort ?? "" }),
+                getSession: () => props.getSession(), t, disabled: pending,
+              }, "picker")
+            : jsx.jsxs("div", { className: "weir-da-route-fallback", children: [
+                jsx.jsx("input", { type: "text", id: `weir-da-agent-route-provider-${index}`, "data-route-provider": true, "data-row-index": index, "aria-label": t("decisionRouteProvider"), placeholder: t("decisionRouteProvider"), value: rung.provider, disabled: pending, onChange: event => patchRung(index, { provider: event.target.value }) }, "provider"),
+                jsx.jsx("input", { type: "text", id: `weir-da-agent-route-model-${index}`, "data-route-model": true, "data-row-index": index, "aria-label": t("decisionRouteModel"), placeholder: t("decisionRouteModel"), value: rung.model, disabled: pending, onChange: event => patchRung(index, { model: event.target.value }) }, "model"),
+                jsx.jsx("input", { type: "text", id: `weir-da-agent-route-effort-${index}`, "data-route-effort": true, "data-row-index": index, "aria-label": t("decisionRouteEffort"), placeholder: t("decisionRouteEffort"), value: rung.reasoningEffort, disabled: pending, onChange: event => patchRung(index, { reasoningEffort: event.target.value }) }, "effort"),
+              ] }, "fallback"),
+          jsx.jsx(ui.Button, { variant: "ghost", size: "sm", "data-route-remove": true, "data-row-index": index, disabled: pending, onClick: () => props.onPatch({ rungs: rungs.filter((entry, at) => at !== index) }), children: t("decisionRouteRemove") }, "remove"),
+        ] }, `rung-${index}`)),
+        jsx.jsx(ui.Button, { variant: "ghost", size: "sm", "data-route-add": true, disabled: pending, onClick: () => props.onPatch({ rungs: [...rungs, { provider: "", model: "", reasoningEffort: "" }] }), children: t("decisionRouteAdd") }, "add"),
+        rungs.some(rung => !rungComplete(rung)) ? jsx.jsx("p", { className: "weir-da-caption", "data-route-incomplete": true, children: t("decisionRouteIncomplete") }, "incomplete") : null,
+        rungs.length === 0 ? jsx.jsx("p", { className: "weir-da-caption", "data-route-empty": true, children: t("decisionRouteEmpty") }, "empty") : null,
+      ] });
+    }
 
     function AgentEditor(props) {
       const { editor, ui, t } = props;
@@ -420,14 +582,8 @@ window.__ModuleLoader__.load({
         }) }, "preference"),
         jsx.jsx(ui.Disclosure, { id: `weir-da-agent-settings-${suffix}`, label: t("decisionAdvancedSettings"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-agent-advanced", children: [
           jsx.jsx("p", { className: "weir-da-caption", children: t("decisionAdvancedSettingsHint") }, "hint"),
-          jsx.jsx(ui.Field, { id: `weir-da-agent-scope-${suffix}`, label: t("decisionAgentScopeJson"), children: jsx.jsx("textarea", {
-            id: `weir-da-agent-scope-${suffix}`, "data-agent-field": "scope", "aria-label": t("decisionAgentScopeJson"), value: editor.scopeText, rows: 6, disabled: props.pending,
-            onChange: event => props.onField("scopeText", event.target.value),
-          }) }, "scope"),
-          jsx.jsx(ui.Field, { id: `weir-da-agent-route-${suffix}`, label: t("decisionAgentModelRouteJson"), hint: t("decisionModelInheritanceHint"), children: jsx.jsx("textarea", {
-            id: `weir-da-agent-route-${suffix}`, "data-agent-field": "modelRoute", "aria-label": t("decisionAgentModelRouteJson"), value: editor.routeText, rows: 6, disabled: props.pending,
-            onChange: event => props.onField("routeText", event.target.value),
-          }) }, "route"),
+          jsx.jsx(ui.Field, { id: `weir-da-agent-scope-${suffix}`, label: t("decisionScopeTitle"), hint: t("decisionScopeHint"), children: AgentScopeEditor({ visual: props.visual, ui, t, pending: props.pending, onPatch: props.onVisual }) }, "scope"),
+          jsx.jsx(ui.Field, { id: `weir-da-agent-route-${suffix}`, label: t("decisionRouteTitle"), hint: t("decisionRouteHint"), children: AgentRouteEditor({ visual: props.visual, ui, t, pending: props.pending, modelPicker: props.modelPicker, getSession: props.getSession, onPatch: props.onVisual }) }, "route"),
         ] }) }, "advanced"),
         jsx.jsxs("div", { className: "weir-da-actions", children: [
           jsx.jsx(ui.Button, { disabled: props.pending, onClick: props.onCancel, children: t("decisionCancel") }, "cancel"),
@@ -782,6 +938,11 @@ window.__ModuleLoader__.load({
       // new ref really exists.
       const exportFocusRef = react.useRef(false);
       const [editor, setEditor] = react.useState(null);
+      // Local row state for the visual scope/route editors (paths, tags, classes,
+      // rungs). It is derived from the staged texts and never authoritative:
+      // agentVisualState re-initializes it whenever the editor target or the
+      // staged text changes, so switching assistants cannot leak rows.
+      const [agentVisual, setAgentVisual] = react.useState(null);
       const [selectedAgentId, setSelectedAgentId] = react.useState(null);
       const [agentFocusRequest, setAgentFocusRequest] = react.useState(null);
       const pendingRef = react.useRef(false);
@@ -1432,9 +1593,26 @@ window.__ModuleLoader__.load({
         : resources.agents.value.length ? resources.agents.value.map(agent => AgentSummary({
           agent, detail: selectedAgent, selected: selectedAgentId === agent.agentId, ui, t, onOpen: openAgent, openRef: selectedAgentId === agent.agentId ? agentSummaryRef : null,
         })) : jsx.jsx(ui.EmptyState, { children: t("decisionNoAgents") });
+      const editorVisual = agentVisualState(editor, agentVisual);
+      const patchEditorVisual = patch => {
+        if (!editor || !editorVisual) return;
+        const next = { ...editorVisual, ...patch };
+        if ("paths" in patch || "tags" in patch || "classes" in patch) next.scopeText = composeScopeText(next);
+        if ("rungs" in patch) next.routeText = composeRouteText(next);
+        setAgentVisual(next);
+        setEditor(current => {
+          if (!current || (current.agentId ?? "create") !== next.key) return current;
+          return {
+            ...current,
+            ...(next.scopeText !== current.scopeText ? { scopeText: next.scopeText } : {}),
+            ...(next.routeText !== current.routeText ? { routeText: next.routeText } : {}),
+          };
+        });
+      };
       const agentPane = editor ? AgentEditor({
         editor, ui, t, pending: pending !== null, onSave: saveEditor, onCancel: () => closeEditor(), nameRef: agentNameRef,
         onField: (field, value) => setEditor(current => ({ ...current, [field]: value })),
+        visual: editorVisual, onVisual: patchEditorVisual, modelPicker: props.modelPicker, getSession: () => props.getSession?.(),
       }) : resources.agent.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.agent.status === "error" ? retryState(resources.agent, () => selectAgent(selectedAgentId))
         : selectedAgent ? AgentDetail({
