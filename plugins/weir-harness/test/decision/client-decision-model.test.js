@@ -127,3 +127,42 @@ test('Context Pack dictionaries are localized and mark L3 as non-authoritative',
   assert.match(model.dictionaries.en.decisionStructuralReplayHint, /manual/)
   assert.match(model.dictionaries.zh.decisionStructuralReplayHint, /手动/)
 })
+
+test('unowned Auto cases project routing failure, no match, and ambiguity from the latest non-Shadow route', async () => {
+  const model = await load()
+  const waiting = { caseId: 'dc-route-reason', agentId: null, state: 'awaiting_user', awaitingReason: 'no_route', feedbackState: 'none', request: { questions: [{ id: 'q', question: 'Choose' }] } }
+  const route = (mode, extra = {}) => ({ routeDecisionId: `rd-${mode}`, mode, chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z', ...extra })
+  const truncated = route('auto', { reason: 'failure:truncated' })
+  const ambiguous = route('auto', { ambiguity: { candidates: ['a', 'b'], conflict: 'Both claim it' } })
+
+  assert.equal(model.recordSummary(waiting, [], 'en', [truncated]).reasonKey, 'decisionReasonRouteFailure')
+  assert.equal(model.cardView({ case: waiting, attempts: [], feedback: [], routeDecisions: [truncated] }, []).reasonKey, 'decisionReasonRouteFailure')
+  assert.equal(model.recordSummary(waiting, [], 'en', [route('auto')]).reasonKey, 'decisionReasonUnownedNoRoute')
+  assert.equal(model.recordSummary(waiting, [], 'en', [ambiguous]).reasonKey, 'decisionReasonRouteAmbiguous')
+  // A Shadow sample is diagnostic only and never overrides the real outcome.
+  assert.equal(model.recordSummary(waiting, [], 'en', [truncated, route('auto_shadow', { chosen: 'a' })]).reasonKey, 'decisionReasonRouteFailure')
+  assert.equal(model.recordSummary(waiting, [], 'en', [ambiguous, route('auto_shadow', { reason: 'failure:truncated' })]).reasonKey, 'decisionReasonRouteAmbiguous')
+  // The inbox projection's bounded routeStatus answers before the record is read.
+  assert.equal(model.recordSummary({ ...waiting, routeStatus: 'failure' }, [], 'en').reasonKey, 'decisionReasonRouteFailure')
+  assert.equal(model.recordSummary({ ...waiting, routeStatus: 'ambiguous' }, [], 'en').reasonKey, 'decisionReasonRouteAmbiguous')
+  assert.equal(model.recordSummary({ ...waiting, routeStatus: 'none' }, [], 'en').reasonKey, 'decisionReasonUnownedNoRoute')
+  assert.equal(model.recordSummary(waiting, [], 'en').reasonKey, 'decisionReasonUnownedNoRoute')
+  assert.equal(model.recordSummary({ ...waiting, routeStatus: 'not-a-status' }, [], 'en').reasonKey, 'decisionReasonUnownedNoRoute')
+  // An owned Case keeps its awaiting-reason wording; the route history is not a reason there.
+  const owned = { ...waiting, agentId: 'a', awaitingReason: 'authority' }
+  assert.equal(model.recordSummary(owned, [], 'en', [truncated]).reasonKey, 'decisionReasonAuthority')
+
+  const { en, zh } = model.dictionaries
+  assert.match(en.decisionReasonRouteFailure, /routing failed/i)
+  assert.match(en.decisionReasonRouteFailure, /answer directly/)
+  assert.match(en.decisionReasonRouteFailure, /reassign/)
+  assert.match(zh.decisionReasonRouteFailure, /自动路由失败/)
+  assert.match(zh.decisionReasonRouteFailure, /直接回答/)
+  assert.match(zh.decisionReasonRouteFailure, /改派/)
+  // Definitely a failure, never the no-match / unavailable wording.
+  assert.doesNotMatch(en.decisionReasonRouteFailure, /no assistant(?: was)? selected|selection is unavailable/i)
+  assert.doesNotMatch(zh.decisionReasonRouteFailure, /尚未选择助手|未选择助手|助手不可用/)
+  for (const dictionary of [en, zh]) {
+    assert.doesNotMatch(dictionary.decisionReasonRouteFailure, /failure:|truncated|max-tokens/i)
+  }
+})
