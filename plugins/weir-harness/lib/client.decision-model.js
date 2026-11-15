@@ -1031,6 +1031,29 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
       decisionRouteIncomplete: "未同时填写 provider 与模型的档位不会保存。",
       decisionRouteEmpty: "未配置模型路由——使用会话模型。",
     });
+    // The shared composer-style model picker (client.model-picker.js) resolves
+    // its own strings through the caller's `t`. On the settings page that is
+    // "settings.weir.page", which owns these six keys; the assistant editor's
+    // route rows are bound to THIS namespace, so without them the picker rendered
+    // raw keys (pickerModel/pickerEffort/modelEmpty…). They are byte-identical to
+    // the settings-page copies — a documented cross-namespace duplicate, pinned by
+    // test/client.test.js's dictionary union map.
+    Object.assign(dictionaries.en, {
+      catalogLoading: "Loading providers…",
+      pickerModel: "Model",
+      pickerEffort: "Reasoning",
+      effortProviderDefault: "Provider default",
+      catalogFailed: "Provider catalog unavailable; enter provider and model manually.",
+      modelEmpty: "Select a model",
+    });
+    Object.assign(dictionaries.zh, {
+      catalogLoading: "正在加载 provider…",
+      pickerModel: "模型",
+      pickerEffort: "推理",
+      effortProviderDefault: "跟随 provider 默认",
+      catalogFailed: "Provider 目录不可用；可手动填写 provider 与模型。",
+      modelEmpty: "选择模型",
+    });
 
     exports.dictionaries = dictionaries;
     exports.narrowRecords = narrowRecords;

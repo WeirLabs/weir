@@ -242,3 +242,13 @@ lane 内全 Weir 为 **3647 PASS / 0 FAIL / 1 既有平台跳过**，测试装�
 - 唯一性：展开整轮披露与组内 `button[data-process-activity]` 表头后，同一 Case 的全文档 `[data-weir-decision-card]` 计数仍为 1（`consultCardUniqueWithProcessExpanded` / `nativeCardUniqueWithProcessExpanded`），再折叠回去后计数与卡片文本都与展开前一致（`*CardSurvivesFoldRoundTrip`），即不重复、不重挂、不丢失。
 - 工具槽位让位：让位后的调用行保留 `call:` 滚动锚点但 `rowHeight=0`、无文本，槽位锚点是 `display: contents` 的空容器（`consultDecisionToolRowRendersNothing` / `consultYieldedToolRowKeepsAnchorOnly`）。真机测得该行自身盒高 0、`margin-top: 0px`，本条变更接受这点零高度占位，不做补偿。
 - 原生路径同时修掉既有重复：展开过程披露后不再出现第二张同一 Case 的卡（这正是本次变更顺带消除的缺陷）。
+
+### 决策助手设置页与助手编辑器的真实验收（settings-page 4.3 / 5.3）
+
+同一驱动（`plugins/weir-test-harness/spikes/decision/gui-product.mjs`）不再从 Weir 主页面的文本与旧输入框取证，而是走真机的第三分区：
+
+- 导航账本先证明三个 Weir 分区都注册且顺序为 `Weir` → `Weir 模型路由` → `决策助手`，导航后以 `[data-group="decisionBasics"]` 为就绪信号（不再依赖任何页面正文）。
+- 页面结构断言：基本组恰好三行（总开关 → 新根会话默认选择的两段控件 → A/B/C 芯片），高级组默认 `aria-expanded=false` 且 `[data-advanced-body]` 不挂载；展开后七行可编辑（Attempt 超时输入在前、`Auto Shadow 诊断` 开关在后，值对权威配置）；键入超时只进草稿（保存条出现），放弃后回到权威值；总开关关闭时高级组连同折叠标题消失、基本组只剩总开关一行，恢复后两组回归且表单回到未脏状态；关闭后以分组/芯片/折叠/编辑器均不存在为断言。
+- 白名单芯片切换后权威 `decisionAgentAutoAnswerClasses` 等于所选且按 A/B/C 行序；助手编辑器的专长范围与模型路由以可视化控件保存并读回（路径/标签/芯片顺序、路由档位 provider 与目录模型名往返一致），且高级区不存在 `data-agent-field="scope"|"modelRoute"` 文本域。
+- 共享模型选择器（`lib/client.model-picker.js`）的六条字符串（`modelEmpty`/`pickerModel`/`pickerEffort`/`catalogLoading`/`catalogFailed`/`effortProviderDefault`）原先只存在于设置页命名空间，助手编辑器绑定 `settings.weir.decision`，真机因此渲染原始键名；本批把这六条按字节相同的跨命名空间副本登记进决策词典（`client.test.js` 词典并集表登记），由 `assistantRoutePickerRendersLocalizedStrings` 守住。
+- 最终接受 run `B4RljA`：**295/295 check PASS**（166 张真实截图、1640 条原始网络 RPC，端口 9468），运行时异常/console/Slot/Log/import 错误均为 0，六次 owned main/Host 启动（`process-1..3` 与 `cross-legacy-boot/restart`、`cross-workspace-final`）均按精确 PID 停止且 9468 无监听。结构、芯片、选择器与助手字段的证据分别为 `settings-structure.json`、`settings-classes-*.json`、`assistant-visual-picker.json`、`assistant-visual-readback.json`（权威读回 `scope.paths=[plugins/weir-harness/lib]`、`tags=[decision-settings]`、`authorizationClasses=[A,B]`、`modelRoute.chain=[{mock, mock-1}]`）。更早的 `run-S0E51i`（调试中主动终止）与 `run-XkA1hI`（既有 `uiuxModal:selector-zoom200-360` 滚动锁审计偶发失败，非本批断言语义）仅作非最终诊断保留。

@@ -1256,3 +1256,296 @@ export function pendingOverviewProblems(state = {}) {
   }
   return problems
 }
+
+// ---------------------------------------------------------------------------
+// Decision settings page (decision-assistant-settings-page D7/D8): the real
+// Desktop acceptance reads the third Weir settings section as rendered — the
+// navigation ledger, the two basic/advanced groups, the A/B/C class chips and
+// the assistant editor's visual scope/route controls. These guards take only
+// captured DOM data, so they are unit-tested without a browser.
+// ---------------------------------------------------------------------------
+
+/** Localized labels the guards accept without pinning one GUI language. */
+const DECISION_SETTINGS_LABELS = Object.freeze({
+  navWeir: /^Weir$/,
+  navRouting: /^(?:Weir 模型路由|Weir model routing)$/i,
+  navDecision: /^(?:决策助手|Decision assistant)$/i,
+  master: /^(?:决策 Agent|Decision Agents)$/,
+  selector: /新根会话的默认选择|Default for new root sessions/,
+  // Row text is the whole row (label + hint + control copy), so this one is a
+  // containment test; the master and shadow labels above are exact accessible names.
+  classes: /自动回答类别|Auto answer classes/,
+  shadow: /^Auto Shadow (?:诊断|diagnostics)$/,
+  none: /未允许任何类别|No class is allowed/,
+})
+
+/** Every string the shared model picker resolves through the ambient `t`; a raw
+ * key rendering in the assistant editor means the owning namespace lost them. */
+export const MODEL_PICKER_KEYS = Object.freeze(['modelEmpty', 'pickerModel', 'pickerEffort', 'catalogLoading', 'catalogFailed', 'effortProviderDefault'])
+
+/**
+ * The settings navigation must carry the third Weir page: the Weir section, its
+ * model-routing page (order 41) and the Decision assistant page (order 42), in
+ * that order. A missing or reordered ledger means the section did not register.
+ * @param {string[]} labels
+ */
+export function decisionSettingsNavProblems(labels = []) {
+  const problems = []
+  const rows = (Array.isArray(labels) ? labels : []).map(text => readableText(text))
+  const weir = rows.findIndex(text => DECISION_SETTINGS_LABELS.navWeir.test(text))
+  const routing = rows.findIndex(text => DECISION_SETTINGS_LABELS.navRouting.test(text))
+  const decision = rows.findIndex(text => DECISION_SETTINGS_LABELS.navDecision.test(text))
+  if (weir < 0) problems.push('the settings navigation has no Weir section')
+  if (routing < 0) problems.push('the settings navigation has no Weir model-routing page')
+  if (decision < 0) problems.push('the settings navigation has no Decision assistant page')
+  if (weir >= 0 && routing >= 0 && routing < weir) problems.push('the model-routing page renders before its Weir section')
+  if (weir >= 0 && decision >= 0 && decision < weir) problems.push('the Decision assistant page renders before its Weir section')
+  if (routing >= 0 && decision >= 0 && decision < routing) problems.push('the Decision assistant page renders before the model-routing page (order 42 must follow 41)')
+  if (new Set([weir, routing, decision].filter(index => index >= 0)).size !== [weir, routing, decision].filter(index => index >= 0).length) problems.push('two Weir pages share one navigation row')
+  return problems
+}
+
+const isSwitch = control => control?.role === 'switch'
+const isTab = control => control?.role === 'tab'
+const pressedControls = row => (row?.controls ?? []).filter(control => control.pressed === 'true' || control.pressed === 'false')
+
+/**
+ * The Decision assistant page as rendered on open: the active navigation row is
+ * that page, the basic group is exactly the three ordered rows (master switch,
+ * default selector, A/B/C chips) and the advanced group starts folded with no
+ * body mounted. With the master switch off, only its own row survives and the
+ * whole advanced group disappears (fold title included).
+ * @param {{activeNav?:string|null,nav?:string[],groups?:string[],basics?:any,advanced?:any,classSet?:any}} dom
+ * @param {{masterEnabled?:boolean}} expected
+ */
+export function decisionSettingsPageProblems(dom = {}, expected = {}) {
+  const problems = []
+  const masterEnabled = expected.masterEnabled !== false
+  const active = readableText(dom.activeNav)
+  if (!DECISION_SETTINGS_LABELS.navDecision.test(active)) problems.push(`the mounted settings page is ${active || 'unknown'} instead of the Decision assistant page`)
+  const groups = (Array.isArray(dom.groups) ? dom.groups : []).map(String)
+  const rows = dom.basics?.rows
+  if (!Array.isArray(rows)) {
+    problems.push('the Decision assistant page renders no basic group')
+    return problems
+  }
+  if (rows.length === 0) problems.push('the basic group renders no row at all')
+  const firstControl = row => (row?.controls ?? [])[0] ?? null
+  if (rows[0] && !(rows[0].controls ?? []).some(isSwitch)) problems.push('the first basic row is not the master switch')
+  if (rows[0] && !DECISION_SETTINGS_LABELS.master.test(readableText(firstControl(rows[0])?.label))) problems.push(`the master switch is labelled ${shortenedText(firstControl(rows[0])?.label)}`)
+  if (!masterEnabled) {
+    if (rows.length !== 1) problems.push(`the master switch is off but the basic group keeps ${rows.length} rows`)
+    if (dom.advanced) problems.push('the advanced group still renders while the master switch is off')
+    if (groups.includes('decisionAdvanced')) problems.push('the advanced group id survives the master switch being off')
+    return problems
+  }
+  if (rows.length !== 3) problems.push(`the basic group renders ${rows.length} rows instead of three`)
+  const selectorTabs = (rows[1]?.controls ?? []).filter(isTab)
+  if (rows[1] && selectorTabs.length !== 2) problems.push(`the default-selector row renders ${selectorTabs.length} segments instead of two (off/auto)`)
+  const segmentIds = selectorTabs.map(control => String(control.id ?? ''))
+  if (rows[1] && !segmentIds.every(id => /decisionAgentSelectorDefault-(?:off|auto)$/.test(id))) problems.push(`the default-selector segments are not the off/auto control: ${segmentIds.join(', ')}`)
+  if (rows[1] && !DECISION_SETTINGS_LABELS.selector.test(readableText(rows[1]?.text))) problems.push('the second basic row does not name the new-session default')
+  const chips = pressedControls(rows[2])
+  if (rows[2] && chips.length !== 3) problems.push(`the answer-class row renders ${chips.length} chips instead of three`)
+  if (rows[2] && !DECISION_SETTINGS_LABELS.classes.test(readableText(rows[2]?.text))) problems.push('the third basic row does not name the Auto answer classes')
+  if (!dom.advanced) problems.push('the advanced group is missing while the master switch is on')
+  else {
+    if (dom.advanced.hasToggle !== true) problems.push('the advanced group renders no fold toggle')
+    if (dom.advanced.expanded !== 'false') problems.push(`the advanced group starts with aria-expanded=${dom.advanced.expanded} instead of false`)
+    if (dom.advanced.body) problems.push('the collapsed advanced group still mounts its body')
+    if ((dom.advanced.rows ?? []).length > 0) problems.push('the collapsed advanced group still holds rows')
+  }
+  if (groups.includes('decisionAdvanced') !== Boolean(dom.advanced)) problems.push('the advanced group id and its rendered group disagree')
+  const extra = groups.filter(id => !['decisionBasics', 'decisionAdvanced'].includes(id))
+  if (extra.length) problems.push(`the Decision assistant page renders a foreign group: ${extra.join(', ')}`)
+  return problems
+}
+
+/**
+ * The expanded advanced group: the seven runtime rows the settings declaration
+ * owns, the timeout input first and the Auto Shadow switch last, every control
+ * enabled and carrying the authority value.
+ * @param {{advanced?:any}} dom
+ * @param {{timeoutMs?:number,shadow?:boolean}} expected
+ */
+export function decisionSettingsAdvancedProblems(dom = {}, expected = {}) {
+  const problems = []
+  const advanced = dom.advanced ?? null
+  if (!advanced) return ['the advanced group is not rendered, so it cannot expand']
+  if (advanced.expanded !== 'true') problems.push(`the advanced toggle reports aria-expanded=${advanced.expanded}`)
+  if (!advanced.body) problems.push('the expanded advanced group mounts no body')
+  const rows = advanced.rows ?? []
+  if (rows.length !== 7) problems.push(`the expanded advanced group renders ${rows.length} rows instead of seven`)
+  const timeoutControl = (rows[0]?.controls ?? []).find(control => control.tag === 'input')
+  if (!timeoutControl) problems.push('the first advanced row is not the Attempt timeout input')
+  else {
+    if (timeoutControl.id !== 'plugin-config-weir-settings-decisionAgentAnswerTimeoutMs') problems.push(`the Attempt timeout input id is ${timeoutControl.id}`)
+    if (timeoutControl.disabled === true) problems.push('the Attempt timeout input is disabled while the master switch is on')
+    if (Number.isInteger(expected.timeoutMs) && timeoutControl.value !== String(expected.timeoutMs)) problems.push(`the Attempt timeout input shows ${timeoutControl.value} instead of the authoritative ${expected.timeoutMs}`)
+  }
+  const shadow = (rows.at(-1)?.controls ?? []).find(isSwitch)
+  if (!shadow) problems.push('the last advanced row is not the Auto Shadow switch')
+  else {
+    if (!DECISION_SETTINGS_LABELS.shadow.test(readableText(shadow.label))) problems.push(`the Auto Shadow switch keeps the accessible name ${shortenedText(shadow.label)}`)
+    if (shadow.disabled === true) problems.push('the Auto Shadow switch is disabled while the master switch is on')
+    if (typeof expected.shadow === 'boolean' && shadow.checked !== String(expected.shadow)) problems.push(`the Auto Shadow switch reads ${shadow.checked} instead of the authoritative ${expected.shadow}`)
+  }
+  for (const row of rows) {
+    for (const control of row?.controls ?? []) {
+      if (control.disabled === true) problems.push(`an expanded advanced control is disabled: ${shortenedText(control.id ?? control.label ?? control.tag)}`)
+    }
+  }
+  return problems
+}
+
+/**
+ * The A/B/C chips after a real toggle: exactly three chips in row order, one
+ * aria-pressed per chip naming the current selection, and the count marker
+ * carrying the same selection in row order (the stored JSON is canonicalized
+ * from the row order, never from click order).
+ * @param {{chips?:any[],count?:number|null,countText?:string|null}|null} classSet
+ * @param {string[]} expected
+ */
+export function decisionSettingsClassSetProblems(classSet, expected = []) {
+  const problems = []
+  const wanted = (Array.isArray(expected) ? expected : []).map(String)
+  if (!classSet) {
+    problems.push('the Auto answer class editor is not rendered')
+    return problems
+  }
+  const chips = (Array.isArray(classSet.chips) ? classSet.chips : []).filter(chip => chip && typeof chip === 'object')
+  if (chips.map(chip => String(chip.value)).join(',') !== 'A,B,C') problems.push(`the class chips render ${chips.map(chip => String(chip.value)).join(',') || 'nothing'} instead of A,B,C in row order`)
+  for (const chip of chips) if (!['true', 'false'].includes(String(chip.pressed))) problems.push(`the ${chip.value} chip carries no aria-pressed state`)
+  const selected = chips.filter(chip => String(chip.pressed) === 'true').map(chip => String(chip.value))
+  if (selected.join(',') !== wanted.join(',')) problems.push(`the rendered selection ${selected.join(',') || 'none'} differs from ${wanted.join(',') || 'none'}`)
+  if (chips.some(chip => chip.disabled === true)) problems.push('a class chip is disabled while the master switch is on')
+  if (classSet.count !== wanted.length) problems.push(`the class counter reads ${classSet.count} instead of ${wanted.length}`)
+  const countText = readableText(classSet.countText)
+  if (wanted.length === 0) {
+    if (!DECISION_SETTINGS_LABELS.none.test(countText)) problems.push(`an empty selection reads ${shortenedText(countText)} instead of the none sentence`)
+  } else if (countText !== wanted.join(', ')) problems.push(`the class counter reads ${shortenedText(countText)} instead of ${wanted.join(', ')} in row order`)
+  return problems
+}
+
+/**
+ * After Escape: the Settings dialog is gone AND the Decision assistant page
+ * unmounted — no group, no class chips, no advanced fold, no assistant editor.
+ * @param {{dialog?:boolean,groups?:string[],classSets?:number,advancedToggles?:number,agentEditors?:number}} snapshot
+ */
+export function decisionSettingsClosedProblems(snapshot = {}) {
+  const problems = []
+  if (snapshot.dialog === true) problems.push('the Settings dialog is still open after Escape')
+  if ((snapshot.groups ?? []).length > 0) problems.push(`the Weir settings page is still mounted: ${(snapshot.groups ?? []).join(', ')}`)
+  if ((snapshot.classSets ?? 0) > 0) problems.push('the Auto answer class chips are still mounted after close')
+  if ((snapshot.advancedToggles ?? 0) > 0) problems.push('the advanced fold is still mounted after close')
+  if ((snapshot.agentEditors ?? 0) > 0) problems.push('an assistant editor is still mounted after close')
+  return problems
+}
+
+/**
+ * The assistant editor's advanced area: the scope and model route are ordinary
+ * rows and chips — no JSON textarea survives, the preference stays the only
+ * free-text box, and an empty chain still renders its own caption.
+ * @param {{textareas?:any[],scopeEditors?:number,scopePaths?:any[],scopeTags?:any[],scopeClasses?:any[],scopeAdd?:any,routeEditors?:number,routeAdd?:number,routeEmpty?:number,routeIncomplete?:number,rungs?:any[]}} dom
+ */
+export function assistantVisualEditorProblems(dom = {}) {
+  const problems = []
+  const textareas = (Array.isArray(dom.textareas) ? dom.textareas : []).filter(entry => entry && typeof entry === 'object')
+  for (const textarea of textareas) {
+    const field = String(textarea.agentField ?? '')
+    if (field === 'scope' || field === 'modelRoute') problems.push(`the ${field} JSON textarea still renders`)
+  }
+  const editable = textareas.map(textarea => String(textarea.agentField ?? ''))
+  if (editable.length !== 1 || editable[0] !== 'preference') problems.push(`the editor's free-text boxes are ${editable.join(', ') || 'none'} instead of the preference alone`)
+  if (dom.scopeEditors !== 1) problems.push(`the editor renders ${dom.scopeEditors} scope editors instead of one`)
+  const classes = (Array.isArray(dom.scopeClasses) ? dom.scopeClasses : []).map(entry => String(entry?.value))
+  if (classes.join(',') !== 'A,B,C') problems.push(`the scope class chips render ${classes.join(',') || 'nothing'} instead of A,B,C in row order`)
+  for (const chip of Array.isArray(dom.scopeClasses) ? dom.scopeClasses : []) if (!['true', 'false'].includes(String(chip?.pressed))) problems.push(`the scope class ${chip?.value} chip carries no aria-pressed state`)
+  if ((dom.scopeAdd?.path ?? 0) !== 1 || (dom.scopeAdd?.tag ?? 0) !== 1) problems.push('the scope editor must offer one path and one tag add action')
+  if (dom.routeEditors !== 1) problems.push(`the editor renders ${dom.routeEditors} route editors instead of one`)
+  if (dom.routeAdd !== 1) problems.push('the route editor must offer one add action')
+  const rungs = (Array.isArray(dom.rungs) ? dom.rungs : []).filter(rung => rung && typeof rung === 'object')
+  for (const rung of rungs) {
+    if (!['picker', 'fallback'].includes(String(rung.mode))) problems.push(`route rung ${rung.index} renders neither the model picker nor the three fallback inputs`)
+    if (rung.remove !== true) problems.push(`route rung ${rung.index} has no remove action`)
+    if (rung.mode === 'fallback') {
+      const values = rung.values ?? {}
+      if (!('provider' in values) || !('model' in values) || !('effort' in values)) problems.push(`route rung ${rung.index} does not expose provider/model/effort inputs`)
+    } else {
+      const trigger = readableText(rung.trigger)
+      if (!trigger) problems.push(`route rung ${rung.index} renders no model trigger`)
+      else if (MODEL_PICKER_KEYS.includes(trigger)) problems.push(`route rung ${rung.index} renders the raw picker key ${trigger}`)
+    }
+  }
+  if (rungs.length === 0 && dom.routeEmpty !== 1) problems.push('an empty model chain must render its own caption')
+  // A freshly added rung is legitimately incomplete (no provider/model yet) and
+  // the picker shows its loading string while the catalog arrives, so neither is
+  // a problem here; the driver proves the caption clears once a model is picked.
+  return problems
+}
+
+/**
+ * The opened model picker's root pane: the model and reasoning rows, every visible
+ * string localized — a raw dictionary key means the owning namespace never
+ * received the picker's strings (the settings page owns them in its own namespace,
+ * the assistant editor reads them from the decision one).
+ * @param {{trigger?:string,rows?:string[]}} picker
+ */
+export function assistantRoutePickerProblems(picker = {}) {
+  const problems = []
+  const bare = value => readableText(value).replace(/[›»>]+$/u, '').trim()
+  const trigger = bare(picker.trigger)
+  if (!trigger) problems.push('the model picker renders no trigger')
+  else if (MODEL_PICKER_KEYS.includes(trigger)) problems.push(`the model picker trigger renders the raw key ${trigger}`)
+  const rows = (Array.isArray(picker.rows) ? picker.rows : []).map(bare)
+  if (rows.length !== 2) problems.push(`the model picker root pane renders ${rows.length} rows instead of the model and reasoning rows`)
+  for (const row of rows) if (MODEL_PICKER_KEYS.includes(row)) problems.push(`the model picker renders the raw key ${row}`)
+  return problems
+}
+
+/**
+ * The saved assistant profile as the authority returns it: the visual scope and
+ * route reach the store exactly as the controls staged them — paths/tags only
+ * when filled, authorization classes in row order, never `workspaces`, and the
+ * ordered rungs without an empty reasoning effort.
+ * @param {{scope?:any,modelRoute?:any}} profile
+ * @param {{paths?:string[],tags?:string[],classes?:string[],chain?:Array<{provider?:string,model?:string,reasoningEffort?:string}>}} expected
+ */
+export function assistantVisualReadbackProblems(profile = {}, expected = {}) {
+  const problems = []
+  const scope = profile.scope ?? {}
+  const readList = key => (Array.isArray(scope[key]) ? scope[key] : []).map(String)
+  for (const key of ['paths', 'tags']) {
+    const want = (expected[key] ?? []).map(String)
+    const got = readList(key)
+    if (got.join(',') !== want.join(',')) problems.push(`the saved scope ${key} are ${got.join(',') || 'none'} instead of ${want.join(',') || 'none'}`)
+  }
+  const classes = readList('authorizationClasses')
+  const wantClasses = (expected.classes ?? []).map(String)
+  if (classes.join(',') !== wantClasses.join(',')) problems.push(`the saved authorization classes are ${classes.join(',') || 'none'} instead of ${wantClasses.join(',') || 'none'} in row order`)
+  if (Object.hasOwn(scope, 'workspaces')) problems.push('the saved scope carries a workspaces key the editor must never write')
+  const chain = (Array.isArray(profile.modelRoute?.chain) ? profile.modelRoute.chain : []).map(rung => ({
+    provider: String(rung?.provider ?? ''), model: String(rung?.model ?? ''),
+    ...(rung?.reasoningEffort ? { reasoningEffort: String(rung.reasoningEffort) } : {}),
+  }))
+  const wantChain = (expected.chain ?? []).map(rung => ({
+    provider: String(rung?.provider ?? ''), model: rung?.model === '*' ? '*' : String(rung?.model ?? ''),
+    ...(rung?.reasoningEffort ? { reasoningEffort: String(rung.reasoningEffort) } : {}),
+  }))
+  // A `*` model expectation means "whatever id the picked catalog row resolved
+  // to": the rendered menu only carries the model name, so the caller proves the
+  // id through the picker's name round-trip and this guard asserts the shape.
+  if (chain.length !== wantChain.length) problems.push(`the saved model route holds ${chain.length} rungs instead of ${wantChain.length}`)
+  wantChain.forEach((want, index) => {
+    const got = chain[index]
+    if (!got) return
+    if (got.provider !== want.provider) problems.push(`rung ${index + 1} saved provider ${got.provider} instead of ${want.provider}`)
+    if (want.model === '*') {
+      if (got.model === '') problems.push(`rung ${index + 1} saved no model id`)
+    } else if (got.model !== want.model) problems.push(`rung ${index + 1} saved model ${got.model} instead of ${want.model}`)
+    // `*` also covers the reasoning effort: a catalog row's default effort is only
+    // visible as a localized suffix on the picker trigger, never as an id.
+    if (want.reasoningEffort !== '*' && JSON.stringify(got.reasoningEffort ? { reasoningEffort: got.reasoningEffort } : {}) !== JSON.stringify(want.reasoningEffort ? { reasoningEffort: want.reasoningEffort } : {})) problems.push(`rung ${index + 1} saved reasoning effort ${got.reasoningEffort ?? 'none'} instead of ${want.reasoningEffort ?? 'none'}`)
+  })
+  return problems
+}

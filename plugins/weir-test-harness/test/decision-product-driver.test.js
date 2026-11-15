@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
 import decisionGui from '../src/scenarios/decision-gui.js'
 import { extract } from '../src/mock-kit.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
@@ -383,19 +383,52 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   assert.ok(inboxWindow.includes('options.checkBlock') && inboxWindow.includes("stillPending.case.state === 'awaiting_user'"), 'the inbox block check re-proves the case stays awaiting the user after the fill')
 })
 
-test('Decision settings navigation tolerates the Host settings page it restores', () => {
+test('Decision settings navigation targets the third Weir page without a page-body probe', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function openDecisionSettings\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(body, 'openDecisionSettings exists')
-  // Host Settings restores the last visited page, so a page-specific version
-  // string is not a readiness probe: two real runs stalled on it.
-  assert.ok(!body.includes('当前版本'), 'readiness is the dialog and the Weir page, not a restored page body')
+  // Host Settings restores the last visited page, so neither a version string nor
+  // one page's body text is a readiness probe: the dialog, its navigation ledger
+  // and the decision page's own basic group are.
+  assert.ok(!body.includes('当前版本'), 'readiness is the dialog and the page groups, not a restored page body')
+  assert.ok(!body.includes('Auto Shadow'), 'the Auto Shadow body text is never the readiness signal')
   const dialog = body.indexOf('[role="dialog"]')
-  const weir = body.indexOf("keyboardActivate('Open Weir settings'")
-  const controls = body.indexOf('Auto Shadow')
-  assert.ok(dialog >= 0 && weir > dialog && controls > weir, 'dialog → Weir page → its real Auto Shadow controls')
-  assert.ok(body.includes("await instance.cdp.key('Escape')"), 'a restored open dialog is closed before the menu gesture')
-  assert.ok(!/\.click\(|dispatchMouseEvent/.test(body), 'Host Settings navigation stays native-keyboard only')
+  const section = body.indexOf("keyboardActivate('Open the Decision assistant settings page'")
+  const ready = body.indexOf('[data-group="decisionBasics"]')
+  assert.ok(dialog >= 0 && section > dialog && ready > section, 'dialog → Decision assistant section → its basic group')
+  assert.ok(body.includes('decisionSettingsNavProblems('), 'the navigation ledger proves the third Weir section registered')
+  const shell = driver.match(/async function openSettingsDialog\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(shell, 'openSettingsDialog exists')
+  assert.ok(shell.includes("await instance.cdp.key('Escape')"), 'a restored open dialog is closed before the menu gesture')
+  assert.ok(!/\.click\(|dispatchMouseEvent/.test(body + shell), 'Host Settings navigation stays native-keyboard only')
+})
+
+test('Decision settings page structure and close are asserted from real DOM attributes', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const dom = driver.match(/async function decisionSettingsDom\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(dom, 'decisionSettingsDom exists')
+  assert.ok(dom.includes('data-decision-class-set'), 'the class chips are read from their real container')
+  assert.ok(dom.includes("'aria-pressed'") || dom.includes('aria-pressed'), 'chip state is the aria-pressed attribute')
+  assert.ok(dom.includes("data-advanced-toggle") && dom.includes('aria-expanded'), 'the fold state is the toggle aria-expanded')
+  assert.ok(dom.includes('data-decision-class-count'), 'the count marker is read from the chip row')
+  assert.ok(driver.includes('decisionSettingsPageProblems(opened, { masterEnabled: true })'), 'the open page is asserted through the three-row guard')
+  assert.ok(driver.includes('decisionSettingsAdvancedProblems(expanded, authority)'), 'the expanded advanced group is asserted against the authority')
+  assert.ok(driver.includes('decisionSettingsPageProblems(off, { masterEnabled: false })'), 'the master-off page is asserted to lose the advanced group')
+  assert.ok(!driver.includes('document.body.innerText.includes("Auto Shadow'), 'no close assertion relies on the Auto Shadow body text')
+  const closeBody = driver.match(/async function closeDecisionSettings\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(closeBody, 'closeDecisionSettings exists')
+  assert.ok(closeBody.includes('decisionSettingsClosedProblems('), 'the close assertion is the structural page-absent guard')
+})
+
+test('Decision settings chip entry replaces the retired whitelist text input', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(!driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'the whitelist is no longer a text input')
+  const chips = driver.match(/async function setDecisionAnswerClasses\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(chips, 'setDecisionAnswerClasses exists')
+  assert.ok(chips.includes('button[data-decision-class="${entry}"]') || chips.includes('data-decision-class="'), 'the whitelist is edited by clicking its class chips')
+  assert.ok(chips.includes('decisionSettingsClassSetProblems('), 'the staged chips are compared against the requested selection')
+  assert.ok(driver.includes("await setDecisionAdvanced(true)"), 'the advanced group is expanded before its rows are touched')
+  assert.ok(!/keyboardFill\('Edit Auto answer-class whitelist'/.test(driver), 'no JSON text entry survives for the whitelist')
 })
 test('a delayed host credit page above a Decision modal is still dismissed', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
@@ -1039,7 +1072,8 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   assert.ok(mainSignal >= 0 && networkCollection > mainSignal, 'crash signals the owned main PID before any asynchronous network collection')
   assert.ok(stopBody.indexOf('const mainPid = value.app.pid') < mainSignal && stopBody.indexOf('const before =') < mainSignal, 'ownership identity and liveness are captured synchronously before SIGKILL')
   assert.match(driver, /knownSessionIds\.has\(sessionId\)/, 'raw authority reads are limited to run-created sessions')
-  assert.ok(driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'settings text entry targets the actual host-namespaced input')
+  assert.ok(driver.includes('[data-decision-class-set] button[data-decision-class="${entry}"]'), 'the Auto answer whitelist is entered through the rendered A/B/C chips')
+  assert.ok(!driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'the retired whitelist text input is not addressed anymore')
   assert.match(driver, /keyboardSelect\('Change routing review window', 'select\[data-routing-window\]', '24h'\)/, 'Desktop changes to the first real non-default window before its controlled select starts loading')
   assert.ok(!driver.includes("keyboardSelect('Change routing review window', 'select[data-routing-window]', '7d')"), 'the known intermediate-onChange 7d prefix path is not retained')
   assert.ok(driver.includes('input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs'), 'the held interruption uses the real timeout setting input')
@@ -1376,8 +1410,9 @@ test('the driver imports every guard it calls', () => {
 
 test('the P4 candidate fixtures do not rely on workspace-bound eligibility', () => {
   const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const created = driver.indexOf("const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE")
-  assert.ok(created > 0, 'the foreign assistant fixture still exists')
+  const created = driver.indexOf("const foreign = await createAgentWithVisualSettings(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE")
+  assert.ok(created > 0, 'the foreign assistant fixture still exists (created through the visual scope/route editor)')
+  assert.ok(driver.includes('async function createAgentWithVisualSettings('), 'the visual-scope assistant flow exists')
   const disabled = driver.indexOf("await agentState(foreignSession, foreign.agentId, 'disabled')", created)
   const firstMarker = driver.indexOf('await submitMarker(instance, \'GUI_AUTO_EMPTY\')', created)
   assert.ok(disabled > created && disabled < firstMarker, 'the foreign assistant is switched off through the rendered confirmation before any Auto fixture counts candidates')
@@ -2083,4 +2118,202 @@ test('the pending-overview driver probes exist, stay compiled, and pin the real 
   assert.ok(fixtureHost.includes("event.type === 'user/message'"), 'the scan reads the real user-message event type')
   const guiB = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-b.mjs'), 'utf8')
   assert.ok(guiB.includes('finalInbox.every(item => !scenarioCaseIds.includes(item.caseId))'), 'gui-b scopes its clean-end assertion to its own Cases')
+})
+
+// The Decision assistant settings page, as the real isolated Desktop rendered it on
+// 2025-11-26 (run probe-1794775355709): the shapes below are captured DOM, so these
+// guards are tested against the product's own structure rather than a mock.
+const SETTINGS_NAV_ZH = ['通用设置', '模型', '内置插件', 'Agent 预设', 'Weir', 'Weir 模型路由', '决策助手']
+const SETTINGS_NAV_EN = ['General', 'Models', 'Built-in plugins', 'Agent presets', 'Weir', 'Weir model routing', 'Decision assistant']
+const masterSwitchControl = { tag: 'button', id: null, role: 'switch', label: '决策 Agent', checked: 'true', pressed: null, value: '', disabled: false }
+const chipControl = (value, pressed) => ({ tag: 'button', id: null, role: null, label: null, checked: null, pressed, value: '', disabled: false })
+const tabControl = value => ({ tag: 'button', id: `plugin-config-weir-settings-decisionAgentSelectorDefault-${value}`, role: 'tab', label: null, checked: null, pressed: null, value: '', disabled: false })
+const advancedRow = (tag, control) => ({ tag: 'div', text: 'row', controls: [control] })
+const settingsOpenSnapshot = (overrides = {}) => ({
+  nav: SETTINGS_NAV_ZH,
+  activeNav: '决策助手',
+  groups: ['decisionBasics', 'decisionAdvanced'],
+  basics: {
+    rows: [
+      { tag: 'div', text: '决策 Agent\nOff 时不拦截、不咨询、不采样，也不创建数据库（默认关闭）。', controls: [masterSwitchControl, { tag: 'button', id: null, role: null, label: null, checked: null, pressed: null, value: '', disabled: false }] },
+      { tag: 'div', text: '新根会话的默认选择\n默认 Off。\nOff\nAuto', controls: [tabControl('off'), tabControl('auto')] },
+      { tag: 'div', text: '自动回答类别\n允许 Auto 自动回答的授权类别。\nA\nB\nC', controls: [chipControl('A', 'false'), chipControl('B', 'false'), chipControl('C', 'false')] },
+    ],
+  },
+  advanced: { expanded: 'false', hasToggle: true, body: false, rows: [] },
+  classSet: { chips: [{ value: 'A', pressed: 'false', disabled: false }, { value: 'B', pressed: 'false', disabled: false }, { value: 'C', pressed: 'false', disabled: false }], count: 0, countText: '未允许任何类别——Auto 仍会分类与路由，但结论交给你。' },
+  saveBar: false,
+  ...overrides,
+})
+const settingsExpandedSnapshot = (overrides = {}) => ({
+  ...settingsOpenSnapshot(),
+  advanced: {
+    expanded: 'true',
+    hasToggle: true,
+    body: true,
+    rows: [
+      advancedRow('input', { tag: 'input', id: 'plugin-config-weir-settings-decisionAgentAnswerTimeoutMs', role: null, label: null, checked: 'false', pressed: null, value: '150', disabled: false }),
+      advancedRow('input', { tag: 'input', id: 'plugin-config-weir-settings-decisionAgentMaxAttemptsPerCase', role: null, label: null, checked: 'false', pressed: null, value: '3', disabled: false }),
+      advancedRow('input', { tag: 'input', id: 'plugin-config-weir-settings-decisionAgentContextBudgetTokens', role: null, label: null, checked: 'false', pressed: null, value: '24000', disabled: false }),
+      advancedRow('input', { tag: 'input', id: 'plugin-config-weir-settings-decisionAgentMaxOutputTokens', role: null, label: null, checked: 'false', pressed: null, value: '4096', disabled: false }),
+      advancedRow('input', { tag: 'input', id: 'plugin-config-weir-settings-decisionAgentMaxConcurrentAttempts', role: null, label: null, checked: 'false', pressed: null, value: '4', disabled: false }),
+      advancedRow('input', { tag: 'input', id: 'plugin-config-weir-settings-decisionAgentRetentionDays', role: null, label: null, checked: 'false', pressed: null, value: '0', disabled: false }),
+      advancedRow('button', { tag: 'button', id: null, role: 'switch', label: 'Auto Shadow 诊断', checked: 'false', pressed: null, value: '', disabled: false }),
+    ],
+  },
+  ...overrides,
+})
+
+test('decision settings navigation guard requires the third Weir page in order', () => {
+  assert.deepEqual(decisionSettingsNavProblems(SETTINGS_NAV_ZH), [])
+  assert.deepEqual(decisionSettingsNavProblems(SETTINGS_NAV_EN), [])
+  const missing = decisionSettingsNavProblems(['通用设置', 'Weir'])
+  assert.equal(missing.length, 2, 'a missing routing page and a missing decision page are both reported')
+  assert.ok(missing.some(text => /model-routing/.test(text)) && missing.some(text => /Decision assistant page/.test(text)))
+  const swapped = decisionSettingsNavProblems(['Weir', '决策助手', 'Weir 模型路由'])
+  assert.ok(swapped.some(text => /before the model-routing page/.test(text)), 'order 42 must follow order 41')
+  assert.deepEqual(decisionSettingsNavProblems([]).length, 3)
+})
+
+test('decision settings page guard proves three basic rows and a folded advanced group', () => {
+  assert.deepEqual(decisionSettingsPageProblems(settingsOpenSnapshot(), { masterEnabled: true }), [])
+  const twoRows = settingsOpenSnapshot()
+  twoRows.basics.rows = twoRows.basics.rows.slice(0, 2)
+  assert.ok(decisionSettingsPageProblems(twoRows, { masterEnabled: true }).some(text => /instead of three/.test(text)))
+  const expanded = settingsOpenSnapshot()
+  expanded.advanced = { expanded: 'true', hasToggle: true, body: true, rows: [] }
+  const problems = decisionSettingsPageProblems(expanded, { masterEnabled: true })
+  assert.ok(problems.some(text => /aria-expanded=true/.test(text)) && problems.some(text => /mounts its body/.test(text)), 'the default fold must stay closed')
+  const foreignGroup = settingsOpenSnapshot({ groups: ['decisionBasics', 'decisionAdvanced', 'todo'] })
+  assert.ok(decisionSettingsPageProblems(foreignGroup, { masterEnabled: true }).some(text => /foreign group/.test(text)))
+  const noChips = settingsOpenSnapshot()
+  noChips.basics.rows[2].controls = []
+  assert.ok(decisionSettingsPageProblems(noChips, { masterEnabled: true }).some(text => /chips instead of three/.test(text)))
+  // master switch off: only its own row survives and the advanced group is gone
+  const off = settingsOpenSnapshot({ groups: ['decisionBasics'], basics: { rows: [settingsOpenSnapshot().basics.rows[0]] }, advanced: null, classSet: null })
+  assert.deepEqual(decisionSettingsPageProblems(off, { masterEnabled: false }), [])
+  const offButAdvanced = settingsOpenSnapshot({ groups: ['decisionBasics', 'decisionAdvanced'], basics: { rows: [settingsOpenSnapshot().basics.rows[0]] } })
+  assert.ok(decisionSettingsPageProblems(offButAdvanced, { masterEnabled: false }).some(text => /advanced group still renders/.test(text)))
+  const offButTwoRows = settingsOpenSnapshot({ groups: ['decisionBasics'], basics: { rows: settingsOpenSnapshot().basics.rows.slice(0, 2) }, advanced: null })
+  assert.ok(decisionSettingsPageProblems(offButTwoRows, { masterEnabled: false }).some(text => /keeps 2 rows/.test(text)))
+  const wrongPage = settingsOpenSnapshot({ activeNav: 'Weir' })
+  assert.ok(decisionSettingsPageProblems(wrongPage, { masterEnabled: true }).some(text => /mounted settings page is Weir/.test(text)))
+})
+
+test('decision settings advanced guard reads the runtime rows against authority', () => {
+  assert.deepEqual(decisionSettingsAdvancedProblems(settingsExpandedSnapshot(), { timeoutMs: 150, shadow: false }), [])
+  assert.ok(decisionSettingsAdvancedProblems(settingsExpandedSnapshot({ advanced: { expanded: 'false', hasToggle: true, body: false, rows: [] } }), {}).some(text => /aria-expanded=false/.test(text)))
+  const wrongTimeout = settingsExpandedSnapshot()
+  wrongTimeout.advanced.rows[0].controls[0].value = '60000'
+  assert.ok(decisionSettingsAdvancedProblems(wrongTimeout, { timeoutMs: 150 }).some(text => /instead of the authoritative 150/.test(text)))
+  const disabled = settingsExpandedSnapshot()
+  disabled.advanced.rows[0].controls[0].disabled = true
+  assert.ok(decisionSettingsAdvancedProblems(disabled, { timeoutMs: 150 }).some(text => /is disabled/.test(text)))
+  const renamed = settingsExpandedSnapshot()
+  renamed.advanced.rows[6].controls[0].label = 'Shadow'
+  assert.ok(decisionSettingsAdvancedProblems(renamed, {}).some(text => /accessible name Shadow/.test(text)))
+  const sixRows = settingsExpandedSnapshot()
+  sixRows.advanced.rows = sixRows.advanced.rows.slice(0, 6)
+  assert.ok(decisionSettingsAdvancedProblems(sixRows, {}).some(text => /instead of seven/.test(text)))
+})
+
+test('decision settings class-set guard keeps the stored whitelist in row order', () => {
+  const selected = (values) => ({ chips: ['A', 'B', 'C'].map(value => ({ value, pressed: String(values.includes(value)), disabled: false })), count: values.length, countText: values.length === 0 ? '未允许任何类别——Auto 仍会分类与路由，但结论交给你。' : values.join(', ') })
+  assert.deepEqual(decisionSettingsClassSetProblems(selected(['A', 'C']), ['A', 'C']), [])
+  assert.deepEqual(decisionSettingsClassSetProblems(selected([]), []), [])
+  assert.ok(decisionSettingsClassSetProblems(selected(['A', 'C']), ['A', 'C']).length === 0, 'row order, not click order')
+  const clickOrder = selected(['A', 'C'])
+  clickOrder.countText = 'C, A'
+  assert.ok(decisionSettingsClassSetProblems(clickOrder, ['A', 'C']).some(text => /instead of A, C in row order/.test(text)))
+  const stale = selected(['A', 'C'])
+  stale.chips[1].pressed = 'true'
+  assert.ok(decisionSettingsClassSetProblems(stale, ['A', 'C']).some(text => /rendered selection A,B,C differs from A,C/.test(text)))
+  const notPressed = selected(['A'])
+  notPressed.chips[1].pressed = null
+  assert.ok(decisionSettingsClassSetProblems(notPressed, ['A']).some(text => /carries no aria-pressed state/.test(text)))
+  assert.ok(decisionSettingsClassSetProblems(selected([]), ['A']).some(text => /differs from A/.test(text)))
+  assert.ok(decisionSettingsClassSetProblems(null, []).length === 1)
+})
+
+test('decision settings close guard is structural, not a body-text probe', () => {
+  assert.deepEqual(decisionSettingsClosedProblems({ dialog: false, groups: [], classSets: 0, advancedToggles: 0, agentEditors: 0 }), [])
+  assert.ok(decisionSettingsClosedProblems({ dialog: true, groups: [], classSets: 0, advancedToggles: 0, agentEditors: 0 }).some(text => /dialog is still open/.test(text)))
+  assert.ok(decisionSettingsClosedProblems({ dialog: false, groups: ['decisionBasics'], classSets: 1, advancedToggles: 1, agentEditors: 0 }).length === 3, 'a mounted page, its chips and its fold are each reported')
+  assert.ok(decisionSettingsClosedProblems({ dialog: false, groups: [], classSets: 0, advancedToggles: 0, agentEditors: 1 }).some(text => /assistant editor/.test(text)))
+})
+
+test('assistant editor guard replaces the scope and route JSON boxes with visual controls', () => {
+  const staged = {
+    textareas: [{ id: 'weir-da-agent-preference-create', agentField: 'preference' }],
+    scopeEditors: 1,
+    scopePaths: [],
+    scopeTags: [],
+    scopeClasses: ['A', 'B', 'C'].map(value => ({ value, pressed: 'true' })),
+    scopeAdd: { path: 1, tag: 1 },
+    routeEditors: 1,
+    routeAdd: 1,
+    routeEmpty: 1,
+    routeIncomplete: 0,
+    rungs: [],
+  }
+  assert.deepEqual(assistantVisualEditorProblems(staged), [])
+  const withJson = { ...staged, textareas: [{ id: 'weir-da-agent-scope-create', agentField: 'scope' }, { id: 'weir-da-agent-preference-create', agentField: 'preference' }] }
+  assert.ok(assistantVisualEditorProblems(withJson).some(text => /scope JSON textarea still renders/.test(text)))
+  const withRouteJson = { ...staged, textareas: [{ id: 'weir-da-agent-route-create', agentField: 'modelRoute' }, { id: 'weir-da-agent-preference-create', agentField: 'preference' }] }
+  assert.ok(assistantVisualEditorProblems(withRouteJson).some(text => /modelRoute JSON textarea still renders/.test(text)))
+  const twoBoxes = { ...staged, textareas: [{ id: 'a', agentField: 'preference' }, { id: 'b', agentField: 'name' }] }
+  assert.ok(assistantVisualEditorProblems(twoBoxes).some(text => /free-text boxes/.test(text)))
+  const rungPicker = { ...staged, routeEmpty: 0, rungs: [{ index: 0, mode: 'picker', trigger: 'Mock One', remove: true }] }
+  assert.deepEqual(assistantVisualEditorProblems(rungPicker), [])
+  // A freshly added rung is legitimately incomplete and its picker shows the
+  // catalogue-loading string while the catalog arrives (real Desktop shape).
+  assert.deepEqual(assistantVisualEditorProblems({ ...staged, routeEmpty: 0, routeIncomplete: 1, rungs: [{ index: 0, mode: 'picker', trigger: '正在加载 provider…', remove: true }] }), [])
+  const rawPicker = { ...rungPicker, rungs: [{ index: 0, mode: 'picker', trigger: 'modelEmpty', remove: true }] }
+  assert.ok(assistantVisualEditorProblems(rawPicker).some(text => /renders the raw picker key modelEmpty/.test(text)))
+  const fallback = { ...staged, routeEmpty: 0, rungs: [{ index: 0, mode: 'fallback', trigger: 'Remove', remove: true, values: { provider: 'mock', model: 'mock-1', effort: '' } }] }
+  assert.deepEqual(assistantVisualEditorProblems(fallback), [])
+  const missingValues = { ...staged, routeEmpty: 0, rungs: [{ index: 0, mode: 'fallback', trigger: 'Remove', remove: true, values: {} }] }
+  assert.ok(assistantVisualEditorProblems(missingValues).some(text => /does not expose provider\/model\/effort inputs/.test(text)))
+  const noRemove = { ...rungPicker, rungs: [{ index: 0, mode: 'picker', trigger: 'Mock One', remove: false }] }
+  assert.ok(assistantVisualEditorProblems(noRemove).some(text => /has no remove action/.test(text)))
+  const noChips = { ...staged, scopeClasses: [{ value: 'A', pressed: 'true' }] }
+  assert.ok(assistantVisualEditorProblems(noChips).some(text => /instead of A,B,C/.test(text)))
+  const noEditor = { ...staged, scopeEditors: 0 }
+  assert.ok(assistantVisualEditorProblems(noEditor).some(text => /0 scope editors instead of one/.test(text)))
+})
+
+test('assistant route picker guard rejects raw dictionary keys', () => {
+  // The real isolated Desktop rendered exactly these rows before the decision
+  // namespace owned the picker strings: the failure this guard exists for.
+  assert.ok(assistantRoutePickerProblems({ trigger: 'modelEmpty', rows: ['pickerModel›', 'pickerEffort›'] }).length === 3)
+  assert.deepEqual(assistantRoutePickerProblems({ trigger: '选择模型', rows: ['模型›', '推理›'] }), [])
+  assert.deepEqual(assistantRoutePickerProblems({ trigger: 'Select a model', rows: ['Model›', 'Reasoning›'] }), [])
+  assert.deepEqual(assistantRoutePickerProblems({ trigger: 'Mock One', rows: ['模型›', '推理›'] }), [])
+  assert.ok(assistantRoutePickerProblems({ trigger: '', rows: ['模型›', '推理›'] }).some(text => /no trigger/.test(text)))
+  assert.ok(assistantRoutePickerProblems({ trigger: '选择模型', rows: ['模型›'] }).some(text => /instead of the model and reasoning rows/.test(text)))
+  // every key the shared picker resolves through `t` is rejected as a raw string
+  for (const key of MODEL_PICKER_KEYS) {
+    assert.ok(assistantRoutePickerProblems({ trigger: '选择模型', rows: [key, '推理›'] }).some(text => text.includes(`raw key ${key}`)), `${key} must be rejected as a rendered key`)
+    assert.ok(assistantRoutePickerProblems({ trigger: key, rows: ['模型›', '推理›'] }).some(text => text.includes(`trigger renders the raw key ${key}`)), `${key} must be rejected as a trigger`)
+  }
+})
+
+test('assistant visual readback guard compares the saved profile to the staged controls', () => {
+  const profile = { scope: { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], authorizationClasses: ['A', 'B'] }, modelRoute: { chain: [{ provider: 'mock', model: 'mock-1' }] } }
+  assert.deepEqual(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }), [])
+  assert.deepEqual(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: 'mock-1' }] }), [])
+  // the catalog row's default reasoning effort is only visible as a localized
+  // trigger suffix, so the driver wildcards it while the ids stay exact
+  assert.deepEqual(assistantVisualReadbackProblems({ scope: profile.scope, modelRoute: { chain: [{ provider: 'mock', model: 'mock-1', reasoningEffort: 'standard' }] } }, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*', reasoningEffort: '*' }] }), [])
+  assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*', reasoningEffort: 'standard' }] }).some(text => /saved reasoning effort none instead of standard/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(profile, { paths: [], tags: [], classes: ['A', 'B'], chain: [] }).length >= 3)
+  const leaked = { scope: { ...profile.scope, workspaces: ['weir-harness'] }, modelRoute: profile.modelRoute }
+  assert.ok(assistantVisualReadbackProblems(leaked, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /workspaces key/.test(text)))
+  const wrongClass = { scope: { ...profile.scope, authorizationClasses: ['C', 'B'] }, modelRoute: profile.modelRoute }
+  assert.ok(assistantVisualReadbackProblems(wrongClass, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /in row order/.test(text)))
+  const wrongProvider = { scope: profile.scope, modelRoute: { chain: [{ provider: 'other', model: 'mock-1' }] } }
+  assert.ok(assistantVisualReadbackProblems(wrongProvider, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved provider other instead of mock/.test(text)))
+  const emptyModel = { scope: profile.scope, modelRoute: { chain: [{ provider: 'mock', model: '' }] } }
+  assert.ok(assistantVisualReadbackProblems(emptyModel, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved no model id/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }, { provider: 'mock', model: 'mock-2' }] }).some(text => /holds 1 rungs instead of 2/.test(text)))
 })

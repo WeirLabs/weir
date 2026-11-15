@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -597,6 +597,143 @@ async function createAgent(sessionId, name, preference) {
   return agent
 }
 
+// One structured read of the assistant editor's advanced area: the scope rows,
+// the A/B/C chips and the ordered route rungs exactly as they render.
+async function assistantVisualDom() {
+  return instance.cdp.evaluate(`(() => {
+    const form = document.querySelector('form[data-agent-editor]')
+    if (!form) return null
+    const value = el => typeof el?.value === 'string' ? el.value : null
+    return {
+      textareas: [...form.querySelectorAll('textarea')].map(el => ({ id: el.id || null, agentField: el.getAttribute('data-agent-field') })),
+      scopeEditors: form.querySelectorAll('[data-scope-editor]').length,
+      scopePaths: [...form.querySelectorAll('[data-scope-path]')].map(el => ({ id: el.id || null, label: el.getAttribute('aria-label'), value: value(el) })),
+      scopeTags: [...form.querySelectorAll('[data-scope-tag]')].map(el => ({ id: el.id || null, label: el.getAttribute('aria-label'), value: value(el) })),
+      scopeClasses: [...form.querySelectorAll('[data-scope-class]')].map(el => ({ value: el.getAttribute('data-scope-class'), pressed: el.getAttribute('aria-pressed') })),
+      scopeAdd: { path: form.querySelectorAll('[data-scope-add-path]').length, tag: form.querySelectorAll('[data-scope-add-tag]').length },
+      routeEditors: form.querySelectorAll('[data-route-editor]').length,
+      routeAdd: form.querySelectorAll('[data-route-add]').length,
+      routeEmpty: form.querySelectorAll('[data-route-empty]').length,
+      routeIncomplete: form.querySelectorAll('[data-route-incomplete]').length,
+      rungs: [...form.querySelectorAll('[data-route-index]')].map(row => ({
+        index: Number(row.getAttribute('data-route-index')),
+        mode: row.querySelector('[data-route-provider]') ? 'fallback' : 'picker',
+        trigger: row.querySelector('button') ? row.querySelector('button').textContent.trim() : null,
+        remove: Boolean(row.querySelector('[data-route-remove]')),
+        values: { provider: value(row.querySelector('[data-route-provider]')), model: value(row.querySelector('[data-route-model]')), effort: value(row.querySelector('[data-route-effort]')) },
+      })),
+    }
+  })()`)
+}
+
+// The open model picker: its two root rows, and (in the model pane) each catalog
+// row with the provider header it renders under.
+async function modelPickerMenuDom() {
+  return instance.cdp.evaluate(`(() => {
+    const menu = document.querySelector('[role="menu"]')
+    if (!menu) return null
+    const rows = []
+    let provider = null
+    for (const child of menu.children) {
+      const button = child.tagName === 'BUTTON' ? child : child.querySelector('button')
+      if (button) rows.push({ label: button.textContent.trim(), provider, checked: /✓/.test(button.textContent) })
+      else provider = child.textContent.trim()
+    }
+    return { rows, text: menu.innerText }
+  })()`)
+}
+
+// The assistant editor's visual scope/route controls, exercised end to end on a
+// throwaway private assistant: paths, tags and the A/B/C chips are edited through
+// the rendered rows, one route rung is picked from the real model catalog, and the
+// saved profile is read back from the authority. Callers disable the assistant
+// immediately afterwards, so its narrowed scope can never gate a real route.
+async function createAgentWithVisualSettings(sessionId, name, preference) {
+  const scopePath = 'plugins/weir-harness/lib'
+  const scopeTag = 'decision-settings'
+  await openPage('agents')
+  await keyboardActivate('Open assistant editor', '[data-action="create-agent"]', { expectFocus: '[data-agent-field="name"]' })
+  await keyboardFill('Edit assistant name', '[data-agent-field="name"]', name)
+  await keyboardFill('Edit assistant preference', '[data-agent-field="preference"]', preference)
+  await openDisclosure('weir-da-agent-settings-create')
+  const opened = await assistantVisualDom()
+  writeJson(join(out, 'assistant-visual-open.json'), opened)
+  const openedProblems = assistantVisualEditorProblems(opened)
+  check('assistantEditorReplacesScopeAndRouteJsonWithVisualControls', openedProblems.length === 0, { problems: openedProblems, textareas: opened?.textareas, scopeClasses: opened?.scopeClasses, rungs: opened?.rungs, routeEmpty: opened?.routeEmpty })
+  await shot('assistant-visual-editor')
+  await keyboardActivate('Add an expertise scope path', '[data-scope-add-path]')
+  await keyboardFill('Edit the expertise scope path', 'input[data-scope-path]', scopePath)
+  await keyboardActivate('Add an expertise scope tag', '[data-scope-add-tag]')
+  await keyboardFill('Edit the expertise scope tag', 'input[data-scope-tag]', scopeTag)
+  await keyboardActivate('Exclude authorization class C', '[data-scope-class="C"]', { key: 'Space' })
+  await waitFor(() => instance.cdp.evaluate('document.querySelector(\'[data-scope-class="C"]\')?.getAttribute("aria-pressed") === "false"'), 30_000)
+  await keyboardActivate('Add a fallback model rung', '[data-route-add]')
+  const staged = await waitFor(async () => { const value = await assistantVisualDom(); return value?.rungs?.length === 1 ? value : null }, 30_000)
+  const rungProblems = assistantVisualEditorProblems(staged)
+  check('assistantRouteEditorStagesOneVisualRung', rungProblems.length === 0, { problems: rungProblems, rungs: staged?.rungs, routeIncomplete: staged?.routeIncomplete })
+  const rung = staged.rungs[0]
+  let chosen
+  if (rung.mode === 'picker') {
+    await keyboardActivate('Open the rung model picker', '[data-route-index="0"] button')
+    const root = await waitFor(modelPickerMenuDom, 30_000)
+    const rootProblems = assistantRoutePickerProblems({ trigger: rung.trigger, rows: root.rows.map(row => row.label) })
+    check('assistantRoutePickerRendersLocalizedStrings', rootProblems.length === 0, { problems: rootProblems, trigger: rung.trigger, menu: root })
+    await keyboardActivate('Open the model list pane', 'button', { scope: '[role="menu"]', labels: [root.rows[0].label] })
+    const catalog = await waitFor(async () => { const value = await modelPickerMenuDom(); return value && value.rows.some(row => row.provider) ? value : null }, 60_000)
+    const modelRow = catalog.rows.find(row => row.provider)
+    requireEvidence(modelRow && modelRow.label, 'the real model catalog renders at least one model row')
+    await keyboardActivate('Select the catalog model', 'button', { scope: '[role="menu"]', labels: [modelRow.label] })
+    await waitFor(() => instance.cdp.evaluate('!document.querySelector(\'[role="menu"]\')'), 30_000)
+    const settledDom = await waitFor(async () => { const value = await assistantVisualDom(); return value?.rungs?.[0]?.trigger ? value : null }, 60_000)
+    const settled = settledDom.rungs[0]
+    // The trigger reads "<model name>" or "<model name> · <localized effort>";
+    // a bare name only renders when the stored provider/model pair matches the
+    // catalog exactly, which is what this comparison pins.
+    requireEvidence(settled.trigger.startsWith(modelRow.label), `the picked catalog model ${modelRow.label} is what the rung shows (${settled.trigger})`)
+    // Completing the rung clears the "not saved yet" caption: the row is real now.
+    requireEvidence(settledDom.routeIncomplete === 0, `the incomplete-rung caption clears once a model is picked (${settledDom.routeIncomplete})`)
+    chosen = { provider: modelRow.provider, model: '*', effort: '*', name: modelRow.label, mode: 'picker' }
+    writeJson(join(out, 'assistant-visual-picker.json'), { trigger: rung.trigger, root, catalog, chosen })
+  } else {
+    await keyboardFill('Edit the rung provider', 'input[data-route-provider]', 'mock')
+    await keyboardFill('Edit the rung model', 'input[data-route-model]', 'mock-1')
+    const filled = await assistantVisualDom()
+    requireEvidence(filled.routeIncomplete === 0, `typing provider and model clears the incomplete-rung caption (${filled.routeIncomplete})`)
+    chosen = { provider: 'mock', model: 'mock-1', name: 'mock-1', mode: 'fallback' }
+    writeJson(join(out, 'assistant-visual-picker.json'), { mode: 'fallback', chosen })
+  }
+  await shot('assistant-visual-rung')
+  await keyboardActivate('Save assistant', 'form[data-agent-editor] button[type="submit"]', { expectFocus: '.weir-da-agent-back,[data-agent-detail]' })
+  const agents = await waitFor(async () => { const value = await rpc(sessionId, 'agent-create', 'agents'); return value.some(agent => agent.name === name) ? value : null }, 30_000)
+  const agent = agents.find(item => item.name === name)
+  const expected = { paths: [scopePath], tags: [scopeTag], classes: ['A', 'B'], chain: [{ provider: chosen.provider, model: chosen.model, reasoningEffort: chosen.effort }] }
+  const readbackProblems = assistantVisualReadbackProblems(agent, expected)
+  check('assistantVisualScopeAndRouteSaveAndReadBack', readbackProblems.length === 0, { problems: readbackProblems, expected, scope: agent.scope, modelRoute: agent.modelRoute, chosen })
+  writeJson(join(out, 'assistant-visual-readback.json'), { expected, chosen, profile: { agentId: agent.agentId, scope: agent.scope, modelRoute: agent.modelRoute } })
+  // Reopening the saved assistant proves the stored route resolves back into the
+  // same catalog model: the picker only shows a model NAME for a stored pair that
+  // matches a catalog entry exactly.
+  await openAgent(sessionId, agent.agentId)
+  await keyboardActivate('Edit assistant', `[data-agent-detail="${agent.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
+  await openDisclosure(`weir-da-agent-settings-${agent.agentId}`)
+  // The stored route must resolve back into the same catalog model: the picker shows
+  // a model NAME only for a stored provider/model pair that matches the catalog, and
+  // the fallback inputs carry the typed pair. Both are waited for, so the picker's
+  // own lazy catalog load never makes this a timing assertion.
+  const resolvesSavedRoute = value => {
+    const rung = value?.rungs?.[0]
+    if (!rung) return false
+    if (rung.mode === 'fallback') return rung.values.provider === chosen.provider && rung.values.model === chosen.model
+    return String(rung.trigger ?? '').startsWith(chosen.name)
+  }
+  const reopened = await waitFor(async () => { const value = await assistantVisualDom(); return value?.rungs?.length === 1 && resolvesSavedRoute(value) ? value : null }, 60_000)
+  const reopenedProblems = assistantVisualEditorProblems(reopened)
+  check('assistantVisualEditorReopensTheSavedScopeAndRoute', reopenedProblems.length === 0 && resolvesSavedRoute(reopened) && reopened.scopePaths[0]?.value === scopePath && reopened.scopeTags[0]?.value === scopeTag && reopened.scopeClasses.filter(chip => chip.pressed === 'true').map(chip => chip.value).join(',') === 'A,B', { problems: reopenedProblems, rungs: reopened?.rungs, paths: reopened?.scopePaths, tags: reopened?.scopeTags, classes: reopened?.scopeClasses })
+  await shot('assistant-visual-reopened')
+  await keyboardActivate('Close the reopened assistant editor', 'button', { scope: 'form[data-agent-editor] .weir-da-actions', labels: ['取消', 'Cancel'], expectFocus: `.weir-da-agent-back,[data-agent-detail="${agent.agentId}"]` })
+  return agent
+}
+
 async function openAgent(sessionId, agentId) {
   await openPage('agents')
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-agent-summary=${JSON.stringify(agentId)}] [data-action="open-agent"]'))`), 30_000)
@@ -661,13 +798,15 @@ async function decisionConfig(phase) {
   writeJson(join(out, `decision-config-${phase}.json`), value)
   return value
 }
-async function openDecisionSettings() {
-  await instance.cdp.setViewport(1440)
-  // Host Settings restores whichever page was open last, so no single page's body
-  // text proves readiness: the dialog and its navigation are what every call
-  // needs. A dialog left open is closed first so the menu click is never
-  // swallowed by an existing modal.
-  const settingsDialogOpen = () => instance.cdp.evaluate('(() => { const visible = [...document.querySelectorAll(\'[role="dialog"]\')].find(item => { const rect = item.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(item).visibility === "visible" }); return Boolean(visible) })()')
+async function settingsDialogOpen() {
+  return instance.cdp.evaluate('(() => { const visible = [...document.querySelectorAll(\'[role="dialog"]\')].find(item => { const rect = item.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(item).visibility === "visible" }); return Boolean(visible) })()')
+}
+
+// Host Settings restores whichever page was open last, so no single page's body
+// text proves readiness: the dialog and its navigation ledger are what every call
+// needs. A dialog left open is closed first so the menu click is never swallowed
+// by an existing modal.
+async function openSettingsDialog() {
   if (await settingsDialogOpen()) {
     await instance.cdp.key('Escape')
     await waitFor(async () => !(await settingsDialogOpen()), 30_000)
@@ -675,35 +814,183 @@ async function openDecisionSettings() {
   await keyboardActivate('Open account menu', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
   await keyboardActivate('Open Settings', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
   await waitFor(settingsDialogOpen, 30_000)
-  await keyboardActivate('Open Weir settings', 'button', { scope: '[role="dialog"]', labels: ['Weir'] })
-  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("Auto Shadow")'), 60_000)
+}
+
+// The Decision assistant page is the third Weir settings section (order 42). The
+// navigation click is the product gesture: the dialog's own nav ledger proves the
+// section registered, and the page's basic group is the readiness signal — a
+// settings page body string is not, because the Host restores the last page.
+async function openDecisionSettings() {
+  await instance.cdp.setViewport(1440)
+  await openSettingsDialog()
+  const labels = await waitFor(async () => {
+    const value = await instance.cdp.evaluate('(() => [...document.querySelectorAll(\'[role="dialog"] nav button\')].map(button => button.textContent.trim()).filter(Boolean))()')
+    return Array.isArray(value) && value.length >= 3 ? value : null
+  }, 30_000)
+  const navProblems = decisionSettingsNavProblems(labels)
+  writeJson(join(out, 'settings-nav.json'), { labels, problems: navProblems })
+  requireEvidence(navProblems.length === 0, `the settings navigation exposes the three Weir pages: ${navProblems.join('; ')}`)
+  await keyboardActivate('Open the Decision assistant settings page', '[role="dialog"] nav button', { labels: ['决策助手', 'Decision assistant'] })
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector(\'[data-group="decisionBasics"]\'))'), 60_000)
+}
+
+// One structured read of the decision settings page as rendered. Every guard in
+// gui-product-lib.mjs takes this shape, so the page contract is asserted from
+// real DOM attributes (aria-expanded, aria-pressed, input ids) rather than text.
+async function decisionSettingsDom() {
+  return instance.cdp.evaluate(`(() => {
+    const control = el => ({ tag: el.tagName.toLowerCase(), id: el.id || null, role: el.getAttribute('role'), label: el.getAttribute('aria-label'), checked: el.getAttribute('aria-checked') ?? (typeof el.checked === 'boolean' ? String(el.checked) : null), pressed: el.getAttribute('aria-pressed'), value: typeof el.value === 'string' ? el.value : null, disabled: el.disabled === true })
+    const controls = root => [...root.querySelectorAll('button,input,select,[role="switch"]')].map(control)
+    const cardRows = group => group ? [...group.children].slice(1).map(row => ({ tag: row.tagName.toLowerCase(), text: row.innerText.trim(), controls: controls(row) })) : null
+    const bodyRows = body => body ? [...body.children].map(row => ({ tag: row.tagName.toLowerCase(), text: row.innerText.trim(), controls: controls(row) })) : null
+    const nav = [...document.querySelectorAll('[role="dialog"] nav button')].map(button => ({ text: button.textContent.trim(), current: button.getAttribute('aria-current') }))
+    const basics = document.querySelector('[data-group="decisionBasics"]')
+    const advanced = document.querySelector('[data-group="decisionAdvanced"]')
+    const body = advanced ? advanced.querySelector('[data-advanced-body]') : null
+    const set = document.querySelector('[data-decision-class-set]')
+    const counter = set ? set.parentElement?.querySelector('[data-decision-class-count]') : null
+    return {
+      nav: nav.map(row => row.text),
+      activeNav: (nav.find(row => row.current === 'true') ?? null)?.text ?? null,
+      groups: [...document.querySelectorAll('[data-group]')].map(el => el.getAttribute('data-group')),
+      basics: basics ? { rows: cardRows(basics) } : null,
+      advanced: advanced ? { expanded: advanced.querySelector('[data-advanced-toggle]')?.getAttribute('aria-expanded') ?? null, hasToggle: Boolean(advanced.querySelector('[data-advanced-toggle]')), body: Boolean(body), rows: bodyRows(body) } : null,
+      classSet: set ? { chips: [...set.querySelectorAll('button[data-decision-class]')].map(chip => ({ value: chip.getAttribute('data-decision-class'), pressed: chip.getAttribute('aria-pressed'), disabled: chip.disabled === true })), count: counter ? Number(counter.getAttribute('data-decision-class-count')) : null, countText: counter ? counter.textContent : null } : null,
+      saveBar: Boolean(document.querySelector('[data-save-bar]')),
+    }
+  })()`)
+}
+
+// After Escape the Settings dialog AND the Decision assistant page must be gone:
+// the close assertion is structural (no group, no chips, no fold, no editor),
+// never "the Auto Shadow text disappeared".
+async function decisionSettingsClosedState() {
+  return instance.cdp.evaluate(`(() => ({
+    dialog: Boolean([...document.querySelectorAll('[role="dialog"]')].find(item => { const rect = item.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(item).visibility === 'visible' })),
+    groups: [...document.querySelectorAll('[data-group]')].map(el => el.getAttribute('data-group')),
+    classSets: document.querySelectorAll('[data-decision-class-set]').length,
+    advancedToggles: document.querySelectorAll('[data-advanced-toggle]').length,
+    agentEditors: document.querySelectorAll('form[data-agent-editor]').length,
+  }))()`)
+}
+
+async function closeDecisionSettings(phase) {
+  await keyboardKey('Close settings after authority reread', 'Escape', { phase })
+  await waitFor(async () => !(await settingsDialogOpen()), 30_000)
+  const closed = await decisionSettingsClosedState()
+  writeJson(join(out, `settings-closed-${phase}.json`), closed)
+  const problems = decisionSettingsClosedProblems(closed)
+  requireEvidence(problems.length === 0, `closing Settings unmounts the Decision assistant page: ${problems.join('; ')}`)
+  return { phase, ...closed }
+}
+
+// The advanced group is one group-level fold: the toggle is the group title, the
+// body mounts only while expanded, and both shadow and timeout live behind it.
+async function setDecisionAdvanced(open) {
+  const read = () => instance.cdp.evaluate(`(() => { const advanced=document.querySelector('[data-group="decisionAdvanced"]'); const toggle=advanced?.querySelector('[data-advanced-toggle]'); return advanced&&toggle?{expanded:toggle.getAttribute('aria-expanded'),body:Boolean(advanced.querySelector('[data-advanced-body]'))}:null })()`)
+  const current = await waitFor(read, 30_000)
+  if ((current.expanded === 'true') !== open) await keyboardActivate(open ? 'Expand the decision advanced settings' : 'Collapse the decision advanced settings', '[data-group="decisionAdvanced"] [data-advanced-toggle]')
+  return waitFor(async () => { const value = await read(); return value && (value.expanded === 'true') === open && value.body === open ? value : null }, 30_000)
+}
+
+// One chip per authorization class: aria-pressed is the current value, a real
+// click stages the field immediately, and the stored JSON is canonicalized from
+// the A/B/C row order rather than from click order.
+async function setDecisionAnswerClasses(expected) {
+  const wanted = expected.slice()
+  const read = () => instance.cdp.evaluate(`(() => {
+    const set=document.querySelector('[data-decision-class-set]')
+    if(!set)return null
+    const chips=[...set.querySelectorAll('button[data-decision-class]')]
+    const counter=set.parentElement?.querySelector('[data-decision-class-count]')
+    return {chips:chips.map(chip=>({value:chip.getAttribute('data-decision-class'),pressed:chip.getAttribute('aria-pressed'),disabled:chip.disabled===true})),count:counter?Number(counter.getAttribute('data-decision-class-count')):null,countText:counter?counter.textContent:null}
+  })()`)
+  const initial = await waitFor(read, 30_000)
+  for (const entry of ['A', 'B', 'C']) {
+    const pressed = initial.chips.find(chip => chip.value === entry)?.pressed === 'true'
+    if (pressed === wanted.includes(entry)) continue
+    await keyboardActivate(`${pressed ? 'Exclude' : 'Allow'} authorization class ${entry}`, `[data-decision-class-set] button[data-decision-class="${entry}"]`, { key: 'Space' })
+    await waitFor(async () => { const value = await read(); return value?.chips.find(chip => chip.value === entry)?.pressed === String(!pressed) ? value : null }, 30_000)
+  }
+  const state = await read()
+  return { state, problems: decisionSettingsClassSetProblems(state, wanted) }
 }
 
 async function setAutoSettings(phase, { shadow, answerClasses, answerTimeoutMs }) {
   await openDecisionSettings()
+  if (shadow !== undefined || answerTimeoutMs !== undefined) await setDecisionAdvanced(true)
   if (shadow !== undefined) {
     const selector = '[aria-label="Auto Shadow 诊断"],[aria-label="Auto Shadow diagnostics"]'
     const current = await instance.cdp.evaluate(`(() => { const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(item=>item.offsetParent!==null); return el?{checked:el.getAttribute('aria-checked')==='true'||el.checked===true}:null })()`)
-    requireEvidence(current, 'the real Auto Shadow settings control is visible')
+    requireEvidence(current, 'the real Auto Shadow settings control is visible in the expanded advanced group')
     if (current.checked !== shadow) await keyboardActivate(`Set Shadow ${shadow ? 'on' : 'off'}`, selector, { key: 'Space' })
   }
   if (answerClasses !== undefined) {
-    const value = JSON.stringify(answerClasses)
-    await keyboardFill('Edit Auto answer-class whitelist', 'input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses', value)
+    const staged = await setDecisionAnswerClasses(answerClasses)
+    writeJson(join(out, `settings-classes-${phase}.json`), staged)
+    requireEvidence(staged.problems.length === 0, `the A/B/C chips stage exactly ${answerClasses.join(', ') || 'no class'}: ${staged.problems.join('; ')}`)
   }
   if (answerTimeoutMs !== undefined) {
     await keyboardFill('Edit Auto answer timeout', 'input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs', String(answerTimeoutMs))
   }
-  await keyboardActivate('Save Decision Auto settings', '[data-save-bar] button', { namePattern: '^(保存|Save)' })
+  await keyboardActivate('Save Decision settings', '[data-save-bar] button', { namePattern: '^(保存|Save)' })
   const expected = value => (shadow === undefined || value.effective?.decisionAgentAutoShadow === shadow) && (answerClasses === undefined || JSON.stringify(value.effective?.decisionAgentAutoAnswerClasses) === JSON.stringify(answerClasses)) && (answerTimeoutMs === undefined || value.effective?.decisionAgentAnswerTimeoutMs === answerTimeoutMs)
   const config = await waitFor(async () => { const value = await decisionConfig(phase); return expected(value) ? value : null }, 30_000)
   await shot(`settings-${phase}`)
-  await keyboardKey('Close settings after authority reread', 'Escape', { phase })
-  await waitFor(() => instance.cdp.evaluate('!document.body.innerText.includes("Auto Shadow 诊断") && !document.body.innerText.includes("Auto Shadow diagnostics")'), 30_000)
+  await closeDecisionSettings(phase)
   // Settings are external volatile input to an already mounted selector. Leave the
   // conversation once so the next real session open remounts and rereads overview.auto.
   await openPage('inbox')
   return config
+}
+
+// The rendered Decision assistant page contract (design D7): three basic rows,
+// the advanced group folded by default, expandable into editable runtime rows, a
+// folded group that disappears with the master switch, and a close that unmounts
+// the page. Nothing here persists a setting: the timeout edit is discarded before
+// the master switch is restored.
+async function verifyDecisionSettingsStructure(config) {
+  const authority = { timeoutMs: config.effective?.decisionAgentAnswerTimeoutMs, shadow: config.effective?.decisionAgentAutoShadow === true }
+  // The config face reports the whitelist already normalized to an array (the raw
+  // config key is the JSON text), so accept both shapes.
+  const whitelist = Array.isArray(config.effective?.decisionAgentAutoAnswerClasses)
+    ? config.effective.decisionAgentAutoAnswerClasses.map(String)
+    : JSON.parse(config.effective?.decisionAgentAutoAnswerClasses || '[]')
+  await openDecisionSettings()
+  const opened = await decisionSettingsDom()
+  writeJson(join(out, 'settings-page-open.json'), opened)
+  const openProblems = decisionSettingsPageProblems(opened, { masterEnabled: true })
+  check('decisionSettingsPageRendersThreeBasicRowsWithCollapsedAdvanced', openProblems.length === 0, { problems: openProblems, nav: opened.nav, groups: opened.groups, basicsRows: opened.basics?.rows?.length, advanced: opened.advanced })
+  await shot('settings-decision-basics')
+  const chipProblems = decisionSettingsClassSetProblems(opened.classSet, whitelist)
+  check('decisionSettingsClassChipsShowTheAuthoritativeWhitelist', chipProblems.length === 0, { authority: whitelist, classSet: opened.classSet, problems: chipProblems })
+  await setDecisionAdvanced(true)
+  const expanded = await decisionSettingsDom()
+  writeJson(join(out, 'settings-page-advanced.json'), expanded)
+  const advancedProblems = decisionSettingsAdvancedProblems(expanded, authority)
+  check('decisionSettingsAdvancedExpandsIntoEditableRuntimeRows', advancedProblems.length === 0, { problems: advancedProblems, rows: expanded.advanced?.rows?.length, authority })
+  await shot('settings-decision-advanced')
+  const stagedTimeout = Number(authority.timeoutMs) + 1000
+  await keyboardFill('Stage a different Attempt timeout', 'input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs', String(stagedTimeout))
+  const readStaged = () => instance.cdp.evaluate(`(() => ({ value: document.querySelector('input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs')?.value ?? null, saveBar: Boolean(document.querySelector('[data-save-bar]')) }))()`)
+  const staged = await readStaged()
+  requireEvidence(staged.value === String(stagedTimeout) && staged.saveBar, `a keystroke in the expanded advanced row reaches the staged draft (${JSON.stringify(staged)})`)
+  await keyboardActivate('Discard the staged settings probe', '[data-save-bar] button', { labels: ['放弃更改', 'Discard'] })
+  const discarded = await waitFor(async () => { const value = await readStaged(); return value.value === String(authority.timeoutMs) && !value.saveBar ? value : null }, 30_000)
+  check('decisionSettingsAdvancedDraftDiscardsBackToAuthority', discarded.value === String(authority.timeoutMs) && !discarded.saveBar, { staged, discarded, authority: authority.timeoutMs })
+  await setDecisionAdvanced(false)
+  await keyboardActivate('Turn the decision master switch off', '[data-group="decisionBasics"] button[role="switch"]', { labels: ['决策 Agent', 'Decision Agents'], key: 'Space' })
+  const off = await decisionSettingsDom()
+  writeJson(join(out, 'settings-page-master-off.json'), off)
+  const offProblems = decisionSettingsPageProblems(off, { masterEnabled: false })
+  check('decisionMasterOffRemovesAdvancedGroup', offProblems.length === 0, { problems: offProblems, groups: off.groups, basicsRows: off.basics?.rows?.length, advanced: off.advanced })
+  await shot('settings-decision-master-off')
+  await keyboardActivate('Turn the decision master switch back on', '[data-group="decisionBasics"] button[role="switch"]', { labels: ['决策 Agent', 'Decision Agents'], key: 'Space' })
+  const restored = await waitFor(async () => { const value = await decisionSettingsDom(); return decisionSettingsPageProblems(value, { masterEnabled: true }).length === 0 ? value : null }, 30_000)
+  requireEvidence(restored.saveBar === false, 'restoring the master switch returns the form to its saved state')
+  const closed = await closeDecisionSettings('structure')
+  writeJson(join(out, 'settings-structure.json'), { authority, whitelist, opened: { groups: opened.groups, basicsRows: opened.basics?.rows?.length, advanced: opened.advanced, classSet: opened.classSet }, expanded: { rows: expanded.advanced?.rows?.length }, staged, discarded, off: { groups: off.groups, basicsRows: off.basics?.rows?.length, advanced: off.advanced }, closed })
+  return closed
 }
 
 async function routingReviewDom() {
@@ -2118,6 +2405,10 @@ async function reassignUnownedInbox(sessionId, caseId, label, agentId) {
 async function runP4BeforeRestart(sessionId, primary, secondary) {
   const initialConfig = await decisionConfig('p4-initial')
   check('p4InitialConfigFreshAutoShadowOffEmptyWhitelist', initialConfig.effective?.decisionAgentSelectorDefault === 'auto' && initialConfig.effective?.decisionAgentAutoShadow === false && JSON.stringify(initialConfig.effective?.decisionAgentAutoAnswerClasses) === '[]' && initialConfig.effective?.decisionAgentAnswerTimeoutMs === 150, initialConfig.effective)
+  // The settings page's rendered structure (3 basic rows, folded advanced group,
+  // folded group that disappears with the master switch, structural close) runs on
+  // the same authority this phase then compares against.
+  p4Evidence.settingsStructure = await verifyDecisionSettingsStructure(initialConfig)
   const autoSession = (await newIsolatedSession('p4-auto')).sessionId
   const explicitOffSession = (await newIsolatedSession('p4-explicit-off')).sessionId
   const shadowControlSession = (await newIsolatedSession('p4-shadow-control')).sessionId
@@ -2137,12 +2428,15 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   await selectorChoose(explicitOffSession, 'off')
   const explicitOff = sqliteSnapshot('p4-explicit-off')
   check('explicitOffPersistsRowDespiteAutoDefault', explicitOff.rows.selectors.some(row => row.root_session_id === explicitOffSession && row.mode === 'off' && row.agent_id === null), explicitOff.rows.selectors)
-  await openIsolatedSession(foreignSession)
-  const foreign = await createAgent(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE · never route', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY must never enter the main Router pack.')
   // Assistant identity is profile-global now, so a foreign-workspace assistant is
   // an eligible Auto candidate instead of being filtered out by workspace. The P4
-  // fixtures below count eligible candidates, so this one is switched off through
-  // the rendered confirmation and stays an identity + private-record fixture.
+  // fixtures below count eligible candidates, so this one is created through the
+  // assistant editor's visual scope/route controls (proving the save payload and
+  // its readback) and switched off through the rendered confirmation: it stays an
+  // identity + private-record fixture that can never gate a real route.
+  await openIsolatedSession(foreignSession)
+  const foreign = await createAgentWithVisualSettings(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE · never route', 'FOREIGN WORKSPACE PRIVATE PROFILE BODY must never enter the main Router pack.')
+  // The visual-scope fixture is switched off before any routing happens.
   await agentState(foreignSession, foreign.agentId, 'disabled')
   await openIsolatedSession(autoSession)
 
