@@ -19,24 +19,31 @@ import { CONFIG_FACE_ONLY_KEYS, FIELD_DEFAULTS as SERVER_FIELD_DEFAULTS, RESTART
 describe('client.settings-page chunk', () => {
   async function loadPage() {
     const reactState = []
-    let hookCursor = 0
+    // State and effect slots are indexed apart: the card and the form shell are
+    // separate components, so one component's state slot cannot shadow another's
+    // effect registration.
+    const reactEffects = []
+    let stateCursor = 0
+    let effectCursor = 0
     const reactStub = {
       reset() {
         reactState.length = 0
+        reactEffects.length = 0
       },
       begin() {
-        hookCursor = 0
+        stateCursor = 0
+        effectCursor = 0
       },
       useState(initial) {
-        const at = hookCursor++
+        const at = stateCursor++
         if (!(at in reactState)) reactState[at] = [initial, (next) => {
           reactState[at][0] = typeof next === 'function' ? next(reactState[at][0]) : next
         }]
         return reactState[at]
       },
       useEffect(fn) {
-        const at = hookCursor++
-        if (!(at in reactState)) reactState[at] = { cleanup: fn() }
+        const at = effectCursor++
+        if (!(at in reactEffects)) reactEffects[at] = { cleanup: fn() }
         return undefined
       },
       useRef: (initial) => ({ current: initial }),
@@ -116,9 +123,10 @@ describe('client.settings-page chunk', () => {
       DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }),
       LspManagerField: (props) => ({ __lspPanel: props }),
       NotifyPermissionsField: (props) => ({ __notifyPermissions: props }),
+      ClassSetEditorField: (props) => ({ __classSetEditor: props }),
       EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }),
     }
-    return { definition, exports, editors, specsSeen, reactStub, reactState, primitivesStub }
+    return { definition, exports, editors, specsSeen, reactStub, reactState, reactEffects, primitivesStub }
   }
 
   // The settings page dictionary now rides the chunk data faces: the entry
@@ -153,11 +161,17 @@ describe('client.settings-page chunk', () => {
     return dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentSelectorDefault','decisionAgentAutoShadow','decisionAgentAutoAnswerClasses','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentRetentionDays','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentSelectorDefault','decisionAgentAutoAnswerClasses','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentRetentionDays','decisionAgentAutoShadow','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
-  const MAIN_GROUPS = ['intent', 'todo', 'guard', 'decision', 'editing', 'worktree', 'robash', 'lsp', 'notify']
+  const MAIN_GROUPS = ['intent', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify']
   const ROUTING_GROUPS = ['routingCategories', 'routingAgents', 'routingSupervision']
   const ROUTING_FIELD_NAMES = ['delegateCategoryChains', 'delegateDisabledCategories', 'delegateAgentChains', 'supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs']
+  const DECISION_GROUPS = ['decisionBasics', 'decisionAdvanced']
+  const DECISION_ADVANCED_FIELD_NAMES = [
+    'decisionAgentAnswerTimeoutMs', 'decisionAgentMaxAttemptsPerCase', 'decisionAgentContextBudgetTokens',
+    'decisionAgentMaxOutputTokens', 'decisionAgentMaxConcurrentAttempts', 'decisionAgentRetentionDays',
+    'decisionAgentAutoShadow',
+  ]
 
   // The boolean product defaults that are ON in the bundle yet have no saved
   // value in a profile that never touched them (src/notify/policy.js DEFAULTS).
@@ -203,6 +217,11 @@ describe('client.settings-page chunk', () => {
       modelPicker: 'modelPicker' in spies ? spies.modelPicker : PICKER_STUB,
     })
   }
+  /** The form shell's registered unmount-discard effect (effect slots are indexed apart from state slots). */
+  function unmountEffect(reactEffects) {
+    expect(reactEffects[0]).toBeTruthy()
+    return reactEffects[0]
+  }
 
   /** Card lookup: rendered.children[0] is the cards column; cards carry data-group. */
   function cardsOf(rendered) {
@@ -227,15 +246,18 @@ describe('client.settings-page chunk', () => {
 
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-  it('keeps the flat FIELDS table (order unchanged) and renders the summary description', async () => {
+  it('keeps the flat FIELDS table (order unchanged) and renders the summary description per page', async () => {
     const { definition, exports, editors } = await loadPage()
     expect(definition.id).toBe('weir-harness')
     expect(definition.chunk).toBe('client.settings-page.js')
-    // the form-layer field table covers both pages in GROUPS declaration
-    // order (main-page fields and the routing page's six model fields)
+    // the form-layer field table covers all three pages in GROUPS declaration
+    // order (main-page fields, the routing page's six model fields, and the
+    // decision page's basics + advanced rows)
     expect(exports.FIELDS.map((descriptor) => descriptor.field)).toEqual(FIELD_NAMES)
-    expect(exports.WeirCard({ view: 'summary', t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('description')
-    expect(exports.WeirCard({ view: 'summary', page: 'routing', t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })).toBe('routingDescription')
+    const summary = (page) => exports.WeirCard({ view: 'summary', page, t: (key) => key, useWeirSettingsCard: (selector) => selector({ writable: true, fields: {} }), editors })
+    expect(summary(undefined)).toBe('description')
+    expect(summary('routing')).toBe('routingDescription')
+    expect(summary('decision')).toBe('decisionDescription')
   })
 
   it('renders the flat group sections and the default visible set per group', async () => {
@@ -276,33 +298,123 @@ describe('client.settings-page chunk', () => {
     for (const row of todoRows.slice(1)) expect(row.style.borderTop).toBe('0.5px solid var(--dsw-alias-border-l2)')
   })
 
-  it('keeps the three conservative Auto controls in the existing Decision group', async () => {
-    const { exports, editors } = await loadPage()
-    const group = exports.GROUPS.find((candidate) => candidate.id === 'decision')
-    expect(group.fields.slice(0, 4)).toEqual([
+  it('splits the decision settings: basics stays visible, advanced is a default-collapsed fold', async () => {
+    const { exports, editors, reactStub } = await loadPage()
+    // declaration: both groups belong to the decision page; only the advanced
+    // one carries the fold marker, and its rows never use a cross-group parent
+    const basics = exports.GROUPS.find((candidate) => candidate.id === 'decisionBasics')
+    const advanced = exports.GROUPS.find((candidate) => candidate.id === 'decisionAdvanced')
+    expect(basics.page).toBe('decision')
+    expect(basics.advanced).toBeUndefined()
+    expect(basics.fields).toEqual([
       { field: 'decisionAgentsEnabled', kind: 'boolean' },
       { field: 'decisionAgentSelectorDefault', kind: 'enum', values: ['off', 'auto'], parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
-      { field: 'decisionAgentAutoShadow', kind: 'boolean', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
-      { field: 'decisionAgentAutoAnswerClasses', kind: 'text', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
+      { field: 'decisionAgentAutoAnswerClasses', kind: 'custom', slot: 'classSet', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
     ])
-    const cards = cardsOf(renderCard(exports, editors, {
-      fields: makeFields({ decisionAgentsEnabled: { text: 'true' } }),
-      env: { status: 'ready', facts: { platform: 'darwin' } },
-    }))
-    expect(rowKeys(cards, 'decision').slice(0, 4)).toEqual([
-      'decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswerClasses',
-    ])
+    expect(advanced.page).toBe('decision')
+    expect(advanced.advanced).toBe(true)
+    for (const node of advanced.fields) {
+      expect(node.parent).toBeUndefined()
+      expect(node.when).toEqual({ key: 'decisionAgentsEnabled', equals: true })
+    }
+    expect(advanced.fields.map((node) => node.field)).toEqual(DECISION_ADVANCED_FIELD_NAMES)
+
+    const openState = { fields: makeFields({ decisionAgentsEnabled: { text: 'true' } }), env: { status: 'ready', facts: { platform: 'darwin' } } }
+    const render = () => {
+      reactStub.begin()
+      return renderCard(exports, editors, openState, { page: 'decision' })
+    }
+    let cards = cardsOf(render())
+    expect(Object.keys(cards)).toEqual(DECISION_GROUPS)
+    // the basics rows render their three simplified entries in order
+    expect(rowKeys(cards, 'decisionBasics')).toEqual(['decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoAnswerClasses'])
+    // advanced: folded by default — one toggle, no body mounted
+    const foldedCard = cards.decisionAdvanced
+    expect(foldedCard.children).toHaveLength(1)
+    const toggle = foldedCard.children[0]
+    expect(toggle['data-advanced-toggle']).toBe(true)
+    expect(toggle.type).toBe('button')
+    expect(toggle['aria-expanded']).toBe(false)
+    expect(toggle['aria-controls']).toBe('weir-settings-group-decisionAdvanced')
+    expect(findAll(foldedCard, (node) => node['data-advanced-body'] === true)).toHaveLength(0)
+    // the toggle names the group through the existing group label plus its hint
+    expect(findAll(toggle, (node) => node.children === 'groupDecisionAdvanced')).toHaveLength(1)
+    expect(findAll(toggle, (node) => node.children === 'decisionAdvancedHint')).toHaveLength(1)
+    // expanding mounts the body with the seven runtime rows in declaration order
+    expect(typeof toggle.onClick).toBe('function')
+    toggle.onClick()
+    cards = cardsOf(render())
+    const expandedCard = cards.decisionAdvanced
+    const expandedToggle = expandedCard.children[0]
+    expect(expandedToggle['aria-expanded']).toBe(true)
+    const body = expandedCard.children.find((child) => child['data-advanced-body'] === true)
+    expect(body.id).toBe('weir-settings-group-decisionAdvanced')
+    expect(body.children.map((row) => row.key)).toEqual(DECISION_ADVANCED_FIELD_NAMES)
+    // every advanced row is a plain input or switch — never a JSON box
+    expect(findAll(body, (node) => node.type === 'textarea')).toHaveLength(0)
+    // collapsing hides the body again (the fold is display-only)
+    expandedToggle.onClick()
+    cards = cardsOf(render())
+    expect(findAll(cards.decisionAdvanced, (node) => node['data-advanced-body'] === true)).toHaveLength(0)
   })
 
-  it('splits the two pages: main renders its 8 groups, routing renders its 3 — never mixed', async () => {
+  it('hides the advanced fold entirely when the master switch is off', async () => {
+    const { exports, editors, reactStub } = await loadPage()
+    reactStub.begin()
+    const off = cardsOf(renderCard(exports, editors, {
+      fields: makeFields({ decisionAgentsEnabled: { text: 'false' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }, { page: 'decision' }))
+    // master off: the page keeps only the switch row and its explanation; the
+    // advanced group disappears together with its fold title
+    expect(Object.keys(off)).toEqual(['decisionBasics'])
+    expect(rowKeys(off, 'decisionBasics')).toEqual(['decisionAgentsEnabled'])
+    // unset master (product default off): the same collapse
+    reactStub.begin()
+    const unset = cardsOf(renderCard(exports, editors, {
+      fields: makeFields(),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+    }, { page: 'decision' }))
+    expect(Object.keys(unset)).toEqual(['decisionBasics'])
+  })
+
+  it('saves staged advanced rows while the fold is closed — the fold is not a form boundary', async () => {
+    const { exports, editors, reactStub } = await loadPage()
+    const saves = []
+    reactStub.begin()
+    const rendered = renderCard(exports, editors, {
+      fields: makeFields({ decisionAgentsEnabled: { text: 'true' }, decisionAgentAnswerTimeoutMs: { text: '90000' } }),
+      env: { status: 'ready', facts: { platform: 'darwin' } },
+      available: true,
+      dirty: true,
+      pendingCount: 2,
+    }, { page: 'decision', save: () => saves.push('save') })
+    const cards = cardsOf(rendered)
+    // folded: no body, but the staged draft stays in the form plan
+    expect(findAll(cards.decisionAdvanced, (node) => node['data-advanced-body'] === true)).toHaveLength(0)
+    const form = renderForm(rendered, reactStub)
+    const bar = findAll(form, (node) => node['data-save-bar'] !== undefined)[0]
+    expect(bar).toBeTruthy()
+    // the pending-count label still renders (t() is the bare key in this test scaffold)
+    expect(findAll(bar, (node) => node.children === 'pendingChanges').length).toBeGreaterThan(0)
+    const saveButton = findAll(bar, (node) => node.variant === 'primary' && typeof node.onClick === 'function')[0]
+    saveButton.onClick()
+    expect(saves).toEqual(['save'])
+  })
+
+  it('splits the three pages: main, routing and decision render only their own groups', async () => {
     const { exports, editors } = await loadPage()
-    const state = { fields: makeFields(), env: { status: 'ready', facts: { platform: 'darwin' } } }
+    const state = { fields: makeFields({ decisionAgentsEnabled: { text: 'true' } }), env: { status: 'ready', facts: { platform: 'darwin' } } }
     const main = cardsOf(renderCard(exports, editors, state))
     expect(Object.keys(main)).toEqual(MAIN_GROUPS)
     expect(Object.keys(main)).not.toContain('routingCategories')
+    expect(Object.keys(main)).not.toContain('decisionBasics')
     const routing = cardsOf(renderCard(exports, editors, state, { page: 'routing' }))
     expect(Object.keys(routing)).toEqual(ROUTING_GROUPS)
     for (const id of MAIN_GROUPS) expect(Object.keys(routing)).not.toContain(id)
+    const decision = cardsOf(renderCard(exports, editors, state, { page: 'decision' }))
+    expect(Object.keys(decision)).toEqual(DECISION_GROUPS)
+    for (const id of [...MAIN_GROUPS, ...ROUTING_GROUPS]) expect(Object.keys(decision)).not.toContain(id)
     expect(rowKeys(routing, 'routingCategories')).toEqual(['delegateCategoryChains', 'delegateDisabledCategories'])
     expect(rowKeys(routing, 'routingAgents')).toEqual(['delegateAgentChains'])
     expect(rowKeys(routing, 'routingSupervision')).toEqual(['supervisionMaxRetries', 'supervisionInitialBackoffMs', 'supervisionMaxBackoffMs'])
@@ -770,18 +882,18 @@ describe('client.settings-page chunk', () => {
   })
 
   it('discards staged edits on unmount (the preserved host contract), never on mount', async () => {
-    const { exports, editors, reactStub, reactState } = await loadPage()
+    const { exports, editors, reactStub, reactEffects } = await loadPage()
     const discards = []
     const rendered = renderCard(exports, editors, shellState({ dirty: true, pendingCount: 2 }), { discard: () => discards.push('discard') })
     renderForm(rendered, reactStub)
     // the mount pass of the effect discards nothing; the stored cleanup is the unmount
     expect(discards).toEqual([])
-    reactState[0].cleanup()
+    unmountEffect(reactEffects).cleanup()
     expect(discards).toEqual(['discard'])
   })
 
   it('renders the unavailable notice INSTEAD of the form and the readOnly notice above it', async () => {
-    const { exports, editors, reactStub, reactState } = await loadPage()
+    const { exports, editors, reactStub, reactEffects } = await loadPage()
     // unavailable: one status line, no children, no bar — and the unmount
     // discard is still registered (hooks run before the early return)
     const discards = []
@@ -791,7 +903,7 @@ describe('client.settings-page chunk', () => {
     expect(unavailableForm.role).toBe('status')
     expect(unavailableForm.children).toBe('unavailable')
     expect(saveBarsOf(unavailableForm)).toHaveLength(0)
-    reactState[0].cleanup()
+    unmountEffect(reactEffects).cleanup()
     expect(discards).toEqual(['discard'])
     // readOnly: the notice renders above the (still rendered) children
     const readOnly = renderCard(exports, editors, shellState({ writable: false }))
@@ -1202,10 +1314,11 @@ describe('client.settings-page chunk', () => {
     expectLayoutError([{ id: 'g', fields: [{ field: 'a', kind: 'text' }, { field: 'a', kind: 'number' }] }], `duplicate field 'a'`)
     // an invalid group page names the group
     expectLayoutError([{ id: 'g', page: 'side', fields: [{ field: 'a', kind: 'text' }] }], `group 'g' declares an invalid page 'side'`)
-    // both declared pages pass
+    // every declared page passes; any other value is rejected by name
     validateLayout([
       { id: 'g1', page: 'main', fields: [{ field: 'a', kind: 'text' }] },
       { id: 'g2', page: 'routing', fields: [{ field: 'b', kind: 'text' }] },
+      { id: 'g3', page: 'decision', fields: [{ field: 'c', kind: 'text' }] },
     ])
     // conditions may reference keys of other groups (existence only)
     validateLayout([
@@ -1326,10 +1439,12 @@ describe('client.settings-page chunk', () => {
     const projection = controller.projection()
     expect(Object.keys(projection.fields).sort()).toEqual([...ROUTING_FIELD_NAMES].sort())
     expect(projection.restartReminder).toBe(null)
-    // the main page covers the rest: the two pages partition the chunk FIELDS
+    // the three pages partition the chunk FIELDS: main, routing and decision
     const mainFields = exports.fieldsForPage('main').map((descriptor) => descriptor.field)
-    expect([...mainFields, ...exports.fieldsForPage('routing').map((descriptor) => descriptor.field)].sort())
+    const decisionFields = exports.fieldsForPage('decision').map((descriptor) => descriptor.field)
+    expect([...mainFields, ...exports.fieldsForPage('routing').map((descriptor) => descriptor.field), ...decisionFields].sort())
       .toEqual(exports.FIELDS.map((descriptor) => descriptor.field).sort())
+    expect(decisionFields).toEqual(['decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoAnswerClasses', ...DECISION_ADVANCED_FIELD_NAMES])
     expect(mainFields.some((field) => ROUTING_FIELD_NAMES.includes(field))).toBe(false)
     controller.dispose()
   })
@@ -1541,9 +1656,9 @@ describe('client.settings-page chunk', () => {
     }
     for (const locale of ['en', 'zh']) {
       const dict = dicts[locale]
-      // every field on BOTH pages (the chunk FIELDS partition into the main
-      // and routing groups) resolves its label, hint, and enum options
-      expect(exports.fieldsForPage('main').length + exports.fieldsForPage('routing').length).toBe(exports.FIELDS.length)
+      // every field on ALL THREE pages (the chunk FIELDS partition into the main,
+      // routing and decision groups) resolves its label, hint, and enum options
+      expect(exports.fieldsForPage('main').length + exports.fieldsForPage('routing').length + exports.fieldsForPage('decision').length).toBe(exports.FIELDS.length)
       for (const descriptor of exports.FIELDS) {
         expectResolved(dict, descriptor.field)
         expectResolved(dict, `${descriptor.field}Hint`)
@@ -1591,7 +1706,7 @@ describe('client.settings-page chunk', () => {
       // every group on both pages has its translated card title, and no
       // departed group (delegate, blackboard) leaves an orphan label behind
       const groupLabelKeys = exports.GROUPS.map((group) => `group${group.id.charAt(0).toUpperCase()}${group.id.slice(1)}`)
-      expect(groupLabelKeys).toHaveLength(12)
+      expect(groupLabelKeys).toHaveLength(13)
       for (const key of groupLabelKeys) expectResolved(dict, key)
       expect(Object.keys(dict).filter((key) => key.startsWith('group')).sort()).toEqual([...groupLabelKeys].sort())
       // no orphans: the config-face-only keys (server-declared page:false)
