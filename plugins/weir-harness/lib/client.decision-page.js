@@ -202,15 +202,19 @@ window.__ModuleLoader__.load({
       const clarifications = (Array.isArray(props.evidence?.value?.feedback) ? props.evidence.value.feedback : []).filter(entry => entry?.kind === "clarify");
       const clarifyCount = clarifications.length;
       const latestClarify = clarifications.at(-1);
-      return [
+      // The inbox card reuses the transcript card's grouping: the clarification
+      // block, the response entries and their editors sit in ONE wrapper so the
+      // hairline closes the whole response group instead of separating an open
+      // editor from the entry that owns it.
+      return jsx.jsxs("section", { className: "weir-da-user-tools", "data-user-tools": true, children: [
         latestClarify ? jsx.jsxs("div", { className: "weir-da-clarification", "data-clarification": true, children: [
           jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyYouAsked") }, "q-label"), jsx.jsx("span", { children: latestClarify.payload?.question ?? "" }, "q")] }, "question"),
           jsx.jsxs("div", { children: [jsx.jsx("strong", { children: t("decisionClarifyAnswer") }, "a-label"), jsx.jsx("span", { children: latestClarify.payload?.answer ?? "" }, "a")] }, "answer"),
         ] }, "latest-clarify") : null,
         jsx.jsxs("div", { className: "weir-da-actions weir-da-user-actions", children: [
-          summary?.assigned !== false && current.agentId ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-clarify", disabled: pending || clarifyCount >= 3, onClick: () => props.updateDraft("clarifyQuestion", draft.clarifyQuestion ?? ""), title: clarifyCount >= 3 ? t("decisionClarifyLimit") : undefined, children: t("decisionClarify") }, "open-clarify") : null,
-          jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-bounce", disabled: pending, onClick: () => props.updateDraft("bounceNote", draft.bounceNote ?? ""), children: t("decisionBounce") }, "open-bounce"),
-        ] }, "user-tools"),
+          summary?.assigned !== false && current.agentId ? jsx.jsx(ui.Button, { variant: "secondary", "data-action": "open-clarify", disabled: pending || clarifyCount >= 3, onClick: () => props.updateDraft("clarifyQuestion", draft.clarifyQuestion ?? ""), title: clarifyCount >= 3 ? t("decisionClarifyLimit") : undefined, children: t("decisionClarify") }, "open-clarify") : null,
+          jsx.jsx(ui.Button, { variant: "secondary", "data-action": "open-bounce", disabled: pending, onClick: () => props.updateDraft("bounceNote", draft.bounceNote ?? ""), children: t("decisionBounce") }, "open-bounce"),
+        ] }, "entries"),
         draft.clarifyQuestion !== undefined ? jsx.jsxs("div", { className: "weir-da-feedback-editor weir-da-user-editor", children: [
           jsx.jsx(ui.Field, { id: `weir-da-inbox-clarify-${current.caseId}`, label: t("decisionClarify"), hint: t("decisionClarifyHint"), children: jsx.jsx("textarea", {
             id: `weir-da-inbox-clarify-${current.caseId}`, "data-draft": "clarifyQuestion", "aria-label": t("decisionClarify"), value: draft.clarifyQuestion ?? "", disabled: pending,
@@ -227,7 +231,7 @@ window.__ModuleLoader__.load({
           }) }, "bounce-field"),
           jsx.jsx(ui.Button, { variant: "secondary", "data-action": "bounce", disabled: pending || !(draft.bounceNote ?? "").trim(), onClick: () => props.run("returnToCaller", current.caseId, (draft.bounceNote ?? "").trim()), children: t("decisionBounceSubmit") }, "bounce"),
         ] }, "bounce-editor") : null,
-      ];
+      ] }, "user-tools");
     }
 
     function InboxItem(props) {
@@ -268,7 +272,7 @@ window.__ModuleLoader__.load({
           questions, answers: draft.answers, suggestions, pending, collapseTitle: summary?.title,
           onChange: value => props.updateDraft("answers", value), onSubmit: value => props.run("decide", current.caseId, value), t,
         }, "answers"),
-        ...inboxUserTools(props, current, summary),
+        inboxUserTools(props, current, summary),
         jsx.jsx(ui.Disclosure, {
           id: `weir-da-evidence-${current.caseId}`, label: t("decisionEvidence"), onOpen: () => props.loadEvidence(false),
           revealOnOpen: "end", revealReady: evidenceRevealReady,

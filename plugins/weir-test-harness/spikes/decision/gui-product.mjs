@@ -777,6 +777,152 @@ async function cardState(caseId) {
   })()`)
 }
 
+/**
+ * Response-tools truth for one rendered card: the entries, the clarification
+ * block and the editors form ONE group that closes with a hairline, so the record
+ * utilities below it can never interleave with the answer-side response tools.
+ * The same snapshot measures the computed weight of the entries against the
+ * answer form's own secondary and primary buttons.
+ * @param caseId - Case whose card is measured.
+ * @returns one serializable snapshot of the group, its hairline, containment and weight.
+ */
+async function responseToolsDom(caseId) {
+  return instance.cdp.evaluate(`(() => {
+    const cards=[...document.querySelectorAll('[data-weir-decision-card=${JSON.stringify(caseId)}]')]
+    const card=cards.find(el=>el.offsetParent!==null)??cards[0]??null
+    if(!card)return {present:false,caseId:${JSON.stringify(caseId)},cardCount:0,wrapperCount:0,stripCount:0,entries:[],utilities:[],submitRow:{secondary:[],primary:[]},primaryCount:0}
+    const px=value=>{const n=parseFloat(value);return Number.isFinite(n)?n:0}
+    const seeThrough=value=>{
+      if(!value||value==='transparent')return true
+      if(!value.startsWith('rgba('))return false
+      const channels=value.slice(value.indexOf('(')+1,value.lastIndexOf(')')).split(',').map(part=>Number.parseFloat(part))
+      return channels.length===4&&channels[3]===0
+    }
+    const rect=el=>{const box=el?.getBoundingClientRect?.();return box?{top:box.top,bottom:box.bottom,left:box.left,right:box.right,width:box.width,height:box.height}:null}
+    const weight=el=>{
+      const computed=el?getComputedStyle(el):null
+      if(!computed)return null
+      const border={top:px(computed.borderTopWidth),right:px(computed.borderRightWidth),bottom:px(computed.borderBottomWidth),left:px(computed.borderLeftWidth)}
+      const visibleBorder=Math.max(border.top,border.right,border.bottom,border.left)>0&&!seeThrough(computed.borderTopColor)
+      const boxShadow=computed.boxShadow
+      return {
+        variant:el.getAttribute('data-variant'),text:el.textContent.trim(),
+        background:computed.backgroundColor,backgroundSeeThrough:seeThrough(computed.backgroundColor),
+        color:computed.color,borderWidth:border,borderColor:computed.borderTopColor,visibleBorder,
+        boxShadow,visibleShadow:Boolean(boxShadow)&&boxShadow!=='none',
+        visibleChrome:!seeThrough(computed.backgroundColor)||visibleBorder||(Boolean(boxShadow)&&boxShadow!=='none'),
+        rect:rect(el),
+      }
+    }
+    // Every response entry must live inside the group's own entry strip.
+    const wrappers=[...card.querySelectorAll('[data-user-tools]')]
+    const wrapper=wrappers[0]??null
+    const wrapperStyle=wrapper?getComputedStyle(wrapper):null
+    const strips=wrapper?[...wrapper.querySelectorAll('.weir-da-user-actions')]:[]
+    const strip=strips[0]??null
+    const entries=['open-clarify','open-bounce'].map(action=>{
+      const target=wrapper?wrapper.querySelector('[data-action="'+action+'"]'):null
+      return {...(weight(target)??{variant:null,text:null,background:null,backgroundSeeThrough:true,visibleChrome:false}),action,
+        inGroup:Boolean(target),inStrip:Boolean(target&&strip&&strip.contains(target)),
+        outsideGroup:Boolean(!target&&card.querySelector('[data-action="'+action+'"]'))}
+    })
+    // The record utilities are the card children that follow the group.
+    const children=[...card.children]
+    const wrapperIndex=wrapper?children.indexOf(wrapper):-1
+    const wrapperRect=rect(wrapper)
+    const utilities=children.filter((el,index)=>index>wrapperIndex&&(el.classList.contains('weir-da-disclosure')||el.classList.contains('weir-da-feedback-editor')||(el.tagName==='BUTTON'&&el.classList.contains('weir-da-button')))).map(el=>{
+      const box=rect(el)
+      return {className:el.className,text:el.textContent.trim().slice(0,40),rect:box,deltaTop:box&&wrapperRect?box.top-wrapperRect.bottom:null}
+    })
+    const form=card.querySelector(':scope > form.weir-da-answers')
+    const submitRow=form?form.querySelector(':scope > .weir-da-actions'):null
+    return {
+      present:true,caseId:${JSON.stringify(caseId)},cardCount:cards.length,formPresent:Boolean(form),
+      wrapperCount:wrappers.length,
+      wrapper:wrapper?{className:wrapper.className,borderTopWidth:px(wrapperStyle.borderTopWidth),borderBottomWidth:px(wrapperStyle.borderBottomWidth),borderBottomStyle:wrapperStyle.borderBottomStyle,borderColor:wrapperStyle.borderBottomColor,rect:wrapperRect}:null,
+      stripCount:strips.length,
+      strip:strip?{className:strip.className,directChildOfGroup:strip.parentElement===wrapper,borderTopWidth:px(getComputedStyle(strip).borderTopWidth)}:null,
+      entries,utilities,
+      submitRow:submitRow?{secondary:[...submitRow.querySelectorAll('[data-variant="secondary"]')].map(weight),primary:[...submitRow.querySelectorAll('[data-variant="primary"]')].map(weight)}:{secondary:[],primary:[]},
+      primaryCount:card.querySelectorAll('[data-variant="primary"]').length,
+    }
+  })()`)
+}
+
+/**
+ * Grouping problems for one response-tools snapshot: the group owns the hairline
+ * and every record utility that follows it starts below the line.
+ * @param snapshot - responseToolsDom output.
+ * @returns human-readable problems; empty means the grouping contract holds.
+ */
+function responseToolsDividerProblems(snapshot) {
+  const problems=[]
+  if(!snapshot.present)return ['the decision card is not rendered']
+  if(snapshot.wrapperCount!==1)problems.push(`${snapshot.wrapperCount} response-tools groups exist; exactly one is required`)
+  if(!(Number(snapshot.wrapper?.borderBottomWidth)>0))problems.push(`the group's bottom hairline is ${snapshot.wrapper?.borderBottomWidth??'missing'}px`)
+  if(Number(snapshot.wrapper?.borderTopWidth)!==0)problems.push(`the group still draws a ${snapshot.wrapper?.borderTopWidth}px top hairline`)
+  if(snapshot.stripCount!==1)problems.push(`${snapshot.stripCount} entry strips exist inside the group`)
+  if(!snapshot.strip?.directChildOfGroup)problems.push('the entry strip is not a direct child of the group')
+  if(Number(snapshot.strip?.borderTopWidth)!==0)problems.push(`the entry strip still draws a ${snapshot.strip?.borderTopWidth}px top hairline`)
+  for(const entry of snapshot.entries){
+    if(!entry.inGroup)problems.push(`${entry.action} is not inside the group`)
+    if(!entry.inStrip)problems.push(`${entry.action} is not inside the group's entry strip`)
+    if(entry.outsideGroup)problems.push(`${entry.action} also renders outside the group`)
+  }
+  if(snapshot.utilities.length===0)problems.push('no record utility follows the group')
+  for(const utility of snapshot.utilities)if(utility.deltaTop===null||utility.deltaTop<-1)problems.push(`${utility.className||utility.text} starts ${utility.deltaTop}px above the group's hairline`)
+  return problems
+}
+
+/**
+ * Secondary-weight problems for one response-tools snapshot: both entries look
+ * like buttons and stay subordinate to the card's primary action. In the measured
+ * host theme the entries sit on the answer form's own secondary fill (identical
+ * computed background) while the submit keeps the only primary fill, so the
+ * invariant is measured, not a guessed token.
+ * @param snapshot - responseToolsDom output.
+ * @returns human-readable problems; empty means the weight contract holds.
+ */
+function responseToolsWeightProblems(snapshot) {
+  const problems=[]
+  if(!snapshot.present)return ['the decision card is not rendered']
+  const submit=snapshot.submitRow.primary[0]??null
+  const secondary=snapshot.submitRow.secondary[0]??null
+  for(const entry of snapshot.entries){
+    if(!entry.visibleChrome)problems.push(`${entry.action} renders without button chrome (background ${entry.background})`)
+    if(submit&&entry.background===submit.background)problems.push(`${entry.action} shares the primary fill ${entry.background}`)
+    if(secondary&&entry.background!==secondary.background)problems.push(`${entry.action} does not sit on the secondary fill ${secondary.background} (measured ${entry.background})`)
+  }
+  if(submit){
+    if(snapshot.primaryCount!==1)problems.push(`${snapshot.primaryCount} primary buttons exist; the submit must stay the only one`)
+    if(!secondary)problems.push('the answer form lost its secondary suggestion button')
+  }
+  return problems
+}
+
+/**
+ * Frame one card's response-tools group for its screenshot, then hand the card
+ * back to the `block: 'start'` seat every later step expects.
+ * @param name - Screenshot name.
+ * @param caseId - Case whose response-tools group is centered.
+ * @returns the scroll measurement recorded as screenshot evidence.
+ */
+async function frameResponseTools(name, caseId) {
+  const card=`[data-weir-decision-card=${JSON.stringify(caseId)}]`
+  const rendered=await instance.cdp.evaluate(`(() => {
+    const card=document.querySelector(${JSON.stringify(card)})
+    const group=card?.querySelector('[data-user-tools]')??null
+    if(!card||!group)return {present:false}
+    group.scrollIntoView({block:'center',inline:'nearest'})
+    const box=group.getBoundingClientRect()
+    return {present:true,top:box.top,bottom:box.bottom,height:box.height,viewport:innerHeight,fullyVisible:box.top>=0&&box.bottom<=innerHeight}
+  })()`)
+  requireEvidence(rendered.present, `${name} needs a rendered response-tools group`)
+  await shot(name, {kind:'response-tools',caseId,rendered})
+  await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(card)})?.scrollIntoView({block:'start',inline:'nearest'})`)
+  return rendered
+}
+
 // The decision card is owned by the Turn-layer chat node, so it is outside the
 // Turn's process disclosure in every work-details mode. A card that needs a
 // disclosure opened before it can be read is the regression this change
@@ -4025,6 +4171,17 @@ try {
   }
   check('firstJudgmentNativeOnlyWritableSurface', firstCard.forms === 0 && firstCard.nativeHints === 1, firstCard)
   await shot('07-first-judgment-native')
+  // The native pending card shares the response-tools grouping: the hairline
+  // closes its entries and editors before the record utilities, and both entries
+  // are real subordinate buttons instead of ghost text.
+  const nativeTools = await responseToolsDom(first.caseId)
+  const nativeDividerProblems = responseToolsDividerProblems(nativeTools)
+  check('nativeResponseToolsAboveDivider', nativeDividerProblems.length === 0, { ...nativeTools, problems: nativeDividerProblems })
+  const nativeWeightProblems = nativeTools.present && nativeTools.entries.length === 2 && nativeTools.formPresent === false && nativeTools.primaryCount === 0
+    ? nativeTools.entries.filter(entry => !(entry.inGroup && entry.visibleChrome && entry.backgroundSeeThrough === false)).map(entry => `${entry.action} is not a visible secondary button (background ${entry.background}, border ${entry.borderColor})`)
+    : ['the native card does not expose the two subordinate response entries']
+  check('nativeResponseToolsSecondaryWeight', nativeWeightProblems.length === 0, { ...nativeTools, problems: nativeWeightProblems })
+  await frameResponseTools('07a-native-response-tools', first.caseId)
   await answerNative('Use Short')
   const firstClosed = await waitCase(sessionId, 'gui-b-new', current => current.state === 'closed')
   check('firstJudgmentClosedEscalated', firstClosed.closing === 'escalated' && firstClosed.decision?.kind === 'user_decision' && firstClosed.decision.answers[0].selected[0] === 'Use Short')
@@ -4077,6 +4234,15 @@ try {
   check('consultWaitingCardPutsDecisionFirst', beforeCard.cards === 1 && beforeCard.forms === 1 && beforeCard.formImmediatelyAfterHeader && beforeCard.formBeforeSecondary && beforeCard.recordAnswerSummaries === 0 && beforeCard.suggestionReviews === 0 && beforeCard.text.includes('GUI_B_DECIDE'), beforeCard)
   check('consultCardVisibleWithProcessCollapsed', beforeCard.dom.count === 1 && !beforeCard.dom.inProcess && beforeCard.dom.visible && beforeCard.dom.turnControl?.expanded !== 'true', beforeCard.dom)
   await shot('10-consult-before-tool-result')
+  // Both response entries now sit on the answer-form side of ONE hairline and
+  // read as subordinate buttons: the group closes after its entries, its
+  // clarification block and its editors, so the record utilities follow below it.
+  const consultTools = await responseToolsDom(consult.caseId)
+  const consultDividerProblems = responseToolsDividerProblems(consultTools)
+  check('consultResponseToolsAboveDivider', consultDividerProblems.length === 0, { ...consultTools, problems: consultDividerProblems })
+  const consultWeightProblems = responseToolsWeightProblems(consultTools)
+  check('consultResponseToolsSecondaryWeight', consultWeightProblems.length === 0, { ...consultTools, problems: consultWeightProblems })
+  await frameResponseTools('10a-consult-response-tools', consult.caseId)
   writeFileSync(join(out, 'consult-result.release'), `${JSON.stringify({ at: Date.now() })}\n`)
   const afterResult = await waitFor(async () => { const scan = await scanSession(sessionId, 'consult-after-result-session.json'); return scan.events.some(event => event.type === 'tool/result' && event.callId === held.callId) ? scan : null }, 30_000)
   const afterCard = await waitFor(async () => { const value = await cardState(consult.caseId); return value.cards === 1 && value.forms === 1 ? value : null }, 30_000)

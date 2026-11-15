@@ -251,6 +251,42 @@ test('awaiting explicit consult leads with its only answer form and no duplicate
   assert.equal(textContent(tree).includes('decisionNoAnswer'), false)
 })
 
+test('pending response tools group entries, clarification and editors above one hairline', async () => {
+  const clarified = {
+    ...waitingDetail,
+    feedback: [{ feedbackId: 'fb-clarify', kind: 'clarify', actor: 'user', payload: { question: 'Which evidence supports this?', answer: 'Only the submitted record.' } }],
+  }
+  const mounted = await mount(clarified, { props: { toolName: 'decision_consult' } })
+  let tree = mounted.render()
+  const content = tree.children.filter(Boolean)
+  const wrappers = findAll(tree, node => node['data-user-tools'] === true)
+  assert.equal(wrappers.length, 1, 'the pending card exposes exactly one response-tools group')
+  const wrapper = wrappers[0]
+  assert.equal(wrapper.className, 'weir-da-user-tools')
+  assert.ok(content.includes(wrapper), 'the group is a direct child of the card')
+  const formIndex = content.findIndex(node => node.__type === mounted.ui.DecisionAnswers)
+  const evidenceIndex = content.findIndex(node => node.__type === mounted.ui.Disclosure && node.label === 'decisionEvidence')
+  assert.ok(formIndex >= 0 && formIndex < content.indexOf(wrapper) && content.indexOf(wrapper) < evidenceIndex, 'the group sits between the answer form and the record utilities')
+  const strip = findAll(wrapper, node => node.className === 'weir-da-actions weir-da-user-actions')[0]
+  assert.ok(strip, 'the entry strip renders inside the group')
+  assert.ok(wrapper.children.filter(Boolean).includes(strip), 'the entry strip is a direct child of the group')
+  assert.deepEqual(
+    findAll(wrapper, node => node.__type === mounted.ui.Button && ['open-clarify', 'open-bounce'].includes(node['data-action'])).map(node => [node['data-action'], node.variant]),
+    [['open-clarify', 'secondary'], ['open-bounce', 'secondary']],
+    'both response entries carry the subordinate button variant',
+  )
+  assert.equal(findAll(wrapper, node => node['data-clarification'] === true).length, 1, 'the clarification block belongs to the same group')
+  assert.equal(findAll(tree, node => node['data-action'] === 'open-clarify').length, 1, 'no entry copy escapes the group')
+  assert.equal(findAll(tree, node => node['data-action'] === 'open-bounce').length, 1)
+  // An opened editor stays inside the group, so the hairline always closes the
+  // whole group instead of cutting between an entry and its own editor.
+  action(tree, mounted.ui, 'open-clarify').onClick()
+  tree = mounted.render()
+  const opened = findAll(tree, node => node['data-user-tools'] === true)[0]
+  assert.equal(findAll(opened, node => node['data-draft'] === 'clarifyQuestion').length, 1, 'the open editor stays inside the group')
+  mounted.unmount()
+})
+
 test('Hook pending card defers to the native question and never duplicates its answer form', async () => {
   const mounted = await mount(waitingDetail, { props: { toolName: 'ask_user_question' } })
   const tree = mounted.render()
