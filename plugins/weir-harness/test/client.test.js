@@ -356,6 +356,9 @@ describe('weir settings client half', () => {
     expect(localeRegistrations[0].ns).toBe('settings.weir')
     expect(localeRegistrations[0].dicts.en.title).toBe('Weir')
     expect(localeRegistrations[0].dicts.zh.title).toBe('Weir')
+    // the third settings page carries its own navigation label
+    expect(localeRegistrations[0].dicts.en.decisionTitle).toBe('Decision assistant')
+    expect(localeRegistrations[0].dicts.zh.decisionTitle).toBe('决策助手')
     // the chunk arrival states carry dictionary entries (templates in English)
     expect(localeRegistrations[0].dicts.en.loading).toBe('Loading Weir settings…')
     expect(localeRegistrations[0].dicts.en.loadFailed).toBe('Weir settings could not be loaded:')
@@ -413,6 +416,8 @@ describe('weir settings client half', () => {
       'settings.section', 'settings.weir.item',
       // the model-routing page: its own section + item slot registrations
       'settings.section', 'settings.weir-routing.item',
+      // the decision page: its own section + item slot registrations
+      'settings.section', 'settings.weir-decision.item',
     ])
     expect(conversationDefinitions).toHaveLength(1)
     const decisionDefinition = conversationDefinitions[0]
@@ -484,18 +489,32 @@ describe('weir settings client half', () => {
       expect(typeof registration.component).toBe('function')
     }
 
-    // the top-level settings section registrations: the main page (order 40)
-    // and the model-routing page (order 41)
+    // the top-level settings section registrations: the main page (order 40),
+    // the model-routing page (order 41) and the decision page (order 42)
     slotInjects[26].fn()
     slotInjects[28].fn()
+    slotInjects[30].fn()
     const sectionEntries = slotRegistrations.filter((registration) => registration.definition.name === 'settings.section')
-    expect(sectionEntries).toHaveLength(2)
+    expect(sectionEntries).toHaveLength(3)
     const { definition: sectionDef, component: sectionComponent } = sectionEntries.find((registration) => registration.definition.id === 'weir-settings')
     const routingSectionEntry = sectionEntries.find((registration) => registration.definition.id === 'weir-model-routing')
     expect(routingSectionEntry).toBeTruthy()
     expect(routingSectionEntry.definition.order).toBe(41)
     expect(routingSectionEntry.definition.children['settings.weir-routing.item']).toEqual({ kind: 'list', scope: 'root' })
     expect(routingSectionEntry.definition.label()).toBe('routingTitle')
+    const decisionSectionEntry = sectionEntries.find((registration) => registration.definition.id === 'weir-decision')
+    expect(decisionSectionEntry).toBeTruthy()
+    expect(decisionSectionEntry.definition.order).toBe(42)
+    expect(decisionSectionEntry.definition.children['settings.weir-decision.item']).toEqual({ kind: 'list', scope: 'root' })
+    expect(decisionSectionEntry.definition.locale).toBe('settings.weir')
+    expect(decisionSectionEntry.definition.label()).toBe('decisionTitle')
+    reactStub.begin()
+    decisionSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })
+    await flush()
+    reactStub.begin()
+    const decisionSectionRendered = decisionSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })
+    expect(decisionSectionRendered.slot).toBe('settings.weir-decision.item')
+    expect(typeof decisionSectionRendered.renderSlot).toBe('function')
     reactStub.begin()
     expect(routingSectionEntry.component({ renderSlot: (slot) => slot, t: (key) => key })).toBeTruthy()
     expect(sectionDef.name).toBe('settings.section')
@@ -510,12 +529,18 @@ describe('weir settings client half', () => {
     // per page: no plugins.item registration anymore)
     slotInjects[27].fn()
     slotInjects[29].fn()
+    slotInjects[31].fn()
     const itemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir.item')
     const routingItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-routing.item')
     expect(routingItemEntry).toBeTruthy()
     expect(routingItemEntry.definition.id).toBe('weir-routing-config')
     expect(routingItemEntry.definition.order).toBe(0)
     expect(itemEntry.definition.id).toBe('weir-config')
+    const decisionItemEntry = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-decision.item')
+    expect(decisionItemEntry).toBeTruthy()
+    expect(decisionItemEntry.definition.id).toBe('weir-decision-config')
+    expect(decisionItemEntry.definition.order).toBe(0)
+    expect(decisionItemEntry.definition.locale).toBe('settings.weir')
     expect(slotRegistrations.find((registration) => registration.definition.name === 'plugins.item')).toBeUndefined()
 
     // the session capability Badge slot registration (12.1)
@@ -595,13 +620,14 @@ describe('weir settings client half', () => {
     // a prop — never through the settings-chunk Promise.all
     expect(settled.modelPicker).toBe(modelPickerChunk)
 
-    // both page controllers were constructed on arrival with the served
+    // all three page controllers were constructed on arrival with the served
     // scope and the prop-injected deps; each deferred store now serves its
     // controller's snapshot
-    expect(controllerConstructed).toHaveLength(2)
-    expect(controllerConstructed.map((c) => c.page)).toEqual(['main', 'routing'])
+    expect(controllerConstructed).toHaveLength(3)
+    expect(controllerConstructed.map((c) => c.page)).toEqual(['main', 'routing', 'decision'])
     expect(controllerConstructed[0].scope).toBe(scope)
     expect(controllerConstructed[1].scope).toBe(scope)
+    expect(controllerConstructed[2].scope).toBe(scope)
     expect(typeof controllerConstructed[0].deps.getSession).toBe('function')
     expect(typeof controllerConstructed[0].deps.settingsBus.notify).toBe('function')
     expect(injected.hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
@@ -620,6 +646,21 @@ describe('weir settings client half', () => {
     expect(routingSettled.__type).toBe(settingsPageChunk.WeirCard)
     expect(routingSettled.page).toBe('routing')
     expect(routingSettled.modelPicker).toBe(modelPickerChunk)
+
+    // the decision item renders WeirCard on the decision page against the third
+    // controller's store (its own section, same scope)
+    slotInjects[31].fn()
+    const decisionItem = slotRegistrations.find((registration) => registration.definition.name === 'settings.weir-decision.item')
+    expect(decisionItem.definition.inject().hooks.weirSettingsCard.getSnapshot()).toBe(sentinelSnapshot)
+    reactStub.reset()
+    reactStub.begin()
+    decisionItem.component(formProps)
+    await flush()
+    reactStub.begin()
+    const decisionSettled = decisionItem.component(formProps)
+    expect(decisionSettled.__type).toBe(settingsPageChunk.WeirCard)
+    expect(decisionSettled.page).toBe('decision')
+    expect(decisionSettled.modelPicker).toBe(modelPickerChunk)
 
     // settingsBus 贯通: the composer toggle wrapper receives the same bus object
     slotInjects[0].fn()
@@ -2579,7 +2620,7 @@ describe('weir settings client half', () => {
     'decisionAgentMaxConcurrentAttempts', 'decisionAgentMaxConcurrentAttemptsHint', 'decisionAgentMaxOutputTokens', 'decisionAgentMaxOutputTokensHint',
     'decisionAgentRetentionDays', 'decisionAgentRetentionDaysHint',
     'decisionAgentsEnabled', 'decisionAgentsEnabledHint', 'groupDecisionBasics', 'groupDecisionAdvanced', 'decisionAdvancedHint',
-    'decisionDescription',
+    'decisionDescription', 'decisionTitle',
     'decisionSelector', 'decisionOff', 'decisionAgents', 'decisionRecords', 'decisionInbox', 'decisionMetrics',
     'decisionLoading', 'decisionFailed', 'decisionEvidence', 'decisionSuggestions', 'decisionPerQuestion', 'decisionRevision', 'decisionHistory', 'decisionNoRecord', 'decisionMoreDetails', 'decisionMoreDetailsRouteIssue', 'decisionMoreDetailsFailedAttempt', 'decisionFeedbackHintShort',
     'decisionCustomAnswer', 'decisionCustomAnswerPlaceholder', 'decisionClarify', 'decisionClarifyHint', 'decisionClarifyPlaceholder', 'decisionClarifySubmit', 'decisionClarifyLimit', 'decisionClarifyYouAsked', 'decisionClarifyAnswer', 'decisionClarifyRecord', 'decisionBounce', 'decisionBounceHint', 'decisionBouncePlaceholder', 'decisionBounceSubmit',

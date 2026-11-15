@@ -32,6 +32,7 @@ window.__ModuleLoader__.load({
 		const en = {
 			title: "Weir",
 			routingTitle: "Weir Model Routing",
+			decisionTitle: "Decision assistant",
 			loading: "Loading Weir settings…",
 			loadFailed: "Weir settings could not be loaded:",
 			decisionSelector: "Decision assistant",
@@ -87,6 +88,7 @@ window.__ModuleLoader__.load({
 		const zh = {
 			title: "Weir",
 			routingTitle: "Weir 模型路由",
+			decisionTitle: "决策助手",
 			loading: "正在加载 Weir 设置…",
 			loadFailed: "Weir 设置加载失败：",
 			decisionSelector: "决策助手",
@@ -138,6 +140,11 @@ window.__ModuleLoader__.load({
 		// settings-page chunk.
 		const ROUTING_SECTION_ID = "weir-model-routing";
 		const ROUTING_ITEM_SLOT = "settings.weir-routing.item";
+		// The decision assistant settings are the third page of the same form
+		// mechanism (order 42): same chunk, same controller class with the
+		// "decision" page, its own section and item slot.
+		const DECISION_SECTION_ID = "weir-decision";
+		const DECISION_ITEM_SLOT = "settings.weir-decision.item";
 		// ---- Chunk-carried dictionaries ----
 		// Every lazily delivered feature chunk carries a pure { en, zh } data
 		// face (NO ctx calls inside a chunk: the factory re-executes under HMR,
@@ -1168,9 +1175,11 @@ window.__ModuleLoader__.load({
 				// stable deferred store plus delegating actions.
 				let controller = null;
 				let routingController = null;
+				let decisionController = null;
 				let serving = true;
 				const deferredStore = createDeferredStore();
 				const routingDeferredStore = createDeferredStore();
+				const decisionDeferredStore = createDeferredStore();
 				const routingCardFace = {
 					hooks: { weirSettingsCard: routingDeferredStore },
 					edit: (field, text) => routingController?.inject().edit(field, text),
@@ -1178,6 +1187,15 @@ window.__ModuleLoader__.load({
 					save: (...args) => routingController?.inject().save(...args),
 					discard: () => routingController?.inject().discard(),
 					dismissRestartReminder: () => routingController?.inject().dismissRestartReminder(),
+					getSession: () => ctx.remote.session
+				};
+				const decisionCardFace = {
+					hooks: { weirSettingsCard: decisionDeferredStore },
+					edit: (field, text) => decisionController?.inject().edit(field, text),
+					resetField: (field) => decisionController?.inject().resetField(field),
+					save: (...args) => decisionController?.inject().save(...args),
+					discard: () => decisionController?.inject().discard(),
+					dismissRestartReminder: () => decisionController?.inject().dismissRestartReminder(),
 					getSession: () => ctx.remote.session
 				};
 				const cardFace = {
@@ -1223,6 +1241,8 @@ window.__ModuleLoader__.load({
 								deferredStore.attach(controller.store);
 								routingController = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session, fetchEnv: fetchEnvFacts }, "routing");
 								routingDeferredStore.attach(routingController.store);
+								decisionController = new settingsPage.WeirCardController(scope, { settingsBus, getSession: () => ctx.remote.session, fetchEnv: fetchEnvFacts }, "decision");
+								decisionDeferredStore.attach(decisionController.store);
 							}
 							// Editor components pre-bound with their model chunks,
 							// created once per arrival so their identity is stable
@@ -1266,11 +1286,32 @@ window.__ModuleLoader__.load({
 					}
 					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
 				}
+				function DecisionSectionWrapper(props) {
+					const sectionArrival = useChunkArrival(ensureSettingsChunks);
+					if (sectionArrival?.chunks) {
+						return react_jsx_runtime.jsx(sectionArrival.chunks.settingsPage.WeirSection, { renderSlot: props.renderSlot, slot: DECISION_ITEM_SLOT });
+					}
+					if (sectionArrival?.error) {
+						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(sectionArrival.error)}` });
+					}
+					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
+				}
 				function RoutingCardWrapper(props) {
 					const cardArrival = useChunkArrival(ensureSettingsChunks);
 					const pickerArrival = useChunkArrival(loadModelPickerChunk);
 					if (cardArrival?.chunks) {
 						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.WeirCard, { ...props, t: pageT, page: "routing", editors: cardArrival.chunks.editors, modelPicker: pickerArrival?.chunks });
+					}
+					if (cardArrival?.error) {
+						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(cardArrival.error)}` });
+					}
+					return react_jsx_runtime.jsx("div", { style: settingsLoadingStyle, children: props.t("loading") });
+				}
+				function DecisionCardWrapper(props) {
+					const cardArrival = useChunkArrival(ensureSettingsChunks);
+					const pickerArrival = useChunkArrival(loadModelPickerChunk);
+					if (cardArrival?.chunks) {
+						return react_jsx_runtime.jsx(cardArrival.chunks.settingsPage.WeirCard, { ...props, t: pageT, page: "decision", editors: cardArrival.chunks.editors, modelPicker: pickerArrival?.chunks });
 					}
 					if (cardArrival?.error) {
 						return react_jsx_runtime.jsx("div", { style: settingsLoadFailedStyle, children: `${props.t("loadFailed")} ${describeChunkError(cardArrival.error)}` });
@@ -1324,14 +1365,35 @@ window.__ModuleLoader__.load({
 					locale: NS,
 					inject: () => routingCardFace
 				}, RoutingCardWrapper));
+				const offDecisionSection = ctx.slots.inject("settings.section", () => ctx.slots.register({
+					name: "settings.section",
+					id: DECISION_SECTION_ID,
+					order: 42,
+					label: () => t("decisionTitle"),
+					locale: NS,
+					children: { [DECISION_ITEM_SLOT]: {
+						kind: "list",
+						scope: "root"
+					} }
+				}, DecisionSectionWrapper));
+				const offDecisionItem = ctx.slots.inject(DECISION_ITEM_SLOT, () => ctx.slots.register({
+					name: DECISION_ITEM_SLOT,
+					id: "weir-decision-config",
+					order: 0,
+					locale: NS,
+					inject: () => decisionCardFace
+				}, DecisionCardWrapper));
 				return () => {
 					serving = false;
 					controller?.dispose();
 					routingController?.dispose();
+					decisionController?.dispose();
 					offSection();
 					offItem();
 					offRoutingSection();
 					offRoutingItem();
+					offDecisionSection();
+					offDecisionItem();
 				};
 			}), "ui-weir-settings: page");
 			// Decision Agents: synchronous slot shells; chunks load only on first render.
