@@ -1829,3 +1829,121 @@ test('same-assistant Snapshot reload keeps the detail mounted and clamps the set
   assert.equal(scrollTop, 193, 'the settled content shrinks to the new maximum instead of staying at 0')
   harness.unmount()
 })
+
+// The learning/snapshot reload is the only Decision action that replaces the card
+// the user is reading. The pane must hand its own offset back: Chromium's scroll
+// anchoring rewrites scrollTop in the same frame the reloaded card commits.
+function detailPaneScroll(tree, initialAnchor = '') {
+  const node = findAll(tree, item => item.className === 'weir-da-agent-detail-pane' && item.ref)[0]
+  assert.ok(node, 'assistant detail pane exists')
+  const pane = node.ref.current
+  assert.ok(pane, 'assistant detail pane is mounted')
+  const removals = []
+  const style = { overflowAnchor: initialAnchor }
+  style.removeProperty = name => {
+    removals.push(name)
+    if (name === 'overflow-anchor') style.overflowAnchor = ''
+    return ''
+  }
+  Object.assign(pane, { scrollTop: 690, scrollHeight: 4518, clientHeight: 532, style })
+  return { pane, style, removals }
+}
+
+test('a learning action reload restores the assistant detail pane scrollTop, clamps to a shrunken range, and hands the inline anchoring rule back', async () => {
+  const base = { agentId: 'ag_scroll', name: 'Scroll', state: 'enabled', currentSnapshotId: null, learningRuns: [], snapshots: [] }
+  const reloaded = { ...base, learningRuns: [{ learningRunId: 'lr_scroll', outcome: 'published', revision: 1 }] }
+  let agentReads = 0
+  let reload = null
+  let holdSeen = null
+  let watchedPane = null
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [base],
+    inbox: async () => [],
+    agent: async () => {
+      agentReads += 1
+      if (agentReads === 1) return base
+      // Measured in the reload window: the anchoring rule must already be off.
+      holdSeen = watchedPane?.style?.overflowAnchor ?? null
+      const pending = reload
+      await pending.gate.promise
+      pending.commit()
+      return pending.value
+    },
+    learningStart: async () => ({ learningRunId: 'lr_scroll', outcome: 'published' }),
+    learningRun: async id => ({ learningRunId: id, agentId: base.agentId, outcome: 'published', operations: [], inputFrozen: { parentSnapshotId: null } }),
+    publicMemoryRefresh: async () => null,
+  } })
+  let uuid = 0
+  window.crypto = { randomUUID: () => `request-${++uuid}` }
+  const startButton = () => {
+    const detail = findAll(harness.render(), node => node['data-agent-detail'] === base.agentId)[0]
+    const element = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
+    return findAll(harness.learning.AgentLearning(element), node => node.type === harness.ui.Button && node['data-action'] === 'learning-start')[0]
+  }
+  const queueReload = (commit = () => {}) => {
+    const gate = deferred()
+    reload = { gate, value: reloaded, commit }
+    return reload
+  }
+  try {
+    await openAgents(harness)
+    await openAssistant(harness, base.agentId)
+    const { pane, style, removals } = detailPaneScroll(harness.render(), 'auto')
+    watchedPane = pane
+
+    // 1. The range grew (4518 -> 4614) while anchoring rewrote 690 -> 446 (the
+    //    measured Desktop numbers): the captured offset comes back exactly.
+    queueReload(() => { pane.scrollHeight = 4614; pane.scrollTop = 446 })
+    const grown = startButton().onClick()
+    await harness.flush()
+    assert.equal(holdSeen, 'none', 'the reload starts with browser scroll anchoring disabled')
+    assert.equal(style.overflowAnchor, 'none', 'the pane holds the anchoring rule while the reload is in flight')
+    assert.equal(pane.scrollTop, 690, 'the pane offset is captured before the reload commits')
+    reload.gate.resolve()
+    await grown
+    await harness.flush()
+    assert.equal(pane.scrollTop, 690, 'a grown scroll range restores the captured offset exactly')
+    assert.equal(style.overflowAnchor, 'auto', 'the previous inline anchoring rule is restored')
+    assert.deepEqual(removals, [], 'a prior inline rule is written back instead of being removed')
+
+    // 2. The range shrank (4518 -> 700): the browser clamps to the new maximum,
+    //    and an empty prior rule leaves no inline residue behind.
+    style.overflowAnchor = ''
+    removals.length = 0
+    pane.scrollTop = 690; pane.scrollHeight = 4518; pane.clientHeight = 532
+    queueReload(() => { pane.scrollHeight = 700; pane.scrollTop = 168 })
+    const shrunk = startButton().onClick()
+    await harness.flush()
+    reload.gate.resolve()
+    await shrunk
+    await harness.flush()
+    assert.equal(pane.scrollTop, 168, 'a shrunken scroll range clamps to scrollHeight - clientHeight')
+    assert.equal(style.overflowAnchor, '', 'an empty prior rule leaves no inline anchoring residue')
+    assert.deepEqual(removals, ['overflow-anchor'])
+
+    // 3. The authoritative content commits after the read resolves: the hold must
+    //    survive the commit frame, or anchoring rewrites the offset again.
+    const frames = []
+    pane.ownerDocument = { defaultView: { requestAnimationFrame: callback => { frames.push(callback); return frames.length } } }
+    pane.scrollTop = 690; pane.scrollHeight = 4518; pane.clientHeight = 532
+    queueReload()
+    const framed = startButton().onClick()
+    await harness.flush()
+    reload.gate.resolve()
+    await harness.flush()
+    assert.equal(frames.length, 1, 'the restore waits for the commit frame')
+    assert.equal(style.overflowAnchor, 'none', 'anchoring stays disabled until the restore lands')
+    assert.equal(pane.scrollTop, 690, 'the offset is still held before the commit lands')
+    pane.scrollHeight = 4614
+    pane.scrollTop = 446
+    frames.shift()()
+    await framed
+    await harness.flush()
+    assert.equal(pane.scrollTop, 690, 'the commit frame pins the captured offset back')
+    assert.equal(style.overflowAnchor, '', 'the hold is released once the restored offset landed')
+    delete pane.ownerDocument
+  } finally {
+    harness.unmount()
+    delete globalThis.window.crypto
+  }
+})

@@ -1090,6 +1090,36 @@ window.__ModuleLoader__.load({
           await loadPublicMemory(agentId, { sessionId: requestSession, epoch });
         } catch (reason) { if (valid("agent", token, epoch, requestSession)) patchResource("agent", { status: "error", value: null, error: asError(reason) }); }
       };
+      // A learning/snapshot action reloads the assistant the user is reading, and
+      // Chromium's scroll anchoring then rewrites the pane's scrollTop in the same
+      // frame the reloaded card commits (measured: 690 -> 446 while the scroll
+      // range grew). The pane holds its own offset across the reload instead:
+      // capture the offset, disable anchoring, then pin the captured offset back
+      // against the committed range and hand the inline rule back exactly.
+      const preserveDetailScroll = async reload => {
+        const pane = agentDetailPaneRef.current;
+        const style = pane?.style;
+        const previousAnchor = style?.overflowAnchor ?? "";
+        const captured = Math.max(0, Number(pane?.scrollTop) || 0);
+        const hold = () => { if (style) style.overflowAnchor = "none"; };
+        hold();
+        try { return await reload(); } finally {
+          // The authoritative read resolves before React commits the fresh card,
+          // and a nested scroll lock (the publish dialog) hands its own anchoring
+          // rule back while it closes: hold until the commit frame, then restore.
+          hold();
+          const view = pane?.ownerDocument?.defaultView;
+          if (typeof view?.requestAnimationFrame === "function") {
+            await new Promise(resolve => view.requestAnimationFrame(() => resolve()));
+          }
+          if (pane) pane.scrollTop = Math.min(captured, Math.max(0, (Number(pane.scrollHeight) || 0) - (Number(pane.clientHeight) || 0)));
+          if (style) {
+            if (previousAnchor) style.overflowAnchor = previousAnchor;
+            else if (typeof style.removeProperty === "function") style.removeProperty("overflow-anchor");
+            else style.overflowAnchor = "";
+          }
+        }
+      };
       const run = async (method, ...args) => {
         if (pendingRef.current) return;
         pendingRef.current = true; setPending(method); setActionError(null);
@@ -1136,7 +1166,7 @@ window.__ModuleLoader__.load({
             backToAgents();
           } else if (method.startsWith("learning") || method.startsWith("snapshot")) {
             const selected = resources.agent.value;
-            if (selected) await selectAgent(selected.agentId);
+            if (selected) await preserveDetailScroll(() => selectAgent(selected.agentId));
           }
           if (publicActionRef.current) {
             publicActionRef.current = false;
