@@ -1553,17 +1553,18 @@ window.__ModuleLoader__.load({
 			function DecisionPendingBadge(props) {
 				const count = Number.isInteger(props.count) && props.count > 0 ? props.count : 0;
 				if (count === 0) return null;
-				// The count rides the host's warn fill with the on-colour label token and a
-				// ring in the sidebar's own surface colour, so it separates from the icon
-				// without spelling a colour or depending on the light/dark variant.
+				// The digits sit on a soft amber tint, not on the solid warn fill: white
+				// on amber-500 is only ~2:1, while the primary label token on this tint
+				// clears 7:1 in both themes. The amber ring keeps the cue visible.
 				return react_jsx_runtime.jsx("span", {
 					"data-weir-decision-bubble": "true", "aria-hidden": "true",
 					title: String(t("decisionPendingBubbleTitle")).replace(/\{count\}/g, String(count)),
 					style: {
 						position: "absolute", top: "-5px", insetInlineEnd: "-6px", boxSizing: "border-box",
 						minWidth: "14px", height: "14px", padding: "0 3px", borderRadius: "var(--dsw-radius-lg)",
-						background: "var(--dsw-alias-state-warn-primary)", color: "var(--dsw-alias-label-on-color)",
-						boxShadow: "0 0 0 1.5px var(--dsw-specific-selector)",
+						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, var(--dsw-alias-bg-base))",
+						color: "var(--dsw-alias-label-primary)",
+						boxShadow: "0 0 0 1.5px var(--dsw-alias-state-warn-primary)",
 						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
 						textAlign: "center", pointerEvents: "none",
 					},

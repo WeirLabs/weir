@@ -1458,9 +1458,11 @@ describe('weir settings client half', () => {
     expect(rendered.children).toBe('2')
     expect(rendered.title).toBe('2 need your decision')
     expect(rendered.style.position).toBe('absolute')
-    expect(rendered.style.background).toBe('var(--dsw-alias-state-warn-primary)')
-    expect(rendered.style.color).toBe('var(--dsw-alias-label-on-color)')
-    expect(rendered.style.boxShadow).toContain('var(--dsw-specific-selector)')
+    // Soft amber tint + primary label keeps the digits legible in both themes;
+    // the amber ring carries the attention cue instead of a solid fill.
+    expect(rendered.style.background).toBe('color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, var(--dsw-alias-bg-base))')
+    expect(rendered.style.color).toBe('var(--dsw-alias-label-primary)')
+    expect(rendered.style.boxShadow).toContain('var(--dsw-alias-state-warn-primary)')
     expect(rendered.style.borderRadius).toBe('var(--dsw-radius-lg)')
     // Exactly one visually hidden polite region: the icon container is
     // decorative, so the sentence — not the number — carries the state.
