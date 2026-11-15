@@ -1411,6 +1411,12 @@ describe('weir settings client half', () => {
     expect(page.ui).toBeTruthy()
     expect(page.learning).toBeTruthy()
     expect(page.pageView).toBe('page-view')
+    // The assistant editor's route rungs reuse the composer-style picker: the
+    // page gets the picker chunk on its own arrival state plus a lazy session
+    // accessor (S17: apply never dereferences remote.session).
+    expect(page.modelPicker).toBeTruthy()
+    expect(typeof page.modelPicker.ModelPickerField).toBe('function')
+    expect(typeof page.getSession).toBe('function')
     expect(page.decisionModel.decisionRpc).toBe('decision-rpc')
     // One pull from the entry's pending-count read and one from the page batch;
     // the ModuleLoader hands back the same module and registers its data face once.
@@ -2663,8 +2669,8 @@ describe('weir settings client half', () => {
     'decisionSnapshotPin', 'decisionNoSnapshotPin', 'decisionReviewedPrinciples', 'decisionL5Mappings', 'decisionExclusions', 'decisionNoExclusions',
     'decisionLearningOutcome_running', 'decisionLearningOutcome_candidate', 'decisionLearningOutcome_published', 'decisionLearningOutcome_rejected',
     'decisionLearningOutcome_rolled_back', 'decisionLearningOutcome_failed', 'decisionSnapshotState_draft', 'decisionSnapshotState_published', 'decisionSnapshotState_rolled_back',
-    'decisionAddNote', 'decisionAdvancedSettings', 'decisionAdvancedSettingsHint', 'decisionAgentModelRouteJson',
-    'decisionAgentName', 'decisionAgentPreference', 'decisionAgentPreferenceHint', 'decisionAgentScopeJson',
+    'decisionAddNote', 'decisionAdvancedSettings', 'decisionAdvancedSettingsHint',
+    'decisionAgentName', 'decisionAgentPreference', 'decisionAgentPreferenceHint',
     'decisionAgentStateArchived', 'decisionAgentStateDisabled', 'decisionAgentStateEnabled',
     'decisionAllAssistants', 'decisionAllFeedback', 'decisionAllOutcomes', 'decisionAllReasons', 'decisionAllStates',
     'decisionApplyFilters', 'decisionArchiveAgent', 'decisionArchiveConfirmation', 'decisionArchiveTitle',
@@ -2687,7 +2693,7 @@ describe('weir settings client half', () => {
     'decisionMetricMeanLatency', 'decisionMetricRatingsDown', 'decisionMetricRatingsUndone', 'decisionMetricRatingsUp',
     'decisionMetricReassignments', 'decisionMetricReturns', 'decisionMetricSelectorOffBypasses', 'decisionMetricWindow',
     'decisionMetricWindow24h', 'decisionMetricWindow30d', 'decisionMetricWindow7d', 'decisionMetricWindowAll',
-    'decisionModelInheritanceHint', 'decisionMoreFilters', 'decisionNativeAnswerHint', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
+    'decisionMoreFilters', 'decisionNativeAnswerHint', 'decisionNoAnswer', 'decisionNoEarlierEvaluations',
     'decisionNoEvidence', 'decisionNoFeedback', 'decisionNoHistoricalContext', 'decisionNoPreference', 'decisionNoReviewedPrinciples',
     'decisionNoteNoEffect', 'decisionOutcomeAnswer', 'decisionOutcomeEscalate', 'decisionOutcomeFailed', 'decisionOutcomeReturn',
     'decisionPageDescription', 'decisionPendingReview', 'decisionPinnedEmpty', 'decisionPrimaryNavigation',
@@ -2719,6 +2725,12 @@ describe('weir settings client half', () => {
     'decisionPublicStatusFailed', 'decisionPublicStatusIdle', 'decisionPublicStatusLoading', 'decisionPublicStatusPublished',
     'decisionPublicStatusRejected', 'decisionPublicStatusRolledBack', 'decisionPublicStatusRunning', 'decisionPublicStatusUpToDate',
     'decisionPublicWorkspaces', 'decisionScopeCurrentWorkspace', 'decisionWorkspaceExperience',
+    // The assistant editor's visual scope/route controls (client.decision-model.js
+    // data face): ordinary-language labels, never JSON-box copy.
+    'decisionScopeTitle', 'decisionScopeHint', 'decisionScopePaths', 'decisionScopeTags', 'decisionScopeClasses',
+    'decisionScopeAdd', 'decisionScopeRemove', 'decisionScopeClassMinimum',
+    'decisionRouteTitle', 'decisionRouteHint', 'decisionRouteProvider', 'decisionRouteModel', 'decisionRouteEffort',
+    'decisionRouteAdd', 'decisionRouteRemove', 'decisionRouteIncomplete', 'decisionRouteEmpty',
     'decisionPublicCurrentPrinciples', 'decisionPublicCurrentText', 'decisionPublicFrozenInput',
     'decisionPublicOpAdd', 'decisionPublicOpMerge', 'decisionPublicOpNarrow', 'decisionPublicOpRefine', 'decisionPublicOpRetire',
     'decisionPublicProposedText', 'decisionPublicScope',

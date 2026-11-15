@@ -1200,7 +1200,7 @@ test('assistant summaries are read-only and simple create preserves defaults, di
   harness.unmount()
 })
 
-test('assistant edit keeps simple fields primary and preserves exact advanced scope and model route payload', async () => {
+test('assistant edit keeps simple fields primary and edits scope and model route visually', async () => {
   const calls = []
   const harness = await createPageHarness({ actions: {
     agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
@@ -1221,21 +1221,172 @@ test('assistant edit keeps simple fields primary and preserves exact advanced sc
   assert.ok(advanced)
   assert.equal(advanced.revealOnOpen, 'end')
   const advancedTree = advanced.children()
-  const scope = findAll(advancedTree, node => node['data-agent-field'] === 'scope')[0]
-  const route = findAll(advancedTree, node => node['data-agent-field'] === 'modelRoute')[0]
-  assert.deepEqual(JSON.parse(scope.value), assistantDetail.scope)
-  assert.deepEqual(JSON.parse(route.value), assistantDetail.modelRoute)
-  scope.onChange({ target: { value: JSON.stringify({ workspaces: ['/repo'], paths: ['src/decision'], authorizationClasses: ['A'] }) } })
+  // No raw JSON box survives in the advanced area: the scope and route are
+  // ordinary rows, cards and chips.
+  assert.equal(findAll(advancedTree, node => node['data-agent-field'] === 'scope' || node['data-agent-field'] === 'modelRoute').length, 0)
+  const pref = findAll(editor, node => node.type === 'textarea')
+  assert.equal(pref.length, 1, 'preference stays the only free-text box')
+  assert.equal(pref[0]['data-agent-field'], 'preference')
+  // scope rows come from the stored scope; workspaces is a record field, never
+  // rendered as an editable scope list
+  assert.deepEqual(findAll(advancedTree, node => node['data-scope-path']).map(node => node.value), ['src'])
+  assert.deepEqual(findAll(advancedTree, node => node['data-scope-tag']).map(node => node.value), [])
+  assert.deepEqual(findAll(advancedTree, node => node['data-scope-class']).map(node => [node['data-scope-class'], node['aria-pressed']]), [['A', true], ['B', true], ['C', false]])
+  assert.equal(findAll(advancedTree, node => node['data-scope-class-minimum'] === true).length, 1)
+  // the route is one ordered rung per stored chain entry, edited through the
+  // fallback inputs because the picker chunk has not arrived in this harness
+  const rungs = findAll(advancedTree, node => node['data-route-index'] !== undefined && node['data-route-index'] === 0)
+  assert.equal(rungs.length, 1)
+  assert.equal(findAll(advancedTree, node => node['data-route-provider']).map(node => node.value)[0], 'deepseek')
+  assert.equal(findAll(advancedTree, node => node['data-route-model']).map(node => node.value)[0], 'deepseek-flash')
+  assert.equal(findAll(advancedTree, node => node['data-route-effort']).map(node => node.value)[0], 'low')
+  assert.equal(findAll(advancedTree, node => node['data-route-incomplete'] === true).length, 0)
+  assert.equal(findAll(advancedTree, node => node['data-route-empty'] === true).length, 0)
+  // add a tag and switch C on; drop A
+  findAll(advancedTree, node => node['data-scope-add-tag'] === true)[0].onClick()
   editor = currentAgentEditor(harness)
-  const updatedAdvanced = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
-  findAll(updatedAdvanced, node => node['data-agent-field'] === 'modelRoute')[0].onChange({ target: { value: JSON.stringify({ chain: [{ provider: 'other', model: 'model-b' }] }) } })
+  let scopeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  findAll(scopeTree, node => node['data-scope-tag'])[0].onChange({ target: { value: 'copy' } })
+  editor = currentAgentEditor(harness)
+  scopeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  findAll(scopeTree, node => node['data-scope-class'] === 'C')[0].onClick()
+  editor = currentAgentEditor(harness)
+  scopeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  findAll(scopeTree, node => node['data-scope-class'] === 'A')[0].onClick()
+  // change the first rung's model
+  editor = currentAgentEditor(harness)
+  let routeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  findAll(routeTree, node => node['data-route-model'])[0].onChange({ target: { value: 'model-b' } })
   await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
   await harness.flush()
   assert.deepEqual(calls, [{
     agentId: 'ag_a', name: 'Tone editor', userDescription: 'Prefer concise copy',
-    scope: { workspaces: ['/repo'], paths: ['src/decision'], authorizationClasses: ['A'] },
-    modelRoute: { chain: [{ provider: 'other', model: 'model-b' }] },
+    // workspaces dropped; class order canonical
+    scope: { paths: ['src'], tags: ['copy'], authorizationClasses: ['B', 'C'] },
+    modelRoute: { chain: [{ provider: 'deepseek', model: 'model-b', reasoningEffort: 'low' }] },
   }])
+  harness.unmount()
+})
+
+test('assistant scope editor keeps empty rows local and never writes workspaces', async () => {
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileUpsert: async payload => { calls.push(payload); return { ...assistantDetail, ...payload } },
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'create-agent')[0].onClick()
+  agentField(harness, 'name').onChange({ target: { value: 'Scoped' } })
+  const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  // add two path rows: one filled, one blank (with whitespace) — the blank row
+  // must survive locally and never enter the payload
+  findAll(advancedTree(), node => node['data-scope-add-path'] === true)[0].onClick()
+  findAll(advancedTree(), node => node['data-scope-add-path'] === true)[0].onClick()
+  findAll(advancedTree(), node => node['data-scope-path'])[0].onChange({ target: { value: ' src/decision ' } })
+  findAll(advancedTree(), node => node['data-scope-path'])[1].onChange({ target: { value: '   ' } })
+  assert.deepEqual(findAll(advancedTree(), node => node['data-scope-path']).map(node => node.value), [' src/decision ', '   '], 'the unfinished row is not dropped')
+  // a tag row is added then removed again; removal leaves no trace either
+  findAll(advancedTree(), node => node['data-scope-add-tag'] === true)[0].onClick()
+  findAll(advancedTree(), node => node['data-scope-tag'])[0].onChange({ target: { value: 'copy' } })
+  findAll(advancedTree(), node => node['data-scope-remove-tag'] === true)[0].onClick()
+  assert.deepEqual(findAll(advancedTree(), node => node['data-scope-tag']).length, 0)
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0].scope, { paths: ['src/decision'], authorizationClasses: ['A', 'B', 'C'] })
+  assert.equal('tags' in calls[0].scope, false)
+  assert.equal('workspaces' in calls[0].scope, false)
+  assert.equal('modelRoute' in calls[0], false, 'an untouched empty route inherits the session model')
+  harness.unmount()
+})
+
+test('assistant scope editor refuses to release the last authorization class', async () => {
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileUpsert: async payload => { calls.push(payload); return { ...assistantDetail, ...payload } },
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'edit-agent')[0].onClick()
+  const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  const chips = () => findAll(advancedTree(), node => node['data-scope-class'])
+  // stored A+B: release A, then B — the last one cannot be released
+  findAll(advancedTree(), node => node['data-scope-class'] === 'A')[0].onClick()
+  findAll(advancedTree(), node => node['data-scope-class'] === 'B')[0].onClick()
+  const last = chips().filter(chip => chip['aria-pressed'])[0]
+  assert.equal(last['data-scope-class'], 'B')
+  assert.equal(last['aria-disabled'], true)
+  last.onClick()
+  assert.deepEqual(chips().filter(chip => chip['aria-pressed']).map(chip => chip['data-scope-class']), ['B'], 'the final class stays selected')
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.deepEqual(calls[0].scope.authorizationClasses, ['B'])
+  harness.unmount()
+})
+
+test('assistant route editor orders rungs, skips incomplete ones, and saves the empty chain', async () => {
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileUpsert: async payload => { calls.push(payload); return { ...assistantDetail, ...payload } },
+  } })
+  await harness.settle()
+  await openAgents(harness)
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'create-agent')[0].onClick()
+  agentField(harness, 'name').onChange({ target: { value: 'Routed' } })
+  const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  // no rung at all: the empty-chain state says it inherits the session model
+  assert.equal(findAll(advancedTree(), node => node['data-route-empty'] === true).length, 1)
+  findAll(advancedTree(), node => node['data-route-add'] === true)[0].onClick()
+  assert.equal(findAll(advancedTree(), node => node['data-route-incomplete'] === true).length, 1, 'a blank rung is incomplete')
+  // provider only: still incomplete and NOT saved
+  findAll(advancedTree(), node => node['data-route-provider'])[0].onChange({ target: { value: 'deepseek' } })
+  assert.equal(findAll(advancedTree(), node => node['data-route-incomplete'] === true).length, 1)
+  // complete the rung, add a second one, and drop the first: only the second saves
+  findAll(advancedTree(), node => node['data-route-model'])[0].onChange({ target: { value: 'deepseek-chat' } })
+  findAll(advancedTree(), node => node['data-route-effort'])[0].onChange({ target: { value: 'high' } })
+  findAll(advancedTree(), node => node['data-route-add'] === true)[0].onClick()
+  findAll(advancedTree(), node => node['data-route-provider'])[1].onChange({ target: { value: 'other' } })
+  findAll(advancedTree(), node => node['data-route-model'])[1].onChange({ target: { value: 'model-b' } })
+  assert.deepEqual(findAll(advancedTree(), node => node['data-route-provider']).map(node => node.value), ['deepseek', 'other'])
+  findAll(advancedTree(), node => node['data-route-remove'] === true)[0].onClick()
+  assert.equal(findAll(advancedTree(), node => node['data-route-provider']).length, 1)
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.deepEqual(calls[0].modelRoute, { chain: [{ provider: 'other', model: 'model-b' }] })
+  harness.unmount()
+})
+
+test('assistant route editor uses the arrival model picker and falls back to three inputs', async () => {
+  const calls = []
+  const modelPicker = {
+    ModelPickerField: props => ({ __modelPicker: props }),
+  }
+  const getSession = () => ({ marker: 'session' })
+  const harness = await createPageHarness({ modelPicker, getSession, actions: {
+    agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileUpsert: async payload => { calls.push(payload); return { ...assistantDetail, ...payload } },
+  } })
+  await harness.settle()
+  let tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'edit-agent')[0].onClick()
+  const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  // picker arrived: one picker per rung, no fallback inputs, the session accessor is lazy
+  assert.equal(findAll(advancedTree(), node => node['data-route-provider']).length, 0, 'no fallback inputs when the picker is available')
+  const picker = findAll(advancedTree(), node => node.type === modelPicker.ModelPickerField)[0]
+  assert.ok(picker, 'the rung renders the model picker')
+  assert.deepEqual(picker.value, { provider: 'deepseek', model: 'deepseek-flash', reasoningEffort: 'low' })
+  assert.equal(picker.getSession().marker, 'session')
+  picker.onChange({ provider: 'other', model: 'model-z', reasoningEffort: 'medium' })
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.deepEqual(calls[0].modelRoute, { chain: [{ provider: 'other', model: 'model-z', reasoningEffort: 'medium' }] })
   harness.unmount()
 })
 
