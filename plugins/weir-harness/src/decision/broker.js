@@ -442,7 +442,7 @@ export class DecisionBroker {
     if (current.state !== 'awaiting_user') throw new DecisionContractError('NOT_AWAITING_USER', `${caseId} is ${current.state}`)
     const answers = parseAnswerBatch(answer)
     const closed = await this.cases.transition({ caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'closed', closing: 'escalated', decision: { kind: 'user_decision', answers, decidedAt: this.now() } })
-    this.audit('outcome', { caseId, closing: 'escalated', answerCount: answers.length })
+    this.audit('outcome', { caseId, rootSessionId: current.rootSessionId, closing: 'escalated', answerCount: answers.length })
     return closed
   }
 
@@ -455,7 +455,7 @@ export class DecisionBroker {
     const latest = this.cases.getCase(caseId)
     if (latest.state === 'closed') return latest
     const closed = await this.cases.transition({ caseId, expectedState: latest.state, expectedRevision: latest.revision, state: 'closed', closing: 'cancelled', decision: { kind: 'cancelled', at: this.now() } })
-    this.audit('cancel', { caseId, from: latest.state })
+    this.audit('cancel', { caseId, rootSessionId: latest.rootSessionId, from: latest.state })
     return closed
   }
 
@@ -828,9 +828,12 @@ export class DecisionBroker {
         const note = typeof input.note === 'string' ? input.note.trim() : ''
         if (!note || note.length > 4000) throw new DecisionContractError('MISSING_CONTEXT', 'A bounce note of 1..4000 characters is required')
         const revised = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'awaiting_revision', escalation: { ...(current.escalation ?? {}), bounce: note } })
-        this.audit('outcome', { caseId: current.caseId, action: 'returnToCaller' })
-        await this.deliverBounce(revised, note)
-        return revised
+        this.audit('outcome', { caseId: current.caseId, rootSessionId: current.rootSessionId, action: 'returnToCaller' })
+        // The bounce is a user-surface action whose delivery is observable: the
+        // response carries the terminal delivery state, never blocking the
+        // authoritative transition on it.
+        const delivery = await this.deliverBounce(revised, note)
+        return { ...revised, delivery }
       }
       case 'cancel': return this.hookUserAborted({ caseId: current.caseId })
       case 'reassign': {
@@ -846,7 +849,7 @@ export class DecisionBroker {
           caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'manual_reassign',
           candidates: [{ agentId: target.agentId, enabled: true }], chosen: target.agentId, reason: 'User reassigned the Case',
         })
-        this.audit('outcome', { caseId: current.caseId, action: 'reassign', agentId: target.agentId })
+        this.audit('outcome', { caseId: current.caseId, rootSessionId: current.rootSessionId, action: 'reassign', agentId: target.agentId })
         return evaluating
       }
       case 'retry': {
@@ -856,7 +859,7 @@ export class DecisionBroker {
         const profile = this.profiles.getProfile(current.agentId)
         if (profile.state !== 'enabled') this.rejectBoundary({ caseId: current.caseId, agentId: current.agentId, rootSessionId: current.rootSessionId, code: 'AGENT_UNAVAILABLE', detail: current.agentId })
         const evaluating = await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_user', expectedRevision: current.revision, state: 'evaluating', ...(current.attemptCount >= current.maxAttempts ? { maxAttempts: current.attemptCount + 1 } : {}) })
-        this.audit('outcome', { caseId: current.caseId, action: 'retry', attemptCount: current.attemptCount + 1 })
+        this.audit('outcome', { caseId: current.caseId, rootSessionId: current.rootSessionId, action: 'retry', attemptCount: current.attemptCount + 1 })
         return evaluating
       }
       case 'feedback': return this.feedbackStore.append({ actor: { kind: 'user' }, caseId: current.caseId, kind: input.verb, payload: input.payload })
@@ -867,8 +870,10 @@ export class DecisionBroker {
 
   async decide(input) {
     const closed = await this.mutate({ ...input, action: 'decide' })
-    if (closed.entry === 'consult') await this.deliverDecision(closed)
-    return closed
+    // Only a consult Case owns a source conversation to notify; a Hook decision
+    // is handed back to its waiting call as the tool result.
+    if (closed.entry !== 'consult') return closed
+    return { ...closed, delivery: await this.deliverDecision(closed) }
   }
   async cancel(input) { return this.mutate({ ...input, action: 'cancel' }) }
   async feedback(input) { return this.mutate({ ...input, action: 'feedback' }) }
@@ -931,7 +936,7 @@ export class DecisionBroker {
     })
     if (result.kind !== 'ok') throw new DecisionContractError('CLARIFY_FAILED', `Clarification failed: ${result.reason}`)
     await this.feedbackStore.append({ actor: { kind: 'user' }, caseId: current.caseId, kind: 'clarify', payload: { question, answer: result.text } })
-    this.audit('feedback', { caseId: current.caseId, kind: 'clarify', count: prior + 1 })
+    this.audit('feedback', { caseId: current.caseId, rootSessionId: current.rootSessionId, kind: 'clarify', count: prior + 1 })
     return this.cases.getCase(current.caseId)
   }
 
@@ -953,6 +958,14 @@ export class DecisionBroker {
     return { closed }
   }
 
+  /**
+   * Deliver one user ruling to the Case's source session (design D6). Delivery
+   * has exactly one terminal state: `delivered` when a live Agent took the
+   * followup (or the Host resumed the cold session first), `unavailable` when
+   * nothing could take it. The authoritative closing already happened, so a
+   * failed delivery is reported and audited, never rolled back.
+   * @param {any} current @returns {Promise<{state:'delivered'|'unavailable'}>}
+   */
   async deliverDecision(current) {
     try {
       const agent = await this.rootAgent(current.rootSessionId)
@@ -960,9 +973,11 @@ export class DecisionBroker {
       // include the custom text too — otherwise it reads as an empty answer.
       const labels = current.decision.answers.flatMap(answer => [...(Array.isArray(answer.selected) ? answer.selected : []), ...(typeof answer.custom === 'string' && answer.custom ? [answer.custom] : [])]).join(', ')
       await agent.followup(userTextMessage(`Decision ${current.caseId} was resolved by the user: ${labels}`, 'weir-decision'))
-      this.audit('deliver', { caseId: current.caseId, ok: true })
+      this.audit('deliver', { caseId: current.caseId, rootSessionId: current.rootSessionId, ok: true })
+      return { state: 'delivered' }
     } catch (error) {
-      this.audit('deliver', { caseId: current.caseId, ok: false, code: error?.code ?? 'DELIVERY_FAILED' })
+      this.audit('deliver', { caseId: current.caseId, rootSessionId: current.rootSessionId, ok: false, code: error?.code ?? 'DELIVERY_FAILED' })
+      return { state: 'unavailable' }
     }
   }
 
@@ -970,6 +985,7 @@ export class DecisionBroker {
   // followup into the originating session so the agent can revise the question
   // (same request_id, better wording/context) or drop it. Delivery failures are
   // audited and never roll back the authoritative transition.
+  /** @param {any} current @param {string} note @returns {Promise<{state:'delivered'|'unavailable'}>} */
   async deliverBounce(current, note) {
     try {
       const agent = await this.rootAgent(current.rootSessionId)
@@ -977,17 +993,37 @@ export class DecisionBroker {
       await agent.followup(userTextMessage(`Decision ${current.caseId} was returned to you by the user with this note: ${note}
 Original question: ${question}
 Revise the question (consult again with the same request_id and better wording or context) or drop it.`, 'weir-decision'))
-      this.audit('deliver', { caseId: current.caseId, ok: true, kind: 'bounce' })
+      this.audit('deliver', { caseId: current.caseId, rootSessionId: current.rootSessionId, ok: true, kind: 'bounce' })
+      return { state: 'delivered' }
     } catch (error) {
-      this.audit('deliver', { caseId: current.caseId, ok: false, kind: 'bounce', code: error?.code ?? 'DELIVERY_FAILED' })
+      this.audit('deliver', { caseId: current.caseId, rootSessionId: current.rootSessionId, ok: false, kind: 'bounce', code: error?.code ?? 'DELIVERY_FAILED' })
+      return { state: 'unavailable' }
     }
   }
 
+  /**
+   * Resolve the root Agent of a Case's source session. The live registry wins;
+   * otherwise the Host's own session-controller resumes the cold session (it
+   * re-composes that session's preset and starts it — the same semantics
+   * `prompt` uses to inject into a stopped session). A headless composition
+   * mounts no session-controller, so there the failure stays
+   * `ROOT_AGENT_UNAVAILABLE` and the caller reports an undelivered answer
+   * instead of inventing one.
+   * @param {string} rootSessionId
+   */
   async rootAgent(rootSessionId) {
     const agents = this.ctx?.agents
-    const agent = agents?.get?.(rootSessionId) ?? agents?.getById?.(rootSessionId)
-    if (!agent) throw new DecisionContractError('ROOT_AGENT_UNAVAILABLE', rootSessionId)
-    return agent
+    const live = agents?.get?.(rootSessionId) ?? agents?.getById?.(rootSessionId)
+    if (live) return live
+    const controller = this.ctx?.get?.('sessionController')
+    if (typeof controller?.resolveAgent === 'function') {
+      let resolved
+      // `resolveAgent` answers `{agent}` or `{error}` and may reject when the
+      // session is gone or its preset composition fails: both mean unavailable.
+      try { resolved = await controller.resolveAgent(rootSessionId) } catch { resolved = undefined }
+      if (resolved?.agent) return resolved.agent
+    }
+    throw new DecisionContractError('ROOT_AGENT_UNAVAILABLE', rootSessionId)
   }
 
   async sessionContext(sessionId) {
@@ -1641,16 +1677,40 @@ Revise the question (consult again with the same request_id and better wording o
     return this.query.records({ ...input, sessionId: context.rootSessionId })
   }
 
+  /**
+   * User-surface record detail by Case id (design D1). `records`, `metrics`,
+   * `routingReview`, `exportData` and the automation paths stay
+   * workspace-scoped; only the user surface reads across workspaces.
+   * @param {{caseId:string}} input
+   */
   async record(input) {
     if (!this.store) return null
-    const context = await this.sessionContext(input.sessionId)
-    return this.query.record({ ...input, sessionId: context.rootSessionId })
+    return this.query.record({ caseId: input.caseId })
   }
 
-  async inbox(input) {
+  /**
+   * User-surface inbox: the whole profile's pending Cases (design D1). The
+   * Query layer owns the Case rows and the routing status; the Broker adds the
+   * one fact only the runtime knows — whether the source root Agent is live
+   * (`sourceActive`) — and drops the raw `workspaceKey`, which never crosses
+   * the Remote/Client boundary (the client names the workspace from the source
+   * session). An inactive source only labels "not running": delivery resumes
+   * it, so it never disables an action.
+   */
+  async inbox() {
     if (!this.store) return []
-    const context = await this.sessionContext(input.sessionId)
-    return this.query.inbox({ sessionId: context.rootSessionId })
+    return this.query.inbox().map(row => {
+      // The Query projection is frozen, so the projection is a copy.
+      const item = { ...row }
+      delete item.workspaceKey
+      return { ...item, sourceActive: this.sourceActive(row.rootSessionId) }
+    })
+  }
+
+  /** @param {string} rootSessionId */
+  sourceActive(rootSessionId) {
+    const agents = this.ctx?.agents
+    return Boolean(agents?.get?.(rootSessionId) ?? agents?.getById?.(rootSessionId))
   }
 
   async routingReview(input) {

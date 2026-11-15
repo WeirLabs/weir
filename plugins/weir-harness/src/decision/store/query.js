@@ -63,7 +63,13 @@ export class DecisionQuery {
     })
   }
 
-  /** @param {{caseId:string,sessionId?:string}} input */
+  /**
+   * Record detail by Case id. The user surface reads any Case in this profile
+   * with `caseId` alone (the Remote/Broker layer never scopes it); `sessionId`
+   * stays an optional filter for the workspace-scoped internal readers (export
+   * assembly and the Case lookups), so it can only narrow, never authorize.
+   * @param {{caseId:string,sessionId?:string}} input
+   */
   record(input) {
     const row = this.store.db.prepare('SELECT * FROM cases WHERE case_id=?').get(input.caseId)
     if (!row || (input.sessionId !== undefined && row.root_session_id !== input.sessionId)) return null
@@ -80,18 +86,24 @@ export class DecisionQuery {
   }
 
   /**
+   * The waiting inbox is the profile-level user surface (OpenSpec
+   * decision-pending-overview D1): every `awaiting_user` Case in this profile,
+   * newest first, whichever workspace or root session opened it. The caller
+   * names no session, so one decision page merges pending work from every
+   * workspace.
+   *
    * Waiting Cases carry the latest non-Shadow RouteDecision status so the inbox
    * can tell a routing failure apart from "no candidate matched" without a
    * second read. The status is a bounded enum, never the reason text: the
-   * technical cause stays in the RouteDecision history.
-   * @param {{sessionId:string}} input
+   * technical cause stays in the RouteDecision history. One batch query joins
+   * the waiting Cases, so the projection is never N+1.
    */
-  inbox(input) {
-    requireSession(input.sessionId)
-    const rows = this.store.db.prepare("SELECT * FROM cases WHERE root_session_id=? AND state='awaiting_user' ORDER BY updated_at DESC,case_id DESC").all(input.sessionId)
+  inbox() {
+    const rows = this.store.db.prepare("SELECT * FROM cases WHERE state='awaiting_user' ORDER BY updated_at DESC,case_id DESC").all()
     const statuses = new Map()
-    for (const row of this.store.db.prepare(`SELECT case_id,chosen,reason,ambiguity_json FROM route_decisions
-      WHERE root_session_id=? AND case_id IS NOT NULL AND mode<>'auto_shadow' ORDER BY created_at,rowid`).all(input.sessionId)) {
+    for (const row of this.store.db.prepare(`SELECT rd.case_id,rd.chosen,rd.reason,rd.ambiguity_json
+      FROM route_decisions rd JOIN cases c ON c.case_id=rd.case_id
+      WHERE c.state='awaiting_user' AND rd.mode<>'auto_shadow' ORDER BY rd.created_at,rd.rowid`).all()) {
       statuses.set(row.case_id, routeStatusOf({ chosen: row.chosen ?? undefined, reason: row.reason, ambiguity: parseJson(row.ambiguity_json) ?? undefined }))
     }
     return deepFreeze(rows.map(row => {

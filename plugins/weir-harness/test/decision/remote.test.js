@@ -7,6 +7,10 @@ import { createDecisionRemoteService, decisionRemoteContribution, DECISION_REMOT
 import { apply as applyRemote } from '../../src/decision/remote-plugin.js'
 import { apply as applyBroker, decisionBrokerConfig } from '../../src/decision/broker-plugin.js'
 
+// The eight user-surface Case actions, each of which derives its context from a
+// Case read of its own: decide, reassign, cancel, retry, feedback, correction,
+// returnToCaller, clarify.
+const CASE_MUTATION_COUNT = 8
 test('contribution covers the exact read/action surface with bare src-json args only', () => {
   const contribution = decisionRemoteContribution()
   assert.equal(contribution.package, 'weir-decision')
@@ -22,24 +26,98 @@ test('contribution covers the exact read/action surface with bare src-json args 
 
 test('every remote method reaches the Broker and wraps its value', async () => {
   const calls = []
-  const broker = { status: () => ({ available: true }), sessionContext: async id => ({ rootSessionId: id, workspaceKey: '/repo' }) }
+  const reads = []
+  const broker = {
+    status: () => ({ available: true }),
+    sessionContext: async id => ({ rootSessionId: id, workspaceKey: `/ws-${id}` }),
+    // `record` is both the Remote read and the Case-context derivation read, so
+    // it is traced separately from the per-method invocation log.
+    record: async args => { reads.push(args); return { case: { caseId: 'dc-case', rootSessionId: 'case-root', workspaceKey: '/case-ws' } } },
+  }
   for (const method of DECISION_REMOTE_METHODS) {
+    if (method === 'record') continue
     broker[method] = async (...args) => { calls.push([method, args]); return { method } }
   }
   broker.setSelector = async (...args) => { calls.push(['setSelector', args]); return { mode: 'agent' } }
   broker.profileSetState = async (...args) => { calls.push(['profileSetState', args]); return { state: 'disabled' } }
   const service = createDecisionRemoteService({ broker: () => broker })
   for (const method of DECISION_REMOTE_METHODS) {
-    const result = await service[method]({ sessionId: 'child', agentId: 'ag', mode: 'agent', state: 'disabled' })
-    assert.equal(result.ok, true)
+    const result = await service[method]({ caseId: 'dc-case', sessionId: 'child', agentId: 'ag', mode: 'agent', state: 'disabled' })
+    assert.equal(result.ok, true, `${method}: ${JSON.stringify(result)}`)
   }
-  assert.deepEqual(calls.map(call => call[0]), [...DECISION_REMOTE_METHODS])
+  assert.deepEqual(calls.map(call => call[0]), DECISION_REMOTE_METHODS.filter(method => method !== 'record'))
   // Identity calls never receive a caller-named workspace; record-level calls
   // still receive the authenticated root workspace.
   assert.deepEqual(calls.find(call => call[0] === 'setSelector')[1], ['child', 'agent', 'ag'])
   assert.deepEqual(calls.find(call => call[0] === 'profileSetState')[1], ['ag', 'disabled'])
-  assert.equal(calls.find(call => call[0] === 'decide')[1][0].workspaceKey, '/repo')
-  assert.deepEqual(calls.find(call => call[0] === 'profileUpsert')[1], [{ sessionId: 'child', agentId: 'ag', mode: 'agent', state: 'disabled' }])
+  // The user surface names no session: the inbox is a bare call, and every
+  // `record` read (the Remote method plus each Case action's derivation) is the
+  // Case id alone.
+  assert.deepEqual(calls.find(call => call[0] === 'inbox')[1], [])
+  assert.equal(reads.length, 1 + CASE_MUTATION_COUNT)
+  for (const args of reads) assert.deepEqual(args, { caseId: 'dc-case' })
+  // Case actions carry the Case's own context, never the caller's; the live
+  // session context only refines it while that session is reachable.
+  const decide = calls.find(call => call[0] === 'decide')[1][0]
+  assert.equal(decide.sessionId, 'case-root')
+  assert.equal(decide.workspaceKey, '/ws-case-root')
+  assert.deepEqual(calls.find(call => call[0] === 'profileUpsert')[1], [{ caseId: 'dc-case', sessionId: 'child', agentId: 'ag', mode: 'agent', state: 'disabled' }])
+})
+
+test('every Case action derives its context from the Case and drops a caller-named session or workspace', async () => {
+  const actions = []
+  const reads = []
+  const broker = {
+    status: () => ({ available: true }),
+    sessionContext: async id => ({ rootSessionId: id, workspaceKey: `/live-${id}` }),
+    record: async args => { reads.push(args); return { case: { caseId: 'dc-case', rootSessionId: 'case-root', workspaceKey: '/case-ws' } } },
+  }
+  for (const method of ['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify']) {
+    broker[method] = async args => { actions.push([method, args]); return { caseId: 'dc-case' } }
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  for (const method of ['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify']) {
+    const result = await service[method]({ caseId: 'dc-case', sessionId: 'spoof', workspaceKey: '/spoof', note: 'n' })
+    assert.equal(result.ok, true, `${method}: ${JSON.stringify(result)}`)
+  }
+  // Each read is the Case id alone; each action carries the Case-derived context.
+  assert.deepEqual(reads, Array.from({ length: actions.length }, () => ({ caseId: 'dc-case' })))
+  for (const [method, args] of actions) {
+    assert.equal(args.sessionId, 'case-root', method)
+    assert.equal(args.workspaceKey, `/live-case-root`, method)
+    assert.equal(args.note, 'n', method)
+  }
+})
+
+test('a missing Case fails closed with CASE_NOT_FOUND before any action runs', async () => {
+  let acted = false
+  const broker = {
+    status: () => ({ available: true }),
+    record: async () => null,
+    decide: async () => { acted = true; return { caseId: 'dc-missing' } },
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  for (const args of [{ caseId: 'dc-missing' }, {}]) {
+    const result = await service.decide(args)
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, 'CASE_NOT_FOUND')
+  }
+  assert.equal(acted, false)
+})
+
+test('a gone source session keeps the Case context so the action still runs', async () => {
+  const actions = []
+  const broker = {
+    status: () => ({ available: true }),
+    sessionContext: async () => { throw new Error('unknown session') },
+    record: async () => ({ case: { caseId: 'dc-cold', rootSessionId: 'gone-root', workspaceKey: '/cold-ws' } }),
+    decide: async args => { actions.push(args); return { caseId: 'dc-cold' } },
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  const result = await service.decide({ caseId: 'dc-cold', sessionId: 'spoof' })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(actions[0].sessionId, 'gone-root')
+  assert.equal(actions[0].workspaceKey, '/cold-ws')
 })
 
 test('Broker errors become bounded envelopes without stacks', async () => {
