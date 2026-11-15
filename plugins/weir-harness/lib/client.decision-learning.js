@@ -195,6 +195,7 @@ window.__ModuleLoader__.load({
               ] }, "after") : null,
               item.editable && !editing ? jsx.jsxs("div", { className: "weir-da-actions", children: [
                 jsx.jsx(props.ui.Button, {
+                  id: `weir-da-candidate-edit-${item.principleId}`,
                   "data-principle-action": "edit", "data-principle-id": item.principleId,
                   ref: props.entryRef ? props.entryRef(item.principleId, "edit") : undefined,
                   disabled: !props.writable,
@@ -202,6 +203,7 @@ window.__ModuleLoader__.load({
                   children: props.t("decisionPrincipleEdit"),
                 }, "edit"),
                 jsx.jsx(props.ui.Button, {
+                  id: `weir-da-candidate-remove-${item.principleId}`,
                   variant: "danger", "data-principle-action": "remove", "data-principle-id": item.principleId,
                   ref: props.entryRef ? props.entryRef(item.principleId, "remove") : undefined,
                   disabled: !props.writable,

@@ -2749,6 +2749,8 @@ test('candidate review saves wording and scope through the Host, rereads authori
   assert.ok(calls.agent > agentReadsBefore, 'the review is reread after a save')
   assert.equal(findAll(learningTree(harness), node => node['data-principle-text']).length, 0)
   assert.ok(textOf(learningTree(harness)).includes('Use the reviewed wording'), 'the reread renders the edited wording, not the model\'s original')
+  // Focus lands back on the entry the user edited, not on the page body.
+  assert.equal(harness.document.activeElement?.id, 'weir-da-candidate-edit-p_change')
   harness.unmount()
 })
 
@@ -2786,6 +2788,9 @@ test('candidate deletion is confirmed before it writes and keeps the neighbourin
   await harness.flush()
   assert.deepEqual(calls.snapshotUpdate, [['ms-candidate', 9, [{ principleId: 'p_add', remove: true }]]])
   assert.ok(calls.agent > agentReadsBefore, 'a deletion rereads the review')
+  // The deleted entry is gone, so focus lands on its neighbour instead of nowhere.
+  learningTree(harness)
+  assert.equal(harness.document.activeElement?.id, 'weir-da-candidate-edit-p_change')
   harness.unmount()
 })
 

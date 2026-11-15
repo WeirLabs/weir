@@ -254,6 +254,12 @@ window.__ModuleLoader__.load({
 .weir-da-principle-changes li, .weir-da-learning-sources li { min-width: 0; padding: 12px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-1); }
 .weir-da-principle-changes li > div + div { margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
 .weir-da-principle-changes li p { margin: 4px 0 0; white-space: pre-wrap; }
+/* The candidate entry's own action row and inline editor sit inside that entry
+   block: full width at every viewport, never scrolling sideways. */
+.weir-da-principle-changes li .weir-da-actions { margin-top: 8px; }
+.weir-da-candidate-editor { min-width: 0; display: grid; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 0.5px solid var(--dsw-alias-border-l1); }
+.weir-da-candidate-editor textarea { min-height: 88px; resize: vertical; }
+.weir-da-field-error { margin: 0; color: var(--dsw-alias-state-error-primary); font-size: var(--weir-font-small-size, 12px); line-height: var(--weir-font-small-line, 16px); overflow-wrap: anywhere; }
 .weir-da-source-excerpt { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .weir-da-learning-diagnostics ul { max-height: 240px; overflow: auto; overscroll-behavior: contain; }
 .weir-da-learning-diagnostics .weir-da-button { width: 100%; height: auto; white-space: normal; text-align: start; overflow-wrap: anywhere; }
