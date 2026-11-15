@@ -1849,13 +1849,15 @@ async function runPendingOverviewMatrix(primary) {
   check('pendingOverviewStartsClean', baseline === 0, { baseline })
   const article = caseId => `article[data-case-id="${caseId}"]`
 
-  // Two consultations, one per workspace, both pending at once.
+  // Two consultations, one per workspace, both pending at once. Each marker is a
+  // scenario the QA brain turns into a real consult, and waitCase matches the
+  // marker that survives into the persisted question text.
   const cases = {}
-  for (const [label, target] of [['local', localSession], ['remote', remoteSession]]) {
+  for (const [label, target, marker] of [['local', localSession, 'GUI_B_DECIDE'], ['remote', remoteSession, 'GUI_B_REASSIGN']]) {
     await openIsolatedSession(target)
     await selectorChoose(target, 'agent', primary.agentId)
-    await submitMarker(instance, 'GUI_B_REASSIGN')
-    cases[label] = await waitCase(target, `pending-overview-${label}`, current => current.state === 'awaiting_user')
+    await submitMarker(instance, marker)
+    cases[label] = await waitCase(target, marker, current => current.state === 'awaiting_user')
   }
   writeJson(join(out, 'pending-overview-cases.json'), cases)
 
@@ -1922,7 +1924,7 @@ async function runPendingOverviewMatrix(primary) {
   await openIsolatedSession(remoteSession)
   await selectorChoose(remoteSession, 'agent', primary.agentId)
   await submitMarker(instance, 'GUI_B_CANCEL')
-  const undeliveredCase = await waitCase(remoteSession, 'pending-overview-undelivered', current => current.state === 'awaiting_user')
+  const undeliveredCase = await waitCase(remoteSession, 'GUI_B_CANCEL', current => current.state === 'awaiting_user')
   const controlId = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'decide', action: 'delivery-unavailable' })})`)
   await openPage('inbox')
   await waitFor(() => instance.cdp.evaluate(answerFormExpression(undeliveredCase.caseId)), 30_000)
