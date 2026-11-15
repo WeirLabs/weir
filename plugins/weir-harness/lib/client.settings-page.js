@@ -115,9 +115,11 @@ window.__ModuleLoader__.load({
 				{ field: "decisionAgentContextBudgetTokens", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
 				{ field: "decisionAgentMaxOutputTokens", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
 				{ field: "decisionAgentMaxConcurrentAttempts", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentChains", kind: "text", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentRetentionDays", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentStorePath", kind: "text", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") }
+				// The global chain map and the store directory are config-face-only
+				// (src/settings/sections.js page:false): the per-assistant route in the
+				// decision page is the visible routing entry, and this page never
+				// offers a substitute JSON box for either key.
+				{ field: "decisionAgentRetentionDays", kind: "number", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") }
 			] },
 			{ id: "editing", fields: [
 				{ field: "hashlineHideStockEdit", kind: "boolean" },
@@ -1162,12 +1164,8 @@ window.__ModuleLoader__.load({
 				decisionAgentMaxOutputTokensHint: "Maximum evaluator output per Attempt (default 4096).",
 				decisionAgentMaxConcurrentAttempts: "Concurrent Attempt limit",
 				decisionAgentMaxConcurrentAttemptsHint: "Excess Hook requests use the native question path instead of queueing (default 4).",
-				decisionAgentChains: "Agent model chains (JSON)",
-				decisionAgentChainsHint: "Map Agent ids to ordered model rungs; an empty chain inherits the session route and an unavailable explicit route fails.",
 				decisionAgentRetentionDays: "Retention days",
 				decisionAgentRetentionDaysHint: "Startup-only cleanup of closed records without user decisions or feedback; 0 keeps them permanently.",
-				decisionAgentStorePath: "Decision store directory",
-				decisionAgentStorePathHint: "Absolute override directory; empty uses the profile-private store. Restart required.",
 				hashlineHideStockEdit: "Anchor editing only",
 				hashlineHideStockEditHint: "Hides the built-in edit tool; file edits go through hash_edit anchors only.",
 				worktreeEnabled: "Worktree lanes",
@@ -1317,12 +1315,8 @@ window.__ModuleLoader__.load({
 				decisionAgentMaxOutputTokensHint: "每次 Attempt 的评估器输出上限（默认 4096）。",
 				decisionAgentMaxConcurrentAttempts: "并发 Attempt 上限",
 				decisionAgentMaxConcurrentAttemptsHint: "超限 Hook 直接走原生提问，不排队（默认 4）。",
-				decisionAgentChains: "Agent 模型链（JSON）",
-				decisionAgentChainsHint: "按 Agent id 配置有序模型链；空链继承会话路由，显式路由不可用时显式失败。",
 				decisionAgentRetentionDays: "保留天数",
 				decisionAgentRetentionDaysHint: "仅在启动时清理无用户裁决或反馈的已关闭记录；0 表示永久保留。",
-				decisionAgentStorePath: "决策库目录",
-				decisionAgentStorePathHint: "绝对路径覆盖目录；留空使用 profile 私有存储。需重启。",
 				hashlineHideStockEdit: "仅用锚点编辑",
 				hashlineHideStockEditHint: "隐藏内置 edit 工具，文件修改一律走 hash_edit 锚点编辑。",
 				worktreeEnabled: "Worktree 车道",
