@@ -1553,21 +1553,32 @@ window.__ModuleLoader__.load({
 			function DecisionPendingBadge(props) {
 				const count = Number.isInteger(props.count) && props.count > 0 ? props.count : 0;
 				if (count === 0) return null;
-				// The digits sit on a soft amber tint, not on the solid warn fill: white
-				// on amber-500 is only ~2:1, while the primary label token on this tint
-				// clears 7:1 in both themes. The amber ring keeps the cue visible.
+				// Wide rows have a label, so the count belongs at the row's right end
+				// instead of on the icon: the host wraps the entry in a positioned box
+				// (one count slot, no layout shift). The icon-only rail has no label, so
+				// the chip keeps its top-right corner there.
+				const style = props.wide
+					? {
+						position: "absolute", insetInlineEnd: "24px", top: "50%", transform: "translateY(-50%)", boxSizing: "border-box",
+						minWidth: "14px", height: "14px", padding: "0 4px", borderRadius: "var(--dsw-radius-lg)",
+						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 22%, var(--dsw-alias-bg-base))",
+						color: "var(--dsw-alias-label-primary)",
+						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
+						textAlign: "center", pointerEvents: "none",
+					}
+					: {
+						position: "absolute", top: "-4px", insetInlineEnd: "-5px", boxSizing: "border-box",
+						minWidth: "14px", height: "14px", padding: "0 3px", borderRadius: "var(--dsw-radius-lg)",
+						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 22%, var(--dsw-alias-bg-base))",
+						color: "var(--dsw-alias-label-primary)",
+						boxShadow: "0 0 0 1.5px var(--dsw-alias-bg-base)",
+						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
+						textAlign: "center", pointerEvents: "none",
+					};
 				return react_jsx_runtime.jsx("span", {
 					"data-weir-decision-bubble": "true", "aria-hidden": "true",
 					title: String(t("decisionPendingBubbleTitle")).replace(/\{count\}/g, String(count)),
-					style: {
-						position: "absolute", top: "-5px", insetInlineEnd: "-6px", boxSizing: "border-box",
-						minWidth: "14px", height: "14px", padding: "0 3px", borderRadius: "var(--dsw-radius-lg)",
-						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, var(--dsw-alias-bg-base))",
-						color: "var(--dsw-alias-label-primary)",
-						boxShadow: "0 0 0 1.5px var(--dsw-alias-state-warn-primary)",
-						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
-						textAlign: "center", pointerEvents: "none",
-					},
+					style,
 					children: count > 9 ? "9+" : String(count),
 				});
 			}
@@ -1581,9 +1592,12 @@ window.__ModuleLoader__.load({
 					decisionPendingStore.start();
 					return () => { unsubscribe(); decisionPendingStore.stop(); };
 				}, []);
+				// The shell renders 16px in the labelled row and 18px in the icon-only rail;
+				// only the rail needs its own positioning context for the corner chip.
+				const wide = size < 18;
 				return react_jsx_runtime.jsxs("span", {
 					"data-decision-entry": "true",
-					style: { position: "relative", display: "inline-flex", width: size, height: size, flex: "none" },
+					style: { position: wide ? "static" : "relative", display: "inline-flex", width: size, height: size, flex: "none" },
 					children: [
 						react_jsx_runtime.jsxs("svg", {
 							width: size, height: size, viewBox: "0 0 16 16", fill: "none", "aria-hidden": "true",
@@ -1596,7 +1610,7 @@ window.__ModuleLoader__.load({
 								react_jsx_runtime.jsx("path", { d: "m8.5 10.7 1.8 1.8 3.2-4" }, "check"),
 							],
 						}, "icon"),
-						react_jsx_runtime.jsx(DecisionPendingBadge, { count: pending }, "pending"),
+						react_jsx_runtime.jsx(DecisionPendingBadge, { count: pending, wide }, "pending"),
 					],
 				});
 			}

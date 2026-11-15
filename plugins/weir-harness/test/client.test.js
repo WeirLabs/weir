@@ -1458,12 +1458,23 @@ describe('weir settings client half', () => {
     expect(rendered.children).toBe('2')
     expect(rendered.title).toBe('2 need your decision')
     expect(rendered.style.position).toBe('absolute')
-    // Soft amber tint + primary label keeps the digits legible in both themes;
-    // the amber ring carries the attention cue instead of a solid fill.
-    expect(rendered.style.background).toBe('color-mix(in srgb, var(--dsw-alias-state-warn-primary) 18%, var(--dsw-alias-bg-base))')
+    // The labelled row puts the count at the row's right end, not on the icon.
+    expect(counted.style.position).toBe('static')
+    expect(rendered.style.insetInlineEnd).toBe('24px')
+    expect(rendered.style.transform).toBe('translateY(-50%)')
+    // Soft amber tint + primary label keeps the digits legible in both themes.
+    expect(rendered.style.background).toBe('color-mix(in srgb, var(--dsw-alias-state-warn-primary) 22%, var(--dsw-alias-bg-base))')
     expect(rendered.style.color).toBe('var(--dsw-alias-label-primary)')
-    expect(rendered.style.boxShadow).toContain('var(--dsw-alias-state-warn-primary)')
     expect(rendered.style.borderRadius).toBe('var(--dsw-radius-lg)')
+    // The icon-only rail has no label: the chip stays on the icon corner with a
+    // ring in the surface colour so it separates from the glyph.
+    reactStub.begin()
+    const railEntry = panel.component({ size: 18 })
+    expect(railEntry.style.position).toBe('relative')
+    const railBadge = railEntry.children[1].__type(railEntry.children[1])
+    expect(railBadge.style.insetInlineEnd).toBe('-5px')
+    expect(railBadge.style.top).toBe('-4px')
+    expect(railBadge.style.boxShadow).toBe('0 0 0 1.5px var(--dsw-alias-bg-base)')
     // Exactly one visually hidden polite region: the icon container is
     // decorative, so the sentence — not the number — carries the state.
     expect(body.childNodes).toHaveLength(1)

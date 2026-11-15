@@ -1778,12 +1778,14 @@ async function pendingBubbleDom() {
     const rect = el => { if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom } }
     const bubble = document.querySelector('[data-weir-decision-bubble]')
     const entry = document.querySelector('[data-decision-entry]')
+    const row = bubble ? bubble.closest('button') : entry ? entry.closest('button') : null
     const live = document.querySelector('[data-weir-decision-live]')
     return {
       present: Boolean(bubble && bubble.offsetParent !== null),
       text: bubble ? bubble.textContent.trim() : null,
       title: bubble ? bubble.getAttribute('title') : null,
-      bubble: rect(bubble), entry: rect(entry),
+      bubble: rect(bubble), entry: rect(entry), row: rect(row),
+      mode: row && row.getBoundingClientRect().width > 60 ? 'wide' : 'rail',
       background: bubble ? getComputedStyle(bubble).backgroundColor : null,
       color: bubble ? getComputedStyle(bubble).color : null,
       svg: Boolean(entry && entry.querySelector('svg[data-decision-icon="branch-check"]')),

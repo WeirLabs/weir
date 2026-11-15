@@ -1186,10 +1186,15 @@ export function pendingBubbleProblems(state = {}, expected = {}) {
   }
   if (!bubble || bubble.width <= 0 || bubble.height <= 0) problems.push('the bubble has no measurable size')
   else {
-    // The badge must sit on the icon's top-right corner, and it must stay on
-    // screen at every width instead of being clipped by the sidebar rail.
+    // A labelled row keeps the count at its right end (after the title); the
+    // icon-only rail keeps the chip on the icon's top-right corner. Neither may
+    // be clipped by the sidebar.
     if (!entry) problems.push('the bubble has no entry box to position against')
-    else if (!(bubble.left + bubble.width / 2 > entry.left + entry.width / 2 && bubble.top + bubble.height / 2 < entry.top + entry.height / 2)) problems.push('the bubble is not on the icon\u2019s top-right corner')
+    else if (state.mode === 'wide') {
+      if (bubble.left < entry.right - 1) problems.push('the labelled row still draws the count on the icon instead of the row\u2019s right end')
+      if (state.row && !(bubble.left + bubble.width / 2 > state.row.left + state.row.width / 2)) problems.push('the count is not in the row\u2019s right half')
+      if (state.row && bubble.right > state.row.right + 1) problems.push(`the bubble is clipped on the right at x=${bubble.right}`)
+    } else if (!(bubble.left + bubble.width / 2 > entry.left + entry.width / 2 && bubble.top + bubble.height / 2 < entry.top + entry.height / 2)) problems.push('the rail bubble is not on the icon\u2019s top-right corner')
     if (bubble.left < -1) problems.push(`the bubble is clipped on the left at x=${bubble.left}`)
   }
   if (readableText(state.background) === '' || readableText(state.background) === 'rgba(0, 0, 0, 0)') problems.push('the bubble has no warning fill')
