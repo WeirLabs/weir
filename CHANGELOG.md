@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto 路由被小输出预算截断**：`decisionAgentMaxOutputTokens`（桌面 profile 曾设为 1600）此前同时约束领域 Attempt 与 Auto 的分类/Router sidecar，模型的推理 token 先耗尽预算，严格 JSON 判决在收尾前被截断，Auto 频繁落到未归属待办并显示成「未选择助手」。分类与 Router 现在使用独立的有界输出预算（配置值与 4096 取大），截断时以双倍预算重试一次（上限 16384；超时、取消、模型错误不重试，Shadow 保持单次），仍失败时记录有界结束原因与输出 token 用量；卡片与收件箱如实显示「自动路由失败」并保留直接回答/明确改派入口，无匹配与歧义的既有文案不变。详见 [Decision Agent](docs/features/decision-agent.md)。
+
 ## [2.2.1] - 2026-11-15
 
 ### Changed
