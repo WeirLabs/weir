@@ -576,7 +576,7 @@ describe('weir settings client half', () => {
     expect(sessionAccesses()).toBe(0)
   })
 
-  it('fans out the settings chunks plus the picker, constructs both page controllers on arrival, and renders loading/arrived states', async () => {
+  it('fans out the settings chunks plus the picker, constructs all three page controllers on arrival, and renders loading/arrived states', async () => {
     const { surface, reactStub, asyncCalls, controllerConstructed, sentinelSnapshot, settingsPageChunk, modelPickerChunk, chainEditorChunk, chainModelChunk, lspToggleChunk, disabledCategoriesEditorChunk, decisionClassEditorChunk } = await loadEntry()
     const { ctx, whileServedCalls, slotInjects, slotRegistrations, scope, sessionAccesses } = makeCtx()
     surface.apply(ctx)

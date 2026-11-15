@@ -4,7 +4,7 @@
 
 ## 概述
 
-Weir 设置面（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把预设的全部 61 个扁平设置键组织成**三个设置分区、共 13 张卡片**：主页面（section `weir-settings`，标签「Weir」，8 组：意图分类、自动续推、上下文压力、文件编辑、Worktree 车道、只读命令行、LSP 语义工具、系统通知）、模型路由页（section `weir-model-routing`，标签「Weir 模型路由」/ en "Weir Model Routing"，3 组：任务类别、精选代理、监督与重试）与决策助手页（section `weir-decision`，标签「决策助手」/ en "Decision assistant"，2 组：基本设置、高级设置）。三页编辑同一个 `weir-settings` config 命名空间，各自的表单只暂存与保存本页字段；三页键集互不相交，恰好划分页面上的 51 个字段（其余 10 个为配置文件面键）。所有键在 `src/settings/sections.js` 的 `FIELDS` 表里声明一次，Config schema 与服务端 section 映射从那里派生；页面分组、可见性条件（`when`）、父子层级（`parent`）、所属页面（`page`）与分组级折叠（`advanced`）是**纯展示层概念**，在客户端 chunk 的 `GROUPS` 表里声明，不影响任何设置键的生效语义。
+Weir 设置面（`lib/client.settings-page.js` + 组合根 `lib/client.js`）把预设的全部 61 个扁平设置键组织成**三个设置分区、共 13 张卡片**：主页面（section `weir-settings`，标签「Weir」，8 组：意图分类、自动续推、上下文压力、文件编辑、Worktree 车道、只读命令行、LSP 语义工具、系统通知）、模型路由页（section `weir-model-routing`，标签「Weir 模型路由」/ en "Weir Model Routing"，3 组：任务类别、精选代理、监督与重试）与决策助手页（section `weir-decision`，标签「决策助手」/ en "Decision assistant"，2 组：`decisionBasics`「基本设置」与 `decisionAdvanced`「高级设置」（分组级折叠，默认关闭））。三页编辑同一个 `weir-settings` config 命名空间，各自的表单只暂存与保存本页字段；三页键集互不相交，恰好划分页面上的 51 个字段（其余 10 个为配置文件面键）。所有键在 `src/settings/sections.js` 的 `FIELDS` 表里声明一次，Config schema 与服务端 section 映射从那里派生；页面分组、可见性条件（`when`）、父子层级（`parent`）、所属页面（`page`）与分组级折叠（`advanced`）是**纯展示层概念**，在客户端 chunk 的 `GROUPS` 表里声明，不影响任何设置键的生效语义。
 
 设置键分两种呈现面：**页面键**渲染在设置页上；**配置文件面键**（`FIELDS` 里标记 `page: false`，服务端导出为 `CONFIG_FACE_ONLY_KEYS`，当前 10 个）在任何设置页上都不渲染——它们仍是正常的设置键，schema、校验、默认值与生效时机都不变，改配置文件（profile 的 `cordis.patch.yml` 中 `weir-settings` 行的 `config`）照样生效，只是没有页面入口。
 
