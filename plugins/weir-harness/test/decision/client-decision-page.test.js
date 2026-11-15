@@ -1947,3 +1947,152 @@ test('a learning action reload restores the assistant detail pane scrollTop, cla
     delete globalThis.window.crypto
   }
 })
+
+// A failed snapshot action rereads the assistant exactly like the successful one:
+// the catch branch calls selectAgent, so the same card is replaced while the
+// authoritative read resolves and Chromium's scroll anchoring can rewrite the
+// pane's scrollTop in the commit frame (measured 690 -> 446 on the success path).
+// The failure reload gets the same hold, the same captured offset, and the same
+// exact handback, while the action error stays on screen.
+test('a failed snapshot action holds the assistant detail pane scroll across the failure reload and restores it on the commit frame', async () => {
+  const beforeReject = {
+    agentId: 'ag_fail', name: 'Fail', state: 'enabled', workspaceKey: '/repo',
+    userDescription: { revision: 2, text: 'Prefer concise copy' }, generatedDescription: { revision: 0, text: '' },
+    scope: { workspaces: ['/repo'], paths: ['src'] }, modelRoute: { chain: [] },
+    currentSnapshotId: 'ms_current',
+    learningRuns: [{ learningRunId: 'lr_candidate', outcome: 'candidate', revision: 4 }],
+    snapshots: [
+      { snapshotId: 'ms_candidate', state: 'draft', version: 4, revision: 9, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' },
+      { snapshotId: 'ms_current', state: 'published', version: 3, revision: 11 },
+    ],
+  }
+  // A revision conflict resolves against a newer authority: the reread no longer
+  // carries the stale candidate, so the card really can shrink under the reader.
+  const afterConflict = { ...beforeReject, learningRuns: [], snapshots: [beforeReject.snapshots[1]] }
+  let agentReads = 0
+  let reload = null
+  let holdSeen = null
+  let watchedPane = null
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [beforeReject],
+    inbox: async () => [],
+    agent: async () => {
+      agentReads += 1
+      if (agentReads === 1) return beforeReject
+      // Measured inside the failure reload: its hold must already be in place.
+      holdSeen = watchedPane?.style?.overflowAnchor ?? null
+      const pending = reload
+      await pending.gate.promise
+      pending.commit()
+      return pending.value
+    },
+    learningRun: async id => ({
+      learningRunId: id, agentId: beforeReject.agentId, outcome: 'candidate', revision: 4, operations: [],
+      inputFrozen: { parentSnapshotId: 'ms_current', parentSnapshotRevision: 11 }, replay: { passed: true },
+    }),
+    memorySnapshot: async id => ({
+      ...beforeReject.snapshots.find(snapshot => snapshot.snapshotId === id),
+      agentId: beforeReject.agentId,
+      principles: [{ principleId: 'pr_1', text: 'Keep it short', scope: {}, sources: [], state: 'active' }],
+    }),
+    // The authoritative action itself fails: this is the path under test.
+    snapshotReject: async () => { throw Object.assign(new Error('stale candidate'), { code: 'REVISION_CONFLICT' }) },
+    publicMemoryRefresh: async () => null,
+    publicCandidate: async () => null,
+  } })
+  const queueReload = (value, commit = () => {}) => {
+    const gate = deferred()
+    reload = { gate, value, commit }
+    return reload
+  }
+  const rejectButton = () => {
+    const detail = findAll(harness.render(), node => node['data-agent-detail'] === beforeReject.agentId)[0]
+    const element = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
+    assert.ok(element, 'the assistant detail renders the learning panel')
+    return findAll(harness.learning.AgentLearning(element), node => node.type === harness.ui.Button && node['data-action'] === 'learning-reject')[0]
+  }
+  const openRejectConfirmation = () => {
+    const button = rejectButton()
+    assert.ok(button, 'the candidate review offers the reject action')
+    button.onClick()
+    const dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-learning-reject')[0]
+    assert.ok(dialog, 'the reject asks for confirmation first')
+    return dialog
+  }
+  const actionError = () => findAll(harness.render(), node => node.type === harness.ui.ErrorState && node.children === 'decisionErrorConflict')[0]
+  try {
+    await openAgents(harness)
+    await openAssistant(harness, beforeReject.agentId)
+
+    // 0. The reader can leave the assistant detail while the action settles, and
+    //    the catch branch runs without a mounted pane. The hold stays a total
+    //    no-op there: it never scrolls, never takes the anchoring rule, and never
+    //    waits for a commit frame of a pane that is not there.
+    const paneNode = findAll(harness.render(), node => node.className === 'weir-da-agent-detail-pane' && node.ref)[0]
+    const detached = paneNode.ref.current
+    const detachedFrames = []
+    const detachedRemovals = []
+    Object.assign(detached, { scrollTop: 777, scrollHeight: 4518, clientHeight: 532, style: { overflowAnchor: '', removeProperty: name => { detachedRemovals.push(name); return '' } } })
+    detached.ownerDocument = { defaultView: { requestAnimationFrame: callback => { detachedFrames.push(callback); return detachedFrames.length } } }
+    queueReload(beforeReject)
+    const detachedDialog = openRejectConfirmation()
+    paneNode.ref.current = null
+    const detachedFailure = detachedDialog.onConfirm()
+    await harness.flush()
+    assert.equal(detached.scrollTop, 777, 'an absent pane is never scrolled')
+    assert.equal(detached.style.overflowAnchor, '', 'an absent pane never takes the inline anchoring rule')
+    assert.deepEqual(detachedRemovals, [], 'an absent pane has no inline rule to hand back')
+    assert.deepEqual(detachedFrames, [], 'an absent pane never waits for a commit frame')
+    reload.gate.resolve()
+    await detachedFailure
+    await harness.flush()
+    assert.ok(actionError(), 'the failed action still surfaces its error with no pane mounted')
+
+    // 1. The rejected candidate stays authoritative, and the failure reload
+    //    remeasures the same card (4518 -> 4614) while anchoring rewrites
+    //    690 -> 446: the captured offset must come back exactly.
+    const { pane, style, removals } = detailPaneScroll(harness.render(), 'auto')
+    watchedPane = pane
+    queueReload(beforeReject, () => { pane.scrollHeight = 4614; pane.scrollTop = 446 })
+    const grownFailure = openRejectConfirmation().onConfirm()
+    await harness.flush()
+    assert.equal(holdSeen, 'none', 'the failure reload starts with browser scroll anchoring disabled')
+    assert.equal(style.overflowAnchor, 'none', 'the pane holds the anchoring rule while the failure reload runs')
+    assert.equal(pane.scrollTop, 690, 'the pane offset is captured before the failure reload commits')
+    reload.gate.resolve()
+    await grownFailure
+    await harness.flush()
+    assert.equal(pane.scrollTop, 690, 'the failed action restores the captured offset instead of the anchored 446')
+    assert.equal(style.overflowAnchor, 'auto', 'the previous inline anchoring rule is restored')
+    assert.deepEqual(removals, [], 'a prior inline rule is written back instead of being removed')
+    assert.ok(actionError(), 'the failed snapshot action still surfaces its error')
+
+    // 2. The conflict reread drops the stale candidate, so the card shrinks
+    //    (4518 -> 700) and anchoring clamps the offset to 0. The hold must survive
+    //    the commit frame, land on the new maximum, and leave no inline residue.
+    const frames = []
+    pane.ownerDocument = { defaultView: { requestAnimationFrame: callback => { frames.push(callback); return frames.length } } }
+    style.overflowAnchor = ''
+    removals.length = 0
+    pane.scrollTop = 690; pane.scrollHeight = 4518; pane.clientHeight = 532
+    queueReload(afterConflict, () => { pane.scrollHeight = 700; pane.scrollTop = 0 })
+    const clampFailure = openRejectConfirmation().onConfirm()
+    await harness.flush()
+    assert.equal(style.overflowAnchor, 'none', 'the failure reload holds the anchoring rule')
+    reload.gate.resolve()
+    await harness.flush()
+    assert.equal(frames.length, 1, 'the failure reload waits for the commit frame')
+    assert.equal(style.overflowAnchor, 'none', 'anchoring stays disabled until the restore lands')
+    assert.equal(pane.scrollTop, 0, 'the commit frame is what would clamp the held offset')
+    frames.shift()()
+    await clampFailure
+    await harness.flush()
+    assert.equal(pane.scrollTop, 168, 'a shrunken card clamps the captured offset to scrollHeight - clientHeight')
+    assert.equal(style.overflowAnchor, '', 'an empty prior rule leaves no inline anchoring residue')
+    assert.deepEqual(removals, ['overflow-anchor'])
+    assert.ok(actionError(), 'the failure still surfaces the same actionable error')
+    delete pane.ownerDocument
+  } finally {
+    harness.unmount()
+  }
+})

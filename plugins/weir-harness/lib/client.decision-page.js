@@ -1179,7 +1179,7 @@ window.__ModuleLoader__.load({
             setActionError(asError(reason, "DECISION_ACTION_FAILED"));
             if (["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(method)) {
               const selected = resources.agent.value;
-              if (selected) await selectAgent(selected.agentId);
+              if (selected) await preserveDetailScroll(() => selectAgent(selected.agentId));
             }
           }
           return undefined;
