@@ -249,7 +249,10 @@ async function runB() {
     await waitCase(instance, sessionId, 'GUI_B_RETRY', current => current.state === 'closed')
 
     const finalInbox = await exportInbox(instance, sessionId, `${out}/inbox-final.json`)
-    check(checks, 'inboxActionsLeaveNoPendingFixtures', finalInbox.length === 0)
+    // The inbox is profile-wide now: a clean end state means this scenario's own
+    // Cases are gone, not that the profile carries no pending work elsewhere.
+    const scenarioCaseIds = [first.caseId, afterDown.caseId, retry.caseId, decide.caseId, reassign.caseId, cancel.caseId]
+    check(checks, 'inboxActionsLeaveNoPendingFixtures', finalInbox.every(item => !scenarioCaseIds.includes(item.caseId)), { pending: finalInbox.map(item => item.caseId), scenarioCaseIds })
     const scan = await instance.cdp.evaluate(`window.__decisionQA.fixture('scanSession', ${JSON.stringify({ sessionId })})`)
     writeJson(`${out}/session-scan.json`, scan)
     check(checks, 'noCommandOrCustomEvents', scan.commandEvents.length === 0 && scan.customDecisionEvents.length === 0)

@@ -96,8 +96,18 @@ export async function apply(ctx) {
     async scanSession(args) {
       const snapshot = await ctx.get('sessionQuery').readSession(args.sessionId)
       const events = snapshot.events.map(event => ({ seq: event.seq, type: event.type, ignorable: event.ignorable === true, callId: event.data?.callId ?? event.data?.message?.source?.callId ?? null, toolName: event.data?.name ?? null, ...(event.type === 'tool/call' ? { data: event.data } : {}) }))
+      // Bounded user-message text: a delivered ruling is a user/message whose
+      // source names the deciding surface, and its text is the only proof the
+      // conclusion reached the source conversation.
+      const messageText = (data) => {
+        const content = data?.content
+        if (typeof content === 'string') return content.slice(0, 400)
+        if (Array.isArray(content)) return content.map(part => typeof part === 'string' ? part : typeof part?.text === 'string' ? part.text : '').filter(Boolean).join(' ').slice(0, 400)
+        return ''
+      }
+      const userMessages = snapshot.events.filter(event => event.type === 'user/message').map(event => ({ seq: event.seq, source: event.data?.source?.kind ?? null, text: messageText(event.data) }))
       return {
-        sessionId: args.sessionId, eventCount: events.length, events,
+        sessionId: args.sessionId, eventCount: events.length, events, userMessages,
         commandEvents: events.filter(event => event.type === 'command/run' || event.type === 'command/done'),
         customDecisionEvents: events.filter(event => event.type.startsWith('weir/') || event.type.startsWith('decision/')),
         stockAskCalls: events.filter(event => event.type === 'tool/call' && event.toolName === 'ask_user_question'),

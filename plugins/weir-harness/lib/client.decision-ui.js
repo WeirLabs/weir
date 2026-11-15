@@ -111,6 +111,17 @@ window.__ModuleLoader__.load({
 .weir-da-view[data-view="inbox"], .weir-da-view[data-view="metrics"] { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; overscroll-behavior: contain; }
 .weir-da-view[data-view="records"], .weir-da-view[data-view="agents"] { display: flex; flex-direction: column; overflow: hidden; }
 .weir-da-card-list { min-width: 0; display: grid; gap: 12px; align-content: start; }
+/* Pending decisions are grouped for reading: one block per source
+   workspace (or assistant), each headed by its name and count. */
+.weir-da-inbox-groups { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.weir-da-inbox-group { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.weir-da-inbox-group-header { box-sizing: border-box; min-width: 0; max-width: 100%; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin: 0; font-size: var(--weir-font-body-size, 13px); line-height: var(--weir-font-body-line, 18px); font-weight: 600; color: var(--dsw-alias-label-primary); }
+.weir-da-inbox-group-header .weir-da-count { margin-inline-start: 0; padding: 0 6px; border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-2); }
+.weir-da-inbox-group-label { min-width: 0; overflow-wrap: anywhere; }
+.weir-da-inbox-grouping { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.weir-da-delivery-notice { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.weir-da-delivery-notice .weir-ui-notice { flex: 1 1 240px; flex-direction: column; gap: 2px; }
+.weir-da-delivery-notice p { margin: 2px 0 0; }
 .weir-da-card { min-width: 0; padding: 16px; border-radius: var(--dsw-radius-xl); background: var(--dsw-alias-settings-card-fill); color: var(--dsw-alias-label-primary); overflow-wrap: anywhere; }
 .weir-da-card[data-flat="true"] { background: var(--dsw-alias-bg-layer-1); border-radius: var(--dsw-radius-lg); }
 .weir-da-conversation-card { position: relative; }

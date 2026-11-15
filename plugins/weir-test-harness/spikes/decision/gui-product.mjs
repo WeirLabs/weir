@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -1766,6 +1766,179 @@ async function answerInboxWithSuggestions(sessionId, caseId, shotName, options =
   check(`${shotName}InboxDecisionMatchesAuthority`, closed.case.closing === 'escalated' && closed.case.decision.kind === 'user_decision', { caseId, answers: closed.case.decision.answers })
   await shot(`${shotName}-answered`)
   return closed
+}
+
+/**
+ * DOM truth for the sidebar entry's pending bubble. The host marks the icon
+ * container aria-hidden, so the decorative number is only half the surface: the
+ * polite live region above is what carries the state.
+ */
+async function pendingBubbleDom() {
+  return instance.cdp.evaluate(`(() => {
+    const rect = el => { if (!el) return null; const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height, right: r.right, bottom: r.bottom } }
+    const bubble = document.querySelector('[data-weir-decision-bubble]')
+    const entry = document.querySelector('[data-decision-entry]')
+    const live = document.querySelector('[data-weir-decision-live]')
+    return {
+      present: Boolean(bubble && bubble.offsetParent !== null),
+      text: bubble ? bubble.textContent.trim() : null,
+      title: bubble ? bubble.getAttribute('title') : null,
+      bubble: rect(bubble), entry: rect(entry),
+      background: bubble ? getComputedStyle(bubble).backgroundColor : null,
+      color: bubble ? getComputedStyle(bubble).color : null,
+      svg: Boolean(entry && entry.querySelector('svg[data-decision-icon="branch-check"]')),
+      live: live ? { role: live.getAttribute('role'), ariaLive: live.getAttribute('aria-live'), text: live.textContent.trim(), rect: rect(live) } : null,
+    }
+  })()`)
+}
+
+async function waitPendingBubble(predicate, label) {
+  const state = await waitFor(async () => { const value = await pendingBubbleDom(); return predicate(value) ? value : null }, 60_000)
+  writeJson(join(out, `pending-bubble-${label}.json`), state)
+  return state
+}
+
+/**
+ * DOM truth for the grouped pending inbox: group heads with their counts and
+ * cards, the workspace/assistant switch, and each card's source workspace label.
+ */
+async function pendingInboxDom() {
+  return instance.cdp.evaluate(`(() => {
+    const groups = [...document.querySelectorAll('[data-inbox-group]')].map(group => ({
+      key: group.getAttribute('data-inbox-group'),
+      label: group.querySelector('.weir-da-inbox-group-label')?.textContent.trim() ?? '',
+      count: Number(group.querySelector('[data-inbox-group-count]')?.textContent.trim() ?? '0'),
+      caseIds: [...group.querySelectorAll('article[data-case-id]')].map(el => el.getAttribute('data-case-id')),
+      heading: group.querySelector('.weir-da-inbox-group-header')?.tagName ?? null,
+    }))
+    const page = document.querySelector('main.weir-da-page')
+    return {
+      groups,
+      switchButtons: [...document.querySelectorAll('[data-group-by]')].map(el => ({ by: el.getAttribute('data-group-by'), pressed: el.getAttribute('aria-pressed'), label: el.textContent.trim() })),
+      switchAria: document.querySelector('.weir-da-inbox-grouping')?.getAttribute('aria-label') ?? null,
+      navCount: Number(document.querySelector('[data-inbox-count]')?.textContent.trim() ?? '0'),
+      total: groups.reduce((sum, group) => sum + group.count, 0),
+      sourceLabels: [...document.querySelectorAll('[data-inbox-workspace]')].map(el => el.textContent.trim()),
+      horizontalScroll: page ? page.scrollWidth - page.clientWidth : 0,
+    }
+  })()`)
+}
+
+async function switchInboxGrouping(by) {
+  await keyboardActivate(`Group pending decisions by ${by}`, `[data-group-by="${by}"]`)
+  return waitFor(async () => {
+    const value = await pendingInboxDom()
+    return value.switchButtons.find(item => item.by === by)?.pressed === 'true' ? value : null
+  }, 30_000)
+}
+
+/**
+ * decision-pending-overview 5.1 on the real Desktop surface: the sidebar
+ * bubble (appear / count / disappear), the profile-wide inbox grouped across two
+ * workspaces with its switch, one cross-workspace ruling with no extra
+ * confirmation whose conclusion reaches its source session, and the undelivered
+ * ruling's inline notice (stubbed at the RPC boundary; the Host's own
+ * unavailable branch is covered by the broker unit tests).
+ */
+async function runPendingOverviewMatrix(primary) {
+  const overviewWorkspace = join(root, 'pending-overview-workspace')
+  mkdirSync(overviewWorkspace, { recursive: true })
+  const localSession = (await newIsolatedSession('pending-local')).sessionId
+  const remoteSession = (await newIsolatedSession('pending-remote', overviewWorkspace)).sessionId
+  const baseline = (await rpc(localSession, 'pending-overview-baseline', 'inbox')).length
+  check('pendingOverviewStartsClean', baseline === 0, { baseline })
+  const article = caseId => `article[data-case-id="${caseId}"]`
+
+  // Two consultations, one per workspace, both pending at once.
+  const cases = {}
+  for (const [label, target] of [['local', localSession], ['remote', remoteSession]]) {
+    await openIsolatedSession(target)
+    await selectorChoose(target, 'agent', primary.agentId)
+    await submitMarker(instance, 'GUI_B_REASSIGN')
+    cases[label] = await waitCase(target, `pending-overview-${label}`, current => current.state === 'awaiting_user')
+  }
+  writeJson(join(out, 'pending-overview-cases.json'), cases)
+
+  const twoPending = await waitPendingBubble(state => state.present && state.text === String(baseline + 2), 'two-workspaces')
+  const twoProblems = pendingBubbleProblems(twoPending, { count: baseline + 2 })
+  check('pendingBubbleShowsProfileTotal', twoProblems.length === 0, { state: twoPending, problems: twoProblems })
+
+  await openIsolatedSession(localSession)
+  await openPage('inbox')
+  const twoGroups = await waitFor(async () => { const value = await pendingInboxDom(); return value.groups.length >= 2 && value.total === baseline + 2 ? value : null }, 60_000)
+  writeJson(join(out, 'pending-inbox-two-workspaces.json'), twoGroups)
+  const groupProblems = pendingOverviewProblems(twoGroups)
+  const groupOf = caseId => twoGroups.groups.find(group => group.caseIds.includes(caseId))
+  const localGroup = groupOf(cases.local.caseId)
+  const remoteGroup = groupOf(cases.remote.caseId)
+  check('pendingInboxGroupsBothWorkspaces', groupProblems.length === 0 && twoGroups.groups.length === 2 && Boolean(localGroup) && Boolean(remoteGroup) && localGroup.key !== remoteGroup.key, { groups: twoGroups.groups, problems: groupProblems })
+  check('pendingInboxNavMatchesGroupsAndBubble', twoGroups.navCount === baseline + 2 && twoGroups.total === twoGroups.navCount, { navCount: twoGroups.navCount, total: twoGroups.total, bubble: twoPending.text })
+  check('pendingInboxShowsSourceWorkspaceNames', twoGroups.sourceLabels.length === baseline + 2 && twoGroups.sourceLabels.every(label => /工作区|Workspace/.test(label)), twoGroups.sourceLabels)
+  await shot('24a-pending-inbox-two-workspaces')
+
+  const byAgent = await switchInboxGrouping('agent')
+  writeJson(join(out, 'pending-inbox-by-agent.json'), byAgent)
+  const byAgentProblems = pendingOverviewProblems(byAgent)
+  check('pendingInboxSwitchRegroupsByAssistant', byAgentProblems.length === 0 && byAgent.groups.every(group => group.key.startsWith('agent:')) && byAgent.groups.reduce((sum, group) => sum + group.count, 0) === baseline + 2, { groups: byAgent.groups, problems: byAgentProblems })
+  const backByWorkspace = await switchInboxGrouping('workspace')
+  writeJson(join(out, 'pending-inbox-back-by-workspace.json'), backByWorkspace)
+  check('pendingInboxSwitchIsReversible', pendingOverviewProblems(backByWorkspace).length === 0 && backByWorkspace.groups.every(group => group.key.startsWith('workspace:')), backByWorkspace.groups)
+
+  // A cross-workspace ruling: answered from this page, with no second
+  // confirmation, and delivered into the source session's own conversation.
+  await openPage('inbox')
+  await waitFor(() => instance.cdp.evaluate(answerFormExpression(cases.remote.caseId)), 30_000)
+  await keyboardActivate('Answer cross-workspace pending decision', `${article(cases.remote.caseId)} input[type="radio"]`, { key: 'Space', labels: ['User choice', 'Other'] })
+  const decideMark = networkRpc.length
+  await keyboardActivate('Submit cross-workspace pending decision', `${article(cases.remote.caseId)} button[type="submit"]`)
+  const openDialogsAfterSubmit = await instance.cdp.evaluate('document.querySelectorAll("dialog[open]").length')
+  check('pendingOverviewCrossWorkspaceNeedsNoConfirmation', openDialogsAfterSubmit === 0, { openDialogs: openDialogsAfterSubmit })
+  const closedRemote = await waitFor(async () => { const value = await record(remoteSession, 'pending-overview-decided', cases.remote.caseId); return value.case.state === 'closed' ? value : null }, 60_000)
+  await collectNetwork()
+  const decideCalls = networkRpc.slice(decideMark).filter(entry => entry.method === 'decide' && entry.args?.caseId === cases.remote.caseId)
+  const delivered = decideCalls.at(-1)?.response?.result?.value?.value?.delivery?.state ?? null
+  check('pendingOverviewCrossWorkspaceRulingDelivered', closedRemote.case.closing === 'escalated' && decideCalls.length === 1 && delivered === 'delivered', { caseId: cases.remote.caseId, calls: decideCalls.length, delivered, closing: closedRemote.case.closing })
+  const remoteScan = await scanSession(remoteSession, 'pending-overview-remote-delivery.json')
+  const deliveredMessage = remoteScan.userMessages.find(message => message.source === 'weir-decision' && message.text.includes(cases.remote.caseId))
+  check('pendingOverviewConclusionReachesSourceSession', Boolean(deliveredMessage), { caseId: cases.remote.caseId, source: deliveredMessage?.source ?? null, text: deliveredMessage?.text ?? null })
+  const onePending = await waitPendingBubble(state => state.present && state.text === String(baseline + 1), 'one-left')
+  check('pendingBubbleDropsAfterRuling', pendingBubbleProblems(onePending, { count: baseline + 1 }).length === 0, onePending)
+  await shot('24b-pending-inbox-cross-workspace-answered')
+
+  // The last pending ruling clears the bubble entirely.
+  await openPage('inbox')
+  await waitFor(() => instance.cdp.evaluate(answerFormExpression(cases.local.caseId)), 30_000)
+  await keyboardActivate('Answer last pending decision', `${article(cases.local.caseId)} input[type="radio"]`, { key: 'Space', labels: ['User choice', 'Other'] })
+  await keyboardActivate('Submit last pending decision', `${article(cases.local.caseId)} button[type="submit"]`)
+  await waitFor(async () => { const value = await record(localSession, 'pending-overview-last', cases.local.caseId); return value.case.state === 'closed' ? value : null }, 60_000)
+  const emptied = await waitPendingBubble(state => baseline === 0 ? state.present === false : state.present && state.text === String(baseline), 'cleared')
+  check('pendingBubbleDisappearsWhenNothingIsPending', pendingBubbleProblems(emptied, { count: baseline }).length === 0, emptied)
+  await shot('24c-pending-bubble-cleared')
+
+  // Undelivered ruling: the Host reports the terminal delivery state, the page
+  // reports it once and never grows a standing badge. Stubbed at the RPC
+  // boundary, because a real unavailable delivery needs an unresumable source
+  // session; the Host's branch is asserted by the broker unit tests.
+  await openIsolatedSession(remoteSession)
+  await selectorChoose(remoteSession, 'agent', primary.agentId)
+  await submitMarker(instance, 'GUI_B_CANCEL')
+  const undeliveredCase = await waitCase(remoteSession, 'pending-overview-undelivered', current => current.state === 'awaiting_user')
+  const controlId = await instance.cdp.evaluate(`window.__decisionQA.controlDecision(${JSON.stringify({ method: 'decide', action: 'delivery-unavailable' })})`)
+  await openPage('inbox')
+  await waitFor(() => instance.cdp.evaluate(answerFormExpression(undeliveredCase.caseId)), 30_000)
+  await keyboardActivate('Answer undelivered pending decision', `${article(undeliveredCase.caseId)} input[type="radio"]`, { key: 'Space', labels: ['User choice', 'Other'] })
+  await keyboardActivate('Submit undelivered pending decision', `${article(undeliveredCase.caseId)} button[type="submit"]`)
+  const notice = await waitFor(() => instance.cdp.evaluate(`(() => { const root=document.querySelector('[data-delivery-notice="unavailable"]'); if(!root)return null; return { text:root.innerText, dismiss:root.querySelectorAll('[data-action="dismiss-delivery-notice"]').length, standingBadge:document.querySelectorAll('[data-weir-decision-bubble]').length } })()`), 30_000)
+  writeJson(join(out, 'pending-delivery-unavailable.json'), { stub: true, controlId, caseId: undeliveredCase.caseId, notice, control: await instance.cdp.evaluate('window.__decisionQA.decisionControlState()') })
+  check('pendingUndeliveredRulingReportsOnce', Boolean(notice) && /已裁决|saved|已保存/i.test(notice.text) && /未送达|not delivered|could not reach/i.test(notice.text) && notice.dismiss === 1, { caseId: undeliveredCase.caseId, notice })
+  const closedUndelivered = await waitFor(async () => { const value = await record(remoteSession, 'pending-overview-undelivered-closed', undeliveredCase.caseId); return value.case.state === 'closed' ? value : null }, 30_000)
+  check('pendingUndeliveredRulingStillSaved', closedUndelivered.case.closing === 'escalated', closedUndelivered.case.closing)
+  await keyboardActivate('Dismiss undelivered ruling notice', '[data-action="dismiss-delivery-notice"]')
+  const dismissed = await waitFor(() => instance.cdp.evaluate('!document.querySelector("[data-delivery-notice]")'), 30_000)
+  check('pendingUndeliveredNoticeDismissesForGood', dismissed === true, { dismissed })
+  await shot('24d-pending-undelivered-notice')
+  const settled = await rpc(remoteSession, 'pending-overview-settled', 'inbox')
+  check('pendingOverviewLeavesNoPendingFixture', settled.length === baseline, { baseline, remaining: settled.map(item => item.caseId) })
 }
 
 // Run JxliG6 regression anchor: the long native question outlives the inbox decision that
@@ -4491,6 +4664,11 @@ try {
   // The decided long Case leaves its native question pending, and a pending native question
   // occupies the composer; finish it with the rendered Skip before any later marker.
   await finishLongNativeWithSkip(sessionId, longCase.caseId)
+  // decision-pending-overview 5.1: the bubble, the grouped profile-wide inbox
+  // across two workspaces, a cross-workspace ruling with its delivery, and the
+  // undelivered-ruling notice. It starts from a clean pending set, so it runs
+  // before the P4 matrix leaves its own pending fixture behind.
+  await runPendingOverviewMatrix(primary)
   await runEnglishVisualMatrix(sessionId)
   await openPage('metrics')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("[data-metrics-view]"))'), 30_000)

@@ -256,6 +256,11 @@ window.__ModuleLoader__.load({
           jsx.jsxs("div", { children: [
             jsx.jsx("h2", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("p", { className: "weir-da-caption", children: summary?.agentName ?? t("decisionSelector") }, "agent"),
+            jsx.jsxs("p", { className: "weir-da-caption", "data-inbox-workspace": true, children: [`${t("decisionInboxSourceWorkspace")}: `, jsx.jsx("strong", { children: props.workspaceLabel ?? t("decisionInboxOtherWorkspace") }, "label")] }, "workspace"),
+            // An inactive source only labels "not running": delivery resumes a
+            // stopped session, so no action is disabled by this flag.
+            current.sourceActive === false ? jsx.jsx("p", { className: "weir-da-caption", "data-inbox-source-inactive": true, children: t("decisionInboxSourceInactive") }, "source-inactive") : null,
+            props.openSourceSession && props.onOpenSourceSession ? jsx.jsx(ui.Button, { variant: "ghost", "data-action": "open-source-session", onClick: props.onOpenSourceSession, children: t("decisionInboxOpenSourceSession") }, "source-session") : null,
             evidenceView?.routeStatusKey ? jsx.jsx("p", { className: "weir-da-caption", "data-route-status": true, children: t(evidenceView.routeStatusKey) }, "route-status") : null,
           ] }, "copy"),
           jsx.jsx(ui.Badge, { variant: "warn", children: t(summary?.statusKey ?? "decisionStatusAwaitingUser") }, "status"),
@@ -742,8 +747,18 @@ window.__ModuleLoader__.load({
       const ui = props.ui;
       const sessionId = props.getSessionId?.() ?? null;
       const actions = props.createDecisionActions(props.connection, sessionId, props.decisionRpc);
+      // The inbox is profile-wide, so it needs no open session; its action drafts
+      // still stay isolated per session. A page opened without a session keeps
+      // one profile bucket instead of throwing on a missing draft scope.
+      const draftScope = sessionId ?? "profile";
+      // Standard panel props: the page maps a source session to a workspace
+      // locally, so the Remote projection never carries a path or workspace key.
+      const hostSessions = typeof props.useSessions === "function" ? props.useSessions() : null;
+      const hostWorkspaces = typeof props.useWorkspaces === "function" ? props.useWorkspaces() : null;
       const [tab, setTab] = react.useState("inbox");
       const [resources, setResources] = react.useState(emptyResources);
+      const [groupBy, setGroupBy] = react.useState("workspace");
+      const [deliveryNotice, setDeliveryNotice] = react.useState(null);
       const [filter, setFilter] = react.useState({});
       const [appliedFilter, setAppliedFilter] = react.useState({});
       const [selectedCaseId, setSelectedCaseId] = react.useState(null);
@@ -851,12 +866,18 @@ window.__ModuleLoader__.load({
         } catch (reason) { if (valid("agents", token, epoch, requestSession)) patchResource("agents", { status: "error", error: asError(reason) }); }
       };
       const loadInbox = async (requestSession = sessionId, epoch = epochRef.current) => {
-        if (!requestSession) return;
+        // The inbox aggregates every workspace of this profile: an open session
+        // is not a precondition, only the authorization of the read itself.
         const token = ++requestsRef.current.inbox;
         patchResource("inbox", { status: "loading", error: null });
         try {
           const value = model.narrowInbox(await actions.inbox());
-          if (valid("inbox", token, epoch, requestSession)) patchResource("inbox", { status: "ready", value, error: null });
+          if (valid("inbox", token, epoch, requestSession)) {
+            patchResource("inbox", { status: "ready", value, error: null });
+            // One authoritative read feeds the navigation count, the list total
+            // and the sidebar bubble: publish it instead of reading twice.
+            props.publishPendingCount?.(value.length);
+          }
         } catch (reason) { if (valid("inbox", token, epoch, requestSession)) patchResource("inbox", { status: "error", error: asError(reason) }); }
       };
       const loadRecords = async (nextFilter = appliedFilter, requestSession = sessionId, epoch = epochRef.current) => {
@@ -1128,6 +1149,9 @@ window.__ModuleLoader__.load({
         const epoch = epochRef.current;
         try {
           const result = await actions[method](...args);
+          // A ruling that could not reach its source session is reported once,
+          // in plain language: the answer stays authoritative either way.
+          if (result?.delivery?.state === "unavailable") setDeliveryNotice({ method, caseId: args[0] ?? null });
           if (["decide", "reassign", "retry", "cancel", "feedback", "correction", "clarify", "returnToCaller"].includes(method)) {
             const caseId = args[0];
             const authoritative = await actions.record(caseId);
@@ -1135,6 +1159,9 @@ window.__ModuleLoader__.load({
             if (epochRef.current !== epoch || sessionId !== requestSession) return;
             setResources(current => ({ ...current, details: { ...current.details, [caseId]: { status: "ready", value: authoritative, error: null } } }));
             await loadInbox(requestSession, epoch);
+            // The sidebar bubble and every other decision surface converge on
+            // this action without waiting for the poll.
+            props.refreshPending?.();
             if (method === "decide") clearDraft(caseId, ["answers"]);
             if (method === "reassign") clearDraft(caseId, ["reassignTarget"]);
             if (method === "feedback" && args[1] === "comment") clearDraft(caseId, ["comment"]);
@@ -1296,13 +1323,17 @@ window.__ModuleLoader__.load({
         setEditor(agentDestination === "create" && !openCaseId ? newAgentEditor() : null);
         setAgentFocusRequest(agentDestination === "create" && !openCaseId ? { target: "editor" } : null);
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
+        loadInbox(sessionId, epoch);
+        setDeliveryNotice(null);
         if (sessionId) {
-          loadAgents(sessionId, epoch); loadInbox(sessionId, epoch);
+          loadAgents(sessionId, epoch);
           if (openCaseId) { loadRecords({}, sessionId, epoch); readRecord(openCaseId, { select: true, sessionId, epoch, force: true }); }
         }
         const subscription = props.panelInfo?.subscribe?.(value => {
-          if ((value?.activePanelId ?? value) !== PAGE_ID || !sessionId) return;
-          loadAgents(sessionId, epoch); loadInbox(sessionId, epoch);
+          if ((value?.activePanelId ?? value) !== PAGE_ID) return;
+          loadInbox(sessionId, epoch);
+          if (!sessionId) return;
+          loadAgents(sessionId, epoch);
           if (tabRef.current === "records") {
             loadRecords(filterRef.current, sessionId, epoch);
             if (selectedCaseRef.current) readRecord(selectedCaseRef.current, { sessionId, epoch, force: true });
@@ -1315,15 +1346,41 @@ window.__ModuleLoader__.load({
         jsx.jsx(ui.Button, { onClick: retry, children: t("decisionRetry") }, "retry"),
       ] }) });
       const noSession = jsx.jsx(ui.EmptyState, { children: t("decisionNoSession") });
-      const inboxContent = !sessionId ? noSession
-        : resources.inbox.status === "error" ? retryState(resources.inbox, () => loadInbox())
+      // Every pending Case of this profile, grouped for reading. The switch only
+      // appears when the pending items actually span two or more workspaces.
+      const inboxRows = resources.inbox.value;
+      const grouping = model.groupInbox(inboxRows, {
+        by: groupBy, workspaces: hostWorkspaces, sessions: hostSessions,
+        agents: resources.agents.value, t, currentSessionId: sessionId,
+      });
+      const inboxGrouping = grouping.switchable ? jsx.jsx("div", {
+        className: "weir-da-inbox-grouping", role: "group", "aria-label": t("decisionInboxGrouping"),
+        "data-inbox-grouping": groupBy,
+        children: [
+          jsx.jsx(ui.Button, { variant: "ghost", "data-group-by": "workspace", "aria-pressed": groupBy === "workspace", onClick: () => setGroupBy("workspace"), children: t("decisionInboxGroupByWorkspace") }, "workspace"),
+          jsx.jsx(ui.Button, { variant: "ghost", "data-group-by": "agent", "aria-pressed": groupBy === "agent", onClick: () => setGroupBy("agent"), children: t("decisionInboxGroupByAgent") }, "agent"),
+        ],
+      }) : null;
+      const inboxContent = resources.inbox.status === "error" ? retryState(resources.inbox, () => loadInbox())
         : resources.inbox.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
-        : resources.inbox.value.length ? jsx.jsx("div", { className: "weir-da-card-list", children: resources.inbox.value.map(item => jsx.jsx(InboxItem, {
-            item, agents: resources.agents.value, run, pending, model, ui, t,
-            draft: model.readDraft(drafts, sessionId, item.caseId), updateDraft: (field, value) => updateDraft(item.caseId, field, value),
-            evidence: resources.details[item.caseId], loadEvidence: force => readRecord(item.caseId, { force }),
-            requestCancel: () => setConfirm({ kind: "cancel", caseId: item.caseId }),
-          }, item.caseId)) })
+        : inboxRows.length ? jsx.jsxs("div", { className: "weir-da-inbox-groups", children: [
+            inboxGrouping,
+            grouping.groups.map(group => jsx.jsxs("section", { className: "weir-da-inbox-group", "data-inbox-group": group.key, children: [
+              jsx.jsxs("h2", { className: "weir-da-inbox-group-header", children: [
+                jsx.jsx("span", { className: "weir-da-inbox-group-label", children: group.label }, "label"),
+                jsx.jsx("span", { className: "weir-da-count", "data-inbox-group-count": group.count, children: String(group.count) }, "count"),
+              ] }, "header"),
+              jsx.jsx("div", { className: "weir-da-card-list", children: group.items.map(item => jsx.jsx(InboxItem, {
+                item, agents: resources.agents.value, run, pending, model, ui, t,
+                workspaceLabel: item.workspaceLabel,
+                openSourceSession: item.openSourceSession === true,
+                onOpenSourceSession: () => props.openSession?.(item.sessionId),
+                draft: model.readDraft(drafts, draftScope, item.caseId), updateDraft: (field, value) => updateDraft(item.caseId, field, value),
+                evidence: resources.details[item.caseId], loadEvidence: force => readRecord(item.caseId, { force }),
+                requestCancel: () => setConfirm({ kind: "cancel", caseId: item.caseId }),
+              }, item.caseId)) }, "list"),
+            ] }, group.key)),
+          ] })
         : jsx.jsx(ui.EmptyState, { children: t("decisionInboxEmpty") });
       const selectedDetail = selectedCaseId ? resources.details[selectedCaseId] : null;
       const recordContent = !sessionId ? noSession
@@ -1497,6 +1554,15 @@ window.__ModuleLoader__.load({
             jsx.jsxs("div", { children: [jsx.jsx("h1", { children: t("decisionSelector") }, "title"), jsx.jsx("p", { children: t("decisionPageDescription") }, "description")] }, "copy"),
             jsx.jsx(ui.Button, { variant: "ghost", "data-view": "metrics", onClick: () => navigate("metrics"), "aria-pressed": view.tab === "metrics", children: t("decisionAdvancedDiagnostics") }, "advanced"),
           ] }, "header"),
+          // One dismissible inline notice per undelivered ruling: never a standing
+          // badge, and never a cross-workspace confirmation step.
+          deliveryNotice ? jsx.jsxs("div", { className: "weir-da-delivery-notice", "data-delivery-notice": "unavailable", children: [
+            jsx.jsx(ui.Notice, { tone: "warn", children: jsx.jsxs("div", { children: [
+              jsx.jsx("strong", { children: t("decisionDeliveryUnavailableTitle") }, "title"),
+              jsx.jsx("p", { children: t("decisionDeliveryUnavailable") }, "body"),
+            ] }) }, "notice"),
+            jsx.jsx(ui.Button, { variant: "ghost", "data-action": "dismiss-delivery-notice", onClick: () => setDeliveryNotice(null), children: t("decisionDeliveryDismiss") }, "dismiss"),
+          ] }, "delivery-notice") : null,
           jsx.jsx("nav", { ref: primaryNavRef, tabIndex: -1, className: "weir-da-primary-nav", "aria-label": t("decisionPrimaryNavigation"), "data-decision-primary-nav": true, children: view.tabs.map(id => jsx.jsx(ui.Button, {
             "data-view": id, onClick: () => navigate(id), "aria-pressed": view.tab === id,
             children: jsx.jsxs("span", { children: [t(`decision${id[0].toUpperCase()}${id.slice(1)}`), id === "inbox" && resources.inbox.status === "ready" && resources.inbox.value.length > 0 ? jsx.jsx("span", { className: "weir-da-count", "data-inbox-count": resources.inbox.value.length, children: String(resources.inbox.value.length) }, "count") : null] }),

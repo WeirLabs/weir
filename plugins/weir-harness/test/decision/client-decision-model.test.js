@@ -78,7 +78,7 @@ test('card and page projections are complete and malformed payloads stay neutral
   assert.deepEqual(model.narrowRecords({ ok: false }), { records: [], nextCursor: null })
   assert.deepEqual(model.narrowInbox({ ok: false }), [])
   assert.deepEqual(model.narrowRecords({ records: [{ caseId: 'dc-plain' }], nextCursor: 'next' }), { records: [{ caseId: 'dc-plain' }], nextCursor: 'next' })
-  assert.deepEqual(model.narrowInbox([{ caseId: 'dc-plain' }]), [{ caseId: 'dc-plain' }])
+  assert.deepEqual(model.narrowInbox([{ caseId: 'dc-plain' }]), [{ caseId: 'dc-plain', sessionId: '', sourceActive: true, updatedAt: 0 }])
 })
 
 
@@ -165,4 +165,67 @@ test('unowned Auto cases project routing failure, no match, and ambiguity from t
   for (const dictionary of [en, zh]) {
     assert.doesNotMatch(dictionary.decisionReasonRouteFailure, /failure:|truncated|max-tokens/i)
   }
+})
+
+// The profile-wide inbox projection names no workspace (no path, no raw
+// workspace key), and the grouping is a pure function over host snapshots.
+test('inbox projection keeps the source session and never invents workspace data', async () => {
+  const model = await load()
+  const items = model.narrowInbox({ ok: true, value: [
+    { caseId: 'dc-a', rootSessionId: 's-a', workspaceKey: 'must-not-render', state: 'awaiting_user', updatedAt: 30, sourceActive: false, routeStatus: 'failure' },
+    { caseId: 'dc-b', rootSessionId: 's-b', state: 'awaiting_user', updatedAt: 20 },
+    { caseId: 'dc-c', rootSessionId: 's-c', state: 'awaiting_user', updatedAt: 10, routeStatus: 'not-a-status' },
+  ] })
+  assert.deepEqual(items.map(item => item.caseId), ['dc-a', 'dc-b', 'dc-c'])
+  assert.equal(items[0].sessionId, 's-a')
+  assert.equal(items[0].sourceActive, false)
+  assert.equal(items[0].routeStatus, 'failure')
+  assert.equal(items[1].sourceActive, true, 'an absent live flag is unknown, not "not running"')
+  assert.equal(items[2].routeStatus, undefined)
+  for (const item of items) assert.equal(item.crossWorkspace, undefined, 'grouping owns the cross-workspace verdict')
+
+  const grouped = model.groupInbox(items, {
+    workspaces: [
+      { workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-a'] },
+      { workspaceId: 'w2', title: 'Atlas', path: '/work/atlas/', sessionIds: ['s-c'] },
+    ],
+    sessions: { 's-a': { cwd: '/work/orrery' }, 's-b': { cwd: '/work/atlas' }, 's-c': { cwd: '/work/atlas' } },
+    currentSessionId: 's-b',
+    t: key => key,
+  })
+  assert.equal(grouped.by, 'workspace')
+  assert.equal(grouped.workspaceCount, 2)
+  assert.equal(grouped.switchable, true)
+  assert.deepEqual(grouped.groups.map(group => [group.label, group.count]), [['Orrery', 1], ['Atlas', 2]])
+  assert.deepEqual(grouped.groups[1].items.map(item => item.caseId), ['dc-b', 'dc-c'], 'group items stay newest first')
+  const atlasB = grouped.groups[1].items[0]
+  assert.equal(atlasB.caseId, 'dc-b')
+  assert.equal(atlasB.workspaceLabel, 'Atlas')
+  assert.equal(atlasB.crossWorkspace, false, 'the current session sits in Atlas')
+  assert.equal(atlasB.openSourceSession, false, 'the item of the open session offers no jump')
+  assert.equal(grouped.groups[1].items[1].openSourceSession, true, 'another session of the same workspace is still openable')
+  assert.equal(grouped.groups[0].items[0].crossWorkspace, true, 'Orrery differs from the current workspace')
+  assert.equal(model.groupInbox(items.slice(0, 1), { workspaces: [{ workspaceId: 'w1', title: 'Orrery', sessionIds: ['s-a'] }], currentSessionId: 's-a' }).switchable, false, 'one workspace offers no switch')
+})
+
+test('grouping sorts by newest pending decision, hides empty groups, and falls back by agent', async () => {
+  const model = await load()
+  const items = model.narrowInbox([
+    { caseId: 'dc-old', rootSessionId: 's-1', agentId: 'a', updatedAt: 1_000 },
+    { caseId: 'dc-new', rootSessionId: 's-2', agentId: 'b', updatedAt: 9_000 },
+    { caseId: 'dc-mid', rootSessionId: 's-2', agentId: 'a', updatedAt: 5_000 },
+    { caseId: 'dc-unowned', rootSessionId: 's-3', agentId: null, updatedAt: 3_000 },
+  ])
+  const workspaces = [{ workspaceId: 'w1', title: 'One', sessionIds: ['s-1'] }, { workspaceId: 'w2', title: 'Two', sessionIds: ['s-2'] }]
+  const byWorkspace = model.groupInbox(items, { workspaces, sessions: [] })
+  assert.deepEqual(byWorkspace.groups.map(group => group.label), ['Two', 'Other workspace', 'One'])
+  assert.deepEqual(byWorkspace.groups.map(group => group.count), [2, 1, 1])
+  assert.equal(byWorkspace.groups[1].key, 'workspace:other', 'an unmapped session lands in one fallback bucket')
+  assert.equal(byWorkspace.groups[1].label, 'Other workspace')
+
+  const byAgent = model.groupInbox(items, { by: 'agent', workspaces, agents: [{ agentId: 'a', name: 'Tone' }], t: key => key })
+  assert.deepEqual(byAgent.groups.map(group => [group.label, group.count]), [['decisionInboxAssistantFallback', 1], ['Tone', 2], ['decisionInboxUnownedAgent', 1]])
+  assert.equal(byAgent.by, 'agent')
+  assert.equal(byAgent.switchable, true, 'the switch reflects the workspace spread, not the grouping dimension')
+  assert.equal(model.groupInbox([], { workspaces }).groups.length, 0, 'no items, no empty groups')
 })
