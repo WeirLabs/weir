@@ -237,7 +237,11 @@ window.__ModuleLoader__.load({
     function InboxItem(props) {
       const current = props.item;
       const { t, ui, model, draft } = props;
-      const summary = model.recordSummary(current, props.agents, t);
+      // The loaded record is the authoritative route history when it is already
+      // here; before that the inbox projection's bounded routeStatus keeps a
+      // routing failure from reading as "no assistant matched".
+      const detail = props.evidence?.value;
+      const summary = model.recordSummary(current, props.agents, t, detail?.routeDecisions ?? []);
       const questions = Array.isArray(current.request?.questions) ? current.request.questions : [];
       const pending = typeof props.pending === "string";
       const suggestions = Array.isArray(current.escalation?.suggestion) ? current.escalation.suggestion : [];
@@ -245,7 +249,6 @@ window.__ModuleLoader__.load({
       // The shared answer form owns the tentative-suggestion block now, so its
       // per-question reasons arrive already translated from the decision model.
       const suggestionReasons = perQuestion.map(entry => ({ id: entry?.id, reason: t(model.reasonKey(entry?.detail) ?? "decisionReasonUnknown") }));
-      const detail = props.evidence?.value;
       const evidenceView = detail ? model.cardView(detail, props.agents, t) : null;
       const evidenceRevealReady = props.evidence?.status === "ready" || props.evidence?.status === "error";
       return jsx.jsxs("article", { className: "weir-da-card weir-da-inbox-card", "data-case-id": current.caseId, children: [
@@ -259,7 +262,7 @@ window.__ModuleLoader__.load({
         ] }, "header"),
         // The escalation reason is the one thing the user must not miss: it is
         // an accent-barred notice, not another flat paragraph.
-        jsx.jsx(ui.Notice, { tone: "warn", children: current.escalation?.missing?.[0] ?? t(summary?.reasonKey ?? "decisionReasonUnknown") }, "reason"),
+        jsx.jsx(ui.Notice, { tone: "warn", children: current.escalation?.missing?.[0] ?? t(evidenceView?.reasonKey ?? summary?.reasonKey ?? "decisionReasonUnknown") }, "reason"),
         // The tentative suggestions are rendered once, inside the shared answer
         // form, so the inbox card hosts no second copy above it.
         jsx.jsx(ui.DecisionAnswers, {

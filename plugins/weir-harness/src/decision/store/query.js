@@ -79,10 +79,26 @@ export class DecisionQuery {
     return deepFreeze({ case: caseOf(row), attempts, feedback, routeDecisions })
   }
 
-  /** @param {{sessionId:string}} input */
+  /**
+   * Waiting Cases carry the latest non-Shadow RouteDecision status so the inbox
+   * can tell a routing failure apart from "no candidate matched" without a
+   * second read. The status is a bounded enum, never the reason text: the
+   * technical cause stays in the RouteDecision history.
+   * @param {{sessionId:string}} input
+   */
   inbox(input) {
     requireSession(input.sessionId)
-    return deepFreeze(this.store.db.prepare("SELECT * FROM cases WHERE root_session_id=? AND state='awaiting_user' ORDER BY updated_at DESC,case_id DESC").all(input.sessionId).map(caseOf))
+    const rows = this.store.db.prepare("SELECT * FROM cases WHERE root_session_id=? AND state='awaiting_user' ORDER BY updated_at DESC,case_id DESC").all(input.sessionId)
+    const statuses = new Map()
+    for (const row of this.store.db.prepare(`SELECT case_id,chosen,reason,ambiguity_json FROM route_decisions
+      WHERE root_session_id=? AND case_id IS NOT NULL AND mode<>'auto_shadow' ORDER BY created_at,rowid`).all(input.sessionId)) {
+      statuses.set(row.case_id, routeStatusOf({ chosen: row.chosen ?? undefined, reason: row.reason, ambiguity: parseJson(row.ambiguity_json) ?? undefined }))
+    }
+    return deepFreeze(rows.map(row => {
+      const current = caseOf(row)
+      const status = statuses.get(current.caseId)
+      return status === undefined ? current : { ...current, routeStatus: status }
+    }))
   }
 
   /** @param {{sessionId:string,workspaceKey?:string,window?:'24h'|'7d'|'30d'|'all',cursor?:string}} input */
@@ -467,11 +483,16 @@ function classifyRoute(route, prior, hasShadow) {
 }
 
 function automaticOutcome(route, prefix) {
-  if (typeof route.chosen === 'string' && route.chosen) return `${prefix}_selected`
-  if (ROUTE_FAILURE_REASONS.includes(route.reason)) return `${prefix}_failure`
+  return `${prefix}_${routeStatusOf(route)}`
+}
+
+/** One bounded status for a RouteDecision: selected, failure, ambiguous, or none. @param {any} route */
+function routeStatusOf(route) {
+  if (typeof route.chosen === 'string' && route.chosen) return 'selected'
+  if (ROUTE_FAILURE_REASONS.includes(route.reason)) return 'failure'
   if (route.ambiguity && typeof route.ambiguity === 'object' && !Array.isArray(route.ambiguity)
-    && Array.isArray(route.ambiguity.candidates) && typeof route.ambiguity.conflict === 'string') return `${prefix}_ambiguous`
-  return `${prefix}_none`
+    && Array.isArray(route.ambiguity.candidates) && typeof route.ambiguity.conflict === 'string') return 'ambiguous'
+  return 'none'
 }
 
 /** @template T @param {T} value @returns {T} */

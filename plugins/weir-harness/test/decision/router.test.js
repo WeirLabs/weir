@@ -47,6 +47,30 @@ function fakeLlm(value, { finishReason = 'stop', failureCode } = {}) {
   }
 }
 
+function classificationOutput(id, authorizationClass) {
+  return JSON.stringify({ contract: 'router-classification-contract/1', classes: [{ id, authorizationClass }] })
+}
+
+// One scripted reply per sidecar call, so a test can force the first attempt to
+// truncate and the retry to succeed. A missing reply throws: an unexpected call
+// has to be loud, not a silent copy of the previous answer.
+function fakeSequenceLlm(replies) {
+  const calls = []
+  return {
+    calls,
+    stream(options) {
+      calls.push(options)
+      const reply = replies[calls.length - 1]
+      if (!reply) throw new Error('unexpected sidecar call')
+      return (async function * () {
+        if (typeof reply.outputTokens === 'number') yield { type: 'usage', usage: { outputTokens: reply.outputTokens } }
+        if (typeof reply.text === 'string') yield { type: 'text-delta', text: reply.text }
+        yield { type: 'finish', reason: { kind: reply.finishReason ?? 'stop' } }
+      })()
+    },
+  }
+}
+
 function unusedLlm() {
   const calls = []
   return { calls, stream(options) { calls.push(options); throw new Error('model must not be called') } }
@@ -436,7 +460,8 @@ describe('Auto shared sidecar routing and failure mapping', () => {
       assert.equal(call.provider, SESSION_ROUTE.provider)
       assert.equal(call.model, SESSION_ROUTE.model)
       assert.equal(call.reasoningEffort, SESSION_ROUTE.reasoningEffort)
-      assert.equal(call.maxTokens, 1600)
+      // A 1600-token Attempt budget never bounds the router's own JSON.
+      assert.equal(call.maxTokens, 4096)
       for (const key of ['tools', 'purpose', 'temperature', 'sessionId']) assert.equal(key in call, false)
     }
   })
@@ -480,6 +505,83 @@ describe('Auto shared sidecar routing and failure mapping', () => {
       setTimeout(() => controller.abort(new Error('caller cancelled')), 2)
       assertFailure(await pending, 'failure:aborted')
       assert.equal(llm.calls.length, 1)
+    }
+  })
+
+  it('keeps its own sidecar budget floor without widening a larger configured budget', async () => {
+    for (const configured of [1600, 1024, 0, -1]) {
+      const llm = fakeLlm({ contract: 'router-classification-contract/1', classes: [{ id: 'missing', authorizationClass: 'A' }] })
+      assert.equal((await classificationCall(llm, { maxOutputTokens: configured })).kind, 'classified', String(configured))
+      assert.equal(llm.calls[0].maxTokens, 4096, String(configured))
+    }
+    for (const configured of [8192, 4096]) {
+      const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
+      assert.equal((await routeCall(llm, { maxOutputTokens: configured })).kind, 'none', String(configured))
+      assert.equal(llm.calls[0].maxTokens, configured, String(configured))
+    }
+  })
+
+  it('retries a truncated verdict once with a doubled budget and recovers on the retry', async () => {
+    const classification = fakeSequenceLlm([
+      { text: '{"contract":"router-classification-contract/1","classes":[', finishReason: 'max-tokens' },
+      { text: classificationOutput('missing', 'A') },
+    ])
+    const classified = await classificationCall(classification)
+    assert.equal(classified.kind, 'classified')
+    assert.equal(classification.calls.length, 2)
+    assert.deepEqual(classification.calls.map(call => call.maxTokens), [4096, 8192])
+
+    const routing = fakeSequenceLlm([
+      { text: '{"contract":"router-contract/1"', finishReason: 'max-tokens' },
+      { text: JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Current preference' }) },
+    ])
+    const routed = await routeCall(routing)
+    assert.equal(routed.kind, 'selected')
+    assert.equal(routed.chosen, 'agent-b')
+    assert.equal(routing.calls.length, 2)
+    assert.deepEqual(routing.calls.map(call => call.maxTokens), [4096, 8192])
+  })
+
+  it('fails closed after a second truncation and reports the bounded output tokens', async () => {
+    for (const run of [classificationCall, routeCall]) {
+      const llm = fakeSequenceLlm([
+        { text: '{"contract":"router-', finishReason: 'max-tokens', outputTokens: 4096 },
+        { text: '{"contract":"router-', finishReason: 'max-tokens', outputTokens: 8192 },
+      ])
+      const result = await run(llm)
+      assertFailure(result, 'failure:truncated')
+      assert.equal(llm.calls.length, 2)
+      assert.equal(result.outputTokens, 8192)
+    }
+    // The doubled retry is capped instead of growing without bound, and never
+    // shrinks below the already configured budget.
+    const capped = fakeSequenceLlm([
+      { text: '{"contract":"router-', finishReason: 'truncated' },
+      { text: '{"contract":"router-', finishReason: 'truncated' },
+    ])
+    assertFailure(await routeCall(capped, { maxOutputTokens: 20000 }), 'failure:truncated')
+    assert.deepEqual(capped.calls.map(call => call.maxTokens), [20000, 20000])
+  })
+
+  it('never retries timeout, model error, route unavailability, an aborted signal, or the shadow opt-out', async () => {
+    for (const run of [classificationCall, routeCall]) {
+      const timed = hangingLlm()
+      assertFailure(await run(timed, { timeoutMs: 5 }), 'failure:timeout')
+      assert.equal(timed.calls.length, 1)
+      const failed = throwingLlm()
+      assertFailure(await run(failed), 'failure:model_error')
+      assert.equal(failed.calls.length, 1)
+      const unavailable = unusedLlm()
+      assertFailure(await run(unavailable, { sessionRoute: undefined }), 'failure:route_unavailable')
+      assert.equal(unavailable.calls.length, 0)
+      const aborted = new AbortController()
+      aborted.abort(new Error('caller cancelled'))
+      const truncated = fakeSequenceLlm([{ text: '{"contract":"router-', finishReason: 'max-tokens' }])
+      assertFailure(await run(truncated, { signal: aborted.signal }), 'failure:aborted')
+      assert.equal(truncated.calls.length, 0)
+      const single = fakeSequenceLlm([{ text: '{"contract":"router-', finishReason: 'max-tokens' }])
+      assertFailure(await run(single, { retryTruncated: false }), 'failure:truncated')
+      assert.equal(single.calls.length, 1)
     }
   })
 

@@ -329,7 +329,11 @@ test('unowned Auto records expose truthful route history and only owned waiting 
   assert.equal(summary.assigned, false)
   assert.equal(summary.canRetry, false)
   assert.equal(summary.agentName, 'No assistant selected')
+  // The RouteDecision history is the authoritative reason once it is readable;
+  // without it the projection falls back to the existing unowned wording.
+  assert.equal(model.recordSummary(detail.case, agents, 'en', detail.routeDecisions).reasonKey, 'decisionReasonRouteFailure')
   assert.equal(summary.reasonKey, 'decisionReasonUnownedNoRoute')
+  assert.equal(model.cardView(detail, agents).reasonKey, 'decisionReasonRouteFailure')
 
   const manual = { routeDecisionId: 'rd-manual', mode: 'manual_reassign', chosen: 'a', reason: '', createdAt: '2026-01-02T03:06:05.000Z' }
   const reassigned = model.cardView({ ...detail, case: { ...detail.case, agentId: 'a' }, routeDecisions: [auto, manual] }, agents)

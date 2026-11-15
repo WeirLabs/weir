@@ -10,6 +10,16 @@ const CLASSES = ['A', 'B', 'C', 'D', 'E', 'F', 'unknown']
 const ANSWER_CLASSES = ['A', 'B', 'C']
 const TRUNCATED = Symbol('truncated')
 
+// The classifier/router verdict is one tiny closed JSON object, yet the caller
+// model shares a single maxTokens budget between its reasoning and that text. A
+// budget tuned for a domain Attempt (the Desktop profile runs 1600) truncates
+// the verdict before its closing brace, so a sidecar keeps its own floor and a
+// truncated verdict gets exactly one wider retry before failing closed. Domain
+// Attempts keep using the configured value untouched.
+const SIDECAR_MIN_OUTPUT_TOKENS = 4096
+const SIDECAR_RETRY_MAX_OUTPUT_TOKENS = 16384
+const TRUNCATION_FAILURE = 'failure:truncated'
+
 const CLASSIFICATION_SYSTEM = `Auto request classification contract: router-classification-contract/1
 Classify only the supplied question ids. Return one JSON object with exactly this shape:
 {"contract":"router-classification-contract/1","classes":[{"id":"question id","authorizationClass":"A|B|C|D|E|F|unknown"}]}
@@ -61,7 +71,7 @@ export function planAutoRoute(input) {
   return { candidates, eligible }
 }
 
-/** @param {{request:any,llm:any,sessionRoute?:any,signal?:AbortSignal,timeoutMs:number,maxOutputTokens:number,contextBudgetTokens?:number}} input */
+/** @param {{request:any,llm:any,sessionRoute?:any,signal?:AbortSignal,timeoutMs:number,maxOutputTokens:number,contextBudgetTokens?:number,retryTruncated?:boolean}} input */
 export async function classifyAutoRequest(input) {
   const initial = autoAdmission(input.request, ANSWER_CLASSES)
   const normalized = normalizeRequest(input.request)
@@ -74,13 +84,10 @@ export async function classifyAutoRequest(input) {
     questions: missing.map(question => projectQuestion(question, false)),
     context: bounded(normalized.context ?? normalized.taskSummary ?? '', 4000),
   }, input.contextBudgetTokens)
-  if (!pack) return { kind: 'failed', reason: 'failure:context_budget' }
-  const streamed = await streamRouter(input, pack)
-  const failure = sidecarFailure(streamed)
-  if (failure) return { kind: 'failed', reason: failure }
-  const parsed = parseClassification(streamed.text, missing.map(question => question.id))
-  if (parsed === TRUNCATED) return { kind: 'failed', reason: 'failure:truncated' }
-  if (!parsed) return { kind: 'failed', reason: 'failure:invalid_output' }
+  if (!pack) return failureResult('failure:context_budget')
+  const outcome = await streamRouterOutcome(input, pack, text => parseClassification(text, missing.map(question => question.id)))
+  if (outcome.reason) return failureResult(outcome.reason, outcome.outputTokens)
+  const parsed = outcome.parsed
   for (const item of parsed) {
     const question = normalized.questions.find(candidate => candidate.id === item.id)
     question.authorizationClass = item.authorizationClass
@@ -92,7 +99,7 @@ export async function classifyAutoRequest(input) {
   return { kind: 'classified', request: normalized }
 }
 
-/** @param {{request:any,scope:any,profiles:any[],sessionRoute?:any,signal?:AbortSignal,llm:any,contextBudgetTokens:number,timeoutMs:number,maxOutputTokens:number}} input */
+/** @param {{request:any,scope:any,profiles:any[],sessionRoute?:any,signal?:AbortSignal,llm:any,contextBudgetTokens:number,timeoutMs:number,maxOutputTokens:number,retryTruncated?:boolean}} input */
 export async function routeAuto(input) {
   if (!autoAdmission(input.request, ANSWER_CLASSES).ok) {
     return { kind: 'none', candidates: [], reason: 'admission:authority' }
@@ -112,14 +119,10 @@ export async function routeAuto(input) {
       scope: projectScope(profile.scope),
     })),
   }, input.contextBudgetTokens)
-  if (!pack) return { kind: 'failed', candidates, reason: 'failure:context_budget' }
-  const streamed = await streamRouter(input, pack)
-  const failure = sidecarFailure(streamed)
-  if (failure) return { kind: 'failed', candidates, reason: failure }
-  const parsed = parseRoute(streamed.text, new Set(eligible.map(profile => profile.agentId)))
-  if (parsed === TRUNCATED) return { kind: 'failed', candidates, reason: 'failure:truncated' }
-  if (!parsed) return { kind: 'failed', candidates, reason: 'failure:invalid_output' }
-  return { ...parsed, candidates }
+  if (!pack) return { ...failureResult('failure:context_budget'), candidates }
+  const outcome = await streamRouterOutcome(input, pack, text => parseRoute(text, new Set(eligible.map(profile => profile.agentId))))
+  if (outcome.reason) return { ...failureResult(outcome.reason, outcome.outputTokens), candidates }
+  return { ...outcome.parsed, candidates }
 }
 
 function normalizeRequest(request) {
@@ -160,16 +163,71 @@ function makePack(system, payload, contextBudgetTokens = 24000) {
   return { system, messages: [{ role: 'user', content }] }
 }
 
-async function streamRouter(input, pack) {
+/**
+ * The sidecar budget keeps its own floor: a value tuned for a domain Attempt
+ * never truncates the classifier/router JSON. An explicit budget (the retry) is
+ * taken as given so the caller decides how wide the second attempt may be.
+ * @param {any} input @param {{system:string,messages:any[]}} pack @param {number} [maxOutputTokens]
+ */
+async function streamRouter(input, pack, maxOutputTokens = sidecarOutputTokens(input.maxOutputTokens)) {
   const route = await resolveDecisionModelRoute({ llm: input.llm, chain: [], sessionRoute: input.sessionRoute })
   return streamDecision({
     llm: input.llm, route, pack, signal: input.signal,
-    timeoutMs: input.timeoutMs, maxOutputTokens: input.maxOutputTokens,
+    timeoutMs: input.timeoutMs, maxOutputTokens,
   })
 }
 
+/**
+ * Run one sidecar pack and translate its outcome, retrying a truncated verdict
+ * exactly once with a wider (capped) budget. Timeout, abort, model error and
+ * route unavailability never retry: they keep the existing fail-closed
+ * semantics, and a cancelled session spends no second call. Shadow observation
+ * passes `retryTruncated:false` so a diagnostic sample stays single-shot.
+ * @param {any} input @param {{system:string,messages:any[]}} pack @param {(text:string)=>any} parse
+ */
+async function streamRouterOutcome(input, pack, parse) {
+  const budget = sidecarOutputTokens(input.maxOutputTokens)
+  const first = await streamRouterAttempt(input, pack, parse, budget)
+  if (first.reason !== TRUNCATION_FAILURE || input.retryTruncated === false || input.signal?.aborted) return first
+  const retried = await streamRouterAttempt(input, pack, parse, retryOutputTokens(budget))
+  return { ...retried, outputTokens: retried.outputTokens ?? first.outputTokens }
+}
+
+/** @param {any} input @param {{system:string,messages:any[]}} pack @param {(text:string)=>any} parse @param {number} maxOutputTokens */
+async function streamRouterAttempt(input, pack, parse, maxOutputTokens) {
+  const streamed = await streamRouter(input, pack, maxOutputTokens)
+  const outputTokens = boundedCount(/** @type {any} */ (streamed).outputTokens)
+  const failure = sidecarFailure(streamed)
+  if (failure) return { reason: failure, parsed: null, outputTokens }
+  const parsed = parse(streamed.text)
+  if (parsed === TRUNCATED) return { reason: TRUNCATION_FAILURE, parsed: null, outputTokens }
+  if (!parsed) return { reason: 'failure:invalid_output', parsed: null, outputTokens }
+  return { reason: null, parsed, outputTokens }
+}
+
+/** @param {number|undefined} configured @returns {number} */
+function sidecarOutputTokens(configured) {
+  const value = typeof configured === 'number' && Number.isFinite(configured) ? Math.trunc(configured) : SIDECAR_MIN_OUTPUT_TOKENS
+  return Math.max(value, SIDECAR_MIN_OUTPUT_TOKENS)
+}
+
+/** @param {number} budget @returns {number} */
+function retryOutputTokens(budget) {
+  return Math.max(budget, Math.min(budget * 2, SIDECAR_RETRY_MAX_OUTPUT_TOKENS))
+}
+
+/** @param {unknown} value @returns {number|undefined} */
+function boundedCount(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : undefined
+}
+
+/** @param {string} reason @param {number} [outputTokens] */
+function failureResult(reason, outputTokens) {
+  return { kind: 'failed', reason, ...(outputTokens === undefined ? {} : { outputTokens }) }
+}
+
 function sidecarFailure(streamed) {
-  if (['max-tokens', 'truncated'].includes(streamed.finishReason)) return 'failure:truncated'
+  if (['max-tokens', 'truncated'].includes(streamed.finishReason)) return TRUNCATION_FAILURE
   if (['timeout', 'model_error', 'error', 'aborted', 'route_unavailable'].includes(streamed.finishReason)) {
     return `failure:${streamed.finishReason === 'error' ? 'model_error' : streamed.finishReason}`
   }

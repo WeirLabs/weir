@@ -128,6 +128,38 @@ test('inbox contains only awaiting_user Cases for the requested root session', a
   assert.deepEqual(query.inbox({ sessionId: 'root' }).map(row => row.caseId), [waiting.current.caseId])
 })
 
+test('inbox projects the latest non-Shadow RouteDecision status as a bounded enum', async t => {
+  const { cases, query, add } = await fixture(t)
+  const failed = await add('inbox-failure', { state: 'awaiting_user', awaitingReason: 'no_route' })
+  const ambiguous = await add('inbox-ambiguous', { state: 'awaiting_user', awaitingReason: 'route_ambiguous' })
+  const none = await add('inbox-none', { state: 'awaiting_user', awaitingReason: 'no_route' })
+  const bare = await add('inbox-bare', { state: 'awaiting_user', awaitingReason: 'authority' })
+  const record = async (current, routes) => {
+    for (const route of routes) await cases.recordRoute({ caseId: current.current.caseId, rootSessionId: 'root', ...route })
+  }
+  await record(failed, [
+    { mode: 'auto', candidates: [], reason: 'failure:timeout' },
+    { mode: 'auto_shadow', candidates: [], reason: 'failure:truncated' },
+    { mode: 'auto', candidates: [], reason: 'failure:truncated' },
+  ])
+  await record(ambiguous, [{ mode: 'auto', candidates: [], reason: 'Overlap', ambiguity: { candidates: ['agent-a'], conflict: 'Both claim it' } }])
+  await record(none, [{ mode: 'auto', candidates: [{ agentId: 'agent-a', enabled: true, rejectedBecause: 'scope' }], reason: 'none:no_candidates' }])
+  await record(bare, [{ mode: 'manual_reassign', candidates: [{ agentId: 'agent-a', enabled: true }], chosen: 'agent-a', reason: '' }])
+
+  const statuses = Object.fromEntries(query.inbox({ sessionId: 'root' }).map(row => [row.caseId, row.routeStatus ?? null]))
+  // The latest non-Shadow decision wins; the Shadow sample never overrides it.
+  assert.equal(statuses[failed.current.caseId], 'failure')
+  assert.equal(statuses[ambiguous.current.caseId], 'ambiguous')
+  assert.equal(statuses[none.current.caseId], 'none')
+  assert.equal(statuses[bare.current.caseId], 'selected')
+  // A Case without a readable RouteDecision carries no invented status.
+  const undecided = await add('inbox-undecided', { state: 'awaiting_user', awaitingReason: 'no_route' })
+  const rows = query.inbox({ sessionId: 'root' })
+  assert.equal('routeStatus' in rows.find(row => row.caseId === undecided.current.caseId), false)
+  // Records and other reads keep their existing shape: the enum is inbox-only.
+  assert.equal('routeStatus' in query.record({ caseId: failed.current.caseId, sessionId: 'root' }).case, false)
+})
+
 test('metrics rebuild exclusively from authoritative rows after counters disappear', async t => {
   const { store, cases, query, feedback, add } = await fixture(t)
   const answered = await add('metric-answer', { state: 'answered' })

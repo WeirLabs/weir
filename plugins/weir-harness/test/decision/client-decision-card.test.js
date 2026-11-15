@@ -959,6 +959,32 @@ test('unowned Auto consult and Hook cards retain their native answer paths but n
   }
 })
 
+const truncatedAutoDetail = {
+  ...unownedAutoDetail,
+  case: { ...unownedAutoDetail.case, caseId: 'dc-unowned-truncated' },
+  routeDecisions: [{ routeDecisionId: 'rd-auto-truncated', mode: 'auto', chosen: null, reason: 'failure:truncated', createdAt: '2026-01-02T03:04:05.000Z' }],
+}
+
+test('a failed Auto route card names the routing failure and keeps the answer and reassign recovery paths', async () => {
+  for (const toolName of ['decision_consult', 'ask_user_question']) {
+    const mounted = await mount(truncatedAutoDetail, { props: { toolName } })
+    const tree = mounted.render()
+    const text = textContent(tree)
+    // The routing failure wording, never the no-route / unavailable one.
+    assert.match(text, /decisionReasonRouteFailure/)
+    assert.equal(text.includes('decisionReasonUnownedNoRoute'), false)
+    assert.equal(text.includes('decisionReasonNoRoute'), false)
+    assert.match(text, /decisionRoutingAutoFailure/)
+    const recoveryTree = recovery(tree, mounted.ui).children()
+    assert.ok(findAll(recoveryTree, node => node['data-action'] === 'reassign')[0])
+    assert.ok(findAll(recoveryTree, node => node['data-action'] === 'cancel')[0])
+    assert.equal(findAll(recoveryTree, node => node['data-action'] === 'retry').length, 0)
+    const routes = nestedDisclosure(tree, mounted.ui, 'decisionRouteHistory')
+    const history = findAll(routes.children(), node => node.__type === mounted.ui.DecisionRouteHistory)[0]
+    assert.equal(history.history[0].statusKey, 'decisionRouteStatusFailure')
+    mounted.unmount()
+  }
+})
 test('waiting cards offer clarify and bounce, and the clarifications render', async () => {
   let current = { ...waitingDetail }
   const calls = []

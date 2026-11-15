@@ -488,6 +488,9 @@ export class DecisionBroker {
       timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
       maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
       contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
+      // A Shadow sample is diagnostic only: it stays single-shot on truncation
+      // and never spends the retry the real Auto route gets.
+      retryTruncated: false,
     }
     try {
       const pinned = this.profiles.getProfile(current.agentId)
@@ -495,7 +498,7 @@ export class DecisionBroker {
       const classified = await classifyAutoRequest({ request, ...sidecar })
       let route
       if (classified.kind === 'failed') {
-        route = { kind: 'failed', candidates: [], reason: classified.reason }
+        route = { kind: 'failed', candidates: [], reason: classified.reason, ...(classified.outputTokens === undefined ? {} : { outputTokens: classified.outputTokens }) }
       } else if (classified.kind === 'authority') {
         route = { kind: 'none', candidates: [], reason: 'admission:authority' }
       } else {
@@ -542,7 +545,7 @@ export class DecisionBroker {
     if (initial.reason === 'missing_class') {
       const classified = await classifyAutoRequest({ request, ...sidecar })
       if (classified.kind === 'failed') {
-        return this.commitAutoRoute({ current, request, scope, route: { kind: 'failed', candidates: [], reason: classified.reason }, awaitingReason: 'no_route' })
+        return this.commitAutoRoute({ current, request, scope, route: { kind: 'failed', candidates: [], reason: classified.reason, ...(classified.outputTokens === undefined ? {} : { outputTokens: classified.outputTokens }) }, awaitingReason: 'no_route' })
       }
       normalized = classified.request
       if (classified.kind === 'authority') return authority(normalized)
@@ -573,7 +576,7 @@ export class DecisionBroker {
     if (latest.state === 'closed' && latest.closing === 'cancelled') return latest
     const selected = route.kind === 'selected'
     try {
-      return await this.cases.transitionWithRoute({
+      const committed = await this.cases.transitionWithRoute({
         caseId: current.caseId, expectedState: 'received', expectedRevision: current.revision,
         state: selected ? 'evaluating' : 'awaiting_user', request, scope,
         ...(selected ? { agentId: route.chosen } : { awaitingReason }),
@@ -582,6 +585,16 @@ export class DecisionBroker {
         candidates: route.candidates, ...(selected ? { chosen: route.chosen } : {}),
         reason: route.reason, ...(route.ambiguity ? { ambiguity: route.ambiguity } : {}),
       })
+      // The RouteDecision reason is the authoritative failure fact; the audit
+      // record adds the bounded output-token count so a truncated verdict is
+      // distinguishable from an invalid output or a timeout. No storage column.
+      if (route.kind === 'failed') {
+        this.audit('case-open', {
+          caseId: committed.caseId, entry: committed.entry, outcome: 'no_route', reason: route.reason,
+          ...(route.outputTokens === undefined ? {} : { outputTokens: route.outputTokens }),
+        })
+      }
+      return committed
     } catch (error) {
       const afterFailure = this.cases.getCase(current.caseId)
       if (afterFailure.state === 'closed' && afterFailure.closing === 'cancelled') return afterFailure

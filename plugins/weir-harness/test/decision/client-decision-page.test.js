@@ -1739,6 +1739,49 @@ test('unowned inbox keeps answer, reassign, and cancel while retry appears only 
   harness.unmount()
 })
 
+test('an unowned inbox Case reads as a routing failure before and after the record loads', async () => {
+  const waiting = { ...waitingFixture(), caseId: 'dc-inbox-failure', agentId: null, awaitingReason: 'no_route', routeStatus: 'failure', escalation: { missing: [], suggestion: [], perQuestion: [] } }
+  const route = { routeDecisionId: 'rd-inbox-failure', mode: 'auto', chosen: null, reason: 'failure:truncated', createdAt: '2026-01-02T03:04:05.000Z' }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }],
+    inbox: async () => [waiting],
+    record: async () => ({ case: waiting, attempts: [], feedback: [], routeDecisions: [route] }),
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await harness.settle()
+  let card = renderedInboxCard(harness, harness.render(), waiting.caseId)
+  // The bounded inbox projection answers before the record is opened: the
+  // failure is named, never rendered as "no assistant matched".
+  assert.equal(textOf(card).includes('decisionReasonRouteFailure'), true)
+  assert.equal(textOf(card).includes('decisionReasonUnownedNoRoute'), false)
+  assert.equal(textOf(card).includes('decisionReasonNoRoute'), false)
+  const routeHistory = () => findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRouteHistory')[0]
+  routeHistory().onOpen()
+  await harness.flush()
+  card = renderedInboxCard(harness, harness.render(), waiting.caseId)
+  assert.equal(textOf(card).includes('decisionReasonRouteFailure'), true)
+  // The technical cause stays in the route history, and both recovery entries stay.
+  const historyView = findAll(routeHistory().children(), node => node.type === harness.ui.DecisionRouteHistory)[0]
+  assert.equal(historyView.history[0].statusKey, 'decisionRouteStatusFailure')
+  const recoveryTree = findAll(card, node => node.type === harness.ui.Disclosure && node.label === 'decisionRecoveryActions')[0].children
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionReassign')[0])
+  assert.ok(findAll(recoveryTree, node => node.children === 'decisionCancel')[0])
+  harness.unmount()
+
+  // A real "no candidate matched" outcome keeps its existing wording.
+  const noMatch = { ...waiting, caseId: 'dc-inbox-no-match', routeStatus: 'none' }
+  const plain = await createPageHarness({ actions: {
+    agents: async () => [], inbox: async () => [noMatch],
+    record: async () => ({ case: noMatch, attempts: [], feedback: [], routeDecisions: [{ ...route, reason: 'none:no_candidates' }] }),
+    records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+  } })
+  await plain.settle()
+  const plainCard = renderedInboxCard(plain, plain.render(), noMatch.caseId)
+  assert.equal(textOf(plainCard).includes('decisionReasonUnownedNoRoute'), true)
+  assert.equal(textOf(plainCard).includes('decisionReasonRouteFailure'), false)
+  plain.unmount()
+})
+
 test('unowned record detail hides Agent feedback and correction but retains no-Evidence truth and read-only RouteDecision history', async () => {
   const auto = { routeDecisionId: 'rd-record-auto', mode: 'auto', chosen: null, reason: 'none:no_candidates', createdAt: '2026-01-02T03:04:05.000Z' }
   const detail = {
