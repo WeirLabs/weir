@@ -44,6 +44,13 @@ const REPLAY_DETAILS = new Set([
   'CONSOLIDATION_ERROR', 'PUBLIC_CONTENT_REJECTED',
 ])
 
+// A candidate edit is a user-authoritative overlay on the model's derivation: the
+// wording and the workspace-agnostic hints only. Sources and workspace
+// membership are never editable, so `workspaces` is not even a legal field here.
+const CANDIDATE_EDIT_FIELDS = Object.freeze(['principleId', 'text', 'scope', 'remove'])
+const CANDIDATE_SCOPE_FIELDS = Object.freeze(['paths', 'tags', 'authorizationClasses'])
+const CANDIDATE_EDIT_LIMIT = 32
+
 /** @param {unknown} value @param {string} label */
 function parseJson(value, label) {
   if (typeof value !== 'string') throw new DecisionContractError('INVALID_RECORD', `${label} must be JSON text`)
@@ -294,6 +301,105 @@ export function memorySnapshotOf(row) {
     learningRunId: value.learningRunId,
   })).digest('hex')
   return deepFreeze({ ...value, contentHash })
+}
+
+/**
+ * The content identity a candidate diff compares: wording, scope, source
+ * lineage and lifecycle state. Anything else about a principle is derived.
+ * @param {any} principle
+ */
+function principleContent(principle) {
+  return canonicalJson({
+    text: principle.text, scope: principle.scope, sources: principle.sources, state: principle.state,
+  })
+}
+
+/**
+ * The editable set of one draft: exactly the principles this run added or changed
+ * relative to its published parent. Untouched parent principles and the ones the
+ * parent retired are read-only here — a user reviews this run's changes, never
+ * the whole history.
+ * @param {any|null} parent @param {any} snapshot
+ * @returns {Set<string>}
+ */
+function editablePrincipleIds(parent, snapshot) {
+  const before = new Map((parent?.principles ?? []).map(principle => [principle.principleId, principleContent(principle)]))
+  const editable = new Set()
+  for (const principle of snapshot.principles) {
+    const previous = before.get(principle.principleId)
+    if (previous === undefined || previous !== principleContent(principle)) editable.add(principle.principleId)
+  }
+  return editable
+}
+
+/**
+ * Closed parse of one candidate-update payload. An edit either removes (`remove:
+ * true`, with no other editable field) or changes wording and/or scope; the same
+ * principle id may appear once, so one call cannot smuggle two outcomes for one
+ * entry.
+ * @param {unknown} value
+ */
+function parseCandidateEdits(value) {
+  if (!Array.isArray(value) || value.length === 0) throw new DecisionContractError('INVALID_RECORD', 'Candidate edits must be a non-empty array')
+  if (value.length > CANDIDATE_EDIT_LIMIT) {
+    throw new DecisionContractError('CANDIDATE_EDIT_LIMIT', `At most ${CANDIDATE_EDIT_LIMIT} principles can be updated at once`)
+  }
+  const seen = new Set()
+  return value.map(raw => {
+    const edit = assertClosedObject(raw, CANDIDATE_EDIT_FIELDS, ['principleId'], 'candidateUpdate.edit')
+    requiredId(edit.principleId, 'candidateUpdate.edit.principleId')
+    if (seen.has(edit.principleId)) throw new DecisionContractError('INVALID_RECORD', `candidateUpdate.edit repeats ${edit.principleId}`)
+    seen.add(edit.principleId)
+    if (edit.remove !== undefined && typeof edit.remove !== 'boolean') {
+      throw new DecisionContractError('INVALID_RECORD', 'candidateUpdate.edit.remove must be boolean')
+    }
+    if (edit.remove === true) {
+      if (edit.text !== undefined || edit.scope !== undefined) {
+        throw new DecisionContractError('INVALID_RECORD', 'candidateUpdate.edit cannot remove and rewrite the same principle')
+      }
+      return { principleId: edit.principleId, remove: true }
+    }
+    if (edit.text === undefined && edit.scope === undefined) {
+      throw new DecisionContractError('INVALID_RECORD', 'candidateUpdate.edit must change text or scope')
+    }
+    if (edit.text !== undefined && typeof edit.text !== 'string') {
+      throw new DecisionContractError('INVALID_PRINCIPLE', 'candidateUpdate.edit.text must be text')
+    }
+    return {
+      principleId: edit.principleId,
+      ...(edit.text === undefined ? {} : { text: edit.text }),
+      ...(edit.scope === undefined ? {} : { scope: assertClosedObject(edit.scope, CANDIDATE_SCOPE_FIELDS, [], 'candidateUpdate.edit.scope') }),
+    }
+  })
+}
+
+/**
+ * The editable part of a principle scope is only the workspace-agnostic hints.
+ * A private principle keeps exactly the candidate's own workspace — the user can
+ * never move it, and the real path never leaves the Host — while a public
+ * principle never gains a workspace list at all.
+ * @param {Record<string, any>} edited @param {any} snapshot
+ */
+function candidatePrincipleScope(edited, snapshot) {
+  const hints = {}
+  for (const key of CANDIDATE_SCOPE_FIELDS) {
+    if (edited[key] !== undefined) hints[key] = edited[key]
+  }
+  // Validate the caller's raw hints inside the candidate's own namespace shape,
+  // so a non-A/B/C class, a duplicated row or a stray field is rejected instead
+  // of being silently normalized away before the write.
+  validateLearningScope(
+    snapshot.zone === PUBLIC_ZONE ? { ...hints } : { workspaces: [snapshot.namespaceWorkspaceKey], ...hints },
+    'candidateUpdate.edit.scope', snapshot.zone,
+  )
+  const canonical = {}
+  for (const key of CANDIDATE_SCOPE_FIELDS) {
+    const entries = hints[key]
+    if (!Array.isArray(entries) || entries.length === 0) continue
+    // A/B/C keeps its canonical order; the other hints keep the user's order.
+    canonical[key] = key === 'authorizationClasses' ? ['A', 'B', 'C'].filter(entry => entries.includes(entry)) : entries
+  }
+  return snapshot.zone === PUBLIC_ZONE ? canonical : { workspaces: [snapshot.namespaceWorkspaceKey], ...canonical }
 }
 
 export class DecisionLearning {
@@ -619,6 +725,82 @@ export class DecisionLearning {
     return result
   }
 
+  /**
+   * Revise this draft's own added/changed principles. The model's derivation is
+   * history (its operations and structural replay are never rewritten); what the
+   * user accepts is the reviewed wording, so this writes `principles_json` and
+   * bumps the draft revision in one transaction. Every rejection — stale revision,
+   * a published or rejected candidate, a non-editable entry, an out-of-shape edit,
+   * an invalid scope or wording, rejected public content — leaves both the draft
+   * and its run byte-identical.
+   * @param {string} snapshotId @param {number} expectedRevision
+   * @param {{principleId:string,text?:string,scope?:object,remove?:boolean}[]} edits
+   * @returns {Promise<{snapshot:any,run:any,edited:number,removed:number}>}
+   */
+  async updateCandidate(snapshotId, expectedRevision, edits) {
+    const parsedEdits = parseCandidateEdits(edits)
+    let result
+    await this.store.write(db => {
+      const snapshot = memorySnapshotOf(db.prepare('SELECT * FROM memory_snapshots WHERE snapshot_id=?').get(snapshotId))
+      const run = learningRunOf(db.prepare('SELECT * FROM learning_runs WHERE learning_run_id=?').get(snapshot.learningRunId))
+      if (run.agentId !== snapshot.agentId) throw new DecisionContractError('INVALID_RECORD', 'Snapshot and Learning Run namespaces differ')
+      if (snapshot.state !== 'draft' || run.outcome !== 'candidate') throw new DecisionContractError('SNAPSHOT_STATE_CONFLICT', `${snapshot.state}/${run.outcome}`)
+      if (snapshot.revision !== expectedRevision) throw new DecisionContractError('REVISION_CONFLICT', snapshot.snapshotId)
+      const parent = snapshot.parentSnapshotId === null
+        ? null
+        : memorySnapshotOf(db.prepare('SELECT * FROM memory_snapshots WHERE snapshot_id=?').get(snapshot.parentSnapshotId))
+      if (parent && (parent.agentId !== snapshot.agentId || parent.zone !== snapshot.zone
+        || parent.namespaceWorkspaceKey !== snapshot.namespaceWorkspaceKey)) {
+        throw new DecisionContractError('INVALID_RECORD', 'A candidate parent must stay inside its own namespace')
+      }
+      const editable = editablePrincipleIds(parent, snapshot)
+      const byId = new Map(parsedEdits.map(edit => [edit.principleId, edit]))
+      for (const edit of parsedEdits) {
+        if (!editable.has(edit.principleId)) throw new DecisionContractError('CANDIDATE_ITEM_NOT_EDITABLE', edit.principleId)
+      }
+      const principles = []
+      let edited = 0
+      let removed = 0
+      for (const principle of snapshot.principles) {
+        const edit = byId.get(principle.principleId)
+        if (!edit) { principles.push(principle); continue }
+        if (edit.remove === true) { removed += 1; continue }
+        edited += 1
+        principles.push({
+          principleId: principle.principleId,
+          text: edit.text === undefined ? principle.text : edit.text,
+          scope: edit.scope === undefined ? principle.scope : candidatePrincipleScope(edit.scope, snapshot),
+          sources: principle.sources,
+          state: principle.state,
+        })
+      }
+      if (principles.length > LEARNING_LIMITS.principles) throw new DecisionContractError('INVALID_RECORD', 'MemorySnapshot.principles must be a bounded array')
+      if (new Set(principles.map(principle => principle.principleId)).size !== principles.length) {
+        throw new DecisionContractError('INVALID_RECORD', 'MemorySnapshot principle ids must be unique')
+      }
+      principles.forEach(principle => validatePrinciple(principle, snapshot.zone))
+      // Public wording is scanned before it is stored: a path or a foreign record id
+      // is rejected here as well as at publish, never silently kept until then.
+      if (snapshot.zone === PUBLIC_ZONE) {
+        const allowed = [...run.inputFrozen.caseIds, ...run.inputFrozen.feedbackIds]
+        for (const principle of principles) {
+          if (publicContentIssues(principle.text, allowed).length) throw new DecisionContractError('PUBLIC_CONTENT_REJECTED', principle.principleId)
+        }
+      }
+      const now = this.now()
+      const changed = db.prepare(`UPDATE memory_snapshots SET principles_json=?,revision=revision+1,updated_at=?
+        WHERE snapshot_id=? AND state='draft' AND revision=?`).run(
+        JSON.stringify(principles), now, snapshot.snapshotId, expectedRevision,
+      )
+      if (changed.changes !== 1) throw new DecisionContractError('REVISION_CONFLICT', snapshot.snapshotId)
+      result = {
+        snapshot: memorySnapshotOf(db.prepare('SELECT * FROM memory_snapshots WHERE snapshot_id=?').get(snapshot.snapshotId)),
+        run,
+        edited, removed,
+      }
+    })
+    return result
+  }
   /** Fail only a still-running result; late completion cannot rewrite it. */
   async failRun(learningRunId, failure, expectedRevision) {
     await this.store.write(db => {

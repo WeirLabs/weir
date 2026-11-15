@@ -103,3 +103,159 @@ test('Learning Run replay details are closed bounded failure codes, not raw mode
   })
   await assert.rejects(f.broker.learningRun({ sessionId: 'root', learningRunId: 'lr_raw_replay' }))
 })
+
+/** One draft candidate with a published parent: p_keep is untouched, p_change is
+ * reworded by this run, p_add is new this run and p_retire exists only in the
+ * parent. Those four cases are exactly the editable/non-editable split. */
+function seedCandidate(f, options = {}) {
+  const workspace = options.workspace ?? f.workspace
+  const scope = { workspaces: [workspace] }
+  insertSnapshot(f, 'ms_parent', 1, 'published', {
+    principles: [
+      { principleId: 'p_keep', text: 'Keep this rule', scope, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_change', text: 'Old wording', scope, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_retire', text: 'Retire this rule', scope, sources: ['dc_source'], state: 'active' },
+    ],
+  })
+  insertSnapshot(f, 'ms_draft', 2, 'draft', {
+    parentSnapshotId: 'ms_parent',
+    revision: options.revision ?? 3,
+    principles: [
+      { principleId: 'p_keep', text: 'Keep this rule', scope, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_change', text: 'New wording', scope, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_add', text: 'Added rule', scope, sources: ['dc_source'], state: 'active' },
+    ],
+  })
+}
+
+/** The persisted bytes of the model's own derivation: a user edit must never
+ * rewrite them. */
+function runBytes(f, learningRunId) {
+  const row = f.broker.store.db.prepare('SELECT operations_json,replay_json,revision,outcome FROM learning_runs WHERE learning_run_id=?').get(learningRunId)
+  return { operations: row.operations_json, replay: row.replay_json, revision: row.revision, outcome: row.outcome }
+}
+
+function snapshotBytes(f, snapshotId) {
+  return JSON.stringify(f.broker.store.db.prepare('SELECT * FROM memory_snapshots WHERE snapshot_id=?').get(snapshotId))
+}
+
+test('candidate updates revise wording and scope of this review and bump only the draft revision', async t => {
+  const f = await brokerFixture(t)
+  seedCandidate(f)
+  const before = runBytes(f, 'lr_ms_draft')
+  const draftBefore = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: 'ms_draft' })
+  assert.equal(draftBefore.revision, 3)
+  assert.equal(before.outcome, 'candidate')
+
+  const result = await f.broker.learning.updateCandidate('ms_draft', 3, [
+    { principleId: 'p_change', text: 'Revised wording', scope: { paths: ['src/api'], authorizationClasses: ['B', 'A'] } },
+  ])
+  assert.equal(result.edited, 1)
+  assert.equal(result.removed, 0)
+  assert.equal(result.snapshot.revision, 4)
+  const edited = result.snapshot.principles.find(principle => principle.principleId === 'p_change')
+  assert.equal(edited.text, 'Revised wording')
+  // The workspace stays the candidate's own: the edit only rewrites hints, and
+  // the class list keeps the canonical A/B/C order.
+  assert.deepEqual(edited.scope, { workspaces: [f.workspace], paths: ['src/api'], authorizationClasses: ['A', 'B'] })
+  assert.deepEqual(edited.sources, ['dc_source'])
+  assert.equal(edited.state, 'active')
+  assert.equal(result.snapshot.contentHash, (await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: 'ms_draft' })).contentHash)
+  assert.notEqual(result.snapshot.contentHash, draftBefore.contentHash)
+  // The model's derivation and the run's own revision are history, not scratch.
+  assert.deepEqual(runBytes(f, 'lr_ms_draft'), before)
+  assert.equal(result.run.revision, before.revision)
+  // Untouched entries keep their exact stored shape.
+  assert.deepEqual(result.snapshot.principles.map(principle => principle.principleId), ['p_keep', 'p_change', 'p_add'])
+  assert.equal(result.snapshot.principles[0].text, 'Keep this rule')
+})
+
+test('candidate updates delete an added or changed principle without touching the parent history', async t => {
+  const f = await brokerFixture(t)
+  seedCandidate(f)
+  const parentBefore = snapshotBytes(f, 'ms_parent')
+  const result = await f.broker.learning.updateCandidate('ms_draft', 3, [{ principleId: 'p_add', remove: true }])
+  assert.equal(result.removed, 1)
+  assert.equal(result.edited, 0)
+  assert.deepEqual(result.snapshot.principles.map(principle => principle.principleId), ['p_keep', 'p_change'])
+  assert.equal(result.snapshot.revision, 4)
+  // A later revision keeps working off the current draft, not the original one.
+  const second = await f.broker.learning.updateCandidate('ms_draft', 4, [{ principleId: 'p_change', remove: true }])
+  assert.deepEqual(second.snapshot.principles.map(principle => principle.principleId), ['p_keep'])
+  assert.equal(second.snapshot.revision, 5)
+  assert.equal(second.removed, 1)
+  assert.equal(snapshotBytes(f, 'ms_parent'), parentBefore)
+})
+
+test('candidate updates only accept this candidate added/changed entries', async t => {
+  const f = await brokerFixture(t)
+  seedCandidate(f)
+  const draftBefore = snapshotBytes(f, 'ms_draft')
+  for (const principleId of ['p_keep', 'p_retire', 'p_absent']) {
+    await assert.rejects(
+      f.broker.learning.updateCandidate('ms_draft', 3, [{ principleId, text: 'Rejected rewrite' }]),
+      error => error.code === 'CANDIDATE_ITEM_NOT_EDITABLE',
+      principleId,
+    )
+  }
+  assert.equal(snapshotBytes(f, 'ms_draft'), draftBefore)
+})
+
+test('candidate updates reject an open or ambiguous edit shape without writing', async t => {
+  const f = await brokerFixture(t)
+  seedCandidate(f)
+  const draftBefore = snapshotBytes(f, 'ms_draft')
+  const rejected = [
+    [[], 'INVALID_RECORD'],
+    ['not-a-list', 'INVALID_RECORD'],
+    [[{ principleId: 'p_add' }], 'INVALID_RECORD'],
+    [[{ principleId: 'p_add', remove: true, text: 'Both at once' }], 'INVALID_RECORD'],
+    [[{ principleId: 'p_add', remove: true, scope: { paths: ['x'] } }], 'INVALID_RECORD'],
+    [[{ principleId: 'p_add', remove: 'yes' }], 'INVALID_RECORD'],
+    [[{ principleId: 'p_absent', remove: true }, { principleId: 'p_absent', text: 'Twice' }], 'INVALID_RECORD'],
+    [[{ principleId: 'p_add', text: 'Rewrite', sources: ['dc_other'] }], 'UNKNOWN_FIELD'],
+    [[{ principleId: 'p_add', text: 'Rewrite', state: 'retired' }], 'UNKNOWN_FIELD'],
+    [[{ principleId: 'p_add', text: 'Rewrite', scope: { workspaces: ['/elsewhere'] } }], 'UNKNOWN_FIELD'],
+    [[{ principleId: 'p_add', text: 'x'.repeat(601) }], 'INVALID_PRINCIPLE'],
+    [[{ principleId: 'p_add', text: '' }], 'INVALID_PRINCIPLE'],
+    [[{ principleId: 'p_add', scope: { paths: ['a', 'a'] } }], 'INVALID_PRINCIPLE'],
+    [[{ principleId: 'p_add', scope: { authorizationClasses: ['D'] } }], 'INVALID_PRINCIPLE'],
+    [Array.from({ length: 33 }, (_, index) => ({ principleId: `p_${index}`, remove: true })), 'CANDIDATE_EDIT_LIMIT'],
+  ]
+  for (const [edits, code] of rejected) {
+    await assert.rejects(f.broker.learning.updateCandidate('ms_draft', 3, edits), error => error.code === code, `${code} ${JSON.stringify(edits).slice(0, 120)}`)
+  }
+  assert.equal(snapshotBytes(f, 'ms_draft'), draftBefore)
+})
+
+test('candidate updates fail closed on a stale revision, a published candidate and a rejected candidate', async t => {
+  const f = await brokerFixture(t)
+  seedCandidate(f)
+  const draftBefore = snapshotBytes(f, 'ms_draft')
+  await assert.rejects(
+    f.broker.learning.updateCandidate('ms_draft', 2, [{ principleId: 'p_add', text: 'Stale rewrite' }]),
+    error => error.code === 'REVISION_CONFLICT',
+  )
+  assert.equal(snapshotBytes(f, 'ms_draft'), draftBefore)
+
+  // A published Snapshot's principles are immutable history: no edit entry point
+  // exists and the store rejects a direct request.
+  insertSnapshot(f, 'ms_published', 3, 'published', { parentSnapshotId: 'ms_draft', principles: [
+    { principleId: 'p_add', text: 'Added rule', scope: { workspaces: [f.workspace] }, sources: ['dc_source'], state: 'active' },
+  ] })
+  const publishedBefore = snapshotBytes(f, 'ms_published')
+  await assert.rejects(
+    f.broker.learning.updateCandidate('ms_published', 1, [{ principleId: 'p_add', text: 'Too late' }]),
+    error => error.code === 'SNAPSHOT_STATE_CONFLICT',
+  )
+  assert.equal(snapshotBytes(f, 'ms_published'), publishedBefore)
+
+  insertLearningRun(f, 'lr_ms_rejected', 'rejected')
+  insertSnapshot(f, 'ms_rejected', 4, 'draft', { learningRunId: 'lr_ms_rejected' })
+  const rejectedBefore = snapshotBytes(f, 'ms_rejected')
+  await assert.rejects(
+    f.broker.learning.updateCandidate('ms_rejected', 1, [{ principleId: 'p_add', text: 'Never' }]),
+    error => error.code === 'SNAPSHOT_STATE_CONFLICT',
+  )
+  assert.equal(snapshotBytes(f, 'ms_rejected'), rejectedBefore)
+})
