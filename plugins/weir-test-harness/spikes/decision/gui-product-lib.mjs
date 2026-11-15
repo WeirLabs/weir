@@ -1189,6 +1189,8 @@ export function pendingBubbleProblems(state = {}, expected = {}) {
     // A labelled row keeps the count at its right end (after the title); the
     // icon-only rail keeps the chip on the icon's top-right corner. Neither may
     // be clipped by the sidebar.
+    if (state.mode === 'wide' && (bubble.height < 18 || bubble.width < 20)) problems.push(`the labelled row count badge is too small to notice (${Math.round(bubble.width)}x${Math.round(bubble.height)})`)
+    if (state.mode !== 'wide' && bubble.height < 14) problems.push(`the rail count chip is too small to notice (${Math.round(bubble.height)}px)`)
     if (!entry) problems.push('the bubble has no entry box to position against')
     else if (state.mode === 'wide') {
       if (bubble.left < entry.right - 1) problems.push('the labelled row still draws the count on the icon instead of the row\u2019s right end')

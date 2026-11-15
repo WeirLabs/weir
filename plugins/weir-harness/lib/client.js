@@ -1553,26 +1553,27 @@ window.__ModuleLoader__.load({
 			function DecisionPendingBadge(props) {
 				const count = Number.isInteger(props.count) && props.count > 0 ? props.count : 0;
 				if (count === 0) return null;
-				// Wide rows have a label, so the count belongs at the row's right end
-				// instead of on the icon: the host wraps the entry in a positioned box
-				// (one count slot, no layout shift). The icon-only rail has no label, so
-				// the chip keeps its top-right corner there.
+				// The labelled row renders a real count badge, not an icon corner dot:
+				// 20px tall with the 12px label size and a warm fill plus a ring, right
+				// aligned in the row's reserved slot. The icon-only rail keeps a smaller
+				// corner chip, since there is no row text to sit beside.
 				const style = props.wide
 					? {
 						position: "absolute", insetInlineEnd: "24px", top: "50%", transform: "translateY(-50%)", boxSizing: "border-box",
-						minWidth: "14px", height: "14px", padding: "0 4px", borderRadius: "var(--dsw-radius-lg)",
-						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 22%, var(--dsw-alias-bg-base))",
+						minWidth: "22px", height: "20px", padding: "0 7px", borderRadius: "var(--dsw-radius-lg)",
+						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 26%, var(--dsw-alias-bg-base))",
 						color: "var(--dsw-alias-label-primary)",
-						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
+						border: "0.5px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, transparent)",
+						fontSize: "var(--dsw-font-xxs-12-font-size)", lineHeight: "19px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
 						textAlign: "center", pointerEvents: "none",
 					}
 					: {
-						position: "absolute", top: "-4px", insetInlineEnd: "-5px", boxSizing: "border-box",
-						minWidth: "14px", height: "14px", padding: "0 3px", borderRadius: "var(--dsw-radius-lg)",
-						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 22%, var(--dsw-alias-bg-base))",
+						position: "absolute", top: "-5px", insetInlineEnd: "-6px", boxSizing: "border-box",
+						minWidth: "16px", height: "16px", padding: "0 3px", borderRadius: "var(--dsw-radius-lg)",
+						background: "color-mix(in srgb, var(--dsw-alias-state-warn-primary) 26%, var(--dsw-alias-bg-base))",
 						color: "var(--dsw-alias-label-primary)",
 						boxShadow: "0 0 0 1.5px var(--dsw-alias-bg-base)",
-						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "14px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
+						fontSize: "var(--dsw-font-xxxs-11-font-size)", lineHeight: "16px", fontWeight: 600, fontVariantNumeric: "tabular-nums",
 						textAlign: "center", pointerEvents: "none",
 					};
 				return react_jsx_runtime.jsx("span", {
