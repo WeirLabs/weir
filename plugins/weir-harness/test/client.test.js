@@ -2824,6 +2824,16 @@ describe('weir settings client half', () => {
       // the edit-lock card titles: the pre-arrival placeholder reads them from
       // NS, the card from its feature namespace — byte-identical in both homes
       ['leaseToolTitle_edit_lock_acquire', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
+      // The shared composer-style model picker resolves its strings through the
+      // caller's `t`: the settings page owns them in "settings.weir.page", the
+      // assistant editor's route rows in the decision namespace. Six byte-identical
+      // copies, so the picker never renders a raw dictionary key.
+      ['catalogLoading', ['lib/client.settings-page.js', 'lib/client.decision-model.js']],
+      ['pickerModel', ['lib/client.settings-page.js', 'lib/client.decision-model.js']],
+      ['pickerEffort', ['lib/client.settings-page.js', 'lib/client.decision-model.js']],
+      ['effortProviderDefault', ['lib/client.settings-page.js', 'lib/client.decision-model.js']],
+      ['catalogFailed', ['lib/client.settings-page.js', 'lib/client.decision-model.js']],
+      ['modelEmpty', ['lib/client.settings-page.js', 'lib/client.decision-model.js']],
       ['leaseToolTitle_edit_lock_release', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
       ['leaseToolTitle_edit_lock_hold', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
       ['leaseToolTitle_edit_lock_status', ['NS (entry)', 'lib/client.file-lease-tool-view.js']],
