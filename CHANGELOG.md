@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **决策助手独立设置页与可视化配置**：决策相关设置从「Weir」主页面移出为独立的「决策助手」设置页（与主页面、模型路由并列，三页编辑同一个 `weir-settings` 域，各自只暂存与保存本页字段）。页面只保留日常策略——总开关、新根会话默认选择、允许自动回答的授权类别（A/B/C 三枚可切换控件，保存时合成既有 JSON 数组）；单次调用超时、尝试预算、上下文/输出预算、并发上限、保留天数与 Auto Shadow 诊断收进默认折叠的「高级设置」，总开关关闭时整组（含折叠标题）不渲染。助手编辑器的「完整适用范围」改为路径/标签行清单 + A/B/C 授权类别控件，「模型路由」改为有序模型档位编辑器（复用模型选择器，chunk 未到达时降级为 provider/model/reasoningEffort 三个输入框）；两处都不再要求手写 JSON。全局 `decisionAgentChains` 与 `decisionAgentStorePath` 改为配置文件面键（`page: false`），schema、校验、默认值与生效语义不变。详见 [Decision Agent](docs/features/decision-agent.md)。
+
 ## [2.3.0] - 2026-11-16
 
 ### Added
