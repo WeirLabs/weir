@@ -1328,6 +1328,31 @@ test('assistant scope editor refuses to release the last authorization class', a
   harness.unmount()
 })
 
+test('assistant scope editor keeps an explicitly empty class set empty', async () => {
+  const emptyClasses = { ...assistantDetail, scope: { authorizationClasses: [] }, modelRoute: { chain: [] } }
+  const calls = []
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [emptyClasses], inbox: async () => [], agent: async () => ({ ...emptyClasses, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
+    profileUpsert: async payload => { calls.push(payload); return { ...emptyClasses, ...payload } },
+  } })
+  await harness.settle()
+  const tree = await openAgents(harness)
+  await findAll(tree, node => node.type === harness.ui.Button && node['data-action'] === 'open-agent')[0].onClick()
+  await harness.flush()
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'edit-agent')[0].onClick()
+  const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
+  // an explicit empty class list is the stored truth (this assistant answers
+  // nothing): it must not open as "all classes selected", and an unrelated row
+  // edit must not silently grant classes
+  assert.deepEqual(findAll(advancedTree(), node => node['data-scope-class']).map(node => [node['data-scope-class'], node['aria-pressed']]), [['A', false], ['B', false], ['C', false]])
+  findAll(advancedTree(), node => node['data-scope-add-path'] === true)[0].onClick()
+  findAll(advancedTree(), node => node['data-scope-path'])[0].onChange({ target: { value: 'src/decision' } })
+  await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
+  await harness.flush()
+  assert.deepEqual(calls[0].scope, { paths: ['src/decision'], authorizationClasses: [] })
+  harness.unmount()
+})
+
 test('assistant route editor orders rungs, skips incomplete ones, and saves the empty chain', async () => {
   const calls = []
   const harness = await createPageHarness({ actions: {

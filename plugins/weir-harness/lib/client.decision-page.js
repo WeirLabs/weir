@@ -395,17 +395,19 @@ window.__ModuleLoader__.load({
     }
 
     /** The staged scope JSON as local editor state: paths/tags as typed rows and
-     * the selected authorization classes. A missing or empty class selection
-     * opens with every class selected — that is the profile default the server
-     * applies anyway (mirror of `parseProfileScope`). */
+     * the selected authorization classes. A missing `authorizationClasses` key
+     * (the create form's empty text, or a legacy text without the key) opens
+     * with every class selected — the server's own default; an EXPLICIT empty
+     * array stays empty, because that stored profile answers nothing and the
+     * editor must not silently grant classes on an unrelated row edit. */
     function parseScopeText(text) {
       let value = null;
       try { value = JSON.parse(text); } catch { value = null; }
       const readList = key => Array.isArray(value?.[key]) ? value[key].filter(entry => typeof entry === "string") : [];
       const classes = Array.isArray(value?.authorizationClasses)
         ? [...new Set(value.authorizationClasses.filter(entry => AGENT_SCOPE_CLASSES.includes(entry)))]
-        : [];
-      return { paths: readList("paths"), tags: readList("tags"), classes: classes.length > 0 ? classes : [...AGENT_SCOPE_CLASSES] };
+        : [...AGENT_SCOPE_CLASSES];
+      return { paths: readList("paths"), tags: readList("tags"), classes };
     }
 
     /** The visual scope state as the staged JSON text — paths/tags only when
