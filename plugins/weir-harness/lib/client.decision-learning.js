@@ -35,7 +35,16 @@ window.__ModuleLoader__.load({
         && (currentReview.snapshot.agentId === undefined || currentReview.snapshot.agentId === agent.agentId)
         && (!current.learningRunId || currentReview.snapshot.learningRunId === current.learningRunId) ? currentReview.snapshot : null;
       const currentRevision = currentSnapshot?.state === "published" && Number.isInteger(currentSnapshot.revision) ? currentSnapshot.revision : null;
-      const changes = candidateDetail?.snapshot ? principleDiff(candidateDetail.parentSnapshot, candidateDetail.snapshot) : [];
+      // Only this review's own added/changed entries can be revised, and only while
+      // the draft is still a draft tied to a candidate run: a published, rejected or
+      // already removed entry never offers a write entry point.
+      const reviewable = candidateDetail?.snapshot?.state === "draft" && candidateDetail?.run?.outcome === "candidate";
+      const changes = candidateDetail?.snapshot
+        ? principleDiff(candidateDetail.parentSnapshot, candidateDetail.snapshot).map(change => ({
+          ...change,
+          editable: reviewable && (change.change === "added" || change.change === "changed"),
+        }))
+        : [];
       const sourceRecords = rows(candidateDetail?.snapshot?.sourceRecords ?? candidateDetail?.run?.sourceRecords);
       return {
         runs, snapshots, current, latestRun, candidateRun, candidate, candidateDetail, inspection, readiness, changes, sourceRecords,
@@ -47,6 +56,10 @@ window.__ModuleLoader__.load({
         startBlockKey, canStart: startBlockKey === null,
         canReview: readiness.ready && typeof pending !== "string" && !loading,
         canRollback: Boolean(current && currentRevision !== null && typeof pending !== "string" && !loading),
+        // The list can show what is editable, but a write needs the review itself to
+        // be current: a stale or incomplete review never opens a write path.
+        canEditCandidate: readiness.ready && typeof pending !== "string" && !loading,
+        candidateZone: candidateDetail?.snapshot?.zone === "public" ? "public" : "workspace",
       };
     }
     function principleDiff(parentSnapshot, snapshot) {
@@ -77,9 +90,18 @@ window.__ModuleLoader__.load({
       const t = props.t ?? (key => key);
       const ui = props.ui;
       const view = learningView(props);
+      // The publish confirmation states the user's own edits as a fact, and only
+      // when this very candidate was edited; it never shows a before/after draft.
+      const edits = props.candidateEdits && props.candidateEdits.snapshotId === view.readiness.snapshotId ? props.candidateEdits : null;
+      const editCount = edits ? (Number(edits.edited) || 0) + (Number(edits.removed) || 0) : 0;
+      const updateTarget = { snapshotId: view.readiness.snapshotId, expectedRevision: view.readiness.expectedRevision, zone: view.candidateZone };
       const confirm = kind => {
         if (!view.canReview) return;
-        return props.confirmAction?.({ kind, snapshotId: view.readiness.snapshotId, expectedRevision: view.readiness.expectedRevision, changeCount: view.changes.length, currentVersion: view.currentVersion });
+        return props.confirmAction?.({
+          kind, snapshotId: view.readiness.snapshotId, expectedRevision: view.readiness.expectedRevision,
+          changeCount: view.changes.length, currentVersion: view.currentVersion,
+          ...(editCount > 0 ? { edited: Number(edits.edited) || 0, removed: Number(edits.removed) || 0 } : {}),
+        });
       };
       return jsx.jsxs("section", { className: "weir-da-learning", "aria-label": t("decisionLearningGovernance"), children: [
         jsx.jsxs("header", { className: "weir-da-section-header", children: [
@@ -106,7 +128,21 @@ window.__ModuleLoader__.load({
             props.onRetry ? jsx.jsx(ui.Button, { onClick: props.onRetry, children: t("decisionRetry") }, "retry") : null,
           ] }) }, "error") : null,
           view.candidateDetail ? jsx.jsxs("div", { children: [
-            PrincipleChanges({ changes: view.changes, t }),
+            PrincipleChanges({
+              changes: view.changes, t, ui,
+              writable: view.canEditCandidate && props.pending !== "snapshotUpdate",
+              editor: props.candidateEditor ?? null,
+              zone: view.candidateZone,
+              // Every candidate write carries the revision this very review was
+              // rendered from: a stale tab is rejected by the Host, never merged.
+              onEdit: item => props.onCandidateEdit?.(item),
+              onRemove: item => props.onCandidateRemove?.(item, updateTarget),
+              onDraft: patch => props.onCandidateDraft?.(patch),
+              onSave: () => props.onCandidateSave?.(updateTarget),
+              onCancel: () => props.onCandidateCancel?.(),
+              entryRef: props.candidateEntryRef,
+              error: props.candidateEditorError ?? null,
+            }),
             SourceRecords({ records: view.sourceRecords, t, ui, recordAccess: props.detail?.recordAccess, openRecord: props.openRecord }),
             jsx.jsx("p", { role: "note", className: "weir-da-caption", children: t("decisionStructuralQualityWarning") }, "quality-warning"),
           ] }, "review") : jsx.jsx(ui.LoadingState, { children: t("decisionCandidateLoading") }, "loading"),
@@ -130,6 +166,10 @@ window.__ModuleLoader__.load({
       return LearningDiagnostics({ view: learningView(props), ui, t, pending: props.pending, selectRun: props.selectRun, selectSnapshot: props.selectSnapshot });
     }
 
+    // One review entry: the candidate diff as it already read, then — for an
+    // editable draft entry — a row-level edit/delete pair, or the inline editor
+    // while it is open. The editor never adds a second "AI original vs. your
+    // wording" view on top of that diff.
     function PrincipleChanges(props) {
       const groups = ["added", "changed", "removed"];
       const labels = { added: "decisionDiffAdded", changed: "decisionDiffChanged", removed: "decisionDiffRemoved" };
@@ -141,7 +181,8 @@ window.__ModuleLoader__.load({
           jsx.jsx("ul", { children: items.map(item => {
             const previous = item.before;
             const next = item.after;
-            return jsx.jsxs("li", { "data-principle-change": change, children: [
+            const editing = typeof props.editor?.principleId === "string" && props.editor.principleId === item.principleId;
+            return jsx.jsxs("li", { "data-principle-change": change, "data-principle-id": item.principleId, children: [
               previous ? jsx.jsxs("div", { children: [
                 jsx.jsx("strong", { children: props.t(next ? "decisionBefore" : "decisionDiffRemoved") }, "label"),
                 jsx.jsx("p", { children: previous.text ?? "—" }, "text"),
@@ -152,10 +193,111 @@ window.__ModuleLoader__.load({
                 jsx.jsx("p", { children: next.text ?? "—" }, "text"),
                 jsx.jsx("p", { className: "weir-da-caption", children: `${props.t("decisionCorrectionScope")}: ${formatScope(next.scope, props.t)}` }, "scope"),
               ] }, "after") : null,
+              item.editable && !editing ? jsx.jsxs("div", { className: "weir-da-actions", children: [
+                jsx.jsx(props.ui.Button, {
+                  "data-principle-action": "edit", "data-principle-id": item.principleId,
+                  ref: props.entryRef ? props.entryRef(item.principleId, "edit") : undefined,
+                  disabled: !props.writable,
+                  onClick: () => { if (props.writable) return props.onEdit?.(item); },
+                  children: props.t("decisionPrincipleEdit"),
+                }, "edit"),
+                jsx.jsx(props.ui.Button, {
+                  variant: "danger", "data-principle-action": "remove", "data-principle-id": item.principleId,
+                  ref: props.entryRef ? props.entryRef(item.principleId, "remove") : undefined,
+                  disabled: !props.writable,
+                  onClick: () => { if (props.writable) return props.onRemove?.(item); },
+                  children: props.t("decisionPrincipleRemove"),
+                }, "remove"),
+              ] }, "entry-actions") : null,
+              editing ? CandidatePrincipleEditor({
+                editor: props.editor, t: props.t, ui: props.ui, zone: props.zone,
+                onDraft: props.onDraft, onSave: props.onSave, onCancel: props.onCancel,
+                pending: props.writable === false || props.editor.pending === true,
+                error: props.error,
+              }) : null,
             ] }, item.principleId);
           }) }, "items"),
         ] }, change);
       }) });
+    }
+
+    /**
+     * The inline editor of one candidate entry. Wording is a bounded textarea; the
+     * apply-to scope is the same ordinary control language the assistant editor
+     * uses (path/tag rows plus A/B/C chips). The workspace is read-only text for a
+     * private candidate and absent for a public one: neither can be changed here.
+     */
+    function CandidatePrincipleEditor(props) {
+      const t = props.t ?? (key => key);
+      const ui = props.ui;
+      const editor = props.editor ?? {};
+      const text = typeof editor.text === "string" ? editor.text : "";
+      const paths = Array.isArray(editor.paths) ? editor.paths : [];
+      const tags = Array.isArray(editor.tags) ? editor.tags : [];
+      const classes = Array.isArray(editor.classes) ? editor.classes : [];
+      const id = `weir-da-candidate-${editor.principleId ?? "entry"}`;
+      const pending = props.pending === true;
+      const tooLong = text.length > 600;
+      const invalid = text.trim().length === 0 || tooLong;
+      const patch = value => { if (!pending) return props.onDraft?.(value); };
+      const scopeRows = (kind, values) => jsx.jsxs("div", { className: "weir-da-scope-list", "data-principle-scope-list": kind, children: [
+        jsx.jsx("p", { className: "weir-da-caption", children: t(kind === "path" ? "decisionScopePaths" : "decisionScopeTags") }, "label"),
+        ...values.map((value, index) => jsx.jsxs("div", { className: "weir-da-scope-row", children: [
+          jsx.jsx("input", {
+            type: "text", id: `${id}-${kind}-${index}`, "data-principle-scope": kind, "data-row-index": index,
+            "aria-label": t(kind === "path" ? "decisionScopePaths" : "decisionScopeTags"), value, disabled: pending,
+            onChange: event => patch({ [kind === "path" ? "paths" : "tags"]: values.map((entry, at) => at === index ? event.target.value : entry) }),
+          }, "input"),
+          jsx.jsx(ui.Button, {
+            variant: "ghost", size: "sm", "data-principle-scope-remove": kind, disabled: pending,
+            onClick: () => patch({ [kind === "path" ? "paths" : "tags"]: values.filter((entry, at) => at !== index) }),
+            children: t("decisionScopeRemove"),
+          }, "remove"),
+        ] }, `${kind}-${index}`)),
+        jsx.jsx(ui.Button, {
+          variant: "ghost", size: "sm", "data-principle-scope-add": kind, disabled: pending,
+          onClick: () => patch({ [kind === "path" ? "paths" : "tags"]: [...values, ""] }),
+          children: t("decisionScopeAdd"),
+        }, "add"),
+      ] }, kind);
+      const toggleClass = entry => {
+        const next = classes.includes(entry) ? classes.filter(value => value !== entry) : ["A", "B", "C"].filter(value => value === entry || classes.includes(value));
+        patch({ classes: next });
+      };
+      return jsx.jsxs("div", { className: "weir-da-candidate-editor", "data-principle-editor": editor.principleId ?? "" , children: [
+        jsx.jsxs("div", { className: "weir-da-field", "data-field": `${id}-text`, children: [
+          jsx.jsx("label", { htmlFor: `${id}-text`, children: t("decisionPrincipleText") }, "label"),
+          jsx.jsx("textarea", {
+            id: `${id}-text`, rows: 4, value: text, disabled: pending,
+            "data-principle-text": true, "aria-invalid": invalid, "aria-describedby": `${id}-text-hint`,
+            onChange: event => patch({ text: event.target.value }),
+          }, "input"),
+          jsx.jsx("div", { id: `${id}-text-hint`, className: "weir-da-field-hint", children: `${text.length}/600 · ${t("decisionPrincipleLength")}` }, "hint"),
+        ] }, "text"),
+        scopeRows("path", paths),
+        scopeRows("tag", tags),
+        jsx.jsx("div", { className: "weir-da-scope-list", "data-principle-class-set": true, children: [
+          jsx.jsx("p", { className: "weir-da-caption", children: t("decisionScopeClasses") }, "label"),
+          jsx.jsx("div", { className: "weir-da-scope-class-row", role: "group", "aria-label": t("decisionScopeClasses"), children: ["A", "B", "C"].map(entry => jsx.jsx("button", {
+            type: "button", "data-principle-class": entry, "aria-pressed": classes.includes(entry), disabled: pending,
+            onClick: () => toggleClass(entry), children: entry,
+          }, entry)) }),
+        ] }, "classes"),
+        props.zone === "public" ? null : jsx.jsx("p", { className: "weir-da-caption", "data-principle-workspace": "fixed", children: `${t("decisionScopeCurrentWorkspace")} · ${t("decisionPrincipleWorkspaceFixed")}` }, "workspace"),
+        props.error ? jsx.jsx("p", { role: "alert", className: "weir-da-field-error", "data-principle-editor-error": true, children: t(props.error) }, "error") : null,
+        jsx.jsxs("div", { className: "weir-da-actions", children: [
+          jsx.jsx(ui.Button, {
+            variant: "primary", "data-principle-action": "save", disabled: pending || invalid,
+            onClick: () => { if (!pending && !invalid) return props.onSave?.(); },
+            children: pending ? t("decisionPrincipleSaving") : t("decisionPrincipleSave"),
+          }, "save"),
+          jsx.jsx(ui.Button, {
+            "data-principle-action": "cancel", disabled: pending,
+            onClick: () => { if (!pending) return props.onCancel?.(); },
+            children: t("decisionCancel"),
+          }, "cancel"),
+        ] }, "actions"),
+      ] });
     }
 
     function SourceRecords(props) {

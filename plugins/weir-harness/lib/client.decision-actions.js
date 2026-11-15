@@ -26,6 +26,9 @@ window.__ModuleLoader__.load({
         snapshotPublish: (snapshotId, expectedRevision) => call("snapshotPublish", { snapshotId, expectedRevision }),
         snapshotReject: (snapshotId, expectedRevision) => call("snapshotReject", { snapshotId, expectedRevision }),
         snapshotRollback: (snapshotId, expectedRevision) => call("snapshotRollback", { snapshotId, expectedRevision }),
+        // The candidate edit payload is the only caller-owned part; the Host derives
+        // the session, workspace and the closed edit parse.
+        snapshotUpdate: (snapshotId, expectedRevision, edits) => call("snapshotUpdate", { snapshotId, expectedRevision, edits }),
         memorySnapshot: snapshotId => call("memorySnapshot", { snapshotId }),
         // Public memory crosses workspaces, so the caller names no workspace:
         // only the assistant, and the user's explicit disclosure/retry gesture.

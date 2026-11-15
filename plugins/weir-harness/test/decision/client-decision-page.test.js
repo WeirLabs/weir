@@ -2625,3 +2625,252 @@ test('an inactive source session is labelled and never disables a recovery actio
     harness.unmount()
   }
 })
+
+// ---- candidate principle editing and deletion (review wiring) ----
+
+const candidateAgent = {
+  agentId: 'ag_a', name: 'Tone', state: 'enabled', userDescription: { revision: 1, text: 'Prefer concise copy' },
+  scope: { workspaces: ['/repo'] }, modelRoute: { chain: [] }, descriptionHistory: [],
+  currentSnapshotId: 'ms-current',
+  learningRuns: [
+    { learningRunId: 'lr-candidate', outcome: 'candidate', revision: 1 },
+    { learningRunId: 'lr-current', outcome: 'published', revision: 2 },
+  ],
+  snapshots: [
+    { snapshotId: 'ms-candidate', version: 4, state: 'draft', revision: 9, learningRunId: 'lr-candidate', parentSnapshotId: 'ms-current' },
+    { snapshotId: 'ms-current', version: 3, state: 'published', revision: 8, learningRunId: 'lr-current', parentSnapshotId: null },
+  ],
+}
+
+const candidateCurrentSnapshot = {
+  snapshotId: 'ms-current', agentId: 'ag_a', learningRunId: 'lr-current', state: 'published', version: 3, revision: 8,
+  parentSnapshotId: null, zone: 'workspace',
+  principles: [
+    { principleId: 'p_keep', text: 'Keep this rule', scope: { workspaces: ['/repo'] }, sources: [], state: 'active' },
+    { principleId: 'p_change', text: 'Use A', scope: { workspaces: ['/repo'], paths: ['src'] }, sources: [], state: 'active' },
+    { principleId: 'p_remove', text: 'Remove this rule', scope: { tags: ['legacy'] }, sources: [], state: 'active' },
+  ],
+}
+
+function candidateDraft(overrides = {}) {
+  return {
+    snapshotId: 'ms-candidate', agentId: 'ag_a', learningRunId: 'lr-candidate', state: 'draft', version: 4, revision: 9,
+    parentSnapshotId: 'ms-current', zone: 'workspace',
+    principles: [
+      { principleId: 'p_keep', text: 'Keep this rule', scope: { workspaces: ['/repo'] }, sources: [], state: 'active' },
+      { principleId: 'p_change', text: 'Use B', scope: { workspaces: ['/repo'], paths: ['src'] }, sources: [], state: 'active' },
+      { principleId: 'p_add', text: 'Added rule', scope: { paths: ['src/new'] }, sources: [], state: 'active' },
+    ],
+    ...overrides,
+  }
+}
+
+/** The page's own review projection, re-rendered and ref-mounted on demand: the
+ * page owns the editor state, the chunk only renders it. */
+function learningTree(harness) {
+  const tree = harness.render()
+  const detail = findAll(tree, node => node['data-agent-detail'] === 'ag_a')[0]
+  const element = findAll(detail, node => node.type === harness.learning.AgentLearning)[0]
+  const rendered = harness.learning.AgentLearning(element)
+  harness.runtime.mount(rendered)
+  return rendered
+}
+
+function candidateAction(harness, action, principleId) {
+  return findAll(learningTree(harness), node => node['data-principle-action'] === action && (principleId === undefined || node['data-principle-id'] === principleId))[0]
+}
+
+async function openCandidateReview(harness) {
+  await harness.settle()
+  await openAgents(harness)
+  await openAssistant(harness, 'ag_a')
+  harness.render()
+}
+
+test('candidate review saves wording and scope through the Host, rereads authority, and never writes on cancel', async () => {
+  const calls = { snapshotUpdate: [], agent: 0, snapshot: 0 }
+  let draft = candidateDraft()
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [candidateAgent], inbox: async () => [],
+    agent: async () => { calls.agent += 1; return candidateAgent },
+    learningRun: async id => id === 'lr-candidate'
+      ? { learningRunId: id, agentId: 'ag_a', outcome: 'candidate', revision: 1, operations: [{ op: 'add', principleId: 'p_add' }], inputFrozen: { parentSnapshotId: 'ms-current', parentSnapshotRevision: 8, caseIds: [], feedbackIds: [] }, replay: { passed: true } }
+      : { learningRunId: id, agentId: 'ag_a', outcome: 'published', revision: 2, operations: [], inputFrozen: { parentSnapshotId: null } },
+    memorySnapshot: async id => { calls.snapshot += 1; return id === 'ms-candidate' ? draft : candidateCurrentSnapshot },
+    snapshotUpdate: async (...args) => {
+      calls.snapshotUpdate.push(args)
+      draft = candidateDraft({ revision: 10, principles: draft.principles.map(principle => principle.principleId === args[2][0].principleId
+        ? { ...principle, text: args[2][0].text, scope: { workspaces: ['/repo'], ...args[2][0].scope } }
+        : principle) })
+      return draft
+    },
+  } })
+  await openCandidateReview(harness)
+  assert.equal(findAll(learningTree(harness), node => node['data-principle-action'] === 'edit').length, 2)
+
+  // Open the editor: it starts from the entry's current content.
+  candidateAction(harness, 'edit', 'p_change').onClick()
+  let rendered = learningTree(harness)
+  const area = findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0]
+  assert.equal(area.value, 'Use B')
+  assert.equal(findAll(rendered, node => node['data-principle-scope'] === 'path')[0].value, 'src')
+
+  // Cancel discards the local draft without a single write.
+  findAll(rendered, node => node['data-principle-scope'] === 'path')[0].onChange({ target: { value: 'src/discarded' } })
+  rendered = learningTree(harness)
+  findAll(rendered, node => node['data-principle-action'] === 'cancel')[0].onClick()
+  await harness.flush()
+  assert.deepEqual(calls.snapshotUpdate, [])
+  assert.equal(findAll(learningTree(harness), node => node['data-principle-text']).length, 0)
+
+  // Edit and save: wording plus the workspace-agnostic hints only.
+  const agentReadsBefore = calls.agent
+  candidateAction(harness, 'edit', 'p_change').onClick()
+  rendered = learningTree(harness)
+  findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0].onChange({ target: { value: 'Use the reviewed wording' } })
+  rendered = learningTree(harness)
+  findAll(rendered, node => node['data-principle-scope-add'] === 'path')[0].onClick()
+  rendered = learningTree(harness)
+  findAll(rendered, node => node['data-principle-scope'] === 'path')[1].onChange({ target: { value: 'plugins/weir-harness' } })
+  rendered = learningTree(harness)
+  findAll(rendered, node => node['data-principle-class'] === 'B')[0].onClick()
+  rendered = learningTree(harness)
+  const save = findAll(rendered, node => node['data-principle-action'] === 'save')[0]
+  assert.equal(save.disabled, false)
+  await save.onClick()
+  await harness.flush()
+  assert.equal(calls.snapshotUpdate.length, 1)
+  assert.deepEqual(calls.snapshotUpdate[0], ['ms-candidate', 9, [{
+    principleId: 'p_change',
+    text: 'Use the reviewed wording',
+    scope: { paths: ['src', 'plugins/weir-harness'], authorizationClasses: ['B'] },
+  }]])
+  // The successful write closes the editor and rereads the assistant authoritatively.
+  assert.ok(calls.agent > agentReadsBefore, 'the review is reread after a save')
+  assert.equal(findAll(learningTree(harness), node => node['data-principle-text']).length, 0)
+  assert.ok(textOf(learningTree(harness)).includes('Use the reviewed wording'), 'the reread renders the edited wording, not the model\'s original')
+  harness.unmount()
+})
+
+test('candidate deletion is confirmed before it writes and keeps the neighbouring entry in view', async () => {
+  const calls = { snapshotUpdate: [], agent: 0 }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [candidateAgent], inbox: async () => [],
+    agent: async () => { calls.agent += 1; return candidateAgent },
+    learningRun: async id => id === 'lr-candidate'
+      ? { learningRunId: id, agentId: 'ag_a', outcome: 'candidate', revision: 1, operations: [], inputFrozen: { parentSnapshotId: 'ms-current', parentSnapshotRevision: 8, caseIds: [], feedbackIds: [] }, replay: { passed: true } }
+      : { learningRunId: id, agentId: 'ag_a', outcome: 'published', revision: 2, operations: [], inputFrozen: { parentSnapshotId: null } },
+    memorySnapshot: async id => id === 'ms-candidate' ? candidateDraft() : candidateCurrentSnapshot,
+    snapshotUpdate: async (...args) => { calls.snapshotUpdate.push(args); return candidateDraft({ revision: 10 }) },
+  } })
+  await openCandidateReview(harness)
+  candidateAction(harness, 'remove', 'p_add').onClick()
+  let dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-candidate-remove')[0]
+  assert.ok(dialog, 'deletion asks first')
+  assert.equal(dialog.title, 'decisionPrincipleRemoveTitle')
+  assert.ok(textOf(dialog.body).includes('decisionPrincipleRemoveBody'))
+  assert.ok(textOf(dialog.body).includes('history stays readable') === false, 'the copy comes from the dictionary, not the chunk')
+  assert.deepEqual(calls.snapshotUpdate, [])
+
+  // Cancelling writes nothing and re-enables the list.
+  dialog.onCancel()
+  await harness.flush()
+  assert.deepEqual(calls.snapshotUpdate, [])
+  assert.equal(findAll(harness.render(), node => node.id === 'weir-da-candidate-remove').length, 0)
+
+  // Confirming removes exactly that entry, with the review's own revision.
+  const agentReadsBefore = calls.agent
+  candidateAction(harness, 'remove', 'p_add').onClick()
+  dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-candidate-remove')[0]
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.deepEqual(calls.snapshotUpdate, [['ms-candidate', 9, [{ principleId: 'p_add', remove: true }]]])
+  assert.ok(calls.agent > agentReadsBefore, 'a deletion rereads the review')
+  harness.unmount()
+})
+
+test('a failed candidate save keeps the editor, and a revision conflict reloads the review first', async () => {
+  const calls = { snapshotUpdate: [], agent: 0 }
+  let failure = Object.assign(new Error('REVISION_CONFLICT: ms-candidate'), { code: 'REVISION_CONFLICT' })
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [candidateAgent], inbox: async () => [],
+    agent: async () => { calls.agent += 1; return candidateAgent },
+    learningRun: async id => id === 'lr-candidate'
+      ? { learningRunId: id, agentId: 'ag_a', outcome: 'candidate', revision: 1, operations: [], inputFrozen: { parentSnapshotId: 'ms-current', parentSnapshotRevision: 8, caseIds: [], feedbackIds: [] }, replay: { passed: true } }
+      : { learningRunId: id, agentId: 'ag_a', outcome: 'published', revision: 2, operations: [], inputFrozen: { parentSnapshotId: null } },
+    memorySnapshot: async id => id === 'ms-candidate' ? candidateDraft() : candidateCurrentSnapshot,
+    snapshotUpdate: async (...args) => { calls.snapshotUpdate.push(args); throw failure },
+  } })
+  await openCandidateReview(harness)
+
+  candidateAction(harness, 'edit', 'p_change').onClick()
+  let rendered = learningTree(harness)
+  findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0].onChange({ target: { value: 'Kept wording' } })
+  rendered = learningTree(harness)
+  const agentReadsBefore = calls.agent
+  await findAll(rendered, node => node['data-principle-action'] === 'save')[0].onClick()
+  await harness.flush()
+  assert.equal(calls.snapshotUpdate.length, 1)
+  // The conflict rereads authority and says so in a live region, while the editor
+  // keeps exactly what the user typed.
+  assert.ok(calls.agent > agentReadsBefore, 'a conflict rereads the authoritative candidate')
+  rendered = learningTree(harness)
+  assert.equal(findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0].value, 'Kept wording')
+  const alert = findAll(rendered, node => node.role === 'alert')
+  assert.equal(alert.length, 1)
+  assert.equal(alert[0].children, 'decisionPrincipleConflict')
+
+  // A plain validation failure keeps the draft too, with its own message.
+  failure = Object.assign(new Error('INVALID_PRINCIPLE: scope'), { code: 'INVALID_PRINCIPLE' })
+  rendered = learningTree(harness)
+  await findAll(rendered, node => node['data-principle-action'] === 'save')[0].onClick()
+  await harness.flush()
+  assert.equal(calls.snapshotUpdate.length, 2)
+  rendered = learningTree(harness)
+  assert.equal(findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0].value, 'Kept wording')
+  assert.equal(findAll(rendered, node => node.role === 'alert')[0].children, 'decisionPrincipleSaveFailed')
+  harness.unmount()
+})
+
+test('the publish confirmation states the user\'s own edits only after this review edited the candidate', async () => {
+  const calls = { snapshotUpdate: [] }
+  const harness = await createPageHarness({ actions: {
+    agents: async () => [candidateAgent], inbox: async () => [],
+    agent: async () => candidateAgent,
+    learningRun: async id => id === 'lr-candidate'
+      ? { learningRunId: id, agentId: 'ag_a', outcome: 'candidate', revision: 1, operations: [], inputFrozen: { parentSnapshotId: 'ms-current', parentSnapshotRevision: 8, caseIds: [], feedbackIds: [] }, replay: { passed: true } }
+      : { learningRunId: id, agentId: 'ag_a', outcome: 'published', revision: 2, operations: [], inputFrozen: { parentSnapshotId: null } },
+    memorySnapshot: async id => id === 'ms-candidate' ? candidateDraft() : candidateCurrentSnapshot,
+    snapshotUpdate: async (...args) => { calls.snapshotUpdate.push(args); return candidateDraft({ revision: 10 }) },
+  } })
+  await openCandidateReview(harness)
+
+  // No edit yet: the publish confirmation carries no edit fact.
+  findAll(learningTree(harness), node => node.type === harness.ui.Button && node['data-action'] === 'learning-publish')[0].onClick()
+  let dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-learning-publish')[0]
+  assert.equal(findAll(dialog.body, node => node['data-apply-user-edits']).length, 0)
+  dialog.onCancel()
+
+  // One edit and one deletion.
+  candidateAction(harness, 'edit', 'p_change').onClick()
+  let rendered = learningTree(harness)
+  findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0].onChange({ target: { value: 'Edited once' } })
+  rendered = learningTree(harness)
+  await findAll(rendered, node => node['data-principle-action'] === 'save')[0].onClick()
+  await harness.flush()
+  candidateAction(harness, 'remove', 'p_add').onClick()
+  dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-candidate-remove')[0]
+  await dialog.onConfirm()
+  await harness.flush()
+  assert.equal(calls.snapshotUpdate.length, 2)
+
+  findAll(learningTree(harness), node => node.type === harness.ui.Button && node['data-action'] === 'learning-publish')[0].onClick()
+  dialog = findAll(harness.render(), node => node.type === harness.ui.ConfirmDialog && node.id === 'weir-da-learning-publish')[0]
+  const fact = findAll(dialog.body, node => node['data-apply-user-edits'] === true)[0]
+  assert.ok(fact, 'the confirmation states the user edits')
+  assert.deepEqual(fact.children, 'decisionApplyEditedCount: 1 · decisionApplyRemovedCount: 1')
+  // It is a count, never a before/after draft.
+  assert.equal(textOf(dialog.body).includes('Edited once'), false)
+  assert.equal(textOf(dialog.body).includes('Use B'), false)
+  harness.unmount()
+})
