@@ -1271,6 +1271,28 @@ Revise the question (consult again with the same request_id and better wording o
   async snapshotReject(input) { return this.snapshotAction('reject', input) }
   async snapshotRollback(input) { return this.snapshotAction('rollback', input) }
 
+  /**
+   * Revise the user-editable principles of a draft candidate. Authorization and
+   * audit shape mirror `snapshotAction`: the same `sessionContext` +
+   * `readableSnapshot` boundary (workspace and assistant ownership) and one
+   * `snapshot` fact with counts and revisions only. Publishing would create new
+   * usable memory and still requires an enabled Agent; an edit does not, because
+   * a draft never becomes memory by itself.
+   * @param {{sessionId:string,agentId?:string,snapshotId:string,expectedRevision:number,edits:any[]}} input
+   */
+  async snapshotUpdate(input) {
+    const context = await this.sessionContext(input.sessionId)
+    const snapshot = await this.readableSnapshot(input, context)
+    const result = await this.learning.updateCandidate(snapshot.snapshotId, input.expectedRevision, input.edits)
+    this.audit('snapshot', {
+      snapshotId: result.snapshot.snapshotId, learningRunId: result.run.learningRunId, agentId: result.snapshot.agentId,
+      rootSessionId: context.rootSessionId, zone: result.snapshot.zone, action: 'candidate-update',
+      revisionBefore: snapshot.revision, revisionAfter: result.snapshot.revision,
+      edited: result.edited, removed: result.removed,
+    })
+    return result.snapshot
+  }
+
   async snapshotAction(action, input) {
     const context = await this.sessionContext(input.sessionId)
     const snapshot = await this.readableSnapshot(input, context)

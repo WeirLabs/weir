@@ -112,6 +112,32 @@ describe('Decision audit privacy projection', () => {
       rmSync(cwd, { recursive: true, force: true })
     }
   })
+  it('keeps a candidate-update fact as zone, revisions and counts only', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'weir-decision-candidate-audit-'))
+    try {
+      const audit = createDecisionAudit({ emit: () => {} }, { root: cwd })
+      audit('snapshot', {
+        snapshotId: 'ms_1', learningRunId: 'lr_1', agentId: 'ag_1', rootSessionId: 'root', zone: 'workspace',
+        action: 'candidate-update', revisionBefore: 2, revisionAfter: 3, edited: 1, removed: 1,
+        principles: [{ text: 'PRIVATE-PRINCIPLE' }], text: 'PRIVATE-PRINCIPLE',
+        scope: { paths: ['PRIVATE-PATH'] },
+      })
+      const raw = readFileSync(join(cwd, '.weir', 'audit.jsonl'), 'utf8')
+      for (const secret of ['PRIVATE-PRINCIPLE', 'PRIVATE-PATH']) expect(raw.includes(secret)).toBe(false)
+      expect(JSON.parse(raw.trim())).toEqual({
+        type: 'weir/decision/snapshot',
+        session: 'root',
+        time: JSON.parse(raw.trim()).time,
+        data: {
+          snapshotId: 'ms_1', learningRunId: 'lr_1', agentId: 'ag_1', rootSessionId: 'root', zone: 'workspace',
+          action: 'candidate-update', revisionBefore: 2, revisionAfter: 3, edited: 1, removed: 1,
+        },
+      })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   it('allows only learning and Snapshot metadata, counts, and SHA-256 digests', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'weir-decision-learning-audit-'))
     try {
