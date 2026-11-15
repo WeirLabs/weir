@@ -187,6 +187,31 @@ test('Shadow classification, routing, and route-write failures never alter or re
   }
 })
 
+test('a truncated Shadow sidecar stays single-shot while the pinned outcome is untouched', async t => {
+  const f = await fixture(t)
+  const original = f.broker.ctx.llm.stream
+  f.broker.ctx.llm.stream = options => {
+    if (!options.system.includes('router-classification-contract/1')) return original(options)
+    f.calls.push(options)
+    return (async function * () {
+      yield { type: 'text-delta', text: '{"contract":"router-classification-contract/1","classes":[' }
+      yield { type: 'finish', reason: { kind: 'max-tokens' } }
+    })()
+  }
+  const verdict = await f.broker.hook({ agent: f.agent, request: hookRequest('shadow-truncated') })
+  const current = f.broker.cases.getCase(verdict.caseId)
+  assert.equal(current.agentId, f.pinned.agentId)
+  assert.equal(current.state, 'awaiting_user')
+  assert.equal(current.attemptCount, 1)
+  // The real Auto route would retry a truncated verdict; a diagnostic sample does not.
+  assert.equal(callsOf(f, 'router-classification-contract/1').length, 1)
+  const routes = routesFor(f, verdict.caseId)
+  assert.deepEqual(routes.map(route => route.mode), ['pinned', 'auto_shadow'])
+  assert.equal(routes[1].reason, 'failure:truncated')
+  assert.equal(routes[1].chosen, null)
+  assert.equal(f.broker.attempts.forCase(current.caseId).length, 1)
+})
+
 test('Off, global-off, Active Auto, explicit, unavailable, and excluded requests never sample Shadow', async t => {
   const f = await fixture(t)
   await f.broker.setSelector('root', 'off')

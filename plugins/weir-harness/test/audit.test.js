@@ -94,6 +94,24 @@ describe('Decision audit privacy projection', () => {
       rmSync(cwd, { recursive: true, force: true })
     }
   })
+
+  it('keeps the bounded output token count of a failed verdict and drops unknown fields', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'weir-decision-route-audit-'))
+    try {
+      const audit = createDecisionAudit({ emit: () => {} }, { root: cwd })
+      audit('case-open', {
+        caseId: 'dc_route', entry: 'hook', outcome: 'no_route', reason: 'failure:truncated',
+        outputTokens: 4096, outputText: 'PRIVATE-VERDICT', maxTokens: 1600,
+      })
+      const raw = readFileSync(join(cwd, '.weir', 'audit.jsonl'), 'utf8')
+      expect(raw.includes('PRIVATE-VERDICT')).toBe(false)
+      expect(JSON.parse(raw.trim()).data).toEqual({
+        caseId: 'dc_route', entry: 'hook', outcome: 'no_route', reason: 'failure:truncated', outputTokens: 4096,
+      })
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
   it('allows only learning and Snapshot metadata, counts, and SHA-256 digests', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'weir-decision-learning-audit-'))
     try {

@@ -366,6 +366,64 @@ test('Auto ambiguity, invalid output, and timeout persist fail-closed outcomes w
   assert.equal(attemptCount(timeoutFixture), 0)
 })
 
+test('a truncated Auto sidecar retries once, then fails closed with its reason and output tokens on record', async t => {
+  const retried = await fixture(t)
+  await retried.broker.profileUpsert({ workspaceKey: retried.workspace, name: 'A' })
+  await retried.broker.profileUpsert({ workspaceKey: retried.workspace, name: 'B' })
+  const retriedCalls = []
+  retried.broker.ctx.llm.stream = options => {
+    retriedCalls.push(options)
+    return (async function * () {
+      if (options.system.includes('router-classification-contract/1') && retriedCalls.length === 1) {
+        yield { type: 'text-delta', text: '{"contract":"router-classification-contract/1","classes":[' }
+        yield { type: 'finish', reason: { kind: 'max-tokens' } }
+        return
+      }
+      const pack = JSON.parse(options.messages[0].content[0].text)
+      const output = options.system.includes('router-classification-contract/1')
+        ? { contract: 'router-classification-contract/1', classes: pack.questions.map(question => ({ id: question.id, authorizationClass: 'A' })) }
+        : { contract: 'router-contract/1', outcome: 'none', reason: 'No match' }
+      yield { type: 'text-delta', text: JSON.stringify(output) }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })()
+  }
+  const recovered = await retried.broker.hook({ agent: retried.agent, request: hookRequest('truncated-retry') })
+  assert.equal(retried.broker.cases.getCase(recovered.caseId).awaitingReason, 'no_route')
+  assert.equal(routeFor(retried, recovered.caseId).reason, 'No match')
+  // The truncated classification retried once and recovered; the Router still
+  // spends only the sidecar floor, never the 1600-token Attempt budget.
+  assert.deepEqual(retriedCalls.map(call => call.maxTokens), [4096, 8192, 4096])
+  assert.equal(attemptCount(retried), 0)
+
+  const failed = await fixture(t)
+  await failed.broker.profileUpsert({ workspaceKey: failed.workspace, name: 'A' })
+  await failed.broker.profileUpsert({ workspaceKey: failed.workspace, name: 'B' })
+  const audited = []
+  failed.broker.audit = (kind, value) => audited.push({ kind, value })
+  const truncatedCalls = []
+  failed.broker.ctx.llm.stream = options => {
+    truncatedCalls.push(options)
+    return (async function * () {
+      yield { type: 'usage', usage: { outputTokens: 4096 } }
+      yield { type: 'text-delta', text: '{"contract":"router-classification-contract/1","classes":[' }
+      yield { type: 'finish', reason: { kind: 'max-tokens' } }
+    })()
+  }
+  const result = await failed.broker.hook({ agent: failed.agent, request: hookRequest('twice-truncated') })
+  assert.equal(result.why, 'awaiting_user')
+  const current = failed.broker.cases.getCase(result.caseId)
+  assert.equal(current.awaitingReason, 'no_route')
+  assert.equal(current.agentId, null)
+  assert.equal(routeFor(failed, result.caseId).reason, 'failure:truncated')
+  assert.deepEqual(truncatedCalls.map(call => call.maxTokens), [4096, 8192])
+  assert.equal(attemptCount(failed), 0)
+  // The bounded audit record carries the finish reason and the output count only.
+  const failureAudit = audited.filter(event => event.kind === 'case-open' && event.value.outcome === 'no_route')
+  assert.deepEqual(failureAudit.map(event => event.value), [
+    { caseId: result.caseId, entry: 'hook', outcome: 'no_route', reason: 'failure:truncated', outputTokens: 4096 },
+  ])
+})
+
 test('Auto consult commit failure stays an explicit storage failure without recovery or an Attempt', async t => {
   const f = await fixture(t)
   await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
