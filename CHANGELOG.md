@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-15
+
 ### Added
 
 - **Decision 助手永久删除**：助手详情新增「删除助手」，弹出二次确认对话框并列出将一并删除的各类记录真实数量（判断记录、判断依据、反馈与纠正、学习整理与公共记忆版本）；确认后在单个 SQLite 事务中级联删除该助手的档案、修订、全部 Case/Attempt/Evidence/反馈/纠正/RouteDecision/学习 Run/Snapshot（含公共记忆），事务失败整体回滚。确认携带预览时的记录数，期间有新写入则拒绝执行并提示重新确认（`DELETE_COUNTS_STALE`）；删除成功写入一条含各类删除数量的审计。会话选择器仍引用被删助手时按既有「不可用选择」诚实呈现，聚合指标与已落盘导出文件不回溯。详见 [Decision Agent](docs/features/decision-agent.md)。
