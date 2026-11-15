@@ -121,11 +121,16 @@ async function mount(detail = answeredDetail, options = {}) {
   }
 }
 
-test('production registers both toolview keys independently at priority -10 without bypass channels', async () => {
+test('production registers both toolview keys at priority -10 as empty yields to the turn-layer card', async () => {
   const production = readFileSync(new URL('../../lib/client.js', import.meta.url), 'utf8')
   assert.match(production, /for \(const toolName of \["ask_user_question", "decision_consult"\]\)/)
   assert.match(production, /key: toolName, priority: -10/)
-  assert.match(production, /ui-weir-settings: \$\{toolName\} decision card/)
+  // The card is owned by the Turn-layer node; the keyed tool view only keeps the
+  // key occupied (an unregistered key would restore the generic tool row or the
+  // host's own question row), so the registered component renders nothing.
+  assert.match(production, /const DecisionToolSlotYield = \(\) => null/)
+  assert.match(production, /ui-weir-settings: \$\{toolName\} decision card yields to the turn node/)
+  assert.equal(/key: toolName, priority: -10 \}, DecisionCardWrapper/.test(production), false, 'the tool slot no longer renders the card')
   const source = readFileSync(new URL('../../lib/client.decision-card.js', import.meta.url), 'utf8')
   assert.equal(source.includes('session.append') || source.includes('commands.execute'), false)
   assert.equal(source.includes('querySelector') || source.includes('document.body'), false)

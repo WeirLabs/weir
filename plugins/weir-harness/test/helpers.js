@@ -83,6 +83,13 @@ export function expect(actual, message) {
   const api = {
     toBe: (expected) => assert.strictEqual(actual, expected, message),
     toEqual: (expected) => assert.deepStrictEqual(actual, expected, message),
+    // Shallow-by-key subset match: every listed key must deep-equal its value,
+    // so a node assertion pins the fields under contract and ignores the rest.
+    toMatchObject: (expected) => {
+      for (const [key, value] of Object.entries(expected)) {
+        assert.deepStrictEqual(actual?.[key], value, message ?? `expected ${key} to equal ${JSON.stringify(value)}, got ${JSON.stringify(actual?.[key])}`)
+      }
+    },
     toContain: (expected) => assert.ok(actual.includes(expected), message ?? `expected ${String(actual)} to contain ${String(expected)}`),
     toHaveLength: (expected) => assert.strictEqual(actual.length, expected, message),
     toBeTruthy: () => assert.ok(actual, message),
