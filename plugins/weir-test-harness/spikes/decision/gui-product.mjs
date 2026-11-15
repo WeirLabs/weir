@@ -1841,10 +1841,17 @@ async function switchInboxGrouping(by) {
  * unavailable branch is covered by the broker unit tests).
  */
 async function runPendingOverviewMatrix(primary) {
-  const overviewWorkspace = join(root, 'pending-overview-workspace')
-  mkdirSync(overviewWorkspace, { recursive: true })
-  const localSession = (await newIsolatedSession('pending-local')).sessionId
-  const remoteSession = (await newIsolatedSession('pending-remote', overviewWorkspace)).sessionId
+  // Two registered workspaces, so the default grouping has two real groups: the
+  // client maps a source session to a workspace by its cwd when the workspace
+  // does not list the session itself.
+  const workspaceA = join(root, 'pending-overview-ws-a')
+  const workspaceB = join(root, 'pending-overview-ws-b')
+  mkdirSync(workspaceA, { recursive: true })
+  mkdirSync(workspaceB, { recursive: true })
+  await instance.cdp.evaluate(`window.__decisionQA.createWorkspace(${JSON.stringify(workspaceA)})`)
+  await instance.cdp.evaluate(`window.__decisionQA.createWorkspace(${JSON.stringify(workspaceB)})`)
+  const localSession = (await newIsolatedSession('pending-local', workspaceA)).sessionId
+  const remoteSession = (await newIsolatedSession('pending-remote', workspaceB)).sessionId
   const baseline = (await rpc(localSession, 'pending-overview-baseline', 'inbox')).length
   check('pendingOverviewStartsClean', baseline === 0, { baseline })
   const article = caseId => `article[data-case-id="${caseId}"]`

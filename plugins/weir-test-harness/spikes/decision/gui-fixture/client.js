@@ -96,6 +96,12 @@ window.__ModuleLoader__.load({
           const connection = ensureDecisionControls()
           return connection.rpc.call('/api', `weirDecision/${method}`, { args: { args } })
         }
+        async function createWorkspace(path) {
+          if (typeof path !== 'string' || !path) throw new Error('createWorkspace path is required')
+          const service = ctx.get('workspaces')
+          if (typeof service?.create !== 'function') throw new Error('workspaces.create is unavailable')
+          return service.create({ path })
+        }
         async function createSession(args) {
           const created = await fixture('createSession', args)
           const sessionId = created.sessionId
@@ -121,7 +127,7 @@ window.__ModuleLoader__.load({
             toolviews: ctx.slots.entries('tool.call.toolview').map(entry => entry.options.key),
           }
         }
-        window.__decisionQA = { fixture, decision, createSession, openSession, selectDecisions, getState, controlDecision, releaseDecisionControl, decisionControlState }
+        window.__decisionQA = { fixture, decision, createWorkspace, createSession, openSession, selectDecisions, getState, controlDecision, releaseDecisionControl, decisionControlState }
         ctx.on('dispose', () => {
           for (const control of decisionControls) if ((control.action === 'hold' || control.action === 'hold-fail') && !control.released) { control.released = true; control.release?.() }
           if (controlledConnection && originalRpcCall) controlledConnection.rpc.call=originalRpcCall
