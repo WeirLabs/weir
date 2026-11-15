@@ -1379,14 +1379,20 @@ window.__ModuleLoader__.load({
 				const cardProps = conversation ? { ...baseProps, toolName: conversation.toolName, callId: conversation.callId, questions: conversation.questions, refreshKey: conversation.settledSeq } : baseProps;
 				return react_jsx_runtime.jsx(cards.DecisionCard, { ...cardProps, connection: decisionConnection, decisionRpc: model.decisionRpc, waitForDecisionCase, createDecisionActions: actions.createDecisionActions, errorBanner: actions.errorBanner, cardView: model.cardView, decisionModel: model, ui, t: decisionT, openRecord: caseId => { decisionSession.openCaseId = caseId; ctx.layout.selectPanel("weir-decisions"); } });
 			}
+			// The card is owned by the Turn-layer chat node registered below
+			// (`groupTree: "turn"` keeps it outside the Turn's process disclosure, so a
+			// folded Turn still shows it). The tool slot yields to that node: both keys
+			// stay registered because a keyed slot falls back to the generic tool row —
+			// or to the host's own question row — only when NO entry carries the key,
+			// and an entry that renders null keeps that fallback suppressed. Unregistering
+			// would therefore restore the second surface this node replaces.
 			for (const toolName of ["ask_user_question", "decision_consult"]) {
-				const DecisionToolCardWrapper = props => react_jsx_runtime.jsx(DecisionCardWrapper, { ...props, toolName: props.toolName ?? toolName });
-				ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({ name: "tool.call.toolview", key: toolName, priority: -10 }, DecisionToolCardWrapper)), `ui-weir-settings: ${toolName} decision card`);
+				const DecisionToolSlotYield = () => null;
+				ctx.effect(() => ctx.slots.inject("tool.call.toolview", () => ctx.slots.register({ name: "tool.call.toolview", key: toolName, priority: -10 }, DecisionToolSlotYield)), `ui-weir-settings: ${toolName} decision card yields to the turn node`);
 			}
-			// The native answered-question projection replaces its ordinary tool row and
-			// keeps an independent chat node for settled history. A consult's keyed
-			// toolview is its only card at every phase — before and after tool/result —
-			// so a still-awaiting Case never gains a second writable form.
+			// Native escalation and an explicit consult publish the same Turn-layer
+			// node; only the answer surface differs (the host's question panel vs. the
+			// card's own controls), so a held consult never loses its card to a fold.
 			const decisionConversationDefinition = {
 				kind: "weir-decision", target: "chat",
 				match(event) {
@@ -1403,8 +1409,7 @@ window.__ModuleLoader__.load({
 				update: (context, match) => ({ ...context.state, settledSeq: match.event.seq }),
 				buildViewNode(context) {
 					const state = context.state;
-					// decision_consult keeps only its keyed toolview: no chat node at any phase.
-					if (!state || state.toolName === "decision_consult") return null;
+					if (!state) return null;
 					return { key: context.key, id: context.id, kind: "weir-decision", target: "chat", anchorSeq: state.settledSeq ?? state.seq, location: context.start?.location ?? { kind: "unresolved" }, groupTree: "turn", visibility: "visible", data: { callId: state.callId, toolName: state.toolName, questions: state.questions, ...(state.settledSeq === undefined ? {} : { settledSeq: state.settledSeq }) } };
 				},
 			};

@@ -1343,15 +1343,19 @@ describe('weir settings client half', () => {
     expect(page.pageView).toBe('page-view')
     expect(page.decisionModel.decisionRpc).toBe('decision-rpc')
     expect(asyncCalls.filter(spec => spec === './client.decision-model.js')).toHaveLength(1)
-    const cardRegistration = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
-    const cardShell = cardRegistration.component({ sessionId: 'root', callId: 'call-consult' })
+    // The card is rendered by the Turn-layer chat node only: the keyed tool view
+    // for the same call renders nothing, so the node is the single card surface.
+    const decisionToolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
+    const cardProps = { sessionId: 'root', callId: 'call-consult', toolName: 'decision_consult' }
+    expect(decisionToolview.component(cardProps), 'the tool slot yields its card to the turn node').toBe(null)
+    const chatCard = slotRegistrations.find(item => item.definition.name === 'conversation.chat.node' && item.definition.key === 'weir-decision')
+    expect(chatCard, 'the turn-layer chat node owns the card').toBeTruthy()
     reactStub.reset()
     reactStub.begin()
-    const cardProps = { sessionId: 'root', callId: 'call-consult', toolName: 'decision_consult' }
-    cardShell.__type(cardProps)
+    expect(chatCard.component(cardProps), 'chunk arrival gates the card').toBe(null)
     await flush()
     reactStub.begin()
-    const card = cardShell.__type(cardProps)
+    const card = chatCard.component(cardProps)
     expect(card.decisionModel.decisionRpc).toBe('decision-rpc')
     expect(card.cardView).toBe('card-view')
     expect(typeof card.waitForDecisionCase).toBe('function')
@@ -1374,41 +1378,51 @@ describe('weir settings client half', () => {
     expect(selectedPanels).toEqual(['weir-decisions', 'weir-decisions'])
   })
 
-  it('keeps a pending consult on its toolview card without a second writable chat node', async () => {
+  it('renders an explicit consult as a visible turn-layer node while its tool slot stays empty', async () => {
     const { surface } = await loadEntry()
     const { ctx, slotInjects, slotRegistrations, conversationDefinitions } = makeCtx()
     surface.apply(ctx)
     for (const inject of slotInjects) inject.fn()
 
-    const toolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
-    expect(toolview).toBeTruthy()
+    // Both decision tools keep their tool.call.toolview key occupied so the
+    // keyed slot cannot fall back to the generic tool row (consult) or to the
+    // host's own question row (native); the registration renders nothing.
+    for (const toolName of ['ask_user_question', 'decision_consult']) {
+      const toolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === toolName)
+      expect(toolview, `${toolName} keeps its tool.call.toolview key`).toBeTruthy()
+      expect(toolview.definition.priority).toBe(-10)
+      expect(toolview.component({ sessionId: 'root', callId: `call-${toolName}`, toolName }), `${toolName} tool slot renders nothing`).toBe(null)
+    }
+
     const definition = conversationDefinitions[0]
     const consultCall = { type: 'tool/call', seq: 51, data: { name: 'decision_consult', callId: 'call-consult', arguments: JSON.stringify({ questions: [{ id: 'q', question: 'Choose' }] }) } }
     const match = definition.match(consultCall)
     const pending = definition.start(null, { event: consultCall })
     const pendingNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: pending, start: { location: { kind: 'unresolved' } } })
-    expect(pendingNode, 'the toolview is the only pending consult surface').toBe(null)
+    expect(pendingNode, 'a pending consult stays visible outside the Turn process disclosure').toMatchObject({ kind: 'weir-decision', groupTree: 'turn', visibility: 'visible', anchorSeq: 51 })
+    expect(pendingNode.data).toEqual({ callId: 'call-consult', toolName: 'decision_consult', questions: [{ id: 'q', question: 'Choose' }] })
 
     const result = { type: 'tool/result', seq: 52, data: { message: { source: { callId: 'call-consult' } } } }
     const settled = definition.update({ state: pending }, { event: result })
     const settledNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: settled, start: { location: { kind: 'unresolved' } } })
-    expect(settledNode, 'a settled consult stays on its toolview too').toBe(null)
+    expect(settledNode, 'a settled consult keeps the same visible node').toMatchObject({ kind: 'weir-decision', groupTree: 'turn', visibility: 'visible', anchorSeq: 52 })
+    expect(settledNode.id).toBe(pendingNode.id)
+    expect(settledNode.data).toEqual({ callId: 'call-consult', toolName: 'decision_consult', questions: [{ id: 'q', question: 'Choose' }], settledSeq: 52 })
 
     const hookCall = { ...consultCall, data: { ...consultCall.data, name: 'ask_user_question', callId: 'call-hook' } }
     const hookMatch = definition.match(hookCall)
     const hookPending = definition.start(null, { event: hookCall })
     const hookNode = definition.buildViewNode({ key: 'hook-node', id: hookMatch.id, state: hookPending, start: { location: { kind: 'unresolved' } } })
-    expect(hookNode?.visibility, 'answered Hook history remains discoverable through the same projection').toBe('visible')
+    expect(hookNode?.visibility, 'the native path follows the same placement contract').toBe('visible')
+    expect(hookNode.groupTree, 'answered Hook history sits outside the process disclosure too').toBe('turn')
   })
 
-  it('keeps every consult phase on the keyed toolview and never on a consult chat node', async () => {
+  it('publishes one card node per decision callId and no second card surface at any phase', async () => {
     const { surface, reactStub } = await loadEntry()
     const { ctx, slotInjects, slotRegistrations, conversationDefinitions } = makeCtx()
     surface.apply(ctx)
     for (const inject of slotInjects) inject.fn()
 
-    const toolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
-    expect(toolview).toBeTruthy()
     const chatNode = slotRegistrations.find(item => item.definition.name === 'conversation.chat.node' && item.definition.key === 'weir-decision')
     expect(chatNode).toBeTruthy()
     const definition = conversationDefinitions[0]
@@ -1418,39 +1432,33 @@ describe('weir settings client half', () => {
     expect(match).toEqual({ id: 'call-consult', role: 'start' })
     const callState = definition.start(null, { event: callEvent })
     const callNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: callState, start: { location: { kind: 'unresolved' } } })
-    expect(callNode, 'tool/call: the keyed toolview is the only consult surface').toBe(null)
+    expect(callNode, 'tool/call: the turn-layer node is the consult card').toMatchObject({ kind: 'weir-decision', id: 'call-consult', groupTree: 'turn', visibility: 'visible', anchorSeq: 61 })
 
     // A tool result can settle as awaiting_user while the Case still waits for
-    // the user; the toolview must keep the only card there too, otherwise the
-    // chat node renders a second writable form for the very same Case.
+    // the user. The update reuses the same node identity, so the framework
+    // refreshes one card instead of appending a second one for the same Case.
     const awaitingUser = { outcome: 'awaiting_user', caseId: 'dc_same', state: 'awaiting_user', reason: 'no_route' }
     const resultEvent = { type: 'tool/result', seq: 62, data: { message: { source: { callId: 'call-consult' }, content: [{ type: 'text', text: JSON.stringify(awaitingUser) }] } } }
     expect(definition.match(resultEvent)).toEqual({ id: 'call-consult', role: 'update' })
     const settled = definition.update({ state: callState }, { event: resultEvent })
     const settledNode = definition.buildViewNode({ key: 'consult-node', id: match.id, state: settled, start: { location: { kind: 'unresolved' } } })
-    expect(settledNode, 'tool/result(awaiting_user): still no consult chat node').toBe(null)
+    expect(settledNode.id).toBe(callNode.id)
+    expect(settledNode.anchorSeq).toBe(62)
+    expect(settledNode.data).toEqual({ callId: 'call-consult', toolName: 'decision_consult', questions: [], settledSeq: 62 })
 
-    // Composition proof: feed every consult view node the definition publishes to
-    // the chat-node slot and count the cards it renders; that set is empty. The
-    // keyed toolview still renders exactly one card for the same call.
-    const published = [callNode, settledNode].filter(node => node != null)
+    // Composition proof: each phase publishes exactly one card through the
+    // chat-node slot, while the keyed tool view publishes none for the call.
+    const phases = [callNode, settledNode]
     reactStub.reset()
     reactStub.begin()
-    for (const node of published) chatNode.component({ sessionId: 'root', node })
+    for (const node of phases) chatNode.component({ sessionId: 'root', node })
     await flush()
     reactStub.begin()
-    const chatCards = published.map(node => chatNode.component({ sessionId: 'root', node })).filter(card => card != null)
-    expect(chatCards, 'no visible consult chat card at either phase').toEqual([])
-
-    const cardProps = { sessionId: 'root', callId: 'call-consult', toolName: 'decision_consult' }
-    reactStub.reset()
-    reactStub.begin()
-    const shell = toolview.component(cardProps)
-    shell.__type(cardProps)
-    await flush()
-    reactStub.begin()
-    const toolCard = shell.__type(cardProps)
-    expect(toolCard.__type(toolCard).__decisionCard?.cardView, 'the keyed toolview keeps the single consult card').toBe('card-view')
+    const cards = phases.map(node => chatNode.component({ sessionId: 'root', node }))
+    expect(cards.filter(card => card != null), 'one card per published node').toHaveLength(2)
+    for (const card of cards) expect(card.__type(card).__decisionCard?.cardView).toBe('card-view')
+    const consultToolview = slotRegistrations.find(item => item.definition.name === 'tool.call.toolview' && item.definition.key === 'decision_consult')
+    expect(consultToolview.component({ sessionId: 'root', callId: 'call-consult', toolName: 'decision_consult' }), 'the tool slot adds no second card').toBe(null)
   })
 
   it('renders localized Decision sidebar, loading, and chunk-failure shells before dictionary arrival', async () => {

@@ -58,6 +58,8 @@ const accessibilityRequirements = {
   cancelDecisionDialog: { role: 'dialog', name: /取消这次判断|Cancel this decision/i },
 }
 const keyboardAudits = []
+// Pointer activations that open or close product disclosures and preferences.
+const pointerActivations = []
 const mutationCounts = new Map()
 const knownSessionIds = new Set()
 const processProvenance = []
@@ -775,30 +777,365 @@ async function cardState(caseId) {
   })()`)
 }
 
+// The decision card is owned by the Turn-layer chat node, so it is outside the
+// Turn's process disclosure in every work-details mode. A card that needs a
+// disclosure opened before it can be read is the regression this change
+// removes: nothing below may expand, reveal, or scroll a process group open.
 async function revealCard(caseId) {
   const selector = `[data-weir-decision-card=${JSON.stringify(caseId)}]`
-  const initial = await cardState(caseId)
-  if (!initial.text.trim()) {
-    const target = await instance.cdp.evaluate(`(() => {
-      const card=document.querySelector(${JSON.stringify(selector)})
-      const question=card?.querySelector('.weir-da-card-header h2')?.textContent?.trim()
-      if(!question)return null
-      const trigger=[...document.querySelectorAll('button[data-process-activity="tools"]')].find(el=>el.offsetParent!==null&&el.getAttribute('aria-expanded')==='false'&&el.textContent.includes(question))
-      if(!trigger)return null
-      const rect=trigger.getBoundingClientRect()
-      return {label:trigger.textContent.trim(),x:rect.left+rect.width/2,y:rect.top+rect.height/2}
-    })()`)
-    requireEvidence(target, 'the held consult native process group can be opened')
-    await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseMoved', x: target.x, y: target.y })
-    await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mousePressed', x: target.x, y: target.y, button: 'left', buttons: 1, clickCount: 1 })
-    await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', x: target.x, y: target.y, button: 'left', buttons: 0, clickCount: 1 })
-    writeJson(join(out, 'consult-reveal.json'), { caseId, method: 'CDP Input.dispatchMouseEvent', target })
-  }
+  const initial = await decisionCardDom(caseId)
+  // Scrolling the card into view is the only gesture here; no disclosure opens.
   await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({block:'start',inline:'nearest'})`)
-  return waitFor(async () => {
-    const value = await cardState(caseId)
-    return value.text.trim() ? value : null
+  const state = await decisionCardDom(caseId)
+  const problems = decisionCardProblems(state, { folded: false })
+  writeJson(join(out, 'consult-reveal.json'), { caseId, method: 'turn-layer assertion (no disclosure expanded)', initial, problems, state })
+  requireEvidence(state.present, 'the decision card exists in the transcript without expanding a process disclosure')
+  requireEvidence(!state.inProcess, 'the decision card is owned by the Turn layer, not by the Turn process disclosure')
+  requireEvidence(problems.length === 0, problems.join('; '))
+  return { ...(await cardState(caseId)), dom: state, problems }
+}
+
+/**
+ * DOM truth for one rendered decision card and the Turn that owns it.
+ * The seat wrapper carries the owning Turn (`data-chat-turn`), the whole-Turn
+ * control carries the same number (`data-turn-process`), and the process group
+ * root repeats it (`data-chat-turn`).
+ * @param caseId - Case whose card is asserted.
+ * @returns one serializable snapshot of card placement, fold state, and count.
+ */
+async function decisionCardDom(caseId) {
+  return instance.cdp.evaluate(`(() => {
+    const cards=[...document.querySelectorAll('[data-weir-decision-card=${JSON.stringify(caseId)}]')]
+    const card=cards[0]??null
+    const seat=card?.closest('[data-chat-turn]')??null
+    const turn=seat?.getAttribute('data-chat-turn')??null
+    const control=turn===null?null:document.querySelector('button[data-turn-process="'+turn+'"]')
+    const groups=[...document.querySelectorAll('[data-step-process]')].filter(group=>group.getAttribute('data-chat-turn')===turn)
+    const rect=card?.getBoundingClientRect()??null
+    const visible=card? (typeof card.checkVisibility==='function' ? card.checkVisibility({checkOpacity:true,checkVisibilityCSS:true,contentVisibilityAuto:true}) : card.offsetParent!==null) : false
+    return {
+      count:cards.length,
+      present:Boolean(card),
+      text:card?.innerText?.trim()??'',
+      inProcess:Boolean(card?.closest('[data-step-process]')),
+      seatTurn:turn,
+      seatProcessHidden:seat?.hasAttribute('data-turn-process-hidden')===true,
+      offsetParent:card?card.offsetParent!==null:false,
+      visible:visible===true,
+      rect:rect?{width:rect.width,height:rect.height}:null,
+      turnControl:control?{expanded:control.getAttribute('aria-expanded'),open:control.hasAttribute('data-open'),disabled:control.disabled,text:control.textContent.trim().slice(0,100)}:null,
+      groups:groups.map(group=>({hidden:group.hasAttribute('hidden'),expanded:group.querySelector('button[data-process-activity]')?.getAttribute('aria-expanded')??null})),
+    }
+  })()`)
+}
+
+/**
+ * Contract violations for one card snapshot.
+ * @param state - snapshot from decisionCardDom.
+ * @param options - `folded` requires the owning Turn's process to be closed down.
+ * @returns human-readable problems; empty means the contract holds.
+ */
+function decisionCardProblems(state, options) {
+  const problems=[]
+  if(!state.present)problems.push('the decision card is missing from the transcript')
+  if(state.count!==1)problems.push(`${state.count} decision cards render for one Case`)
+  if(state.inProcess)problems.push('the decision card sits inside the Turn process disclosure')
+  if(state.seatProcessHidden)problems.push('the card seat is marked as folded process content')
+  if(!state.text)problems.push('the decision card renders no readable text')
+  if(!state.visible||state.rect===null||state.rect.height<=0)problems.push('the decision card is not visible')
+  if(options.folded){
+    if(state.turnControl===null)problems.push('the owning Turn renders no whole-Turn process control')
+    else{
+      if(state.turnControl.disabled)problems.push('the owning Turn process is not foldable, so the folded contract is untested')
+      if(state.turnControl.expanded!=='false')problems.push(`the whole-Turn process disclosure reads aria-expanded=${state.turnControl.expanded}, not closed`)
+    }
+    if(!state.groups.some(group=>group.hidden))problems.push('no process group of the owning Turn is folded away')
+  }
+  return problems
+}
+
+/**
+ * Wait for a card contract and fail with the measured state, not a guess.
+ * @param label - evidence/check suffix.
+ * @param caseId - Case whose card is asserted.
+ * @param options - `folded` requires the whole Turn process to be closed.
+ * @returns the accepted snapshot.
+ */
+async function assertDecisionCard(label, caseId, options) {
+  const accepted = await waitFor(async () => {
+    const value = await decisionCardDom(caseId)
+    return decisionCardProblems(value, options).length===0 ? value : null
+  }, 60_000).catch(async () => decisionCardDom(caseId))
+  const problems = decisionCardProblems(accepted, options)
+  writeJson(join(out, `decision-card-fold-${label}.json`), { label, caseId, options, problems, state: accepted })
+  check(`${label}CardContract`, problems.length===0, { problems, state: accepted })
+  return accepted
+}
+
+/**
+ * Dispatch one real pointer press at viewport coordinates.
+ * @param x - viewport CSS x.
+ * @param y - viewport CSS y.
+ * @returns nothing; the caller records the receipt.
+ */
+async function dispatchPointerPress(x, y) {
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 })
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 })
+}
+
+/**
+ * Press one rendered control with real pointer input (the same mechanism the
+ * product user has). Transcript controls are mid-document, so pointer input is
+ * used instead of Tab traversal for the fold toggles.
+ * @param action - evidence label.
+ * @param selector - exact control to press.
+ * @param evidence - extra facts recorded with the receipt.
+ * @returns the recorded activation.
+ */
+async function pointerActivate(action, selector, evidence = {}) {
+  await settleDelayedHostOnboarding(action)
+  const target = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const element=document.querySelector(${JSON.stringify(selector)})
+    if(!element||element.disabled)return null
+    element.scrollIntoView({block:'center',inline:'nearest'})
+    const rect=element.getBoundingClientRect()
+    if(rect.width<=0||rect.height<=0)return null
+    return {x:rect.left+rect.width/2,y:rect.top+rect.height/2,text:element.textContent.trim().slice(0,120),expanded:element.getAttribute('aria-expanded')}
+  })()`), 30_000)
+  await dispatchPointerPress(target.x, target.y)
+  const receipt = { action, selector, mechanism: 'CDP Input.dispatchMouseEvent', target, ...evidence }
+  pointerActivations.push(receipt)
+  writeJson(join(out, 'pointer-activations.json'), pointerActivations)
+  return receipt
+}
+
+/**
+ * Toggle every process-group header of one Turn through real pointer input.
+ * A Turn can hold more than one process group, and every one of them has to be
+ * open for the duplicate-surface assertion to mean anything.
+ * @param label - evidence label.
+ * @param turn - owning Turn number as rendered.
+ * @param expanded - target `aria-expanded` state to reach.
+ * @returns the recorded activations.
+ */
+async function toggleTurnProcessGroups(label, turn, expanded) {
+  const receipts = []
+  for (let step = 0; step < 4; step += 1) {
+    const target = await instance.cdp.evaluate(`(() => {
+      const headers=[...document.querySelectorAll('button[data-process-activity]')].filter(header=>header.closest('[data-step-process]')?.getAttribute('data-chat-turn')===${JSON.stringify(String(turn))} && header.offsetParent!==null && header.getAttribute('aria-expanded')===${JSON.stringify(expanded === true ? 'false' : 'true')})
+      const header=headers[0]
+      if(!header)return null
+      header.scrollIntoView({block:'center',inline:'nearest'})
+      const rect=header.getBoundingClientRect()
+      return {x:rect.left+rect.width/2,y:rect.top+rect.height/2,text:header.textContent.trim().slice(0,120),expanded:header.getAttribute('aria-expanded'),remaining:headers.length}
+    })()`)
+    if (!target) break
+    await settleDelayedHostOnboarding(`${label} process group`)
+    await dispatchPointerPress(target.x, target.y)
+    const receipt = { action: `${expanded === true ? 'Expand' : 'Collapse'} the Turn process group ${label}`, selector: 'button[data-process-activity]', mechanism: 'CDP Input.dispatchMouseEvent', target, turn }
+    receipts.push(receipt)
+    pointerActivations.push(receipt)
+    writeJson(join(out, 'pointer-activations.json'), pointerActivations)
+  }
+  return receipts
+}
+
+/**
+ * Read the owning Turn's disclosure state without touching it.
+ * @param turn - owning Turn number as rendered.
+ * @returns group roots, group bodies, and header states for that Turn.
+ */
+async function turnDisclosureState(turn) {
+  return instance.cdp.evaluate(`(() => {
+    const groups=[...document.querySelectorAll('[data-step-process]')].filter(group=>group.getAttribute('data-chat-turn')===${JSON.stringify(String(turn))})
+    const headers=[...document.querySelectorAll('button[data-process-activity]')].filter(header=>header.closest('[data-step-process]')?.getAttribute('data-chat-turn')===${JSON.stringify(String(turn))})
+    const control=document.querySelector(${JSON.stringify(`button[data-turn-process="${turn}"]`)})
+    return {
+      groups:groups.length,
+      hiddenRoots:groups.filter(group=>group.hasAttribute('hidden')).length,
+      hiddenBodies:groups.filter(group=>group.querySelector('[data-step-process-body]')?.hasAttribute('hidden')??false).length,
+      headers:headers.map(header=>({expanded:header.getAttribute('aria-expanded'),visible:header.offsetParent!==null})),
+      turnControl:control?{expanded:control.getAttribute('aria-expanded'),disabled:control.disabled}:null,
+    }
+  })()`)
+}
+
+/**
+ * Expand the owning Turn's process disclosure (whole-Turn control first, then
+ * every process group header) and re-assert the card stays unique.
+ * @param label - evidence/check suffix.
+ * @param caseId - Case whose card is asserted.
+ * @returns the snapshots taken folded and with the disclosure fully open.
+ */
+async function expandProcessDisclosure(label, caseId) {
+  const before = await assertDecisionCard(`${label}-folded`, caseId, { folded: true })
+  requireEvidence(before.seatTurn!==null, 'the card exposes its owning Turn before the disclosure is expanded')
+  const control = `button[data-turn-process="${before.seatTurn}"]`
+  if(await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(control)})?.getAttribute('aria-expanded')`)!=='true'){
+    await pointerActivate(`Expand the folded Turn process ${label}`, control, { caseId, turn: before.seatTurn })
+    await waitFor(() => instance.cdp.evaluate(`document.querySelector(${JSON.stringify(control)})?.getAttribute('aria-expanded')==='true'`), 30_000)
+  }
+  await toggleTurnProcessGroups(label, before.seatTurn, true)
+  const expandedState = await waitFor(async () => {
+    const value = await turnDisclosureState(before.seatTurn)
+    return value.hiddenRoots === 0 && value.hiddenBodies === 0 ? value : null
+  }, 30_000).catch(() => turnDisclosureState(before.seatTurn))
+  const expanded = await assertDecisionCard(`${label}-expanded`, caseId, { folded: false })
+  check(`${label}ProcessDisclosureExpanded`, expandedState.hiddenRoots === 0 && expandedState.hiddenBodies === 0, { turn: before.seatTurn, expandedState })
+  return { before, expanded, disclosure: expandedState }
+}
+
+/**
+ * Collapse the disclosure again and prove the card was neither duplicated nor lost.
+ * @param label - evidence/check suffix.
+ * @param caseId - Case whose card is asserted.
+ * @param turn - owning Turn number read before expanding.
+ * @param previous - snapshot taken while expanded, compared for stability.
+ * @returns the snapshot taken after the round trip.
+ */
+async function collapseProcessDisclosure(label, caseId, turn, previous) {
+  const control = `button[data-turn-process="${turn}"]`
+  await toggleTurnProcessGroups(label, turn, false)
+  if(await instance.cdp.evaluate(`document.querySelector(${JSON.stringify(control)})?.getAttribute('aria-expanded')`)!=='false'){
+    await pointerActivate(`Collapse the Turn process ${label}`, control, { caseId, turn })
+  }
+  const folded = await assertDecisionCard(`${label}-refolded`, caseId, { folded: true })
+  const stable = previous===undefined ? true : folded.text===previous.text
+  check(`${label}CardSurvivesFoldRoundTrip`, stable, { caseId, turn, expandedText: previous?.text ?? null, refoldedText: folded.text })
+  return folded
+}
+
+/**
+ * Measure the tool slot the card yields: the call row keeps the scroll anchor
+ * but must render no content, so the process list gains no row of its own.
+ * @param callId - decision tool call whose row was yielded.
+ * @returns measured row/seat geometry and text.
+ */
+async function measureYieldedToolRow(callId) {
+  const selector = `[data-chat-anchor-key=${JSON.stringify(`call:${callId}`)}]`
+  return instance.cdp.evaluate(`(() => {
+    const row=document.querySelector(${JSON.stringify(selector)})
+    if(!row)return {present:false}
+    const seat=row.closest('[data-chat-flow-kind]')
+    const rowRect=row.getBoundingClientRect()
+    const seatRect=seat?seat.getBoundingClientRect():null
+    const slotDiv=row.firstElementChild
+    const slotStyle=slotDiv?getComputedStyle(slotDiv):null
+    // Visible neighbours in the same flow: the layout cost of keeping the anchor.
+    const content=seat?.parentElement??null
+    const rows=content?[...content.children].filter(child=>child===seat||child.getBoundingClientRect().height>0):[]
+    const at=rows.indexOf(seat)
+    const previous=at>0?rows[at-1].getBoundingClientRect():null
+    const next=at>=0&&at<rows.length-1?rows[at+1].getBoundingClientRect():null
+    return {
+      present:true,
+      rowHeight:rowRect.height,
+      rowText:row.innerText.trim(),
+      rowElementChildren:row.childElementCount,
+      rowEmptySelector:row.matches(':empty'),
+      slotAnchorPresent:Boolean(slotDiv),
+      slotAnchorDisplay:slotStyle?slotStyle.display:null,
+      seatHeight:seatRect?seatRect.height:null,
+      seatMarginTop:seat?getComputedStyle(seat).marginTop:null,
+      seatFlowKind:seat?seat.getAttribute('data-chat-flow-kind'):null,
+      seatText:seat?seat.innerText.trim():'',
+      neighbors:rows.length,
+      gapToPrevious:previous===null||seatRect===null?null:Number((seatRect.top-previous.bottom).toFixed(2)),
+      gapToNext:next===null||seatRect===null?null:Number((next.top-seatRect.bottom).toFixed(2)),
+    }
+  })()`)
+}
+
+const WORK_DETAILS_TITLES = ['工作步骤展示', 'Work details']
+const WORK_DETAILS_MODES = ['简洁', '标准', '详细', '完全展开', 'Compact', 'Standard', 'Detailed', 'Verbose']
+const WORK_DETAILS_CHOICES = { compact: ['简洁', 'Compact'], standard: ['标准', 'Standard'], detailed: ['详细', 'Detailed'] }
+
+async function openGeneralSettingsForWorkDetails() {
+  await instance.cdp.setViewport(1440, 900, false)
+  await keyboardActivate('Open account menu for work details', 'button[aria-label="账号菜单"],button[aria-label="Account menu"]')
+  await keyboardActivate('Open Settings for work details', '[role="menuitem"],button', { namePattern: '^(设置|Settings)(?:\\s|⌘|$)' })
+  await keyboardActivate('Open General settings for work details', '[role="dialog"] button', { labels: ['通用设置', 'General', 'General settings'] })
+  await waitFor(() => instance.cdp.evaluate('document.body.innerText.includes("当前版本") || document.body.innerText.includes("Current version")'), 30_000)
+}
+
+async function workDetailsPreference() {
+  return instance.cdp.evaluate(`(() => {
+    const titles=${JSON.stringify(WORK_DETAILS_TITLES)}
+    const dialog=[...document.querySelectorAll('[role="dialog"]')].find(element=>{const rect=element.getBoundingClientRect();return rect.width>0&&rect.height>0})
+    if(!dialog)return {count:0,reason:'no visible settings dialog',labels:[],target:null}
+    const labels=[...dialog.querySelectorAll('button[aria-haspopup="menu"]')].filter(element=>element.offsetParent!==null).map(element=>element.textContent.trim())
+    // The mode labels are shared with the performance & usage row, so the exact
+    // row is found from its unique rendered title leaf, then the nearest ancestor
+    // that carries the row's menu selector. Matching by ancestor text would also
+    // match every sibling row through the shared list container.
+    const titleElements=[...dialog.querySelectorAll('*')].filter(element=>element.children.length===0&&titles.includes(element.textContent.trim()))
+    if(titleElements.length!==1)return {count:titleElements.length,reason:'the Work details title must render exactly once',labels,target:null}
+    let row=titleElements[0].parentElement
+    for(let depth=0;row!==null&&row!==dialog&&depth<6;depth+=1){
+      const button=row.querySelector('button[aria-haspopup="menu"]')
+      if(button){
+        const rect=button.getBoundingClientRect()
+        return {count:1,labels,target:{label:button.textContent.trim(),row:row.textContent.trim().slice(0,200),x:rect.left+rect.width/2,y:rect.top+rect.height/2}}
+      }
+      row=row.parentElement
+    }
+    return {count:0,reason:'the Work details row exposes no menu selector',labels,target:null}
+  })()`)
+}
+
+/**
+ * Set the real Work details preference through the rendered Settings UI.
+ * Two preference rows share the same mode labels (work details and performance
+ * & usage), so the exact row is selected by its title and opened with a real
+ * pointer press; the menu itself is driven by native keyboard navigation.
+ * @param mode - work-details mode to select.
+ * @returns the label read before and after the change.
+ */
+async function setWorkDetails(mode) {
+  const choices = WORK_DETAILS_CHOICES[mode]
+  requireEvidence(choices, `work details mode ${mode} is a rendered preference`)
+  await openGeneralSettingsForWorkDetails()
+  const preference = await workDetailsPreference()
+  writeJson(join(out, `work-details-${mode}-preference.json`), preference)
+  requireEvidence(preference.count===1&&preference.target, `the Work details preference row is uniquely identifiable (${preference.count} matches)`)
+  const before = preference.target.label
+  if(choices.includes(before)){
+    await keyboardKey('Close Settings with the requested work details already selected', 'Escape')
+    await waitFor(() => instance.cdp.evaluate('!document.body.innerText.includes("当前版本") && !document.body.innerText.includes("Current version")'), 30_000)
+    return { before, after: before, changed: false, preference }
+  }
+  await settleDelayedHostOnboarding(`select ${mode} work details`)
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseMoved', x: preference.target.x, y: preference.target.y })
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mousePressed', x: preference.target.x, y: preference.target.y, button: 'left', buttons: 1, clickCount: 1 })
+  await instance.cdp.request('Input.dispatchMouseEvent', { type: 'mouseReleased', x: preference.target.x, y: preference.target.y, button: 'left', buttons: 0, clickCount: 1 })
+  pointerActivations.push({ action: `Open the Work details preference for ${mode}`, selector: 'row title match (WORK_DETAILS_TITLES)', mechanism: 'CDP Input.dispatchMouseEvent', target: preference.target })
+  writeJson(join(out, 'pointer-activations.json'), pointerActivations)
+  const menu = await waitFor(() => instance.cdp.evaluate(`(() => {
+    const root=document.querySelector('[role="menu"]')
+    if(!root)return null
+    const labels=[...root.querySelectorAll('[role="menuitemradio"],[role="menuitem"]')].map(el=>el.textContent.trim())
+    return ${JSON.stringify(WORK_DETAILS_MODES)}.filter(label=>labels.includes(label)).length===4 ? {labels} : null
+  })()`), 30_000)
+  requireEvidence(menu, 'the opened Work details menu exposes exactly the four work-details modes')
+  await keyboardMenuActivate(`Select ${mode} work details`, '[role="menuitemradio"],[role="menuitem"]', { scope: '[role="menu"]', labels: choices })
+  const after = await waitFor(async () => {
+    const value = await workDetailsPreference()
+    return value.count===1&&value.target&&choices.includes(value.target.label) ? value.target.label : null
   }, 30_000)
+  await keyboardKey('Close Settings after the work details change', 'Escape')
+  await waitFor(() => instance.cdp.evaluate('!document.body.innerText.includes("当前版本") && !document.body.innerText.includes("Current version")'), 30_000)
+  const receipt = { mode, before, after, changed: true, menu, preference }
+  writeJson(join(out, `work-details-${mode}.json`), receipt)
+  return receipt
+}
+
+async function restoreWorkDetails(original) {
+  const mode = Object.entries(WORK_DETAILS_CHOICES).find(([, labels]) => labels.includes(original))?.[0]
+  requireEvidence(mode, `the original work details label ${original} maps to a rendered mode`)
+  const receipt = await setWorkDetails(mode)
+  check('testOwnedWorkDetailsRestored', receipt.after === original, { original, receipt })
+  return receipt
 }
 
 async function scanSession(sessionId, path) {
@@ -3661,6 +3998,12 @@ try {
   await agentState(sessionId, primary.agentId, 'enabled')
   await openSession(instance, sessionId)
 
+  // The decision-card placement contract is asserted under a folding work-details
+  // mode: the rendered Work details preference is set to Compact through the real
+  // Settings UI and restored to its original value once both card paths are proven.
+  const workDetails = await setWorkDetails('compact')
+  writeJson(join(out, 'work-details-contract.json'), workDetails)
+  check('workDetailsFoldingModeActive', WORK_DETAILS_CHOICES.compact.includes(workDetails.after), workDetails)
   await submitMarker(instance, 'GUI_B_NEW')
   const first = await waitCase(sessionId, 'gui-b-new', current => current.state === 'awaiting_user')
   await waitFor(async () => (await nativeState()).pending, 30_000)
@@ -3686,6 +4029,22 @@ try {
   const firstClosed = await waitCase(sessionId, 'gui-b-new', current => current.state === 'closed')
   check('firstJudgmentClosedEscalated', firstClosed.closing === 'escalated' && firstClosed.decision?.kind === 'user_decision' && firstClosed.decision.answers[0].selected[0] === 'Use Short')
   await shot('08-first-judgment-answered')
+
+  // Native path: the answered Case keeps exactly one card outside the folded Turn
+  // process; expanding that disclosure must not add a second card or a duplicate
+  // form, and folding it again must neither lose nor duplicate the card.
+  const nativeFold = await expandProcessDisclosure('native', first.caseId)
+  await shot('08a-native-card-process-folded', { kind: 'decision-card-folded', cardPath: 'native', caseId: first.caseId, folded: nativeFold.before, expanded: nativeFold.expanded })
+  writeJson(join(out, 'native-card-fold.json'), { caseId: first.caseId, ...nativeFold })
+  // Second measurement of the yielded tool slot, on the native path, recorded as
+  // evidence for the accepted zero-height anchor (the check lives on the consult path).
+  const nativeScan = await scanSession(sessionId, 'native-fold-session.json')
+  const nativeCall = nativeScan.stockAskCalls.at(-1)?.callId ?? null
+  writeJson(join(out, 'native-yielded-tool-row.json'), nativeCall === null ? { present: false, reason: 'no ask_user_question call in the scan' } : { callId: nativeCall, ...(await measureYieldedToolRow(nativeCall)) })
+  const nativeRefolded = await collapseProcessDisclosure('native', first.caseId, nativeFold.before.seatTurn, nativeFold.expanded)
+  check('nativeCardVisibleWithProcessFolded', nativeFold.before.count === 1 && !nativeFold.before.inProcess && nativeFold.before.turnControl?.expanded === 'false' && nativeFold.before.groups.some(group => group.hidden), nativeFold.before)
+  check('nativeCardUniqueWithProcessExpanded', nativeFold.expanded.count === 1 && nativeFold.expanded.text.includes('Use Short'), nativeFold.expanded)
+  await shot('08b-native-card-process-expanded', { kind: 'decision-card-expanded', cardPath: 'native', caseId: first.caseId, expanded: nativeFold.expanded, refolded: nativeRefolded })
   await submitMarker(instance, 'GUI_B_REUSE')
   const reuse = await waitCase(sessionId, 'gui-b-reuse', current => current.state === 'closed')
   const reuseDetail = await record(sessionId, 'evidence-reuse', reuse.caseId)
@@ -3716,6 +4075,7 @@ try {
   check('consultSingleWritableCardBeforeToolResult', !beforeResult.events.some(event => event.type === 'tool/result' && event.callId === held.callId) && beforeCard.cards === 1 && beforeCard.forms === 1, { held, card: beforeCard })
   beforeCard = await revealCard(consult.caseId)
   check('consultWaitingCardPutsDecisionFirst', beforeCard.cards === 1 && beforeCard.forms === 1 && beforeCard.formImmediatelyAfterHeader && beforeCard.formBeforeSecondary && beforeCard.recordAnswerSummaries === 0 && beforeCard.suggestionReviews === 0 && beforeCard.text.includes('GUI_B_DECIDE'), beforeCard)
+  check('consultCardVisibleWithProcessCollapsed', beforeCard.dom.count === 1 && !beforeCard.dom.inProcess && beforeCard.dom.visible && beforeCard.dom.turnControl?.expanded !== 'true', beforeCard.dom)
   await shot('10-consult-before-tool-result')
   writeFileSync(join(out, 'consult-result.release'), `${JSON.stringify({ at: Date.now() })}\n`)
   const afterResult = await waitFor(async () => { const scan = await scanSession(sessionId, 'consult-after-result-session.json'); return scan.events.some(event => event.type === 'tool/result' && event.callId === held.callId) ? scan : null }, 30_000)
@@ -3725,6 +4085,27 @@ try {
   const consulted = await answerInboxWithSuggestions(sessionId, consult.caseId, '12-consult-inbox')
   comparisons.push({ phase: 'consult', caseId: consult.caseId, authority: consulted.case })
 
+  // Consult path: the Turn that asked the question is now closed, so its process
+  // is folded away. The card must still be readable, exactly once, and expanding
+  // the disclosure must not add the second surface this change removes.
+  await openSession(instance, sessionId)
+  const consultFold = await expandProcessDisclosure('consult', consult.caseId)
+  const yieldedRow = await measureYieldedToolRow(held.callId)
+  writeJson(join(out, 'consult-yielded-tool-row.json'), yieldedRow)
+  writeJson(join(out, 'consult-card-fold.json'), { caseId: consult.caseId, callId: held.callId, ...consultFold })
+  check('consultCardVisibleWithProcessFolded', consultFold.before.count === 1 && !consultFold.before.inProcess && consultFold.before.turnControl?.expanded === 'false' && consultFold.before.groups.some(group => group.hidden), consultFold.before)
+  check('consultCardUniqueWithProcessExpanded', consultFold.expanded.count === 1 && consultFold.expanded.text.includes('GUI_B_DECIDE'), consultFold.expanded)
+  await shot('12a-consult-card-process-expanded', { kind: 'decision-card-expanded', cardPath: 'consult', caseId: consult.caseId, expanded: consultFold.expanded, yieldedRow })
+  const consultRefolded = await collapseProcessDisclosure('consult', consult.caseId, consultFold.before.seatTurn, consultFold.expanded)
+  check('consultCardVisibleAfterRefolding', consultRefolded.count === 1 && !consultRefolded.inProcess && consultRefolded.turnControl?.expanded === 'false', consultRefolded)
+  // The yielded tool slot keeps the scroll anchor but renders no content and no
+  // visible text: the process list gains no second row for the decision call.
+  check('consultDecisionToolRowRendersNothing', yieldedRow.present === true && yieldedRow.rowText === '' && yieldedRow.seatText === '' && yieldedRow.rowHeight <= 2, yieldedRow)
+  // Design risk 1 is accepted with a measurement, not optimism: the yielded slot
+  // keeps a `display: contents` anchor inside the call row, so the row's own box
+  // is zero height with no margin and no visible gap contribution.
+  check('consultYieldedToolRowKeepsAnchorOnly', yieldedRow.present === true && yieldedRow.slotAnchorPresent === true && yieldedRow.slotAnchorDisplay === 'contents' && (yieldedRow.seatHeight ?? 0) <= 2 && parseFloat(yieldedRow.seatMarginTop ?? '0') <= 4, yieldedRow)
+  await restoreWorkDetails(workDetails.before)
   await openRecord(sessionId, first.caseId)
   const firstRecord = await compareRecord(sessionId, 'first-record', first.caseId, true)
   await shot('13-record-advanced-diagnostics')

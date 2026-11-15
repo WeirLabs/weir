@@ -26,6 +26,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 - `decision_consult` 新增可选 `authorization_class`，只复制到该次标准化问题。Active Auto 要求每题最终都有可核验的 A/B/C 授权类；**白名单只约束回答放行，不再阻止分类与路由**：类别未获允许的请求照常分类、路由并固定选中助手，随后 Case 进入**有归属的** `authority` 待办（不消耗领域 Attempt），用户裁决按有归属语义沉淀 `user_decision` 证据。stock Hook 缺类时只调用有界分类器，非法/unknown/D/E/F 类别仍在路由前整批失败关闭；派生字段标为 `authorizationClassSource='auto_classifier'`，原始 Hook request 不变。选择器文案如实区分「仍会自动选择助手并评估」与「自动回答尚未允许」。
 - Auto 候选来自当前 profile 内全部 enabled、未归档助手（身份不按工作区过滤），经 paths/tags 与类别过滤；Case、证据与授权检查仍只使用当前工作区；零候选不调用模型，唯一候选确定性选择，多候选才进入受限 Router。RouteDecision、规范化 request、Case 归属与状态经 `transitionWithRoute()` 原子提交，选中目标在事务内重新校验；提交失败或目标失效不会进入领域 Attempt。无匹配、歧义、准入拒绝和分类/Router 失败分别持久化为 `no_route`、`route_ambiguous` 或 `authority` 待办，Hook 只在持久提交后交还原生 `next()`。路由提交前同键 Hook/consult 加入同一 `autoFlights` Promise，不提前发布或交还；已结算重放也不增加 RouteDecision 或 Attempt。
 - `decision_consult` 支持 `answered`、`returned`、`awaiting_user`：带 `caseId` 的答案与出处、封闭原因码与修复提示，或持久用户待办。`awaiting_revision` 中只有内容实际改变的咨询才产生新 Attempt，未修订重放保持幂等。Auto 使用 `callerRevisionFingerprint`，仅剥离成对的 `auto_classifier` 派生类别与来源标记；题面、选项、context、evidence、scope 或调用方类别变化仍是真修订。未显式传 `agent_id` 的 Auto 修订和 retry 固定当前 Agent，选择器或 Router 结果变化只影响新请求。
+- 决策卡的**呈现位置由回合层 Chat 节点独占**（`weir-decision`，`groupTree: 'turn'`）：Hook 原生提问与 `decision_consult` 两条路径构建同一个节点，卡片与轮次摘要同级、位于回合的「过程披露」之外，因此在精简/标准/详细任一工作视图下，回合结束被折叠进「已完成」表头后仍可直接阅读，无需展开过程组。同一 Case 在会话中恰好渲染一次：两个工具名的 keyed `tool.call.toolview` 注册保留（占住 key，避免回落到通用工具行或宿主原生提问行）但渲染 `null`，工具行只留零内容的滚动锚点；展开过程披露不会出现第二张卡。两条路径的差异只在回答面——有原生提问面板时它是唯一主回答面，显式咨询由卡片提供完整回答控件。
 - 新判断升级后，用户在原生问题或收件箱作出的选择成为带 scope 的权威 `user_decision`。有归属 Case 的同一 Agent、同 scope 后续问题可直接引用该记录，不需要语义整合；裁决后的咨询凭 `caseId` 重读可取得真实用户答案与出处。无归属 Auto 待办也可直接回答并如实关闭，但最终 `agentId=null`，不创建 Evidence；同一咨询重读返回真实选择与空 `evidence`，该记录不会进入任何 Agent 的后续 L3/L5 检索。
 
 ### 证据与反馈
@@ -221,4 +222,15 @@ WEIR_DECISION_PRODUCT_EVIDENCE_ROOT="$PWD/.weir/decision-uiux-save-focus" \
 - 发布/回滚/忽略之后的**详情面板偏移**另有一条契约：该动作重读助手时会替换候选审阅卡，浏览器滚动锚定会把面板重定位（真机测得 `scrollTop 690 → 446`，而内容高度还在变高，52 个存活节点中 0 个保持原位）。现在**成功与失败**两条重读路径都走 `preserveDetailScroll`（失败时仍会重读一次并以错误提醒呈现，因此同样需要保持）；面板缺席时该保持是空操作：先捕获面板偏移并对该面板禁用滚动锚定，重读期间重断言一次（回复层叠弹窗会回写自己的锚定规则），权威内容提交后的下一帧按新范围 clamp 回写，再逐位恢复内联样式；实测 `690 → 690`、卡片/分区屏幕位置 0 位移、无样式残留，隔离桌面探针对比组（去掉那一帧）会回到 `690 → 758`，证明该帧是必需的。Desktop 全量矩阵 `run-kwkUFV` 为 **242/242 PASS**。
 - 冷错误和冷成功都在首个 settled 内容布局后各定位一次到实际末尾，保留输入焦点和草稿，后续刷新不重复。桌面主从、窄屏返回及同目标学习 Run/Snapshot 恢复均无额外权威重读；17 类创建/编辑/学习/保存/非脏关闭转场均落在 connected、可见且逻辑明确的目标，不再丢到 body。
 - 中英文与明暗主题覆盖 360/768/1440；真实 200% 时 visual width 分别为 180/384/720 CSS px。普通 360 的主区/标题/导航/卡片/操作有几何与命中测试，宿主返回入口保持可用。9 组 session 证据明确记录与 composer 同一真实滚动元素的 alias、锁定/恢复及 wheel/touch/PageDown 尝试，不再静默省略；截图经人工复核。
-- 本轮焦点修复候选的公共门禁为完整 Decision **536/536**、Desktop driver **77/77**、Client digest contract **28/28** 与 checkJs PASS；Client 保持 **33** 个 chunks。lane 内全 Weir 为 **3647 PASS / 0 FAIL / 1 既有平台跳过**，测试装置 **489/489**。早期失败/探索 run 均保留为非最终证据，未用来拼凑完成结论；最终 main 门禁与候选复跑由后续交付门禁另行记录。
+- 本轮焦点修复候选的公共门禁为完整 Decision **536/536**、Desktop driver **77/77**、Client digest contract **28/28** 与 checkJs PASS；Client 保持 **33** 个 chunks。
+lane 内全 Weir 为 **3647 PASS / 0 FAIL / 1 既有平台跳过**，测试装置 **489/489**。早期失败/探索 run 均保留为非最终证据，未用来拼凑完成结论；最终 main 门禁与候选复跑由后续交付门禁另行记录。
+
+
+#### 卡片不随回合折叠消失（真实隔离 Desktop 实测）
+
+同一驱动新增的验收在真实隔离 profile 内把「工作视图」经真实「设置 → 通用设置 → 工作步骤展示」改成精简（读回 `标准 → 简洁`，用例结束时恢复为 `标准`），再对两条路径各跑一遍折叠/展开往返。最终 run `7qwm4P` 为 **262/262 PASS**（基线 242 项全部保留），**153** 张真实截图、1526 条原始网络 RPC。
+
+- 折叠可见性：回合结束后整轮过程披露处于关闭态（`button[data-turn-process]` `aria-expanded=false` 且可折叠、`[data-step-process]` 根节点 `hidden="until-found"`），决策卡仍然 `count=1`、`inProcess=false`（不在任何 `[data-step-process]` 内，座位上的 `data-chat-turn` 与整轮控件编号一致）、真实可见可读；`consultCardVisibleWithProcessFolded` 与 `nativeCardVisibleWithProcessFolded` 同时覆盖显式咨询与原生提问。
+- 唯一性：展开整轮披露与组内 `button[data-process-activity]` 表头后，同一 Case 的全文档 `[data-weir-decision-card]` 计数仍为 1（`consultCardUniqueWithProcessExpanded` / `nativeCardUniqueWithProcessExpanded`），再折叠回去后计数与卡片文本都与展开前一致（`*CardSurvivesFoldRoundTrip`），即不重复、不重挂、不丢失。
+- 工具槽位让位：让位后的调用行保留 `call:` 滚动锚点但 `rowHeight=0`、无文本，槽位锚点是 `display: contents` 的空容器（`consultDecisionToolRowRendersNothing` / `consultYieldedToolRowKeepsAnchorOnly`）。真机测得该行自身盒高 0、`margin-top: 0px`，本条变更接受这点零高度占位，不做补偿。
+- 原生路径同时修掉既有重复：展开过程披露后不再出现第二张同一 Case 的卡（这正是本次变更顺带消除的缺陷）。
