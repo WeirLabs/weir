@@ -753,8 +753,10 @@ window.__ModuleLoader__.load({
       const draftScope = sessionId ?? "profile";
       // Standard panel props: the page maps a source session to a workspace
       // locally, so the Remote projection never carries a path or workspace key.
-      const hostSessions = typeof props.useSessions === "function" ? props.useSessions() : null;
-      const hostWorkspaces = typeof props.useWorkspaces === "function" ? props.useWorkspaces() : null;
+      // The host exposes these as selector hooks (an identity selector returns the
+      // snapshot): calling them with no selector throws and blanks the whole page.
+      const hostSessions = typeof props.useSessions === "function" ? props.useSessions(s => s) : null;
+      const hostWorkspaces = typeof props.useWorkspaces === "function" ? props.useWorkspaces(s => s) : null;
       const [tab, setTab] = react.useState("inbox");
       const [resources, setResources] = react.useState(emptyResources);
       const [groupBy, setGroupBy] = react.useState("workspace");

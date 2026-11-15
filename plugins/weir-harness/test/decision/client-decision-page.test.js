@@ -2218,12 +2218,18 @@ function pendingItem(caseId, sessionId, patch = {}) {
     ...patch,
   }
 }
+// Host panel props are selector hooks: a call without a selector throws on the
+// real page, so the stub refuses one too (a no-arg stub hid that regression).
+const selectorHook = value => selector => {
+  if (typeof selector !== 'function') throw new TypeError('selector is required')
+  return selector(value)
+}
 const TWO_WORKSPACES = {
-  useWorkspaces: () => ({ items: [
+  useWorkspaces: selectorHook({ items: [
     { workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] },
     { workspaceId: 'w2', title: 'Atlas', path: '/work/atlas', sessionIds: ['s-w2'] },
   ] }),
-  useSessions: () => ({ byId: {
+  useSessions: selectorHook({ byId: {
     's-w1': { sessionId: 's-w1', cwd: '/work/orrery', workspaceId: 'w1' },
     's-w2': { sessionId: 's-w2', cwd: '/work/atlas', workspaceId: 'w2' },
   } }),
@@ -2304,8 +2310,8 @@ test('a single workspace renders no grouping switch, and an unmapped session rea
     records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
   } })
   single.update({
-    useWorkspaces: () => ({ items: [{ workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] }] }),
-    useSessions: () => ({ byId: { 's-w1': { sessionId: 's-w1', cwd: '/work/orrery' } } }),
+    useWorkspaces: selectorHook({ items: [{ workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] }] }),
+    useSessions: selectorHook({ byId: { 's-w1': { sessionId: 's-w1', cwd: '/work/orrery' } } }),
   })
   try {
     await single.settle()
@@ -2322,8 +2328,8 @@ test('a single workspace renders no grouping switch, and an unmapped session rea
     records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
   } })
   harness.update({
-    useWorkspaces: () => ({ items: [{ workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] }] }),
-    useSessions: () => ({ byId: { 's-w1': { sessionId: 's-w1', cwd: '/work/orrery' } } }),
+    useWorkspaces: selectorHook({ items: [{ workspaceId: 'w1', title: 'Orrery', path: '/work/orrery', sessionIds: ['s-w1'] }] }),
+    useSessions: selectorHook({ byId: { 's-w1': { sessionId: 's-w1', cwd: '/work/orrery' } } }),
   })
   try {
     await harness.settle()
