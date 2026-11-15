@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DecisionBroker } from '../../src/decision/broker.js'
 import { createDecisionRemoteService } from '../../src/decision/remote.js'
+import { decisionAuditPayload } from '../../src/decision/audit.js'
 import { seedUserDecision, snapshotForRun } from './p3-fixtures.js'
 
 async function fixture(t) {
@@ -38,8 +39,11 @@ async function fixture(t) {
     rmSync(dir, { recursive: true, force: true })
     rmSync(otherDir, { recursive: true, force: true })
   })
-  async function open() {
-    const request = { questions: [{ id: 'q', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }] }] }
+  // Every open() must be a distinct intake: the Hook idempotency key hashes the
+  // question text, so a shared default would hand back the same Case.
+  let opened = 0
+  async function open(question = `Which option ${++opened}?`) {
+    const request = { questions: [{ id: 'q', question, options: [{ label: 'A' }, { label: 'B' }] }] }
     const verdict = await broker.hook({ agent, request })
     return broker.cases.getCase(verdict.caseId)
   }
@@ -61,7 +65,7 @@ test('remote resolves child selector writes to the root session', async t => {
   assert.deepEqual(f.broker.selector('root'), { mode: 'auto' })
 })
 
-test('every remote Case mutation rejects a foreign root and workspace without changing the Case', async t => {
+test('every remote Case action applies to the Case own workspace and ignores a caller-named root or workspace', async t => {
   const f = await fixture(t)
   const actions = [
     ['decide', { answers: [{ id: 'q', selected: ['A'] }] }],
@@ -69,18 +73,36 @@ test('every remote Case mutation rejects a foreign root and workspace without ch
     ['cancel', {}],
     ['retry', {}],
     ['feedback', { verb: 'rating_down' }],
-    ['correction', { direction: 'Use B', scope: { workspaces: [f.otherWorkspace] }, supersedes: [] }],
+    ['correction', { direction: 'Use B', scope: { workspaces: [f.workspace] }, supersedes: [] }],
+    ['returnToCaller', { note: 'Re-ask with the background first' }],
   ]
   for (const [method, args] of actions) {
     const current = await f.open()
-    const before = { state: current.state, agentId: current.agentId, attemptCount: current.attemptCount, feedbackState: current.feedbackState }
-    const result = await f.remote[method]({ ...args, sessionId: 'other', caseId: current.caseId })
-    assert.equal(result.ok, false, `${method} must reject a foreign caller`)
-    assert.equal(result.error.code, 'OUT_OF_SCOPE', method)
+    // A foreign caller names another root session and workspace; both are dropped.
+    const result = await f.remote[method]({ ...args, sessionId: 'other', workspaceKey: f.otherWorkspace, caseId: current.caseId })
+    assert.equal(result.ok, true, `${method}: ${JSON.stringify(result)}`)
     const after = f.broker.cases.getCase(current.caseId)
-    assert.deepEqual({ state: after.state, agentId: after.agentId, attemptCount: after.attemptCount, feedbackState: after.feedbackState }, before, method)
-    assert.ok(f.audits.some(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.caseId === current.caseId), `${method} must audit the rejection`)
+    assert.equal(after.workspaceKey, f.workspace, `${method} must keep the Case workspace`)
+    assert.equal(after.rootSessionId, 'root', `${method} must keep the Case root session`)
+    assert.equal(f.audits.some(event => event.value.action === 'boundary-reject' && event.value.caseId === current.caseId), false, `${method} must not reject a user-surface action`)
   }
+})
+
+test('the Broker mutate boundary still rejects an automation caller that names a foreign context', async t => {
+  const f = await fixture(t)
+  const current = await f.open()
+  const before = { state: current.state, feedbackState: current.feedbackState }
+  await assert.rejects(
+    f.broker.mutate({ action: 'decide', caseId: current.caseId, sessionId: 'other', answers: [{ id: 'q', selected: ['A'] }] }),
+    error => error.code === 'OUT_OF_SCOPE',
+  )
+  await assert.rejects(
+    f.broker.mutate({ action: 'cancel', caseId: current.caseId, workspaceKey: f.otherWorkspace }),
+    error => error.code === 'OUT_OF_SCOPE',
+  )
+  const after = f.broker.cases.getCase(current.caseId)
+  assert.deepEqual({ state: after.state, feedbackState: after.feedbackState }, before)
+  assert.equal(f.audits.filter(event => event.value.action === 'boundary-reject' && event.value.caseId === current.caseId).length, 2)
 })
 
 test('remote profile state changes reach a shared identity from any workspace without leaking paths', async t => {
@@ -96,13 +118,14 @@ test('remote profile state changes reach a shared identity from any workspace wi
   assert.equal(read.value.agentId, f.foreign.agentId)
   assert.equal(JSON.stringify(read.value).includes(f.otherWorkspace), false)
 
-  // Record-level authorization is unchanged: a foreign root session still cannot
-  // mutate this workspace's Case, and every rejection is audited.
+  // The user surface is profile-level: a Case from another workspace is cancelled
+  // from here and audited with the Case's own root session.
   const current = await f.open()
-  const rejected = await f.remote.cancel({ sessionId: 'other', caseId: current.caseId })
-  assert.equal(rejected.ok, false)
-  assert.equal(rejected.error.code, 'OUT_OF_SCOPE')
-  assert.ok(f.audits.some(event => event.kind === 'outcome' && event.value.action === 'boundary-reject' && event.value.caseId === current.caseId))
+  const cancelled = await f.remote.cancel({ sessionId: 'other', caseId: current.caseId })
+  assert.equal(cancelled.ok, true, JSON.stringify(cancelled))
+  assert.equal(f.broker.cases.getCase(current.caseId).closing, 'cancelled')
+  assert.ok(f.audits.some(event => event.kind === 'cancel' && event.value.caseId === current.caseId && event.value.rootSessionId === 'root'))
+  assert.equal(f.audits.some(event => event.value.action === 'boundary-reject' && event.value.caseId === current.caseId), false)
 })
 
 test('learning reads and lifecycle writes reject foreign workspaces and Agent spoofing with metadata audit', async t => {
@@ -149,4 +172,36 @@ test('learning reads and lifecycle writes reject foreign workspaces and Agent sp
   assert.ok(f.audits.some(event => event.kind === 'learning-run' && event.value.action === 'boundary-reject'))
   assert.ok(f.audits.some(event => event.kind === 'snapshot' && event.value.action === 'boundary-reject'))
   assert.equal(JSON.stringify(f.audits).includes('Prefer A'), false)
+})
+
+test('cross-workspace actions and delivery write bounded audit facts without the question body', async t => {
+  const f = await fixture(t)
+  // A consult Case owns a source conversation, so its ruling produces a delivery fact.
+  const consultQuestion = 'CROSS_WORKSPACE_CONSULT_BODY?'
+  const consulted = await f.broker.consult({ agent: f.agent, args: { question: consultQuestion, options: [{ label: 'A' }], request_id: 'bounded-audit', authorization_class: 'A' } })
+  assert.equal(consulted.outcome, 'awaiting_user')
+  const decided = await f.remote.decide({ sessionId: 'other', caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
+  assert.equal(decided.ok, true, JSON.stringify(decided))
+  assert.equal(decided.value.closing, 'escalated')
+  // This fixture's source session has no followup channel, so delivery is reported
+  // as unavailable instead of being faked.
+  assert.deepEqual(decided.value.delivery, { state: 'unavailable' })
+
+  const bounceQuestion = 'CROSS_WORKSPACE_BOUNCE_BODY?'
+  const bouncedCase = await f.open(bounceQuestion)
+  const bounced = await f.remote.returnToCaller({ sessionId: 'other', caseId: bouncedCase.caseId, note: 'Re-ask with the background first' })
+  assert.equal(bounced.ok, true, JSON.stringify(bounced))
+  assert.equal(bounced.value.state, 'awaiting_revision')
+  assert.deepEqual(bounced.value.delivery, { state: 'unavailable' })
+
+  // Every action/delivery fact is bounded: the audit projection keeps all its
+  // fields (an unbounded one would be dropped) and no question body is present.
+  const actionFacts = f.audits.filter(event => ['outcome', 'cancel', 'deliver', 'feedback'].includes(event.kind))
+  assert.ok(actionFacts.length >= 3)
+  for (const event of actionFacts) assert.deepEqual(decisionAuditPayload(event.value), event.value, JSON.stringify(event.value))
+  const serialized = JSON.stringify(f.audits)
+  assert.equal(serialized.includes('CROSS_WORKSPACE_CONSULT_BODY'), false)
+  assert.equal(serialized.includes('CROSS_WORKSPACE_BOUNCE_BODY'), false)
+  assert.ok(f.audits.some(event => event.kind === 'deliver' && event.value.caseId === consulted.caseId && event.value.rootSessionId === 'root' && event.value.ok === false))
+  assert.ok(f.audits.some(event => event.kind === 'deliver' && event.value.kind === 'bounce' && event.value.caseId === bouncedCase.caseId && event.value.ok === false))
 })

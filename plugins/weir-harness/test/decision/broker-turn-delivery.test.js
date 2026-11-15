@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DecisionBroker } from '../../src/decision/broker.js'
 
-async function fixture(t, mode = 'escalate') {
+/**
+ * @param {import('node:test').TestContext} t
+ * @param {{mode?:string, sessionController?:any}} [options]
+ */
+async function fixture(t, options = {}) {
+  const mode = options.mode ?? 'escalate'
   const dir = mkdtempSync(join(tmpdir(), 'weir-decision-turn-'))
   const workspace = realpathSync(dir)
   const audits = []
@@ -18,8 +23,11 @@ async function fixture(t, mode = 'escalate') {
     session: { header: { id: 'root', cwd: dir, delegationDepth: 0 }, requestContext: () => ({ provider: 'p', model: 'm' }) },
     followup: async message => { followups.push(message); if (mode === 'delivery-error') throw new Error('offline') },
   }
+  // The live registry is mutable so a Case can outlive its source session: that
+  // is exactly the cold-session delivery path.
+  const registry = { root: agent }
   const ctx = {
-    agents: { get: id => id === 'root' ? agent : undefined },
+    agents: { get: id => registry[id] },
     llm: { stream: options => (async function * () {
       if (mode === 'concurrency') {
         started++
@@ -35,12 +43,17 @@ async function fixture(t, mode = 'escalate') {
       yield { type: 'finish', reason: { kind: 'stop' } }
     })() },
   }
+  // A headless composition mounts no session-controller, so `get` stays absent
+  // unless the case under test supplies one.
+  if (options.sessionController !== undefined) {
+    ctx.get = name => name === 'sessionController' ? options.sessionController : undefined
+  }
   const broker = new DecisionBroker({ profileContext: { home: dir, name: 'test' }, ctx, config: () => ({ decisionAgentsEnabled: true, decisionAgentMaxConcurrentAttempts: 4 }), audit: (kind, value) => audits.push({ kind, value }) })
   await broker.start()
   const profile = await broker.profileUpsert({ workspaceKey: workspace, name: 'A' })
   await broker.setSelector('root', 'agent', profile.agentId)
   t.after(async () => { await broker.flush(); rmSync(dir, { recursive: true, force: true }) })
-  return { broker, profile, agent, workspace, audits, followups, startedPromise }
+  return { broker, profile, agent, registry, ctx, workspace, audits, followups, startedPromise }
 }
 
 async function returnedCase(broker, profile, workspace, originSessionId, key) {
@@ -53,7 +66,7 @@ async function returnedCase(broker, profile, workspace, originSessionId, key) {
 }
 
 test('turn-stopping closes only the current origin awaiting_revision Cases', async t => {
-  const f = await fixture(t, 'return')
+  const f = await fixture(t, { mode: 'return' })
   const own = await returnedCase(f.broker, f.profile, f.workspace, 'root', 'own')
   const other = await returnedCase(f.broker, f.profile, f.workspace, 'other', 'other')
   const result = await f.broker.turnStopping({ agent: f.agent })
@@ -63,10 +76,11 @@ test('turn-stopping closes only the current origin awaiting_revision Cases', asy
   assert.equal(f.broker.cases.getCase(other.caseId).state, 'awaiting_revision')
 })
 
-test('consult decision delivers exactly one UserMessage; Hook decision does not deliver', async t => {
+test('consult decision delivers exactly one UserMessage and reports delivery; Hook decision does not deliver', async t => {
   const f = await fixture(t)
   const consulted = await f.broker.consult({ agent: f.agent, args: { question: 'New judgment?', request_id: 'deliver' } })
-  await f.broker.decide({ caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
+  const decided = await f.broker.decide({ caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
+  assert.deepEqual(decided.delivery, { state: 'delivered' })
   assert.equal(f.followups.length, 1)
   assert.equal(f.followups[0].role, 'user')
   assert.equal(f.followups[0].source.kind, 'weir-decision')
@@ -74,21 +88,90 @@ test('consult decision delivers exactly one UserMessage; Hook decision does not 
   assert.ok(f.followups[0].content[0].text.includes(consulted.caseId))
 
   const hooked = await f.broker.hook({ agent: f.agent, request: { questions: [{ id: 'q', question: 'New judgment?' }], wait: { callId: 'hook-no-delivery' } } })
-  await f.broker.decide({ caseId: hooked.caseId, answers: [{ id: 'q', selected: ['A'] }] })
+  const hookedDecided = await f.broker.decide({ caseId: hooked.caseId, answers: [{ id: 'q', selected: ['A'] }] })
+  // A Hook decision has no source conversation to notify, so it carries no
+  // delivery state at all.
+  assert.equal(Object.hasOwn(hookedDecided, 'delivery'), false)
   assert.equal(f.followups.length, 1)
 })
 
+test('a stopped source session is resumed through sessionController.resolveAgent and receives the ruling', async t => {
+  const resumedFollowups = []
+  const resumed = {
+    id: 'root',
+    session: { header: { id: 'root', cwd: '/tmp', delegationDepth: 0 } },
+    followup: async message => { resumedFollowups.push(message) },
+  }
+  const resolved = []
+  const f = await fixture(t, {
+    sessionController: { resolveAgent: async sessionId => { resolved.push(sessionId); return { agent: resumed } } },
+  })
+  const consulted = await f.broker.consult({ agent: f.agent, args: { question: 'Resume me?', request_id: 'cold-resume' } })
+  // The session stops; the Case stays pending, exactly as after a restart.
+  delete f.registry.root
+  const decided = await f.broker.decide({ caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
+  assert.deepEqual(decided.delivery, { state: 'delivered' })
+  assert.deepEqual(resolved, ['root'])
+  assert.equal(resumedFollowups.length, 1)
+  assert.ok(resumedFollowups[0].content[0].text.includes(consulted.caseId))
+  // The ruling is authoritative and stays closed either way.
+  assert.equal(f.broker.cases.getCase(consulted.caseId).closing, 'escalated')
+  assert.ok(f.audits.some(event => event.kind === 'deliver' && event.value.ok === true && event.value.rootSessionId === 'root'))
+})
+
+test('a bounce to a stopped source session is resumed and delivered', async t => {
+  const resumedFollowups = []
+  const resumed = { id: 'root', session: { header: { id: 'root', cwd: '/tmp', delegationDepth: 0 } }, followup: async message => { resumedFollowups.push(message) } }
+  const f = await fixture(t, { sessionController: { resolveAgent: async () => ({ agent: resumed }) } })
+  const hooked = await f.broker.hook({ agent: f.agent, request: { questions: [{ id: 'q', question: 'Bounce me?' }] } })
+  delete f.registry.root
+  const bounced = await f.broker.returnToCaller({ caseId: hooked.caseId, note: 'Re-ask with the background first' })
+  assert.equal(bounced.state, 'awaiting_revision')
+  assert.deepEqual(bounced.delivery, { state: 'delivered' })
+  assert.equal(resumedFollowups.length, 1)
+  assert.match(JSON.stringify(resumedFollowups[0]), /Re-ask with the background first/)
+})
+
+test('no session-controller leaves the answer authoritative and reports delivery unavailable', async t => {
+  const f = await fixture(t)
+  const consulted = await f.broker.consult({ agent: f.agent, args: { question: 'Headless?', request_id: 'headless-cold' } })
+  delete f.registry.root
+  const decided = await f.broker.decide({ caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
+  assert.deepEqual(decided.delivery, { state: 'unavailable' })
+  assert.equal(f.followups.length, 0)
+  assert.equal(f.broker.cases.getCase(consulted.caseId).closing, 'escalated')
+  assert.equal(f.broker.cases.getCase(consulted.caseId).decision.kind, 'user_decision')
+  assert.ok(f.audits.some(event => event.kind === 'deliver' && event.value.ok === false && event.value.code === 'ROOT_AGENT_UNAVAILABLE'))
+})
+
+test('a failed resume reports delivery unavailable without rolling back the ruling', async t => {
+  for (const sessionController of [
+    { resolveAgent: async () => ({ error: new Error('session gone') }) },
+    { resolveAgent: async () => { throw new Error('preset composition failed') } },
+  ]) {
+    const f = await fixture(t, { sessionController })
+    const consulted = await f.broker.consult({ agent: f.agent, args: { question: 'Gone?', request_id: 'gone-cold' } })
+    delete f.registry.root
+    const decided = await f.broker.decide({ caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
+    assert.deepEqual(decided.delivery, { state: 'unavailable' })
+    assert.equal(f.followups.length, 0)
+    assert.equal(f.broker.cases.getCase(consulted.caseId).closing, 'escalated')
+    assert.ok(f.audits.some(event => event.kind === 'deliver' && event.value.ok === false && event.value.code === 'ROOT_AGENT_UNAVAILABLE'))
+  }
+})
+
 test('delivery failure preserves the authoritative closing and writes audit', async t => {
-  const f = await fixture(t, 'delivery-error')
+  const f = await fixture(t, { mode: 'delivery-error' })
   const consulted = await f.broker.consult({ agent: f.agent, args: { question: 'New judgment?', request_id: 'delivery-error' } })
   const closed = await f.broker.decide({ caseId: consulted.caseId, answers: [{ id: 'question', selected: ['A'] }] })
   assert.equal(closed.closing, 'escalated')
+  assert.deepEqual(closed.delivery, { state: 'unavailable' })
   assert.equal(f.broker.cases.getCase(closed.caseId).decision.kind, 'user_decision')
   assert.ok(f.audits.some(event => event.kind === 'deliver' && event.value.ok === false))
 })
 
 test('four in-flight Attempts saturate the limit; fifth Hook bypasses without a Case', async t => {
-  const f = await fixture(t, 'concurrency')
+  const f = await fixture(t, { mode: 'concurrency' })
   const pending = []
   for (let index = 0; index < 4; index++) {
     pending.push(f.broker.hook({ agent: f.agent, request: { questions: [{ id: `q${index}`, question: 'New judgment?' }], wait: { callId: `slot-${index}` } } }))

@@ -1,5 +1,14 @@
 // JSON-only remote face. Every method takes one bare args object; no agent lookup
 // and no caller-supplied workspace or Agent ownership override.
+//
+// Scope rule (OpenSpec decision-pending-overview D1): the *user surface* is
+// profile-level — `inbox` and `record` take no caller session, and a Case action
+// derives its session and workspace from the Case itself — while *automation*
+// stays workspace-scoped: `records`/`metrics`/`routingReview`/`exportData`,
+// learning, the tool and Hook paths, and the Broker's `mutate` boundary check
+// are unchanged.
+import { DecisionContractError } from './contracts.js'
+
 export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
 export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
@@ -8,6 +17,9 @@ export const DECISION_REMOTE_METHODS = Object.freeze([
   'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
   'publicMemoryRefresh', 'publicCandidate', 'exportData',
 ])
+// User-surface Case actions. The caller owns only the action payload and the
+// Case id: the Host reads that Case and derives its root session and workspace,
+// so a caller-named `sessionId`/`workspaceKey` is dropped instead of trusted.
 const CASE_MUTATIONS = new Set(['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify'])
 const LEARNING_MUTATIONS = new Set(['learningStart', 'snapshotPublish', 'snapshotReject', 'snapshotRollback'])
 const PUBLIC_MEMORY_METHODS = new Set(['publicMemoryRefresh', 'publicCandidate'])
@@ -34,6 +46,30 @@ export function publicMemoryArgs(args) {
   return input
 }
 
+/**
+ * One user-surface Case action argument object, with its context derived from
+ * the Case (design D1/D5): read the Case by id, then take the root session and
+ * workspace from it. The Case row is the authority — a pending Case stays
+ * decidable after its source session is gone — so `sessionContext` only refines
+ * the derivation while that session is still reachable. A caller-supplied
+ * `sessionId`/`workspaceKey` never survives this step.
+ * @param {any} broker @param {any} args
+ */
+async function caseActionArgs(broker, args) {
+  const caseId = typeof args?.caseId === 'string' ? args.caseId : ''
+  if (!caseId) throw new DecisionContractError('CASE_NOT_FOUND', 'caseId is required')
+  const detail = await broker.record({ caseId })
+  const current = detail?.case
+  if (!current) throw new DecisionContractError('CASE_NOT_FOUND', caseId)
+  let context
+  try { context = await broker.sessionContext(current.rootSessionId) } catch { context = undefined }
+  return {
+    ...args,
+    sessionId: context?.rootSessionId ?? current.rootSessionId,
+    workspaceKey: context?.workspaceKey ?? current.workspaceKey,
+  }
+}
+
 /** @param {{broker:()=>any,ensureRegistered?:()=>boolean}} dependencies */
 export function createDecisionRemoteService(dependencies) {
   const ensure = dependencies.ensureRegistered ?? (() => true)
@@ -44,11 +80,15 @@ export function createDecisionRemoteService(dependencies) {
       const status = broker?.status()
       if (!broker || (status.available !== true && !(method === 'overview' && status.reason === 'disabled'))) return { ok: false, error: { code: 'DECISION_UNAVAILABLE', message: status?.reason ?? 'Decision Broker is unavailable' } }
       let value
-      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || method === 'profileDelete' || CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method) || EXPORT_METHODS.has(method)
+      const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || method === 'profileDelete' || LEARNING_MUTATIONS.has(method) || EXPORT_METHODS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
+      // The two user-surface reads name no session: the inbox is every pending
+      // Case in this profile and a record is keyed by Case id alone.
+      if (method === 'inbox') value = await broker.inbox()
+      else if (method === 'record') value = await broker.record({ caseId: typeof args.caseId === 'string' ? args.caseId : '' })
       // Identity calls take no workspace: the caller cannot name one, and the
       // profile-global identity must not depend on where the call came from.
-      if (method === 'setSelector') value = await broker.setSelector(context.rootSessionId, args.mode, args.agentId)
+      else if (method === 'setSelector') value = await broker.setSelector(context.rootSessionId, args.mode, args.agentId)
       else if (method === 'profileSetState') value = await broker.profileSetState(args.agentId, args.state)
       // Delete calls forward only the two caller-owned fields; everything else
       // about the cascade is derived server-side.
@@ -56,7 +96,8 @@ export function createDecisionRemoteService(dependencies) {
       else if (method === 'profileDeletePreview') value = await broker.profileDeletePreview({ agentId: args.agentId })
       else if (method === 'profileUpsert') value = await broker.profileUpsert(args)
       else if (method === 'routingReview') value = await broker.routingReview({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
-      else if (CASE_MUTATIONS.has(method) || LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
+      else if (CASE_MUTATIONS.has(method)) value = await broker[method](await caseActionArgs(broker, args))
+      else if (LEARNING_MUTATIONS.has(method)) value = await broker[method]({ ...args, sessionId: context.rootSessionId, workspaceKey: context.workspaceKey })
       else if (PUBLIC_MEMORY_METHODS.has(method)) value = await broker[method](publicMemoryArgs(args))
       else if (EXPORT_METHODS.has(method)) value = await broker[method]({ sessionId: context.rootSessionId })
       else if (method === 'waitForToolCall') value = await broker[method](args, signal)

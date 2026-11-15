@@ -120,12 +120,28 @@ test('record is a deeply frozen projection of Case, Attempts, Evidence, Feedback
   assert.equal(query.record({ sessionId: 'other', caseId: current.caseId }), null)
 })
 
-test('inbox contains only awaiting_user Cases for the requested root session', async t => {
-  const { query, add } = await fixture(t)
+test('inbox is every awaiting_user Case in the profile, newest first, with no session filter', async t => {
+  const { query, store, add } = await fixture(t)
+  assert.deepEqual(query.inbox(), [])
   const waiting = await add('waiting', { state: 'awaiting_user' })
   await add('answered', { state: 'answered' })
-  await add('other-root', { state: 'awaiting_user', rootSessionId: 'other' })
-  assert.deepEqual(query.inbox({ sessionId: 'root' }).map(row => row.caseId), [waiting.current.caseId])
+  const otherRoot = await add('other-root', { state: 'awaiting_user', rootSessionId: 'other' })
+  await add('awaiting-revision', { state: 'awaiting_revision' })
+  const rows = query.inbox()
+  // Another root session and workspace is included: the user surface is profile-level.
+  assert.deepEqual(rows.map(row => row.caseId), [otherRoot.current.caseId, waiting.current.caseId])
+  // A caller-named session cannot narrow the profile read.
+  assert.deepEqual(query.inbox().map(row => row.caseId), [otherRoot.current.caseId, waiting.current.caseId])
+  // Same timestamp falls back to case_id DESC so the order stays total.
+  store.db.prepare('UPDATE cases SET updated_at=? WHERE case_id IN (?,?,?)').run(9_999, waiting.current.caseId, otherRoot.current.caseId, 'nothing')
+  assert.deepEqual(query.inbox().map(row => row.caseId), [waiting.current.caseId, otherRoot.current.caseId].sort().reverse())
+  // The projection trims routing internals: status is a bounded enum, never the reason text.
+  const [first] = query.inbox()
+  assert.equal(Object.hasOwn(first, 'reason'), false)
+  assert.equal(Object.hasOwn(first, 'ambiguity'), false)
+  assert.equal(typeof first.rootSessionId, 'string')
+  assert.equal(typeof first.updatedAt, 'number')
+  assert.equal(typeof first.agentId, 'string')
 })
 
 test('inbox projects the latest non-Shadow RouteDecision status as a bounded enum', async t => {
@@ -146,7 +162,7 @@ test('inbox projects the latest non-Shadow RouteDecision status as a bounded enu
   await record(none, [{ mode: 'auto', candidates: [{ agentId: 'agent-a', enabled: true, rejectedBecause: 'scope' }], reason: 'none:no_candidates' }])
   await record(bare, [{ mode: 'manual_reassign', candidates: [{ agentId: 'agent-a', enabled: true }], chosen: 'agent-a', reason: '' }])
 
-  const statuses = Object.fromEntries(query.inbox({ sessionId: 'root' }).map(row => [row.caseId, row.routeStatus ?? null]))
+  const statuses = Object.fromEntries(query.inbox().map(row => [row.caseId, row.routeStatus ?? null]))
   // The latest non-Shadow decision wins; the Shadow sample never overrides it.
   assert.equal(statuses[failed.current.caseId], 'failure')
   assert.equal(statuses[ambiguous.current.caseId], 'ambiguous')
@@ -154,7 +170,7 @@ test('inbox projects the latest non-Shadow RouteDecision status as a bounded enu
   assert.equal(statuses[bare.current.caseId], 'selected')
   // A Case without a readable RouteDecision carries no invented status.
   const undecided = await add('inbox-undecided', { state: 'awaiting_user', awaitingReason: 'no_route' })
-  const rows = query.inbox({ sessionId: 'root' })
+  const rows = query.inbox()
   assert.equal('routeStatus' in rows.find(row => row.caseId === undecided.current.caseId), false)
   // Records and other reads keep their existing shape: the enum is inbox-only.
   assert.equal('routeStatus' in query.record({ caseId: failed.current.caseId, sessionId: 'root' }).case, false)

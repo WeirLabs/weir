@@ -46,7 +46,11 @@ test('learning review exposes bounded cross-root Case and correction Feedback so
     ],
   })
 
-  assert.equal(await f.broker.record({ sessionId: 'root', caseId: source.caseId }), null)
+  // The record LIST stays root-scoped (the automation read), while the
+  // user-surface record detail is keyed by Case id alone.
+  const listed = await f.broker.records({ sessionId: 'root' })
+  assert.equal(listed.records.some(row => row.caseId === source.caseId), false)
+  assert.equal((await f.broker.record({ caseId: source.caseId })).case.caseId, source.caseId)
   const detail = await f.broker.learningRun({ sessionId: 'root', learningRunId: 'lr_source_review' })
   assert.ok(Array.isArray(detail.sourceRecords))
   assert.deepEqual(detail.sourceRecords.map(record => record.sourceId), [source.caseId, correction.feedbackId])
