@@ -83,7 +83,7 @@ Decision Agent 面向 Execution Agent 反复提出的同类结构化问题。一
 
 ## 配置
 
-全部位于「设置 → 决策助手」。除存储目录外均调用时读取；`decisionAgentStorePath` 标为需重启。
+除存储目录外均调用时读取；`decisionAgentStorePath` 标为需重启。
 
 决策助手的设置位于全局设置面板的独立「决策助手」页面（与「Weir」主页面、「Weir 模型路由」并列），不再混在主页面里：基本设置只有总开关、新根会话的默认选择与允许自动回答的授权类别（A/B/C 三枚可独立切换的控件，保存时合成既有 JSON 数组，不再要求手写 JSON）；`decisionAgentAnswerTimeoutMs` 等运行参数与 Shadow 诊断收在默认折叠的「高级设置」，总开关关闭时整个高级区不渲染。`decisionAgentChains` 与 `decisionAgentStorePath` 是**配置文件面键**（config-face-only，`page: false`）：设置页没有它们的行，也没有替代的 JSON 文本框；每助手路由改由助手编辑器维护，全局链与存储目录仍只从配置文件设置并照常生效。
 
