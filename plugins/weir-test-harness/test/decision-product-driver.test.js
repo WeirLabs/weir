@@ -357,9 +357,10 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
   for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===5']) assert.ok(state.includes(token), token)
   const revealBody = driver.match(/async function revealCard\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(revealBody, 'revealCard exists')
-  assert.match(revealBody, /Input\.dispatchMouseEvent/, 'a collapsed native process group opens through real CDP pointer input')
-  assert.match(revealBody, /button\[data-process-activity="tools"\]/)
-  assert.ok(!/\.click\(|\.focus\(/.test(revealBody), 'the reveal never uses DOM click or focus')
+  // The card is owned by the Turn-layer chat node, so reading it never opens a
+  // process disclosure: the assertion replaced the old pointer-driven reveal.
+  assert.match(revealBody, /decisionCardProblems/, 'the reveal asserts the card contract where it stands')
+  assert.ok(!/dispatchMouseEvent|data-process-activity|\.click\(|\.focus\(/.test(revealBody), 'the reveal never opens a disclosure, clicks, or focuses')
   const held = driver.indexOf("check('consultSingleWritableCardBeforeToolResult'")
   const reveal = driver.indexOf('beforeCard = await revealCard(consult.caseId)', held)
   const focused = driver.indexOf("check('consultWaitingCardPutsDecisionFirst'")
