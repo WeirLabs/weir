@@ -1229,12 +1229,16 @@ export function pendingOverviewProblems(state = {}) {
   if (Number.isInteger(state.total) && state.total !== total) problems.push(`the rendered groups hold ${state.total} items but their counts sum to ${total}`)
   if (Number.isInteger(state.navCount) && Number.isInteger(state.total) && state.navCount !== state.total && state.total > 0) problems.push(`the navigation count ${state.navCount} differs from the grouped total ${state.total}`)
   const controls = (Array.isArray(state.switchButtons) ? state.switchButtons : []).filter(item => item && typeof item.by === 'string')
-  if (groups.length >= 2) {
+  // The switch exists while pending items span two workspaces, whatever the
+  // current grouping dimension renders (one assistant can own both workspaces).
+  const switchable = state.switchable === 'true' || (state.switchable !== 'false' && groups.length >= 2)
+  if (switchable) {
     if (controls.length !== 2) problems.push(`two grouping dimensions exist but ${controls.length} switch controls render`)
     if (!readableText(state.switchAria)) problems.push('the grouping switch carries no accessible name')
     for (const control of controls) if (!readableText(control.label)) problems.push(`the ${control.by} switch carries no readable label`)
     if (controls.length === 2 && controls.filter(control => control.pressed === 'true').length !== 1) problems.push('exactly one grouping dimension must be pressed')
   } else if (controls.length > 0) problems.push('one grouping source must not offer a switch')
+  if (state.switchable === 'true' && Number.isInteger(state.workspaceCount) && state.workspaceCount < 2) problems.push('the switch claims two workspaces but the page reports fewer')
   if (Number.isFinite(state.horizontalScroll) && state.horizontalScroll > 0) problems.push(`the inbox introduces ${state.horizontalScroll}px of horizontal scroll`)
   for (const label of Array.isArray(state.sourceLabels) ? state.sourceLabels : []) {
     const text = readableText(label)

@@ -1365,7 +1365,7 @@ window.__ModuleLoader__.load({
       }) : null;
       const inboxContent = resources.inbox.status === "error" ? retryState(resources.inbox, () => loadInbox())
         : resources.inbox.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
-        : inboxRows.length ? jsx.jsxs("div", { className: "weir-da-inbox-groups", children: [
+        : inboxRows.length ? jsx.jsxs("div", { className: "weir-da-inbox-groups", "data-inbox-workspace-count": grouping.workspaceCount, "data-inbox-switchable": grouping.switchable ? "true" : "false", children: [
             inboxGrouping,
             grouping.groups.map(group => jsx.jsxs("section", { className: "weir-da-inbox-group", "data-inbox-group": group.key, children: [
               jsx.jsxs("h2", { className: "weir-da-inbox-group-header", children: [

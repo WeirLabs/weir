@@ -1816,6 +1816,8 @@ async function pendingInboxDom() {
       groups,
       switchButtons: [...document.querySelectorAll('[data-group-by]')].map(el => ({ by: el.getAttribute('data-group-by'), pressed: el.getAttribute('aria-pressed'), label: el.textContent.trim() })),
       switchAria: document.querySelector('.weir-da-inbox-grouping')?.getAttribute('aria-label') ?? null,
+      workspaceCount: Number(document.querySelector('[data-inbox-workspace-count]')?.getAttribute('data-inbox-workspace-count') ?? 'NaN'),
+      switchable: document.querySelector('[data-inbox-switchable]')?.getAttribute('data-inbox-switchable') ?? null,
       navCount: Number(document.querySelector('[data-inbox-count]')?.textContent.trim() ?? '0'),
       total: groups.reduce((sum, group) => sum + group.count, 0),
       sourceLabels: [...document.querySelectorAll('[data-inbox-workspace]')].map(el => el.textContent.trim()),
