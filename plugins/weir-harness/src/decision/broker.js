@@ -1667,16 +1667,39 @@ Revise the question (consult again with the same request_id and better wording o
     }
   }
 
+  /**
+   * Judgment history (OpenSpec decision-records-profile-history D1/D3). The page
+   * names no session, so this lists every Case of this profile and a page opened
+   * without a focused session still reads them all; a caller that does name one
+   * (`exportData`, internal readers) keeps its root scope. Rows drop the raw
+   * `workspaceKey` exactly like the inbox — the client names the source workspace
+   * from the Case's own root session — and only the first page carries the source
+   * summary, so a paginated read never recomputes it.
+   * @param {{sessionId?:string,filter?:Record<string,unknown>,cursor?:string|{after?:string,limit?:number}}} input
+   */
   async records(input) {
-    if (!this.store) return { records: [], nextCursor: null }
-    const context = await this.sessionContext(input.sessionId)
-    return this.query.records({ ...input, sessionId: context.rootSessionId })
+    if (!this.store) return { records: [], nextCursor: null, sources: [] }
+    const sessionId = input.sessionId === undefined ? undefined : (await this.sessionContext(input.sessionId)).rootSessionId
+    const page = this.query.records({ ...input, ...(sessionId === undefined ? {} : { sessionId }) })
+    // The Query projection is frozen, so the projection is a copy.
+    const records = page.records.map(row => {
+      const item = { ...row }
+      delete item.workspaceKey
+      return item
+    })
+    // A page that continues from a cursor carries no summary: the menu belongs to
+    // the first page, so appending never pays for a second grouping query.
+    const continues = typeof input.cursor === 'string' || (input.cursor !== null && typeof input.cursor === 'object' && input.cursor.after !== undefined)
+    return continues
+      ? { records, nextCursor: page.nextCursor }
+      : { records, nextCursor: page.nextCursor, sources: this.query.recordSources() }
   }
 
   /**
-   * User-surface record detail by Case id (design D1). `records`, `metrics`,
-   * `routingReview`, `exportData` and the automation paths stay
-   * workspace-scoped; only the user surface reads across workspaces.
+   * User-surface record detail by Case id (design D1). `metrics`,
+   * `routingReview`, `exportData` and the automation paths stay workspace-scoped;
+   * the user surface — inbox, judgment records and this detail — reads across
+   * workspaces.
    * @param {{caseId:string}} input
    */
   async record(input) {
