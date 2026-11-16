@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, candidateEditConfirmationProblems, candidateUpdateAuditProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsAnswerSwitchProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, candidateEditConfirmationProblems, candidateUpdateAuditProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsAnswerSwitchProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, noSessionHistoryProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, profileRecordsWireProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordHistoryProblems, recordProjectionProblems, recordSourceMenuProblems, scrollLockProblems, sessionlessAssistantProblems, sessionlessExportProblems, sessionlessMetricsProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
 import decisionGui from '../src/scenarios/decision-gui.js'
 import { extract } from '../src/mock-kit.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
@@ -2491,5 +2491,123 @@ test('assistant visual readback guard compares the saved profile to the staged c
   const emptyModel = { scope: profile.scope, modelRoute: { chain: [{ provider: 'mock', model: '' }] } }
   assert.ok(assistantVisualReadbackProblems(emptyModel, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved no model id/.test(text)))
   assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }, { provider: 'mock', model: 'mock-2' }] }).some(text => /holds 1 rungs instead of 2/.test(text)))
+})
+
+// ---------------------------------------------------------------------------
+// Profile-level judgment history (OpenSpec decision-records-profile-history):
+// `records` reads this profile's whole history, names each row's source
+// workspace, narrows on `filter.sessionId` and keeps its paging honest — and a
+// page opened with no focused session still lists the Cases.
+// ---------------------------------------------------------------------------
+
+test('judgment history guard compares the rendered page with the Host page per source session', () => {
+  const page = {
+    records: [
+      { caseId: 'dc_1', rootSessionId: 'session-a' },
+      { caseId: 'dc_2', rootSessionId: 'session-b' },
+    ],
+    sources: [{ sessionId: 'session-a', count: 1, lastAt: 2 }, { sessionId: 'session-b', count: 1, lastAt: 1 }],
+    nextCursor: null,
+  }
+  const rows = [
+    { caseId: 'dc_1', root: 'session-a', sourceLabel: 'Orrery' },
+    { caseId: 'dc_2', root: 'session-b', sourceLabel: 'Orrery' },
+  ]
+  assert.deepEqual(recordHistoryProblems({ rows }, page, { forbiddenPath: '/isolated/root' }), [])
+  // The focused page renders another session's row: that is the profile-level read.
+  assert.deepEqual(recordHistoryProblems({ rows }, page, { forbiddenPath: '/isolated/root', filterSessionId: 'session-b' }).length, 1)
+  assert.deepEqual(recordHistoryProblems({ rows }, page, { filterSessionId: 'session-b' }).some(text => /outside the filtered source/.test(text)), true)
+  assert.ok(recordHistoryProblems({ rows: [{ ...rows[0], root: 'session-b' }, rows[1]] }, page, {}).some(text => /names source session-b instead of session-a/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [{ ...rows[0], sourceLabel: '' }, rows[1]] }, page, {}).some(text => /no source workspace label/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [{ ...rows[0], sourceLabel: 'session-a' }, rows[1]] }, page, {}).some(text => /raw session id/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [{ ...rows[0], sourceLabel: '/isolated/root/repo' }, rows[1]] }, page, { forbiddenPath: '/isolated/root' }).some(text => /leaks a path/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [rows[1], rows[0]] }, page, {}).some(text => /order included/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [...rows, { caseId: 'dc_3', root: 'session-c', sourceLabel: 'Other' }] }, page, { unsorted: true }).some(text => /is not on the Host's page/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [{ ...rows[0] }, { ...rows[1], caseId: 'dc_9' }] }, page, {}).some(text => /is not on the Host's page/.test(text)))
+  assert.ok(recordHistoryProblems({ rows: [] }, page, {}).some(text => /rendered no judgment record/.test(text)))
+  assert.ok(recordHistoryProblems({ rows }, { records: [] }, {}).some(text => /returned no judgment record/.test(text)))
+})
+
+test('source menu guard offers every source session with its real count and no invented one', () => {
+  const sources = [{ sessionId: 'session-a', count: 3, lastAt: 3 }, { sessionId: 'session-b', count: 1, lastAt: 1 }]
+  const menu = (options, ariaLabel = '来源') => ({ ariaLabel, value: '', options })
+  const everySource = [
+    { value: '', label: '全部会话' },
+    { value: 'session-a', label: 'Orrery (3)' },
+    { value: 'session-b', label: 'Orrery (1)' },
+  ]
+  assert.deepEqual(recordSourceMenuProblems(menu([{ value: '', label: '全部会话' }, { value: 'session-a', label: 'Orrery (3)' }, { value: 'session-b', label: 'Orrery (1)' }]), sources), [])
+  assert.deepEqual(recordSourceMenuProblems(menu([{ value: '', label: 'All sessions' }, { value: 'session-a', label: 'Orrery (3)' }, { value: 'session-b', label: 'Orrery (1)' }], 'Source'), sources), [])
+  assert.deepEqual(recordSourceMenuProblems(null, sources), ['the records toolbar renders no source filter'])
+  assert.ok(recordSourceMenuProblems(menu([{ value: '', label: '全部状态' }, { value: 'session-a', label: 'Orrery (3)' }, { value: 'session-b', label: 'Orrery (1)' }]), sources).some(text => /every-source option reads/.test(text)))
+  assert.ok(recordSourceMenuProblems(menu([{ value: '', label: '全部会话' }, { value: 'session-a', label: 'Orrery (2)' }, { value: 'session-b', label: 'Orrery (1)' }]), sources).some(text => /does not show its real count 3/.test(text)))
+  assert.ok(recordSourceMenuProblems(menu([{ value: '', label: '全部会话' }, { value: 'session-a', label: 'Orrery (3)' }]), sources).some(text => /offers no option for session-b/.test(text)))
+  assert.ok(recordSourceMenuProblems(menu([...everySource, { value: 'session-z', label: 'Other (1)' }]), sources).some(text => /session\(s\) the Host does not report/.test(text)))
+  assert.ok(recordSourceMenuProblems(menu([{ value: '', label: '全部会话' }, { value: 'session-a', label: 'Orrery (3)' }, { value: 'session-b', label: 'Other (1)' }]), sources, { rowLabels: { 'session-a': 'Orrery', 'session-b': 'Other' } }).length === 0)
+  assert.ok(recordSourceMenuProblems(menu([{ value: '', label: '全部会话' }, { value: 'session-a', label: 'Orrery (3)' }, { value: 'session-b', label: 'Other (1)' }]), sources, { rowLabels: { 'session-b': 'Orrery' } }).some(text => /while its rows name Orrery/.test(text)))
+  assert.ok(recordSourceMenuProblems(menu([{ value: '', label: '全部会话' }, { value: 'session-b', label: 'Orrery (1)' }, { value: 'session-a', label: 'Orrery (3)' }]), sources).some(text => /carries session-b instead of session-a/.test(text)))
+})
+
+test('judgment history wire guard rejects a caller session on the profile read', () => {
+  assert.deepEqual(profileRecordsWireProblems([{ method: 'records', args: { filter: {} } }]), [])
+  assert.deepEqual(profileRecordsWireProblems([{ method: 'records', args: { filter: { sessionId: 'session-a' } } }]), [])
+  assert.deepEqual(profileRecordsWireProblems([{ method: 'record', args: { caseId: 'dc_1' } }]), ['the records page issued no judgment-history read'])
+  assert.ok(profileRecordsWireProblems([{ method: 'records', args: { sessionId: 'session-a', filter: {} } }]).some(text => /named the caller session session-a/.test(text)))
+  assert.ok(profileRecordsWireProblems([{ method: 'records', args: { filter: 'session-a' } }]).some(text => /non-object filter/.test(text)))
+})
+
+test('session-less guards keep the history open and the session-scoped surfaces honest', () => {
+  const rows = [{ caseId: 'dc_1', root: 'session-a', sourceLabel: 'Orrery' }]
+  assert.deepEqual(noSessionHistoryProblems({ rows, text: 'Orrery\n选择一条判断记录以查看详情。', exportDisabled: true, exportHint: '导出需要先打开会话：Host 由该会话推导要导出的工作区。' }, { expectedCaseIds: ['dc_1'] }), [])
+  assert.ok(noSessionHistoryProblems({ rows: [], text: '暂无判断记录。' }, { expectedCaseIds: ['dc_1'] }).some(text => /no judgment record/.test(text)))
+  assert.ok(noSessionHistoryProblems({ rows, text: '打开会话后可查看判断记录。' }, {}).some(text => /still claims it needs a focused session/.test(text)))
+  assert.ok(noSessionHistoryProblems({ rows, text: 'Open a session to view decision records.' }, {}).some(text => /still claims it needs a focused session/.test(text)))
+  assert.ok(noSessionHistoryProblems({ rows, text: '' }, { expectedCaseIds: ['dc_2'] }).some(text => /created before the restart is not listed/.test(text)))
+
+  assert.deepEqual(sessionlessExportProblems({ exportDisabled: true, exportHint: '导出需要先打开会话：Host 由该会话推导要导出的工作区。' }), [])
+  assert.deepEqual(sessionlessExportProblems({ exportDisabled: true, exportHint: 'A data export needs a focused session: the Host derives which workspace to export from that session.' }), [])
+  assert.ok(sessionlessExportProblems({ exportDisabled: false, exportHint: '把本工作区的判断记录…' }).some(text => /stays enabled/.test(text)))
+  assert.ok(sessionlessExportProblems({ exportDisabled: true, exportHint: '把本工作区的判断记录…' }).some(text => /does not explain the focused-session requirement/.test(text)))
+
+  assert.deepEqual(sessionlessMetricsProblems('打开会话后可查看路由复盘与指标。'), [])
+  assert.deepEqual(sessionlessMetricsProblems('Open a session to view routing review and metrics.'), [])
+  assert.ok(sessionlessMetricsProblems('').some(text => /no longer explain/.test(text)))
+  assert.ok(sessionlessMetricsProblems('打开会话后可查看判断记录。').some(text => /judgment-history explanation instead of its own/.test(text)))
+
+  assert.deepEqual(sessionlessAssistantProblems('打开会话后可查看判断记录。'), [])
+  assert.ok(sessionlessAssistantProblems('').some(text => /lost the explanation it still needs/.test(text)))
+})
+
+test('product driver carries the profile-level judgment-history matrix', () => {
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  for (const name of [
+    'recordsHistoryReadsTheWholeProfile', 'recordsRowNamesItsSourceWorkspace', 'recordsSourceMenuOffersEverySessionWithItsCount',
+    'recordsSourceFilterNarrowsToOneSession', 'recordsSourceFilterKeepsOtherWorkspacesDistinct', 'recordsSourceFilterRestoresEverySession',
+    'recordsCrossSessionDetailMatchesAuthority', 'recordsPaginationFollowsTheHostCursor', 'recordsPaginationAppendsTheHostsNextPage',
+    'sessionlessDesktopStartsWithoutFocusedSession', 'recordsSessionlessPageListsTheProfileHistory', 'recordsSessionlessExportNeedsSession',
+    'recordsSessionlessMetricsNeedSession', 'recordsSessionlessAssistantTabKeepsItsOwnExplanation', 'recordsSessionlessDetailMatchesAuthority',
+  ]) assert.ok(driver.includes(`'${name}'`), name)
+  for (const token of [
+    '[data-record-source]', 'select[data-filter="sessionId"]', '[data-load-more]', '[data-record-export]',
+    'section[data-view="records"] section.weir-da-filters button[data-variant="primary"]',
+    "window.__decisionQA.decision('records'", 'weir-da-records-advanced',
+  ]) assert.ok(driver.includes(token), token)
+  assert.ok(driver.includes('runRecordsProfileMatrix({') && driver.includes('runSessionlessRecordsMatrix({'), 'both matrices are called')
+  // Both legs sit where the semantics require them: the focused leg before the
+  // crash/restart, and the session-less leg before any session is focused again.
+  const profileCall = driver.indexOf('await runRecordsProfileMatrix({')
+  const crash = driver.indexOf("await stopOwned('process-1', { crash: true })")
+  assert.ok(profileCall > 0 && crash > profileCall, 'the focused history leg runs before the crash leg')
+  const restarted = driver.indexOf("await stopOwned('process-2')")
+  const sessionlessCall = driver.indexOf('await runSessionlessRecordsMatrix({')
+  const focusedAgain = driver.indexOf('await openSession(instance, sessionId)', restarted)
+  assert.ok(restarted > 0 && sessionlessCall > restarted && focusedAgain > sessionlessCall, 'the session-less history leg runs between the restart and the next focused session')
+  assert.ok(driver.includes('restartCaseId: p4Evidence.interrupted.case.caseId'), 'the session-less leg reads a Case created before the restart')
+  // The page boundary is crossed with real auto-routed judgments, never fixture rows.
+  assert.ok(driver.includes('while (total + grown.created.length < 51 && grown.index < pageIndex + 24)'), 'the history grows past one 50-row page')
+  assert.ok(driver.includes('await submitMarker(instance, `GUI_AUTO_PAGE_${suffix}`)'), 'each extra row is a real Desktop judgment')
+  const scenario = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/src/scenarios/decision-gui.js'), 'utf8')
+  assert.ok(scenario.includes('index <= 41'), 'the auto-route fixture continues past the 21 routing-pagination markers')
+  assert.ok(scenario.includes('real routing pagination item'), 'the extra markers reuse the real routing fixture')
 })
 

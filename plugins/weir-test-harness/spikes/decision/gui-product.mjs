@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, browserZoomProblems, candidateEditConfirmationProblems, candidateUpdateAuditProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsAnswerSwitchProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, browserZoomProblems, candidateEditConfirmationProblems, candidateUpdateAuditProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsAnswerSwitchProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, noSessionHistoryProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, profileRecordsWireProblems, recordHistoryProblems, recordProjectionProblems, recordSourceMenuProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, sessionlessAssistantProblems, sessionlessExportProblems, sessionlessMetricsProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -1721,6 +1721,339 @@ async function compareRecord(sessionId, phase, caseId, advanced = false) {
   return { authority, dom: withAdvanced }
 }
 
+// ---------------------------------------------------------------------------
+// Profile-level judgment history (OpenSpec decision-records-profile-history).
+// `records` is a user surface of the whole profile: one focused session is not
+// the scope it reads, the source it names, or the filter it narrows on. Each
+// guard below reads what the real Desktop rendered and compares it with the
+// Host's own page.
+// ---------------------------------------------------------------------------
+
+// The judgment-history explanation the session-free matrix must keep out of the
+// records tab: only the assistant tab, and the session-scoped export and metrics,
+// still need a focused session (the lib guards carry those two copies).
+const RECORD_NO_SESSION_COPY = /打开会话后可查看判断记录|Open a session to view decision records/
+/** The rendered records view: rows with their source seat, the source menu, the export entry. */
+async function recordsDom() {
+  return instance.cdp.evaluate(`(() => {
+    const view = document.querySelector('main.weir-da-page section[data-view="records"]')
+    if (!view) return null
+    const list = view.querySelector('.weir-da-record-list')
+    const source = view.querySelector('select[data-filter="sessionId"]')
+    const exportArea = view.querySelector('[data-record-export]')
+    const exportButton = exportArea ? exportArea.querySelector('button[data-action="export"]') : null
+    const hint = exportArea ? exportArea.querySelector('.weir-da-caption') : null
+    const rows = list ? [...list.children].filter(el => el.hasAttribute('data-case-id')).map(el => {
+      const seat = el.querySelector('[data-record-source]')
+      const label = seat ? seat.querySelector('strong') : null
+      return {
+        caseId: el.getAttribute('data-case-id'),
+        root: seat ? seat.getAttribute('data-record-source') : null,
+        sourceLabel: label ? label.textContent.trim() : '',
+        sourceText: seat ? seat.innerText : '',
+        selected: el.getAttribute('aria-pressed') === 'true',
+      }
+    }) : []
+    const more = list ? list.querySelector('[data-load-more]') : null
+    return {
+      rows,
+      loadMore: { present: Boolean(more), disabled: more ? more.disabled === true : null },
+      sourceMenu: source ? { ariaLabel: source.getAttribute('aria-label'), value: source.value, options: [...source.options].map(option => ({ value: option.value, label: option.label })) } : null,
+      exportHint: hint ? hint.innerText : null,
+      exportDisabled: exportButton ? exportButton.disabled === true : null,
+      detailCount: view.querySelectorAll('[data-record-detail]').length,
+      text: view.innerText,
+    }
+  })()`)
+}
+
+/** One tab's visible text inside the rendered Decision page. */
+async function decisionViewText(tab) {
+  const selector = `main.weir-da-page section[data-view="${tab}"]`
+  return instance.cdp.evaluate(`(() => { const view=document.querySelector(${JSON.stringify(selector)}); return view ? view.innerText : '' })()`)
+}
+
+/**
+ * The judgment history exactly as the page reads it: this profile's whole
+ * history, with no caller session at all (one optional source filter and a
+ * cursor are the only narrowing the user surface has).
+ */
+async function profileRecords(phase, filter = undefined, cursor = undefined) {
+  const args = {}
+  if (filter !== undefined) args.filter = filter
+  if (cursor !== undefined) args.cursor = cursor
+  const transport = await instance.cdp.evaluate(`window.__decisionQA.decision('records', ${JSON.stringify(args)})`)
+  const service = transport?.value
+  if (!transport || transport.ok !== true || service?.ok === false) throw new Error(`Profile judgment history failed at ${phase}: ${JSON.stringify(service?.error ?? transport?.error ?? transport)}`)
+  const page = service?.ok === true ? service.value : service
+  authoritativeRpc.push({ phase, method: 'records', args: { profile: true, ...args }, transport })
+  writeJson(join(out, 'authoritative-rpc.json'), authoritativeRpc)
+  return page
+}
+
+/**
+ * Choose one source-filter option through the rendered native select. A native
+ * popup cannot be driven over CDP, and the typeahead path needs a unique label
+ * prefix — two sessions of one workspace share a label — so the value is written
+ * through the native setter and a real `change` event is dispatched, which is
+ * exactly the gesture the page's onChange listens for.
+ */
+async function chooseRecordSource(value) {
+  const selector = 'main.weir-da-page section[data-view="records"] select[data-filter="sessionId"]'
+  const options = await instance.cdp.evaluate(`(() => { const el=document.querySelector(${JSON.stringify(selector)}); return el ? [...el.options].map(option => ({ value: option.value, label: option.label })) : null })()`)
+  requireEvidence(Array.isArray(options) && options.some(option => option.value === value), `the source filter offers the authoritative option ${value}: ${JSON.stringify(options)}`)
+  const changed = await instance.cdp.evaluate(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)})
+    if (!el) return false
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, ${JSON.stringify(value)})
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return el.value === ${JSON.stringify(value)}
+  })()`)
+  requireEvidence(changed, `the source filter accepted ${value}`)
+  return { value, options }
+}
+
+/** Press the toolbar's one primary action (apply filters) with real pointer input. */
+async function applyRecordFilter(action) {
+  return pointerActivate(action, 'main.weir-da-page section[data-view="records"] section.weir-da-filters button[data-variant="primary"]')
+}
+
+/** Wait until the page issued its own history read for these exact arguments. */
+async function waitRecordsRead(expected, mark, timeout = 60_000) {
+  return waitFor(async () => {
+    await collectNetwork()
+    return networkRpc.slice(mark).some(entry => entry.method === 'records' && !Object.hasOwn(entry.args ?? {}, 'sessionId') && exactArgs(entry.args ?? {}, expected)) ? true : null
+  }, timeout)
+}
+
+/**
+ * The rendered history must be the Host's page. A mismatch is judged by the
+ * caller's check, so this returns whatever settled instead of throwing.
+ */
+async function waitRecordPageRows(caseIds, timeout = 60_000) {
+  const wanted = caseIds.join(',')
+  return waitFor(async () => {
+    const dom = await recordsDom()
+    return dom && dom.rows.map(row => row.caseId).join(',') === wanted ? dom : null
+  }, timeout).catch(() => recordsDom())
+}
+
+/**
+ * The profile-level judgment history on the real Desktop: one session is
+ * focused, the page lists another session's decided Case with its source
+ * workspace, the source menu offers every source session with its own count, the
+ * filter narrows to one source and comes back, and the list pages on the Host's
+ * cursor.
+ * @param {{mainSession:string,focusedSession:string,remoteSession:string,recordCaseId:string,pageIndex:number}} context
+ */
+async function runRecordsProfileMatrix(context) {
+  const { mainSession, focusedSession, remoteSession, recordCaseId, pageIndex } = context
+  const evidence = { ...context, phases: {} }
+  const save = () => writeJson(join(out, 'records-profile-history.json'), evidence)
+  await openIsolatedSession(focusedSession, true)
+  const focusedBeforeOpen = await instance.cdp.evaluate('window.__decisionQA.getState().activeSessionId')
+  requireEvidence(focusedBeforeOpen === focusedSession, 'the judgment history is opened while the other session is focused')
+  // The page's own reads are captured before this leg's authority read, so the
+  // wire evidence proves what the rendered page sent, not what the driver asked.
+  await collectNetwork()
+  let mark = networkRpc.length
+  await openPage('records')
+  const all = await waitFor(async () => { const dom = await recordsDom(); return dom && dom.rows.length > 0 ? dom : null }, 90_000)
+  await collectNetwork()
+  const wire = networkRpc.slice(mark).filter(entry => entry.method === 'records')
+  const hostPage = await profileRecords('records-profile-all')
+  evidence.phases.all = { hostPage, dom: all, wire, focusedSession }
+  save()
+  await shot('records-profile-all-sources', { kind: 'records-profile-history', rows: all.rows.length, sources: hostPage.sources?.length ?? 0 })
+
+  const sourceLabelOf = sessionId => all.rows.find(row => row.root === sessionId)?.sourceLabel ?? null
+  const rowLabels = Object.fromEntries(all.rows.filter(row => row.root).map(row => [row.root, row.sourceLabel]))
+  const rootSessions = [...new Set(all.rows.map(row => row.root).filter(Boolean))]
+  const foreignRow = all.rows.find(row => row.caseId === recordCaseId) ?? null
+  const historyProblems = recordHistoryProblems(all, hostPage, { forbiddenPath: root })
+  const wireProblems = profileRecordsWireProblems(wire)
+  const noSessionCopy = RECORD_NO_SESSION_COPY.test(all.text)
+  check('recordsHistoryReadsTheWholeProfile', historyProblems.length === 0 && wireProblems.length === 0 && rootSessions.length >= 2 && mainSession !== focusedSession && Boolean(foreignRow) && foreignRow.root === mainSession && foreignRow.sourceLabel.length > 0 && !noSessionCopy, { problems: historyProblems, wireProblems, focusedSession, rowSessions: rootSessions.length, foreignRow, sourceCounts: hostPage.sources, noSessionCopy })
+
+  const mainLabel = sourceLabelOf(mainSession)
+  const focusedLabel = sourceLabelOf(focusedSession)
+  const remoteLabel = sourceLabelOf(remoteSession)
+  const labelProblems = []
+  if (!mainLabel || !focusedLabel || !remoteLabel) labelProblems.push(`an expected source workspace label is missing: ${JSON.stringify({ mainLabel, focusedLabel, remoteLabel })}`)
+  else {
+    if (mainLabel !== focusedLabel) labelProblems.push(`two sessions of one workspace render different source labels: ${JSON.stringify(mainLabel)} vs ${JSON.stringify(focusedLabel)}`)
+    if (remoteLabel === mainLabel) labelProblems.push(`the second source workspace renders the same label as the first: ${JSON.stringify(remoteLabel)}`)
+  }
+  for (const [sessionId, label] of Object.entries(rowLabels)) {
+    if (!label) labelProblems.push(`a row of ${sessionId} carries no source workspace`)
+    else if (label.includes(sessionId)) labelProblems.push(`a row of ${sessionId} labels its source with the raw session id`)
+    else if (label.includes(root)) labelProblems.push(`a row of ${sessionId} leaks the isolated root path into its label`)
+  }
+  check('recordsRowNamesItsSourceWorkspace', labelProblems.length === 0 && rowLabels[mainSession] === mainLabel && rowLabels[remoteSession] === remoteLabel, { problems: labelProblems, labels: rowLabels, mainLabel, focusedLabel, remoteLabel })
+
+  const menuProblems = recordSourceMenuProblems(all.sourceMenu, hostPage.sources, { rowLabels })
+  const countsMatch = (hostPage.sources ?? []).every(source => Number.isInteger(source.count) && source.count > 0)
+  check('recordsSourceMenuOffersEverySessionWithItsCount', menuProblems.length === 0 && countsMatch && (hostPage.sources ?? []).length >= 2 && (hostPage.sources ?? []).some(source => source.sessionId === mainSession) && (hostPage.sources ?? []).some(source => source.sessionId === focusedSession), { problems: menuProblems, menu: all.sourceMenu, sources: hostPage.sources })
+
+  // One source session at a time: the page narrows on `filter.sessionId` alone.
+  // The authority is read first and the network log flushed, so the `records`
+  // request this leg waits for can only be the page's own read.
+  const mainPage = await profileRecords('records-profile-source-main', { sessionId: mainSession })
+  await collectNetwork()
+  mark = networkRpc.length
+  const chosenMain = await chooseRecordSource(mainSession)
+  await applyRecordFilter('Apply the main source filter')
+  await waitRecordsRead({ filter: { sessionId: mainSession } }, mark)
+  const filteredMain = await waitRecordPageRows(mainPage.records.map(record => record.caseId))
+  const mainProblems = recordHistoryProblems(filteredMain, mainPage, { filterSessionId: mainSession, forbiddenPath: root })
+  const menuValue = filteredMain.sourceMenu?.value ?? null
+  evidence.phases.sourceMain = { hostPage: mainPage, dom: filteredMain, chosen: chosenMain, menuValue }
+  save()
+  await shot('records-profile-source-main', { kind: 'records-profile-source-filter', sessionId: mainSession, rows: filteredMain.rows.length })
+  check('recordsSourceFilterNarrowsToOneSession', mainProblems.length === 0 && menuValue === mainSession && filteredMain.rows.length === mainPage.records.length && filteredMain.rows.length > 0 && filteredMain.rows.every(row => row.root === mainSession), { problems: mainProblems, menuValue, rows: filteredMain.rows.length, hostRows: mainPage.records.length, sessionId: mainSession, sourceRow: filteredMain.rows[0] ?? null })
+
+  // The other workspace's source session: its own label and its own Case only.
+  const remotePage = await profileRecords('records-profile-source-remote', { sessionId: remoteSession })
+  await collectNetwork()
+  mark = networkRpc.length
+  await chooseRecordSource(remoteSession)
+  await applyRecordFilter('Apply the other workspace source filter')
+  await waitRecordsRead({ filter: { sessionId: remoteSession } }, mark)
+  const filteredRemote = await waitRecordPageRows(remotePage.records.map(record => record.caseId))
+  const remoteProblems = recordHistoryProblems(filteredRemote, remotePage, { filterSessionId: remoteSession, forbiddenPath: root })
+  evidence.phases.sourceRemote = { hostPage: remotePage, dom: filteredRemote }
+  save()
+  await shot('records-profile-source-remote', { kind: 'records-profile-source-filter', sessionId: remoteSession, rows: filteredRemote.rows.length })
+  check('recordsSourceFilterKeepsOtherWorkspacesDistinct', remoteProblems.length === 0 && filteredRemote.rows.length === remotePage.records.length && filteredRemote.rows.length > 0 && filteredRemote.rows.every(row => row.root === remoteSession) && filteredRemote.rows[0].sourceLabel === remoteLabel && remoteLabel !== mainLabel, { problems: remoteProblems, rows: filteredRemote.rows.length, hostRows: remotePage.records.length, sessionId: remoteSession, label: filteredRemote.rows[0]?.sourceLabel ?? null, mainLabel })
+
+  // Back to every source: the whole profile again, in the Host's order.
+  const restoredPage = await profileRecords('records-profile-all-again')
+  await collectNetwork()
+  mark = networkRpc.length
+  await chooseRecordSource('')
+  await applyRecordFilter('Restore every source')
+  await waitRecordsRead({ filter: {} }, mark)
+  const restored = await waitRecordPageRows(restoredPage.records.map(record => record.caseId))
+  const restoredProblems = recordHistoryProblems(restored, restoredPage, { forbiddenPath: root })
+  const restoredSessions = [...new Set(restored.rows.map(row => row.root).filter(Boolean))]
+  evidence.phases.restored = { hostPage: restoredPage, dom: restored }
+  save()
+  check('recordsSourceFilterRestoresEverySession', restoredProblems.length === 0 && restored.rows.length === restoredPage.records.length && restoredSessions.length === rootSessions.length && restored.sourceMenu?.value === '' && restoredSessions.includes(mainSession) && restoredSessions.includes(focusedSession), { problems: restoredProblems, rows: restored.rows.length, hostRows: restoredPage.records.length, menuValue: restored.sourceMenu?.value ?? null, rowSessions: restoredSessions.length, hostSources: restoredPage.sources?.length ?? 0 })
+
+  // A record detail is not session-bound either: open another session's Case
+  // while this one stays focused, and compare the whole projection.
+  await openRecord(mainSession, recordCaseId)
+  const crossSession = await compareRecord(mainSession, 'records-profile-cross-session', recordCaseId, true)
+  check('recordsCrossSessionDetailMatchesAuthority', crossSession.authority.case.rootSessionId === mainSession && mainSession !== focusedSession, { caseId: recordCaseId, rootSessionId: crossSession.authority.case?.rootSessionId ?? null, focusedSession })
+
+  // The records list shows the Host's own page (50 rows). This matrix's history
+  // stays shorter than that, so the same auto-route fixture that proves routing
+  // pagination continues past it (each extra marker is a real Desktop judgment of
+  // the focused session) and the list's own paging is then driven.
+  await openIsolatedSession(focusedSession, true)
+  const beforeGrowth = await profileRecords('records-profile-before-growth')
+  const total = (beforeGrowth.sources ?? []).reduce((sum, source) => sum + (Number.isInteger(source.count) ? source.count : 0), 0)
+  const grown = { created: [], index: pageIndex, totalBefore: total }
+  while (total + grown.created.length < 51 && grown.index < pageIndex + 24) {
+    const suffix = String(grown.index).padStart(2, '0')
+    await submitMarker(instance, `GUI_AUTO_PAGE_${suffix}`)
+    const decided = await waitCase(focusedSession, `gui-auto-page-${suffix}`, value => value.state === 'closed')
+    grown.created.push(decided.caseId)
+    grown.index += 1
+  }
+  requireEvidence(grown.created.length > 0, 'the history grew by real auto-routed decisions before the page boundary')
+  const hostFirst = await profileRecords('records-profile-page-one')
+  requireEvidence(typeof hostFirst.nextCursor === 'string' && hostFirst.nextCursor.length > 0, 'the grown history crosses one Host page')
+  const hostSecond = await profileRecords('records-profile-page-two', undefined, hostFirst.nextCursor)
+  await collectNetwork()
+  mark = networkRpc.length
+  await openPage('records')
+  await applyRecordFilter('Reload the grown history')
+  await waitRecordsRead({ filter: {} }, mark)
+  const firstDom = await waitRecordPageRows(hostFirst.records.map(record => record.caseId))
+  evidence.phases.pagination = { grown, hostFirst, hostSecond, dom: firstDom }
+  save()
+  await shot('records-profile-page-one', { kind: 'records-profile-history-page', rows: firstDom.rows.length })
+  const firstProblems = recordHistoryProblems(firstDom, hostFirst, { forbiddenPath: root })
+  check('recordsPaginationFollowsTheHostCursor', firstProblems.length === 0 && firstDom.loadMore.present === true && firstDom.loadMore.disabled === false && firstDom.rows.length === hostFirst.records.length, { problems: firstProblems, loadMore: firstDom.loadMore, rows: firstDom.rows.length, hostRows: hostFirst.records.length, nextCursor: hostFirst.nextCursor, grown: grown.created.length })
+  await pointerActivate('Load the next history page', '.weir-da-record-list [data-load-more]')
+  const appended = await waitFor(async () => {
+    const dom = await recordsDom()
+    return dom && dom.rows.length > hostFirst.records.length ? dom : null
+  }, 60_000).catch(() => recordsDom())
+  const firstIds = hostFirst.records.map(record => record.caseId)
+  const appendedIds = (hostSecond.records ?? []).map(record => record.caseId)
+  const renderedIds = appended.rows.map(row => row.caseId)
+  evidence.phases.paginationAppended = { dom: appended, firstIds, appendedIds }
+  save()
+  await shot('records-profile-page-two', { kind: 'records-profile-history-page', rows: appended.rows.length })
+  check('recordsPaginationAppendsTheHostsNextPage', renderedIds.length > firstIds.length && renderedIds.slice(0, firstIds.length).join(',') === firstIds.join(',') && renderedIds.slice(firstIds.length).join(',') === appendedIds.join(',') && new Set(renderedIds).size === renderedIds.length && appended.rows.every(row => row.sourceLabel.length > 0), { rows: renderedIds.length, first: firstIds.length, appended: appendedIds.length, distinct: new Set(renderedIds).size })
+  return { hostFirst, hostSecond, grown, totalBefore: total }
+}
+
+/**
+ * The same user surface with no focused session at all: after a real restart the
+ * Decisions panel is opened before any session is focused, so the profile's
+ * history, its detail and the session-scoped export/metrics states are read as
+ * rendered.
+ * @param {{owningSession:string,restartCaseId:string}} context
+ */
+async function runSessionlessRecordsMatrix(context) {
+  const { owningSession, restartCaseId } = context
+  const before = await instance.cdp.evaluate('window.__decisionQA.getState()')
+  const composer = await instance.cdp.evaluate(`Boolean([...document.querySelectorAll('textarea,[contenteditable="true"]')].find(el => el.offsetParent !== null))`)
+  const evidence = { owningSession, restartCaseId, before, composer }
+  const save = () => writeJson(join(out, 'records-sessionless.json'), evidence)
+  save()
+  check('sessionlessDesktopStartsWithoutFocusedSession', before.activeSessionId === null && composer === false, { activeSessionId: before.activeSessionId ?? null, activePanelId: before.activePanelId ?? null, composer })
+
+  const mark = networkRpc.length
+  await openPage('records')
+  const hostPage = await profileRecords('records-sessionless-all')
+  const listed = await waitFor(async () => { const dom = await recordsDom(); return dom && dom.rows.length > 0 ? dom : null }, 90_000)
+  await openDisclosure('weir-da-records-advanced')
+  const withExport = await recordsDom()
+  await collectNetwork()
+  const wire = networkRpc.slice(mark)
+  const historyProblems = recordHistoryProblems(withExport, hostPage, { forbiddenPath: root })
+  const wireProblems = profileRecordsWireProblems(wire)
+  const sessionlessProblems = noSessionHistoryProblems(withExport, { expectedCaseIds: [restartCaseId] })
+  evidence.listed = { hostPage, dom: withExport, wire, problems: historyProblems, wireProblems, sessionlessProblems }
+  save()
+  await shot('records-sessionless-history', { kind: 'records-sessionless-history', rows: withExport.rows.length, sources: hostPage.sources?.length ?? 0 })
+  check('recordsSessionlessPageListsTheProfileHistory', historyProblems.length === 0 && wireProblems.length === 0 && sessionlessProblems.length === 0 && withExport.detailCount === 0, { problems: [...historyProblems, ...wireProblems, ...sessionlessProblems], rows: withExport.rows.length, hostRows: hostPage.records.length, restartCaseId, sources: hostPage.sources })
+
+  const exportProblems = sessionlessExportProblems(withExport)
+  check('recordsSessionlessExportNeedsSession', exportProblems.length === 0, { problems: exportProblems, disabled: withExport.exportDisabled, hint: withExport.exportHint })
+
+  await openPage('metrics')
+  const metricsText = await decisionViewText('metrics')
+  const metricsGone = await instance.cdp.evaluate('!document.querySelector("section[data-view=metrics] [data-metrics-view]") && !document.querySelector("section[data-view=metrics] section[data-routing-review]")')
+  const metricsProblems = sessionlessMetricsProblems(metricsText)
+  evidence.metrics = { metricsText, metricsGone, problems: metricsProblems }
+  save()
+  await shot('records-sessionless-metrics', { kind: 'records-sessionless-metrics' })
+  check('recordsSessionlessMetricsNeedSession', metricsProblems.length === 0 && metricsGone === true, { problems: metricsProblems, metricsText, metricsGone })
+
+  await openPage('agents')
+  const agentsText = await decisionViewText('agents')
+  const assistantProblems = sessionlessAssistantProblems(agentsText)
+  evidence.agents = { agentsText, problems: assistantProblems }
+  save()
+  check('recordsSessionlessAssistantTabKeepsItsOwnExplanation', assistantProblems.length === 0, { problems: assistantProblems, agentsText })
+
+  await openPage('records')
+  const listedAgain = await waitFor(async () => { const dom = await recordsDom(); return dom && dom.rows.length > 0 ? dom : null }, 90_000)
+  const caseId = listedAgain.rows.find(row => row.caseId === restartCaseId)?.caseId ?? listedAgain.rows[0].caseId
+  await keyboardActivate('Open a judgment record without a focused session', `.weir-da-record-list [data-case-id="${caseId}"]`)
+  const opened = await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('[data-record-detail=${JSON.stringify(caseId)}]'))`), 30_000).catch(() => false)
+  const detail = await compareRecord(owningSession, 'records-sessionless-detail', caseId, true)
+  evidence.detail = { caseId, opened, rootSessionId: detail.authority.case?.rootSessionId ?? null }
+  save()
+  await shot('records-sessionless-detail', { kind: 'records-sessionless-detail', caseId })
+  check('recordsSessionlessDetailMatchesAuthority', opened === true && detail.authority.case?.caseId === caseId, { caseId, opened, rootSessionId: detail.authority.case?.rootSessionId ?? null, restartCaseId })
+}
+
 async function feedback(sessionId, caseId, verb) {
   await keyboardActivate(`Apply feedback ${verb}`, `[data-record-detail="${caseId}"] [data-feedback="${verb}"]`)
   const expected = { rating_up: 'validated', rating_down: 'disputed', undo_rating_up: 'none', undo_rating_down: 'none' }[verb]
@@ -2245,6 +2578,9 @@ async function runPendingOverviewMatrix(primary) {
   await shot('24d-pending-undelivered-notice')
   const settled = await rpc(remoteSession, 'pending-overview-settled', 'inbox')
   check('pendingOverviewLeavesNoPendingFixture', settled.length === baseline, { baseline, remaining: settled.map(item => item.caseId) })
+  // The two workspaces stay reachable for the profile-level judgment history,
+  // which needs a source session outside the focused session's workspace.
+  return { localSession, remoteSession, cases }
 }
 
 // Run JxliG6 regression anchor: the long native question outlives the inbox decision that
@@ -4716,8 +5052,10 @@ async function runSelectorZoomMatrix(sessionId) {
 async function runExportSurfaceAcceptance(sessionId, phase = 'GUI-decision-export') {
   if (process.env.WEIR_DECISION_PRODUCT_EXPORT !== '1') return null
   const evidence = { phase, sessionId }
-  // The export is scoped to one workspace, so bind the page to that workspace's
-  // own session first; a page without a session renders no records at all.
+  // The export is scoped to one workspace, so the page is bound to that
+  // workspace's own session before the advanced area is read: the list itself
+  // lists the whole profile, but the export needs the focused session to derive
+  // its scope (a page without one disables the entry instead).
   await openDecisionPageForSession(sessionId, 'export-surface', 'records')
   await openDisclosure('weir-da-records-advanced')
   const action = await waitFor(() => instance.cdp.evaluate(`(() => {
@@ -5228,7 +5566,7 @@ try {
   // across two workspaces, a cross-workspace ruling with its delivery, and the
   // undelivered-ruling notice. It starts from a clean pending set, so it runs
   // before the P4 matrix leaves its own pending fixture behind.
-  await runPendingOverviewMatrix(primary)
+  const pendingOverview = await runPendingOverviewMatrix(primary)
   await runEnglishVisualMatrix(sessionId)
   await openPage('metrics')
   await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("[data-metrics-view]"))'), 30_000)
@@ -5289,6 +5627,18 @@ try {
   // before the restart legs, so the restart reads the accepted edit back.
   const candidateEdit = await runCandidateEditMatrix(sessionId, primary, publishedV1)
   const p4State = await runP4BeforeRestart(sessionId, primary, secondary)
+  // decision-records-profile-history 9.2-9.3: the records page is read while one
+  // session is focused, yet it lists another session's decided Case with its
+  // source workspace, offers every source session with its own count, narrows to
+  // one source and pages on the Host's cursor.
+  const recordsProfile = await runRecordsProfileMatrix({
+    mainSession: sessionId,
+    focusedSession: p4State.autoSession,
+    remoteSession: pendingOverview.remoteSession,
+    recordCaseId: learned.caseId,
+    pageIndex: p4Evidence.pageCases.length + 1,
+  })
+  writeJson(join(out, 'records-profile-summary.json'), { totalBefore: recordsProfile.totalBefore, created: recordsProfile.grown.created.length, firstPage: recordsProfile.hostFirst.records.length, secondPage: recordsProfile.hostSecond.records.length, sources: recordsProfile.hostFirst.sources })
   const beforeRestart = { agent: rejectedV3.agent, run: rejectedV3.run, snapshot: rejectedV3.snapshot, learned: learnedDetail, candidateEdit: candidateEdit.publishedSnapshot.snapshotId, selector: await rpc(sessionId, 'before-restart', 'overview') }
   writeJson(join(out, 'before-restart.json'), beforeRestart)
   const scanBefore = await scanSession(sessionId, 'session-before-restart.json')
@@ -5331,6 +5681,12 @@ try {
   await stopOwned('process-2')
   instance = await startDesktop(true)
   await installUiuxInstrumentation()
+  // decision-records-profile-history 9.3: a restarted Desktop starts on the
+  // workspace picker with no focused session, so the panel is opened from the
+  // sidebar before any session is focused — the history still lists the profile's
+  // Cases, its detail still opens, and only the session-scoped export and metrics
+  // say what they need.
+  await runSessionlessRecordsMatrix({ owningSession: p4State.autoSession, restartCaseId: p4Evidence.interrupted.case.caseId })
   await openSession(instance, sessionId)
   const restartedRun = await rpc(sessionId, 'restart', 'learningRun', { learningRunId: rejectedV3.run.learningRunId })
   const restartedSnapshot = await rpc(sessionId, 'restart', 'memorySnapshot', { snapshotId: rejectedV3.snapshot.snapshotId })
