@@ -114,9 +114,7 @@ window.__ModuleLoader__.load({
       const triggerLabel = view.unavailable ? `${triggerText} · ${t("decisionSelectionUnavailable")}` : triggerText;
       const optionRow = option => {
         const label = option.labelKey ? t(option.labelKey) : option.label;
-        const description = option.descriptionKey
-          ? t(option.descriptionKey).replace(/\{count\}/g, String(option.auto?.answerClasses.length ?? 0))
-          : "";
+        const description = option.descriptionKey ? t(option.descriptionKey) : "";
         return jsx.jsxs("label", {
           className: "weir-da-selector-option", "data-selected": view.selected === option.value,
           children: [

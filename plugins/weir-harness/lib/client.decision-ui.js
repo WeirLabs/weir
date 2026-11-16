@@ -1016,6 +1016,7 @@ window.__ModuleLoader__.load({
         return jsx.jsxs("li", { children: [
           jsx.jsx("strong", { children: `${t(item?.modeKey ?? "decisionRouteModeUnknown")} · ${t(item?.statusKey ?? "decisionStatusUnknown")}` }, "status"),
           item?.choiceName ? jsx.jsx("span", { children: item.choiceName }, "choice") : null,
+          item?.failureReasonKey ? jsx.jsx("span", { className: "weir-da-caption", "data-route-failure-reason": true, children: t(item.failureReasonKey) }, "failure-reason") : null,
           item?.mode === "manual_reassign" ? jsx.jsx("span", { className: "weir-da-caption", children: `${t("decisionRoutingDirection")}: ${item.fromName ?? t("decisionNoAssignedAgent")} → ${item.toName ?? t("decisionNoAssignedAgent")}` }, "direction") : null,
           time ? jsx.jsx("time", { dateTime: item.createdAt, children: time }, "time") : null,
         ] }, item?.routeDecisionId ?? index);

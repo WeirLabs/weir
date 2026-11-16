@@ -123,7 +123,6 @@ describe('client.settings-page chunk', () => {
       DisabledCategoriesEditorField: (props) => ({ __disabledCategoriesEditor: props }),
       LspManagerField: (props) => ({ __lspPanel: props }),
       NotifyPermissionsField: (props) => ({ __notifyPermissions: props }),
-      ClassSetEditorField: (props) => ({ __classSetEditor: props }),
       EditLockMaintenanceField: (props) => ({ __editLockMaintenance: props }),
     }
     return { definition, exports, editors, specsSeen, reactStub, reactState, reactEffects, primitivesStub }
@@ -149,7 +148,6 @@ describe('client.settings-page chunk', () => {
       ['lib/client.robash-model.js', undefined],
       ['lib/client.lsp-model.js', undefined],
       ['lib/client.disabled-categories-editor.js', chunkRequire],
-      ['lib/client.decision-class-editor.js', chunkRequire],
       ['lib/client.notify-permissions.js', chunkRequire],
     ]) {
       slices.push(await loadClientChunk(spec, ...(stub ? [stub] : [])))
@@ -162,7 +160,7 @@ describe('client.settings-page chunk', () => {
     return dicts
   }
 
-  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentSelectorDefault','decisionAgentAutoAnswerClasses','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentRetentionDays','decisionAgentAutoShadow','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
+  const FIELD_NAMES = ['intentGateClassifier','intentGateProvider','intentGateModel','intentGateReasoningEffort','intentGateTimeoutMs','jevEndpoint','jevModel','jevApiKeyEnv','delegateCategoryChains','delegateDisabledCategories','delegateAgentChains','supervisionMaxRetries','supervisionInitialBackoffMs','supervisionMaxBackoffMs','todoEnabled','todoMaxConsecutive','todoErrorRetryMax','guardEnabled','guardSoftThreshold','guardHardThreshold','decisionAgentsEnabled','decisionAgentSelectorDefault','decisionAgentAutoAnswer','decisionAgentAnswerTimeoutMs','decisionAgentMaxAttemptsPerCase','decisionAgentContextBudgetTokens','decisionAgentMaxOutputTokens','decisionAgentMaxConcurrentAttempts','decisionAgentRetentionDays','decisionAgentAutoShadow','hashlineHideStockEdit','worktreeEnabled','worktreeAutoSetup','worktreeMaxActive','worktreeRoot','worktreeWatchTimeoutMinutes','worktreeAutoApprove','robashEnabled','robashAllow','robashGitAllow','robashDeny','robashPwshAllow','robashPwshDeny','lspEnabled','lspServers','notifyEnabled','notifyOnComplete','notifyOnAttention','notifyMinTurnSeconds','notifySound','notifyForeground']
 
   const MAIN_GROUPS = ['intent', 'todo', 'guard', 'editing', 'worktree', 'robash', 'lsp', 'notify']
   const ROUTING_GROUPS = ['routingCategories', 'routingAgents', 'routingSupervision']
@@ -310,7 +308,7 @@ describe('client.settings-page chunk', () => {
     expect(basics.fields).toEqual([
       { field: 'decisionAgentsEnabled', kind: 'boolean' },
       { field: 'decisionAgentSelectorDefault', kind: 'enum', values: ['off', 'auto'], parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
-      { field: 'decisionAgentAutoAnswerClasses', kind: 'custom', slot: 'classSet', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
+      { field: 'decisionAgentAutoAnswer', kind: 'boolean', parent: 'decisionAgentsEnabled', when: { key: 'decisionAgentsEnabled', equals: true } },
     ])
     expect(advanced.page).toBe('decision')
     expect(advanced.advanced).toBe(true)
@@ -328,7 +326,7 @@ describe('client.settings-page chunk', () => {
     let cards = cardsOf(render())
     expect(Object.keys(cards)).toEqual(DECISION_GROUPS)
     // the basics rows render their three simplified entries in order
-    expect(rowKeys(cards, 'decisionBasics')).toEqual(['decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoAnswerClasses'])
+    expect(rowKeys(cards, 'decisionBasics')).toEqual(['decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoAnswer'])
     // advanced: folded by default — one toggle, no body mounted
     const foldedCard = cards.decisionAdvanced
     expect(foldedCard.children).toHaveLength(1)
@@ -379,30 +377,23 @@ describe('client.settings-page chunk', () => {
     expect(Object.keys(unset)).toEqual(['decisionBasics'])
   })
 
-  it('renders the Auto whitelist row through the A/B/C chip editor with its form wiring', async () => {
+  it('renders the answer switch as one boolean row with its form wiring', async () => {
     const { exports, editors } = await loadPage()
-    // the closed class set is declared once and exported for the parity pin
-    expect(exports.CLASS_SET_ROWS).toEqual(['A', 'B', 'C'])
+    // The A/B/C chip editor is gone: the answer permission is one switch.
+    expect(exports.CLASS_SET_ROWS).toBe(undefined)
     const edits = []
-    const resets = []
     const rendered = renderCard(exports, editors, {
-      fields: makeFields({ decisionAgentsEnabled: { text: 'true' }, decisionAgentAutoAnswerClasses: { text: '["A"]', overridden: true } }),
+      fields: makeFields({ decisionAgentsEnabled: { text: 'true' }, decisionAgentAutoAnswer: { text: 'true', overridden: true } }),
       env: { status: 'ready', facts: { platform: 'darwin' } },
-    }, { page: 'decision', edit: (name, text) => edits.push([name, text]), resetField: (name) => resets.push(name) })
-    const row = findAll(rendered.children, (node) => node.__type === editors.ClassSetEditorField)
-    expect(row).toHaveLength(1)
-    expect(row[0].field).toBe('decisionAgentAutoAnswerClasses')
-    expect(row[0].rows).toEqual(['A', 'B', 'C'])
-    expect(row[0].text).toBe('["A"]')
-    expect(row[0].overridden).toBe(true)
-    expect(row[0].disabled).toBe(false)
-    expect(typeof row[0].edit).toBe('function')
-    expect(typeof row[0].onReset).toBe('function')
-    expect(typeof row[0].t).toBe('function')
-    row[0].edit('decisionAgentAutoAnswerClasses', '["B"]')
-    expect(edits).toEqual([['decisionAgentAutoAnswerClasses', '["B"]']])
-    row[0].onReset()
-    expect(resets).toEqual(['decisionAgentAutoAnswerClasses'])
+    }, { page: 'decision', edit: (name, text) => edits.push([name, text]) })
+    const controls = findAll(rendered.children, (node) => node && typeof node === 'object' && node.kind === 'boolean')
+    expect(Array.isArray(controls)).toBe(true)
+    // The row is present in the rendered card text and the field edits through
+    // the shared boolean control (no JSON box, no chips).
+    // The row renders through the shared boolean control: the field name and
+    // its hint are the only copy, and no edit happens on render.
+    expect(JSON.stringify(rendered)).toContain('decisionAgentAutoAnswer')
+    expect(edits).toEqual([])
   })
 
   it('saves staged advanced rows while the fold is closed — the fold is not a form boundary', async () => {
@@ -1060,12 +1051,13 @@ describe('client.settings-page chunk', () => {
     expect(Object.keys(FIELD_DEFAULTS).sort()).toEqual(Object.keys(SERVER_FIELD_DEFAULTS).sort())
     expect(FIELD_DEFAULTS).toEqual(SERVER_FIELD_DEFAULTS)
     // BOOLEAN_DEFAULTS is the derived boolean subset — exactly the previous
-    // hand-maintained literal plus the Decision master and Shadow switches (13 entries).
+    // hand-maintained literal plus the Decision master, Shadow and answer switches (14 entries).
     expect(BOOLEAN_DEFAULTS).toEqual({
       todoEnabled: true,
       guardEnabled: true,
       decisionAgentsEnabled: false,
       decisionAgentAutoShadow: false,
+      decisionAgentAutoAnswer: false,
       hashlineHideStockEdit: true,
       worktreeEnabled: true,
       worktreeAutoSetup: true,
@@ -1471,7 +1463,7 @@ describe('client.settings-page chunk', () => {
     const decisionFields = exports.fieldsForPage('decision').map((descriptor) => descriptor.field)
     expect([...mainFields, ...exports.fieldsForPage('routing').map((descriptor) => descriptor.field), ...decisionFields].sort())
       .toEqual(exports.FIELDS.map((descriptor) => descriptor.field).sort())
-    expect(decisionFields).toEqual(['decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoAnswerClasses', ...DECISION_ADVANCED_FIELD_NAMES])
+    expect(decisionFields).toEqual(['decisionAgentsEnabled', 'decisionAgentSelectorDefault', 'decisionAgentAutoAnswer', ...DECISION_ADVANCED_FIELD_NAMES])
     expect(mainFields.some((field) => ROUTING_FIELD_NAMES.includes(field))).toBe(false)
     controller.dispose()
   })
@@ -1719,12 +1711,6 @@ describe('client.settings-page chunk', () => {
       for (const key of ['disabledCategoriesCount', 'disabledCategoriesPanelHint', 'disabledCategoriesInvalid']) {
         expectResolved(dict, key)
       }
-      // the A/B/C whitelist editor's own summary/invalid copy resolves too
-      // (its {classes} placeholder stays for the locale's vars interpolation)
-      for (const key of ['decisionClassNone', 'decisionClassCount', 'decisionClassInvalid']) {
-        expectResolved(dict, key)
-      }
-      expect(dict.decisionClassCount).toContain('{classes}')
       // the LSP manager's malformed-JSON hint resolves too (the folded
       // lspServers row's error state)
       for (const key of ['lspManagerInvalidJson']) {

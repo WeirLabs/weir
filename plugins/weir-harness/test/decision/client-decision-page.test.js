@@ -1231,8 +1231,9 @@ test('assistant edit keeps simple fields primary and edits scope and model route
   // rendered as an editable scope list
   assert.deepEqual(findAll(advancedTree, node => node['data-scope-path']).map(node => node.value), ['src'])
   assert.deepEqual(findAll(advancedTree, node => node['data-scope-tag']).map(node => node.value), [])
-  assert.deepEqual(findAll(advancedTree, node => node['data-scope-class']).map(node => [node['data-scope-class'], node['aria-pressed']]), [['A', true], ['B', true], ['C', false]])
-  assert.equal(findAll(advancedTree, node => node['data-scope-class-minimum'] === true).length, 1)
+  // The retired authorization-class chips are gone from the assistant editor.
+  assert.equal(findAll(advancedTree, node => node['data-scope-class'] !== undefined).length, 0)
+  assert.equal(findAll(advancedTree, node => node['data-scope-class-minimum'] === true).length, 0)
   // the route is one ordered rung per stored chain entry, edited through the
   // fallback inputs because the picker chunk has not arrived in this harness
   const rungs = findAll(advancedTree, node => node['data-route-index'] !== undefined && node['data-route-index'] === 0)
@@ -1242,17 +1243,11 @@ test('assistant edit keeps simple fields primary and edits scope and model route
   assert.equal(findAll(advancedTree, node => node['data-route-effort']).map(node => node.value)[0], 'low')
   assert.equal(findAll(advancedTree, node => node['data-route-incomplete'] === true).length, 0)
   assert.equal(findAll(advancedTree, node => node['data-route-empty'] === true).length, 0)
-  // add a tag and switch C on; drop A
+  // add a tag
   findAll(advancedTree, node => node['data-scope-add-tag'] === true)[0].onClick()
   editor = currentAgentEditor(harness)
   let scopeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
   findAll(scopeTree, node => node['data-scope-tag'])[0].onChange({ target: { value: 'copy' } })
-  editor = currentAgentEditor(harness)
-  scopeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
-  findAll(scopeTree, node => node['data-scope-class'] === 'C')[0].onClick()
-  editor = currentAgentEditor(harness)
-  scopeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
-  findAll(scopeTree, node => node['data-scope-class'] === 'A')[0].onClick()
   // change the first rung's model
   editor = currentAgentEditor(harness)
   let routeTree = findAll(editor, node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
@@ -1261,8 +1256,8 @@ test('assistant edit keeps simple fields primary and edits scope and model route
   await harness.flush()
   assert.deepEqual(calls, [{
     agentId: 'ag_a', name: 'Tone editor', userDescription: 'Prefer concise copy',
-    // workspaces dropped; class order canonical
-    scope: { paths: ['src'], tags: ['copy'], authorizationClasses: ['B', 'C'] },
+    // paths/tags only: no workspace and no legacy class field
+    scope: { paths: ['src'], tags: ['copy'] },
     modelRoute: { chain: [{ provider: 'deepseek', model: 'model-b', reasoningEffort: 'low' }] },
   }])
   harness.unmount()
@@ -1294,14 +1289,14 @@ test('assistant scope editor keeps empty rows local and never writes workspaces'
   await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
   await harness.flush()
   assert.equal(calls.length, 1)
-  assert.deepEqual(calls[0].scope, { paths: ['src/decision'], authorizationClasses: ['A', 'B', 'C'] })
+  assert.deepEqual(calls[0].scope, { paths: ['src/decision'] })
   assert.equal('tags' in calls[0].scope, false)
   assert.equal('workspaces' in calls[0].scope, false)
   assert.equal('modelRoute' in calls[0], false, 'an untouched empty route inherits the session model')
   harness.unmount()
 })
 
-test('assistant scope editor refuses to release the last authorization class', async () => {
+test('assistant scope editor writes no authorization class at all', async () => {
   const calls = []
   const harness = await createPageHarness({ actions: {
     agents: async () => [assistantDetail], inbox: async () => [], agent: async () => ({ ...assistantDetail, learningRuns: [], snapshots: [], currentSnapshotId: null }), records: async () => ({ records: [], nextCursor: null }), metrics: async () => ({}),
@@ -1313,22 +1308,15 @@ test('assistant scope editor refuses to release the last authorization class', a
   await harness.flush()
   findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'edit-agent')[0].onClick()
   const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
-  const chips = () => findAll(advancedTree(), node => node['data-scope-class'])
-  // stored A+B: release A, then B — the last one cannot be released
-  findAll(advancedTree(), node => node['data-scope-class'] === 'A')[0].onClick()
-  findAll(advancedTree(), node => node['data-scope-class'] === 'B')[0].onClick()
-  const last = chips().filter(chip => chip['aria-pressed'])[0]
-  assert.equal(last['data-scope-class'], 'B')
-  assert.equal(last['aria-disabled'], true)
-  last.onClick()
-  assert.deepEqual(chips().filter(chip => chip['aria-pressed']).map(chip => chip['data-scope-class']), ['B'], 'the final class stays selected')
+  // A stored legacy class list neither renders as chips nor survives a save.
+  assert.equal(findAll(advancedTree(), node => node['data-scope-class'] !== undefined).length, 0)
   await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
   await harness.flush()
-  assert.deepEqual(calls[0].scope.authorizationClasses, ['B'])
+  assert.equal(Object.hasOwn(calls[0].scope, 'authorizationClasses'), false)
   harness.unmount()
 })
 
-test('assistant scope editor keeps an explicitly empty class set empty', async () => {
+test('assistant scope editor keeps a legacy empty class scope clean on save', async () => {
   const emptyClasses = { ...assistantDetail, scope: { authorizationClasses: [] }, modelRoute: { chain: [] } }
   const calls = []
   const harness = await createPageHarness({ actions: {
@@ -1341,15 +1329,14 @@ test('assistant scope editor keeps an explicitly empty class set empty', async (
   await harness.flush()
   findAll(harness.render(), node => node.type === harness.ui.Button && node['data-action'] === 'edit-agent')[0].onClick()
   const advancedTree = () => findAll(currentAgentEditor(harness), node => node.type === harness.ui.Disclosure && node.label === 'decisionAdvancedSettings')[0].children()
-  // an explicit empty class list is the stored truth (this assistant answers
-  // nothing): it must not open as "all classes selected", and an unrelated row
-  // edit must not silently grant classes
-  assert.deepEqual(findAll(advancedTree(), node => node['data-scope-class']).map(node => [node['data-scope-class'], node['aria-pressed']]), [['A', false], ['B', false], ['C', false]])
+  // The stored legacy class scope is ignored: no chips render and no class
+  // field is written back on an unrelated row edit.
+  assert.equal(findAll(advancedTree(), node => node['data-scope-class'] !== undefined).length, 0)
   findAll(advancedTree(), node => node['data-scope-add-path'] === true)[0].onClick()
   findAll(advancedTree(), node => node['data-scope-path'])[0].onChange({ target: { value: 'src/decision' } })
   await currentAgentEditor(harness).onSubmit({ preventDefault() {} })
   await harness.flush()
-  assert.deepEqual(calls[0].scope, { paths: ['src/decision'], authorizationClasses: [] })
+  assert.deepEqual(calls[0].scope, { paths: ['src/decision'] })
   harness.unmount()
 })
 
@@ -2763,7 +2750,6 @@ test('candidate review saves wording and scope through the Host, rereads authori
   rendered = learningTree(harness)
   findAll(rendered, node => node['data-principle-scope'] === 'path')[1].onChange({ target: { value: 'plugins/weir-harness' } })
   rendered = learningTree(harness)
-  findAll(rendered, node => node['data-principle-class'] === 'B')[0].onClick()
   rendered = learningTree(harness)
   const save = findAll(rendered, node => node['data-principle-action'] === 'save')[0]
   assert.equal(save.disabled, false)
@@ -2773,7 +2759,7 @@ test('candidate review saves wording and scope through the Host, rereads authori
   assert.deepEqual(calls.snapshotUpdate[0], ['ms-candidate', 9, [{
     principleId: 'p_change',
     text: 'Use the reviewed wording',
-    scope: { paths: ['src', 'plugins/weir-harness'], authorizationClasses: ['B'] },
+    scope: { paths: ['src', 'plugins/weir-harness'] },
   }]])
   // The successful write closes the editor and rereads the assistant authoritatively.
   assert.ok(calls.agent > agentReadsBefore, 'the review is reread after a save')

@@ -74,12 +74,12 @@ test('selector projection never guesses Off and pins an unavailable selection ho
   assert.equal(globalOff.globalOff, true)
   assert.equal(globalOff.selected, 'a')
   assert.deepEqual(globalOff.options.map(option => option.value), ['off', 'auto', 'a'])
-  const automatic = model.selectorView({ phase: 'ready', selector: { mode: 'auto', agentId: null }, agents, auto: { answerClasses: [], shadow: false } })
+  const automatic = model.selectorView({ phase: 'ready', selector: { mode: 'auto', agentId: null }, agents, auto: { autoAnswer: false, shadow: false } })
   assert.equal(automatic.selected, 'auto')
   assert.equal(automatic.selectedName, null)
   assert.equal(automatic.unavailable, false)
   assert.equal(automatic.triggerKey, 'decisionAuto')
-  assert.equal(automatic.options[1].descriptionKey, 'decisionAutoEmptyWhitelist')
+  assert.equal(automatic.options[1].descriptionKey, 'decisionAutoAnswerOff')
 })
 
 test('record summaries and card evidence follow the current Attempt only', async () => {
