@@ -469,7 +469,7 @@ test('Decision settings page structure and close are asserted from real DOM attr
   assert.ok(dom.includes('aria-checked') || dom.includes('checked'), 'the switch state is the checked attribute')
   assert.ok(dom.includes("data-advanced-toggle") && dom.includes('aria-expanded'), 'the fold state is the toggle aria-expanded')
   assert.ok(!dom.includes('data-decision-class-set'), 'the retired class-chip container is no longer read')
-  assert.ok(driver.includes('decisionSettingsPageProblems(opened, { masterEnabled: true })'), 'the open page is asserted through the three-row guard')
+  assert.ok(driver.includes('decisionSettingsPageProblems(opened, { masterEnabled: true, autoAnswer })'), 'the open page is asserted through the three-row guard, including the answer switch state')
   assert.ok(driver.includes('decisionSettingsAdvancedProblems(expanded, authority)'), 'the expanded advanced group is asserted against the authority')
   assert.ok(driver.includes('decisionSettingsPageProblems(off, { masterEnabled: false })'), 'the master-off page is asserted to lose the advanced group')
   assert.ok(!driver.includes('document.body.innerText.includes("Auto Shadow'), 'no close assertion relies on the Auto Shadow body text')
@@ -1032,7 +1032,9 @@ test('the accepted candidate edit is driven through the real review and read bac
     assert.ok(at > cursor, `${token} runs in order`)
     cursor = at
   }
-  assert.ok(matrix.includes("edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: { paths: ['src'] } }]"), 'the save carries the reviewed wording and the staged paths')
+  assert.ok(matrix.includes('edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: stagedScope }]'), 'the save carries the reviewed wording and the scope staged through the rendered paths/tags rows')
+  assert.ok(matrix.includes("keyboardActivate('Add a candidate principle scope path'") && matrix.includes("keyboardActivate('Add a candidate principle scope tag'"), 'both scope hints are staged through the rendered add actions')
+  assert.ok(matrix.includes("'the candidate update payload carries paths/tags only'"), 'the wire payload is asserted free of workspaces and class lists')
   assert.ok(matrix.includes("edits: [{ principleId: addedEntry.principleId, remove: true }]"), 'the removal carries only the id and remove')
   assert.ok(matrix.includes('JSON.stringify(editedRun.operations) === JSON.stringify(reviewedRun.operations)'), 'the learning run operations are compared byte-for-byte')
   assert.ok(matrix.includes('JSON.stringify(editedRun.replay) === JSON.stringify(reviewedRun.replay)'), 'the structural replay is compared byte-for-byte')
@@ -1187,7 +1189,9 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
     'shadowOnOffIdenticalActualOutcomeAndHistoryExceptAppendOnlyDiagnostic',
     'routingReviewFirstPageHasExactlyTwentyRealItems', 'routingPaginationAppendsRealRecordsWithoutDuplicates',
     'interruptedReceivedIntakeRecoversWaitingWithoutRouteOrAttempt',
-    'stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage',
+    'stockSessionAndWireProveRealClasslessRoutingWithoutInjectionOrLeakage',
+    'routeFailureCarriesRootSessionReasonAndInvalidCodeInWorkspaceAudit',
+    'decisionSettingsAnswerSwitchShowsTheAuthoritativeBoolean',
     'sqliteReadModelAndRouteJoinAgreeWithoutExtraAttempts', 'everyTemporaryAgentArchivedThroughRealProfileSetState',
     'testOwnedSelectorsAndSettingsRestored', 'allOwnedProcessesAndPortFinallyReleased', 'nativeKeyPacketsPersisted',
   ]) assert.ok(driver.includes(token), token)
@@ -2315,6 +2319,12 @@ test('decision settings navigation guard requires the third Weir page in order',
 
 test('decision settings page guard proves three basic rows and a folded advanced group', () => {
   assert.deepEqual(decisionSettingsPageProblems(settingsOpenSnapshot(), { masterEnabled: true }), [])
+  // The rendered answer switch must read the authoritative boolean, both ways.
+  assert.deepEqual(decisionSettingsPageProblems(settingsOpenSnapshot(), { masterEnabled: true, autoAnswer: false }), [])
+  const answerOn = settingsOpenSnapshot()
+  answerOn.basics.rows[2].controls = [{ tag: 'button', id: null, role: 'switch', label: '允许自动回答', checked: 'true', pressed: null, value: '', disabled: false }]
+  assert.deepEqual(decisionSettingsPageProblems(answerOn, { masterEnabled: true, autoAnswer: true }), [])
+  assert.ok(decisionSettingsPageProblems(answerOn, { masterEnabled: true, autoAnswer: false }).some(text => /reads true instead of the authoritative false/.test(text)))
   const twoRows = settingsOpenSnapshot()
   twoRows.basics.rows = twoRows.basics.rows.slice(0, 2)
   assert.ok(decisionSettingsPageProblems(twoRows, { masterEnabled: true }).some(text => /instead of three/.test(text)))
@@ -2324,10 +2334,22 @@ test('decision settings page guard proves three basic rows and a folded advanced
   assert.ok(problems.some(text => /aria-expanded=true/.test(text)) && problems.some(text => /mounts its body/.test(text)), 'the default fold must stay closed')
   const foreignGroup = settingsOpenSnapshot({ groups: ['decisionBasics', 'decisionAdvanced', 'todo'] })
   assert.ok(decisionSettingsPageProblems(foreignGroup, { masterEnabled: true }).some(text => /foreign group/.test(text)))
-  // The third basic row is the answer switch: class chips are a regression now.
+  // The third basic row is ONE boolean switch: class chips are a regression now,
+  // and the switch's accessible name must be the answer permission itself.
   const chips = settingsOpenSnapshot()
   chips.basics.rows[2].controls = [{ tag: 'button', pressed: 'true', disabled: false }, { tag: 'button', pressed: 'false', disabled: false }, { tag: 'button', pressed: 'false', disabled: false }]
-  assert.ok(decisionSettingsPageProblems(chips, { masterEnabled: true }).some(text => /class chips/.test(text)))
+  const chipProblems = decisionSettingsPageProblems(chips, { masterEnabled: true })
+  assert.ok(chipProblems.some(text => /class chips/.test(text)))
+  assert.ok(chipProblems.some(text => /renders 0 switches instead of one boolean answer switch/.test(text)))
+  const twoSwitches = settingsOpenSnapshot()
+  twoSwitches.basics.rows[2].controls = [
+    { tag: 'button', id: null, role: 'switch', label: '允许自动回答', checked: 'false', pressed: null, value: '', disabled: false },
+    { tag: 'button', id: null, role: 'switch', label: '别的开关', checked: 'false', pressed: null, value: '', disabled: false },
+  ]
+  assert.ok(decisionSettingsPageProblems(twoSwitches, { masterEnabled: true }).some(text => /renders 2 switches instead of one/.test(text)))
+  const mislabelled = settingsOpenSnapshot()
+  mislabelled.basics.rows[2].controls = [{ tag: 'button', id: null, role: 'switch', label: '别的开关', checked: 'false', pressed: null, value: '', disabled: false }]
+  assert.ok(decisionSettingsPageProblems(mislabelled, { masterEnabled: true }).some(text => /answer switch is labelled/.test(text)))
   // master switch off: only its own row survives and the advanced group is gone
   const off = settingsOpenSnapshot({ groups: ['decisionBasics'], basics: { rows: [settingsOpenSnapshot().basics.rows[0]] }, advanced: null })
   assert.deepEqual(decisionSettingsPageProblems(off, { masterEnabled: false }), [])
@@ -2364,6 +2386,37 @@ test('decision settings answer-switch guard reads the stored boolean, never a cl
   assert.ok(decisionSettingsAnswerSwitchProblems({ checked: 'true' }, false).some(text => /reads true instead of false/.test(text)))
   assert.ok(decisionSettingsAnswerSwitchProblems({ checked: null }, true).some(text => /carries no checked state/.test(text)))
   assert.ok(decisionSettingsAnswerSwitchProblems(null, true).length === 1)
+})
+
+// The classless product has no classifier and no class list: the driver must prove
+// that on the real wire, drive the boolean switch, and stage candidate scope only
+// through its paths/tags rows.
+test('the driver proves classless Auto routing, the boolean answer switch and paths/tags scope', () => {
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  assert.ok(!driver.includes('WEIR_DECISION_GUI_AUTO_CLASSES'), 'the retired class env var is not read or set any more')
+  assert.ok(!driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'the retired whitelist input is never addressed')
+  assert.ok(!/allowedCount|emptyScope/.test(driver), 'selector copy expectations are the boolean answer switch, not a class count')
+  for (const state of ['autoAnswer: true', 'autoAnswer: false']) assert.ok(driver.includes(state), `the selector copy is asserted for ${state}`)
+  assert.ok(/initialCopyProblems = selectorCopyProblems\(initialSelector\.text, \{ language: 'zh', autoAnswer: false, shadow: false \}\)/.test(driver), 'the fresh selector asserts the default-off answer copy')
+  // The mock must never see the classifier contract, and the router contract is
+  // the only wire the classless Auto path may produce.
+  assert.ok(driver.includes("const classifierWires = trace.filter(entry => /router-classification-contract/.test(JSON.stringify(entry)))"), 'every traced model call is scanned for the retired classifier contract')
+  assert.ok(driver.includes("includes('router-contract/1')"), 'every Auto wire must carry the classless router contract')
+  assert.ok(driver.includes("wiresFor('GUI_AUTO_ZERO').length === 0") && driver.includes("wiresFor('GUI_AUTO_ONE').length === 0"), 'zero and single candidates never call the model')
+  assert.ok(driver.includes("wiresFor('GUI_AUTO_INVALID').length === 2"), 'an unusable router output earns exactly one bounded repair')
+  assert.ok(driver.includes("selectedRoute.length === 1"), 'two candidates call the router exactly once')
+  // Route failures surface as ordinary language and as a cold-readable audit fact.
+  assert.ok(driver.includes("check(`${label}RouteFailureReasonIsReadable`"), 'the card and inbox route history are asserted to show the failure reason')
+  assert.ok(driver.includes("'failure:invalid_output': [/模型输出无法解析为路由判决/") && driver.includes("'failure:timeout': [/模型调用超时/"), 'both failure reasons map to the shipped ordinary-language sentences')
+  assert.ok(driver.includes("check('routeFailureCarriesRootSessionReasonAndInvalidCodeInWorkspaceAudit'"), 'the workspace audit line is asserted for root session, reason and invalid code')
+  assert.ok(driver.includes("line.type === 'weir/decision/case-open'"), 'the audit assertion reads the decision case-open rows')
+  // Candidate scope is staged through its paths/tags rows and nothing else.
+  assert.ok(!driver.includes('[data-principle-class="A"]'), 'no class-chip activation survives in the candidate editor leg')
+  assert.ok(driver.includes('[data-principle-scope-add="path"]') && driver.includes('[data-principle-scope-add="tag"]'), 'both scope rows are driven through their add actions')
+  assert.ok(driver.includes("'the candidate update payload carries paths/tags only'"), 'the wire payload is asserted to carry no workspace or class list')
+  // The assistant editor save and reopen prove a paths/tags-only scope.
+  assert.ok(!/expected = \{ paths: \[scopePath\], tags: \[scopeTag\], classes:/.test(driver), 'the assistant readback no longer expects class chips')
+  assert.ok(driver.includes('reopened.scopeClasses === 0'), 'reopening the assistant proves the class chips are gone')
 })
 
 
