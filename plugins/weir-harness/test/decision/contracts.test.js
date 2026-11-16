@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   ATTEMPT_FAILURES, ATTEMPT_OUTCOMES, AWAITING_REASONS, CASE_CLOSINGS, CASE_STATES,
   EVIDENCE_SOURCES, EVIDENCE_STATUSES, FEEDBACK_KINDS, OMISSION_CODES, RETURN_CODES, ROUTE_MODES,
-  ROUTE_FAILURE_REASONS, ROUTE_REASON_CODES, ROUTER_CLASSIFICATION_CONTRACT, ROUTER_CONTRACT,
+  ROUTE_FAILURE_REASONS, ROUTE_INVALID_CODES, ROUTE_REASON_CODES, ROUTER_CONTRACT,
   SELECTOR_MODES, DecisionContractError, assertClosedObject, assertEnum, canonicalJson, parseAnswerBatch,
 } from '../../src/decision/contracts.js'
 
@@ -41,9 +41,11 @@ describe('decision contract enums', () => {
     assert.throws(() => assertEnum('automatic', ROUTE_MODES, 'route mode'), /INVALID_ENUM/)
   })
 
-  it('versions both router sidecars and closes their stable reason vocabulary', () => {
-    assert.equal(ROUTER_CLASSIFICATION_CONTRACT, 'router-classification-contract/1')
+  it('versions the router sidecar and closes its stable reason vocabulary', () => {
     assert.equal(ROUTER_CONTRACT, 'router-contract/1')
+    assert.deepEqual([...ROUTE_INVALID_CODES], [
+      'not_json', 'missing_field', 'unknown_agent', 'ambiguous_shape', 'reason_invalid', 'truncated',
+    ])
     assert.deepEqual([...ROUTE_FAILURE_REASONS], [
       'failure:timeout', 'failure:model_error', 'failure:invalid_output', 'failure:truncated',
       'failure:aborted', 'failure:route_unavailable', 'failure:candidate_limit', 'failure:context_budget',
@@ -51,7 +53,7 @@ describe('decision contract enums', () => {
     assert.deepEqual([...ROUTE_REASON_CODES], [
       'none:no_candidates', 'admission:authority', 'deterministic:single_candidate',
     ])
-    for (const vocabulary of [ROUTE_MODES, SELECTOR_MODES, ROUTE_FAILURE_REASONS, ROUTE_REASON_CODES]) {
+    for (const vocabulary of [ROUTE_MODES, SELECTOR_MODES, ROUTE_FAILURE_REASONS, ROUTE_REASON_CODES, ROUTE_INVALID_CODES]) {
       assert.equal(Object.isFrozen(vocabulary), true)
     }
   })

@@ -1,29 +1,24 @@
-// Broker-private Auto admission, classification, and candidate routing. This
-// module never enters the domain Attempt/retrieval pipeline or reads its memory.
-import {
-  ROUTER_CLASSIFICATION_CONTRACT, ROUTER_CONTRACT,
-} from './contracts.js'
+// Broker-private Auto candidate routing. This module never enters the domain
+// Attempt/retrieval pipeline or reads its memory.
+import { ROUTER_CONTRACT } from './contracts.js'
+import { extractJsonObject } from './json.js'
 import { profileScopeCovers } from './scope.js'
 import { resolveDecisionModelRoute, streamDecision } from './evaluator/sidecar.js'
 
-const CLASSES = ['A', 'B', 'C', 'D', 'E', 'F', 'unknown']
-const ANSWER_CLASSES = ['A', 'B', 'C']
-const TRUNCATED = Symbol('truncated')
-
-// The classifier/router verdict is one tiny closed JSON object, yet the caller
-// model shares a single maxTokens budget between its reasoning and that text. A
-// budget tuned for a domain Attempt (the Desktop profile runs 1600) truncates
-// the verdict before its closing brace, so a sidecar keeps its own floor and a
-// truncated verdict gets exactly one wider retry before failing closed. Domain
-// Attempts keep using the configured value untouched.
+// The router verdict is one tiny closed JSON object, yet the caller model shares
+// a single maxTokens budget between its reasoning and that text. A budget tuned
+// for a domain Attempt (the Desktop profile runs 1600) truncates the verdict
+// before its closing brace, so a sidecar keeps its own floor and a truncated
+// verdict gets exactly one wider retry before failing closed. Domain Attempts
+// keep using the configured value untouched.
 const SIDECAR_MIN_OUTPUT_TOKENS = 4096
 const SIDECAR_RETRY_MAX_OUTPUT_TOKENS = 16384
 const TRUNCATION_FAILURE = 'failure:truncated'
-
-const CLASSIFICATION_SYSTEM = `Auto request classification contract: router-classification-contract/1
-Classify only the supplied question ids. Return one JSON object with exactly this shape:
-{"contract":"router-classification-contract/1","classes":[{"id":"question id","authorizationClass":"A|B|C|D|E|F|unknown"}]}
-Cover every supplied id exactly once. Do not answer the questions, add fields, estimate confidence, or use unstated context.`
+const INVALID_OUTPUT_FAILURE = 'failure:invalid_output'
+// One bounded repair instruction: appended to the same pack when the first
+// verdict is unusable. Fences and prose are already tolerated, so this asks for
+// the canonical shape only, in English like every other template layer.
+const REPAIR_INSTRUCTION = 'Return only the verdict JSON object. Do not add explanations or code fences.'
 
 const ROUTER_SYSTEM = `Auto candidate router contract: router-contract/1
 Choose only an eligible supplied candidate, no route, or a substantive ambiguity. Return one JSON object in one of these shapes:
@@ -32,28 +27,14 @@ Choose only an eligible supplied candidate, no route, or a substantive ambiguity
 {"contract":"router-contract/1","outcome":"ambiguous","reason":"short reason","ambiguity":{"candidates":["eligible id"],"conflict":"short conflict"}}
 Do not answer the questions, add fields, estimate confidence, change scope, or use unstated context.`
 
-/** @param {any} request @param {unknown} allowedClasses @returns {{ok:true,classes:string[]}|{ok:false,reason:'missing_class'|'unknown_class'|'not_allowed'}} */
-export function autoAdmission(request, allowedClasses) {
-  const allowed = new Set(Array.isArray(allowedClasses) ? allowedClasses.filter(value => ANSWER_CLASSES.includes(value)) : [])
-  const questions = Array.isArray(request?.questions) ? request.questions : []
-  if (questions.length === 0) return { ok: false, reason: 'missing_class' }
-  const supplied = questions.map(question => question?.authorizationClass)
-  if (supplied.some(value => value !== undefined && !ANSWER_CLASSES.includes(value))) return { ok: false, reason: 'unknown_class' }
-  if (supplied.some(value => value !== undefined && !allowed.has(value))) return { ok: false, reason: 'not_allowed' }
-  if (supplied.some(value => value === undefined)) return { ok: false, reason: 'missing_class' }
-  return { ok: true, classes: [...new Set(supplied)] }
-}
-
 /**
  * Deterministic Auto prefilter over the whole profile: every enabled,
- * non-archived assistant whose authorization classes and optional paths/tags
- * hints admit the request. Workspace membership is not part of an identity, so
- * it never filters this list.
+ * non-archived assistant whose optional paths/tags hints admit the request.
+ * Workspace membership is not part of an identity, so it never filters this
+ * list; a request with no eligible assistant simply routes nowhere.
  * @param {{request:any,scope:any,profiles:any[]}} input
  */
 export function planAutoRoute(input) {
-  const admission = autoAdmission(input.request, ANSWER_CLASSES)
-  const classes = admission.ok ? admission.classes : []
   const eligible = []
   const candidates = []
   const profiles = (Array.isArray(input.profiles) ? input.profiles : [])
@@ -63,47 +44,19 @@ export function planAutoRoute(input) {
     const enabled = profile.state === 'enabled'
     let rejectedBecause
     if (!enabled) rejectedBecause = 'disabled'
-    else if (!admission.ok || !profileScopeCovers(profile.scope, input.scope)) rejectedBecause = 'scope'
-    else if (!classes.every(value => profile.scope?.authorizationClasses?.includes(value))) rejectedBecause = 'authorization'
+    else if (!profileScopeCovers(profile.scope, input.scope)) rejectedBecause = 'scope'
     candidates.push({ agentId: profile.agentId, enabled, ...(rejectedBecause ? { rejectedBecause } : {}) })
     if (!rejectedBecause) eligible.push(profile)
   }
   return { candidates, eligible }
 }
 
-/** @param {{request:any,llm:any,sessionRoute?:any,signal?:AbortSignal,timeoutMs:number,maxOutputTokens:number,contextBudgetTokens?:number,retryTruncated?:boolean}} input */
-export async function classifyAutoRequest(input) {
-  const initial = autoAdmission(input.request, ANSWER_CLASSES)
-  const normalized = normalizeRequest(input.request)
-  if (initial.ok) return { kind: 'classified', request: normalized }
-  if (initial.reason === 'unknown_class') return { kind: 'authority', reason: 'unknown_class', request: normalized }
-
-  const missing = normalized.questions.filter(question => question.authorizationClass === undefined)
-  const pack = makePack(CLASSIFICATION_SYSTEM, {
-    contract: ROUTER_CLASSIFICATION_CONTRACT,
-    questions: missing.map(question => projectQuestion(question, false)),
-    context: bounded(normalized.context ?? normalized.taskSummary ?? '', 4000),
-  }, input.contextBudgetTokens)
-  if (!pack) return failureResult('failure:context_budget')
-  const outcome = await streamRouterOutcome(input, pack, text => parseClassification(text, missing.map(question => question.id)))
-  if (outcome.reason) return failureResult(outcome.reason, outcome.outputTokens)
-  const parsed = outcome.parsed
-  for (const item of parsed) {
-    const question = normalized.questions.find(candidate => candidate.id === item.id)
-    question.authorizationClass = item.authorizationClass
-    question.authorizationClassSource = 'auto_classifier'
-  }
-  if (parsed.some(item => !ANSWER_CLASSES.includes(item.authorizationClass))) {
-    return { kind: 'authority', reason: 'unknown_class', request: normalized }
-  }
-  return { kind: 'classified', request: normalized }
-}
-
-/** @param {{request:any,scope:any,profiles:any[],sessionRoute?:any,signal?:AbortSignal,llm:any,contextBudgetTokens:number,timeoutMs:number,maxOutputTokens:number,retryTruncated?:boolean}} input */
+/**
+ * Zero eligible candidates route nowhere without a model call, exactly one is a
+ * deterministic selection, and only a real choice reaches the bounded Router.
+ * @param {{request:any,scope:any,profiles:any[],sessionRoute?:any,signal?:AbortSignal,llm:any,contextBudgetTokens:number,timeoutMs:number,maxOutputTokens:number,singleShot?:boolean}} input
+ */
 export async function routeAuto(input) {
-  if (!autoAdmission(input.request, ANSWER_CLASSES).ok) {
-    return { kind: 'none', candidates: [], reason: 'admission:authority' }
-  }
   const { candidates, eligible } = planAutoRoute(input)
   if (eligible.length === 0) return { kind: 'none', candidates, reason: 'none:no_candidates' }
   if (eligible.length === 1) return { kind: 'selected', candidates, chosen: eligible[0].agentId, reason: 'deterministic:single_candidate' }
@@ -111,7 +64,7 @@ export async function routeAuto(input) {
 
   const pack = makePack(ROUTER_SYSTEM, {
     contract: ROUTER_CONTRACT,
-    questions: input.request.questions.map(question => projectQuestion(question, true)),
+    questions: (Array.isArray(input.request.questions) ? input.request.questions : []).map(question => projectQuestion(question)),
     context: bounded(input.request.context ?? input.request.taskSummary ?? '', 4000),
     candidates: eligible.map(profile => ({
       agentId: profile.agentId, name: bounded(profile.name, 200),
@@ -121,19 +74,17 @@ export async function routeAuto(input) {
   }, input.contextBudgetTokens)
   if (!pack) return { ...failureResult('failure:context_budget'), candidates }
   const outcome = await streamRouterOutcome(input, pack, text => parseRoute(text, new Set(eligible.map(profile => profile.agentId))))
-  if (outcome.reason) return { ...failureResult(outcome.reason, outcome.outputTokens), candidates }
+  if (outcome.reason) return { ...failureResult(outcome.reason, outcome.outputTokens, outcome.invalidCode), candidates }
   return { ...outcome.parsed, candidates }
 }
 
-function normalizeRequest(request) {
-  return { ...request, questions: (Array.isArray(request?.questions) ? request.questions : []).map(question => ({ ...question })) }
-}
-
+/** @param {string} value @param {number} max */
 function bounded(value, max) {
   return Array.from(typeof value === 'string' ? value : String(value ?? '')).slice(0, max).join('')
 }
 
-function projectQuestion(question, includeClass) {
+/** @param {any} question */
+function projectQuestion(question) {
   return {
     id: question.id,
     ...(question.header === undefined ? {} : { header: bounded(question.header, 4000) }),
@@ -144,18 +95,18 @@ function projectQuestion(question, includeClass) {
       ...(option?.description === undefined ? {} : { description: bounded(option.description, 4000) }),
     })) }),
     ...(question.multiSelect === undefined ? {} : { multiSelect: question.multiSelect }),
-    ...(includeClass ? { authorizationClass: question.authorizationClass } : {}),
   }
 }
 
+/** @param {any} scope */
 function projectScope(scope) {
   return {
     ...(scope?.paths === undefined ? {} : { paths: [...scope.paths] }),
     ...(scope?.tags === undefined ? {} : { tags: [...scope.tags] }),
-    authorizationClasses: [...(scope?.authorizationClasses ?? [])],
   }
 }
 
+/** @param {string} system @param {any} payload @param {number} [contextBudgetTokens] */
 function makePack(system, payload, contextBudgetTokens = 24000) {
   const content = JSON.stringify(payload)
   if (!Number.isFinite(contextBudgetTokens) || contextBudgetTokens <= 0
@@ -165,8 +116,8 @@ function makePack(system, payload, contextBudgetTokens = 24000) {
 
 /**
  * The sidecar budget keeps its own floor: a value tuned for a domain Attempt
- * never truncates the classifier/router JSON. An explicit budget (the retry) is
- * taken as given so the caller decides how wide the second attempt may be.
+ * never truncates the router JSON. An explicit budget (the retry) is taken as
+ * given so the caller decides how wide the second attempt may be.
  * @param {any} input @param {{system:string,messages:any[]}} pack @param {number} [maxOutputTokens]
  */
 async function streamRouter(input, pack, maxOutputTokens = sidecarOutputTokens(input.maxOutputTokens)) {
@@ -178,19 +129,31 @@ async function streamRouter(input, pack, maxOutputTokens = sidecarOutputTokens(i
 }
 
 /**
- * Run one sidecar pack and translate its outcome, retrying a truncated verdict
- * exactly once with a wider (capped) budget. Timeout, abort, model error and
- * route unavailability never retry: they keep the existing fail-closed
- * semantics, and a cancelled session spends no second call. Shadow observation
- * passes `retryTruncated:false` so a diagnostic sample stays single-shot.
+ * Run one sidecar pack and translate its outcome with at most ONE bounded retry:
+ * a truncated verdict is retried with a wider (capped) budget, and any other
+ * unusable verdict is retried once with the canonical "verdict JSON only"
+ * repair instruction. Timeout, abort, model error and route unavailability never
+ * retry: they keep the existing fail-closed semantics, and a cancelled session
+ * spends no second call. Shadow observation passes `singleShot:true` so a
+ * diagnostic sample stays exactly one call.
  * @param {any} input @param {{system:string,messages:any[]}} pack @param {(text:string)=>any} parse
  */
 async function streamRouterOutcome(input, pack, parse) {
   const budget = sidecarOutputTokens(input.maxOutputTokens)
   const first = await streamRouterAttempt(input, pack, parse, budget)
-  if (first.reason !== TRUNCATION_FAILURE || input.retryTruncated === false || input.signal?.aborted) return first
-  const retried = await streamRouterAttempt(input, pack, parse, retryOutputTokens(budget))
-  return { ...retried, outputTokens: retried.outputTokens ?? first.outputTokens }
+  if (!first.reason || input.singleShot === true || input.signal?.aborted) return first
+  // Only an unusable OUTPUT earns the one repair; timeout, abort, model error and
+  // route unavailability are operational failures and keep fail-closed semantics.
+  if (first.reason !== TRUNCATION_FAILURE && first.reason !== INVALID_OUTPUT_FAILURE) return first
+  const second = first.reason === TRUNCATION_FAILURE
+    ? await streamRouterAttempt(input, pack, parse, retryOutputTokens(budget))
+    : await streamRouterAttempt(input, repairPack(pack), parse, budget)
+  return { ...second, outputTokens: second.outputTokens ?? first.outputTokens }
+}
+
+/** @param {{system:string,messages:any[]}} pack */
+function repairPack(pack) {
+  return { system: pack.system, messages: [...pack.messages, { role: 'user', content: REPAIR_INSTRUCTION }] }
 }
 
 /** @param {any} input @param {{system:string,messages:any[]}} pack @param {(text:string)=>any} parse @param {number} maxOutputTokens */
@@ -198,11 +161,11 @@ async function streamRouterAttempt(input, pack, parse, maxOutputTokens) {
   const streamed = await streamRouter(input, pack, maxOutputTokens)
   const outputTokens = boundedCount(/** @type {any} */ (streamed).outputTokens)
   const failure = sidecarFailure(streamed)
-  if (failure) return { reason: failure, parsed: null, outputTokens }
+  if (failure) return { reason: failure, ...(failure === TRUNCATION_FAILURE ? { invalidCode: 'truncated' } : {}), parsed: null, outputTokens }
   const parsed = parse(streamed.text)
-  if (parsed === TRUNCATED) return { reason: TRUNCATION_FAILURE, parsed: null, outputTokens }
-  if (!parsed) return { reason: 'failure:invalid_output', parsed: null, outputTokens }
-  return { reason: null, parsed, outputTokens }
+  if (parsed.truncated) return { reason: TRUNCATION_FAILURE, invalidCode: 'truncated', parsed: null, outputTokens }
+  if (!parsed.ok) return { reason: 'failure:invalid_output', invalidCode: parsed.invalidCode, parsed: null, outputTokens }
+  return { reason: null, parsed: parsed.value, outputTokens }
 }
 
 /** @param {number|undefined} configured @returns {number} */
@@ -221,11 +184,16 @@ function boundedCount(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : undefined
 }
 
-/** @param {string} reason @param {number} [outputTokens] */
-function failureResult(reason, outputTokens) {
-  return { kind: 'failed', reason, ...(outputTokens === undefined ? {} : { outputTokens }) }
+/** @param {string} reason @param {number} [outputTokens] @param {string} [invalidCode] */
+function failureResult(reason, outputTokens, invalidCode) {
+  return {
+    kind: 'failed', reason,
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+    ...(invalidCode === undefined ? {} : { invalidCode }),
+  }
 }
 
+/** @param {any} streamed */
 function sidecarFailure(streamed) {
   if (['max-tokens', 'truncated'].includes(streamed.finishReason)) return TRUNCATION_FAILURE
   if (['timeout', 'model_error', 'error', 'aborted', 'route_unavailable'].includes(streamed.finishReason)) {
@@ -234,62 +202,42 @@ function sidecarFailure(streamed) {
   return null
 }
 
-function parseJson(text) {
-  if (typeof text !== 'string') return null
-  const cleaned = text.trim()
-  if (!cleaned.startsWith('{')) return null
-  try { return JSON.parse(cleaned) } catch (error) {
-    const message = /** @type {any} */ (error)?.message ?? ''
-    if (/after json/i.test(message)) return null
-    if (!cleaned.endsWith('}') || /unexpected end|unterminated|end of (?:json )?(?:input|data)/i.test(message)) return TRUNCATED
-    return null
-  }
-}
-
-function closed(value, allowed, required) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const keys = Object.keys(value)
-  return keys.every(key => allowed.includes(key)) && required.every(key => Object.hasOwn(value, key))
-}
-
+/** @param {unknown} value */
 function validReason(value) {
   return typeof value === 'string' && value.trim().length > 0 && value.length <= 200
 }
 
-function parseClassification(text, missingIds) {
-  const value = parseJson(text)
-  if (value === TRUNCATED) return TRUNCATED
-  if (!closed(value, ['contract', 'classes'], ['contract', 'classes'])
-    || value.contract !== ROUTER_CLASSIFICATION_CONTRACT || !Array.isArray(value.classes)) return null
-  if (value.classes.some(item => !closed(item, ['id', 'authorizationClass'], ['id', 'authorizationClass'])
-    || typeof item.id !== 'string' || !CLASSES.includes(item.authorizationClass))) return null
-  const ids = value.classes.map(item => item.id)
-  if (ids.length !== missingIds.length || new Set(ids).size !== ids.length || ids.some(id => !missingIds.includes(id))) return null
-  return value.classes.map(item => ({ id: item.id, authorizationClass: item.authorizationClass }))
-}
-
+/**
+ * One verdict, extracted tolerantly: fences and surrounding prose are fine and
+ * unknown extra fields are IGNORED (they are not a failure reason). The required
+ * score still stays strict — contract version, a known outcome, a candidate
+ * from the input set, an ambiguity shape and a bounded reason.
+ * @param {unknown} text @param {Set<string>} eligibleIds
+ * @returns {{ok:true,value:any}|{ok:false,invalidCode:string,truncated?:true}}
+ */
 function parseRoute(text, eligibleIds) {
-  const value = parseJson(text)
-  if (value === TRUNCATED) return TRUNCATED
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || value.contract !== ROUTER_CONTRACT || !validReason(value.reason)) return null
-  if (value.outcome === 'none') {
-    if (!closed(value, ['contract', 'outcome', 'reason'], ['contract', 'outcome', 'reason'])) return null
-    return { kind: 'none', reason: value.reason }
-  }
+  const extracted = extractJsonObject(text)
+  if (extracted.status === 'truncated') return { ok: false, truncated: true, invalidCode: 'truncated' }
+  if (extracted.status !== 'parsed') return { ok: false, invalidCode: 'not_json' }
+  const value = extracted.value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false, invalidCode: 'not_json' }
+  if (value.contract !== ROUTER_CONTRACT) return { ok: false, invalidCode: 'missing_field' }
+  if (!validReason(value.reason)) return { ok: false, invalidCode: 'reason_invalid' }
+  if (value.outcome === 'none') return { ok: true, value: { kind: 'none', reason: value.reason } }
   if (value.outcome === 'selected') {
-    if (!closed(value, ['contract', 'outcome', 'agentId', 'reason'], ['contract', 'outcome', 'agentId', 'reason'])
-      || typeof value.agentId !== 'string' || !eligibleIds.has(value.agentId)) return null
-    return { kind: 'selected', chosen: value.agentId, reason: value.reason }
+    if (typeof value.agentId !== 'string' || !value.agentId) return { ok: false, invalidCode: 'missing_field' }
+    if (!eligibleIds.has(value.agentId)) return { ok: false, invalidCode: 'unknown_agent' }
+    return { ok: true, value: { kind: 'selected', chosen: value.agentId, reason: value.reason } }
   }
   if (value.outcome === 'ambiguous') {
-    if (!closed(value, ['contract', 'outcome', 'reason', 'ambiguity'], ['contract', 'outcome', 'reason', 'ambiguity'])
-      || !closed(value.ambiguity, ['candidates', 'conflict'], ['candidates', 'conflict'])
-      || !Array.isArray(value.ambiguity.candidates) || value.ambiguity.candidates.length === 0
-      || new Set(value.ambiguity.candidates).size !== value.ambiguity.candidates.length
-      || value.ambiguity.candidates.some(id => typeof id !== 'string' || !eligibleIds.has(id))
-      || !validReason(value.ambiguity.conflict)) return null
-    return { kind: 'ambiguous', reason: value.reason, ambiguity: { candidates: [...value.ambiguity.candidates], conflict: value.ambiguity.conflict } }
+    const ambiguity = value.ambiguity
+    if (!ambiguity || typeof ambiguity !== 'object' || Array.isArray(ambiguity)
+      || !Array.isArray(ambiguity.candidates) || ambiguity.candidates.length === 0
+      || new Set(ambiguity.candidates).size !== ambiguity.candidates.length
+      || ambiguity.candidates.some(id => typeof id !== 'string' || !eligibleIds.has(id))
+      || !validReason(ambiguity.conflict)) return { ok: false, invalidCode: 'ambiguous_shape' }
+    return { ok: true, value: { kind: 'ambiguous', reason: value.reason, ambiguity: { candidates: [...ambiguity.candidates], conflict: ambiguity.conflict } } }
   }
-  return null
+  // No known outcome: the one required discriminator is missing.
+  return { ok: false, invalidCode: 'missing_field' }
 }

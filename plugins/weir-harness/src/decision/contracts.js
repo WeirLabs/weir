@@ -3,7 +3,6 @@
 export const DECISION_SCHEMA_VERSION = 1
 export const PROMPT_VERSION = 'evaluator-contract/3'
 export const EVALUATOR_VERSION = 'sidecar/1'
-export const ROUTER_CLASSIFICATION_CONTRACT = 'router-classification-contract/1'
 export const ROUTER_CONTRACT = 'router-contract/1'
 
 export const RETURN_CODES = Object.freeze([
@@ -32,6 +31,11 @@ export const ROUTE_MODES = Object.freeze(['pinned', 'explicit', 'manual_reassign
 export const ROUTE_FAILURE_REASONS = Object.freeze([
   'failure:timeout', 'failure:model_error', 'failure:invalid_output', 'failure:truncated',
   'failure:aborted', 'failure:route_unavailable', 'failure:candidate_limit', 'failure:context_budget',
+])
+/** Sub-reasons of a rejected Auto Router verdict (closed vocabulary). The Auto
+ * Router never reports a bare "invalid output" without one of these. */
+export const ROUTE_INVALID_CODES = Object.freeze([
+  'not_json', 'missing_field', 'unknown_agent', 'ambiguous_shape', 'reason_invalid', 'truncated',
 ])
 export const ROUTE_REASON_CODES = Object.freeze([
   'none:no_candidates', 'admission:authority', 'deterministic:single_candidate',

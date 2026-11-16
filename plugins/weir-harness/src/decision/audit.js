@@ -2,7 +2,7 @@
 import { AUDIT_SUBTYPES, AUDIT_TYPES, createAudit } from '../shared/audit.js'
 
 const ID_FIELDS = new Set(['caseId', 'attemptId', 'feedbackId', 'agentId', 'routeDecisionId', 'rootSessionId', 'originSessionId', 'learningRunId', 'snapshotId'])
-const ENUM_FIELDS = new Set(['kind', 'action', 'state', 'closing', 'outcome', 'awaitingReason', 'failureKind', 'reason', 'code', 'from', 'target', 'mode', 'entry', 'rejected', 'zone'])
+const ENUM_FIELDS = new Set(['kind', 'action', 'state', 'closing', 'outcome', 'awaitingReason', 'failureKind', 'reason', 'code', 'from', 'target', 'mode', 'entry', 'rejected', 'zone', 'invalidCode'])
 const COUNT_FIELDS = new Set(['revision', 'version', 'attemptCount', 'answerCount', 'interruptedAttempts', 'interruptedLearningRuns', 'recoveredCases', 'durationMs', 'at', 'operationCount', 'sourceCount', 'activePrincipleCount', 'retiredPrincipleCount', 'outputTokens', 'revisionBefore', 'revisionAfter', 'edited', 'removed'])
 const FLAG_FIELDS = new Set(['available', 'enabled', 'needsReview', 'ok', 'explicit'])
 const DIGEST_FIELDS = new Set(['contentHash', 'inputHash', 'feedbackDigest', 'finalHash'])

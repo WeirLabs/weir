@@ -1,17 +1,14 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  autoAdmission, classifyAutoRequest, planAutoRoute, routeAuto,
-} from '../../src/decision/router.js'
+import { planAutoRoute, routeAuto } from '../../src/decision/router.js'
 
 const WORKSPACE = '/workspace-one'
 const SESSION_ROUTE = { provider: 'session-provider', model: 'session-model', reasoningEffort: 'low' }
 
-function question(id, authorizationClass, text = `Question ${id}`) {
+function question(id, text = `Question ${id}`) {
   return {
     id, header: `Header ${id}`, question: text, detail: `Detail ${id}`,
     options: [{ label: 'A', description: 'First' }, { label: 'B', description: 'Second' }],
-    ...(authorizationClass === undefined ? {} : { authorizationClass }),
   }
 }
 
@@ -20,7 +17,7 @@ function request(questions, extra = {}) {
 }
 
 function scope(extra = {}) {
-  return { workspaces: [WORKSPACE], authorizationClasses: ['A', 'B', 'C'], ...extra }
+  return { workspaces: [WORKSPACE], ...extra }
 }
 
 function profile(agentId, extra = {}) {
@@ -47,13 +44,9 @@ function fakeLlm(value, { finishReason = 'stop', failureCode } = {}) {
   }
 }
 
-function classificationOutput(id, authorizationClass) {
-  return JSON.stringify({ contract: 'router-classification-contract/1', classes: [{ id, authorizationClass }] })
-}
-
 // One scripted reply per sidecar call, so a test can force the first attempt to
-// truncate and the retry to succeed. A missing reply throws: an unexpected call
-// has to be loud, not a silent copy of the previous answer.
+// truncate/invalidate and the retry to succeed. A missing reply throws: an
+// unexpected call has to be loud, not a silent copy of the previous answer.
 function fakeSequenceLlm(replies) {
   const calls = []
   return {
@@ -87,56 +80,12 @@ function userPayload(call) {
   return JSON.parse(call.messages[0].content[0].text)
 }
 
-describe('Auto deterministic admission and candidate planning', () => {
-  it('requires a complete, known, allowed A/B/C class for every question', () => {
-    assert.deepEqual(autoAdmission(request([question('q1', 'A'), question('q2', 'C'), question('q3', 'A')]), ['A', 'C']), {
-      ok: true, classes: ['A', 'C'],
-    })
-    assert.deepEqual(autoAdmission(request([question('q1', 'A'), question('q2')]), ['A']), {
-      ok: false, reason: 'missing_class',
-    })
-    for (const authorizationClass of ['D', 'E', 'F', 'unknown', 'a', '', null, 1]) {
-      assert.deepEqual(autoAdmission(request([question('q1', authorizationClass)]), ['A', 'B', 'C']), {
-        ok: false, reason: 'unknown_class',
-      })
-    }
-    assert.deepEqual(autoAdmission(request([question('q1', 'C')]), ['A', 'B']), {
-      ok: false, reason: 'not_allowed',
-    })
-    assert.deepEqual(autoAdmission(request([question('q1', 'A'), question('q2'), question('q3', 'D')]), ['A']), {
-      ok: false, reason: 'unknown_class',
-    })
-    assert.deepEqual(autoAdmission(request([question('q1', 'C'), question('q2')]), ['A']), {
-      ok: false, reason: 'not_allowed',
-    })
-  })
+function validRoute() {
+  return { contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Relevant preference' }
+}
 
-  it('classifies only missing ids once and marks derived classes without mutating the caller request', async () => {
-    const original = request([
-      question('provided', 'B'), question('missing-a'), question('missing-c'),
-    ])
-    const snapshot = structuredClone(original)
-    const llm = fakeLlm({
-      contract: 'router-classification-contract/1',
-      classes: [
-        { id: 'missing-a', authorizationClass: 'A' },
-        { id: 'missing-c', authorizationClass: 'C' },
-      ],
-    })
-    const result = await classifyAutoRequest({ request: original, ...input(llm) })
-    assert.equal(result.kind, 'classified')
-    assert.equal(llm.calls.length, 1)
-    assert.deepEqual(original, snapshot)
-    assert.equal(result.request.questions[0].authorizationClass, 'B')
-    assert.equal(result.request.questions[0].authorizationClassSource, undefined)
-    assert.deepEqual(result.request.questions.slice(1).map(item => [item.id, item.authorizationClass, item.authorizationClassSource]), [
-      ['missing-a', 'A', 'auto_classifier'], ['missing-c', 'C', 'auto_classifier'],
-    ])
-    assert.ok(llm.calls[0].system.includes('router-classification-contract/1'))
-    assert.deepEqual(userPayload(llm.calls[0]).questions.map(item => item.id), ['missing-a', 'missing-c'])
-  })
-
-  it('keeps enabled/scope-hints/class filtering deterministic across the whole profile', () => {
+describe('Auto deterministic candidate planning', () => {
+  it('keeps enabled/archived/scope filtering deterministic across the whole profile', () => {
     const eligibleA = profile('agent-a')
     const eligibleB = profile('agent-b', { userDescription: { revision: 4, text: 'Current revision four' } })
     const disabled = profile('agent-disabled', { state: 'disabled' })
@@ -145,17 +94,18 @@ describe('Auto deterministic admission and candidate planning', () => {
     const foreign = profile('agent-foreign')
     const wrongPath = profile('agent-path', { scope: scope({ paths: ['src'] }) })
     const wrongTag = profile('agent-tag', { scope: scope({ tags: ['backend'] }) })
-    const wrongClass = profile('agent-class', { scope: scope({ authorizationClasses: ['A'] }) })
+    // A legacy class field is inert: it neither filters nor rejects.
+    const legacyClass = profile('agent-class', { scope: { authorizationClasses: ['A'] } })
     const plan = planAutoRoute({
-      request: request([question('q1', 'A'), question('q2', 'B')]),
+      request: request([question('q1'), question('q2')]),
       scope: scope({ paths: ['docs'], tags: ['product'] }),
-      profiles: [wrongTag, eligibleB, foreign, disabled, wrongClass, archived, eligibleA, wrongPath],
+      profiles: [wrongTag, eligibleB, foreign, disabled, legacyClass, archived, eligibleA, wrongPath],
     })
-    assert.deepEqual(plan.eligible.map(item => item.agentId), ['agent-a', 'agent-b', 'agent-foreign'])
+    assert.deepEqual(plan.eligible.map(item => item.agentId), ['agent-a', 'agent-b', 'agent-class', 'agent-foreign'])
     assert.deepEqual(plan.candidates, [
       { agentId: 'agent-a', enabled: true },
       { agentId: 'agent-b', enabled: true },
-      { agentId: 'agent-class', enabled: true, rejectedBecause: 'authorization' },
+      { agentId: 'agent-class', enabled: true },
       { agentId: 'agent-disabled', enabled: false, rejectedBecause: 'disabled' },
       { agentId: 'agent-foreign', enabled: true },
       { agentId: 'agent-path', enabled: true, rejectedBecause: 'scope' },
@@ -165,7 +115,7 @@ describe('Auto deterministic admission and candidate planning', () => {
   })
 
   it('handles zero, one, multiple, and more than 32 eligible candidates without guessing', async () => {
-    const req = request([question('q1', 'A')])
+    const req = request([question('q1')])
     const noModel = unusedLlm()
     assert.deepEqual(await routeAuto({ request: req, scope: scope(), profiles: [], ...input(noModel) }), {
       kind: 'none', candidates: [], reason: 'none:no_candidates',
@@ -175,7 +125,7 @@ describe('Auto deterministic admission and candidate planning', () => {
     })
     assert.equal(noModel.calls.length, 0)
 
-    const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Matches the current preference' })
+    const llm = fakeLlm(validRoute())
     const selected = await routeAuto({
       request: req, scope: scope(),
       profiles: [profile('agent-a'), profile('agent-b'), profile('foreign')],
@@ -195,131 +145,100 @@ describe('Auto deterministic admission and candidate planning', () => {
     assert.equal(limited.candidates.length, 33)
     assert.equal(noModel.calls.length, 0)
   })
+
+  it('never appends an authorization class to the caller request or the Router wire', async () => {
+    const req = request([question('q1'), question('q2')])
+    const snapshot = structuredClone(req)
+    const llm = fakeLlm(validRoute())
+    await routeAuto({ request: req, scope: scope(), profiles: [profile('agent-a'), profile('agent-b')], ...input(llm) })
+    assert.deepEqual(req, snapshot)
+    const payload = userPayload(llm.calls[0])
+    for (const item of payload.questions) {
+      assert.equal(Object.hasOwn(item, 'authorizationClass'), false)
+      assert.equal(Object.hasOwn(item, 'authorizationClassSource'), false)
+    }
+    assert.equal(JSON.stringify(llm.calls[0]).includes('authorizationClass'), false)
+  })
 })
 
-describe('Auto bounded packs and closed sidecar contracts', () => {
-  const classificationQuestions = () => [question('provided', 'B'), question('missing-a'), question('missing-c')]
-  const validClassification = () => ({
-    contract: 'router-classification-contract/1',
-    classes: [{ id: 'missing-a', authorizationClass: 'A' }, { id: 'missing-c', authorizationClass: 'C' }],
-  })
-  const validRoute = () => ({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Relevant preference' })
-
-  async function classifyOutput(output, options = {}) {
-    const llm = fakeLlm(output, options)
-    const result = await classifyAutoRequest({ request: request(classificationQuestions()), ...input(llm, options) })
-    return { result, llm }
-  }
-
+describe('Auto Router verdict tolerance and strict required fields', () => {
   async function routeOutput(output, options = {}) {
     const llm = fakeLlm(output, options)
     const result = await routeAuto({
-      request: request([question('q', 'A')]), scope: scope(),
+      request: request([question('q')]), scope: scope(),
       profiles: [profile('agent-a'), profile('agent-b')], ...input(llm, options),
     })
     return { result, llm }
   }
 
-  it('rejects duplicate, omitted, provided, unknown, and extra-field classification output', async () => {
-    const valid = validClassification()
-    const cases = [
-      { ...valid, classes: [valid.classes[0], valid.classes[0]] },
-      { ...valid, classes: [valid.classes[0]] },
-      { ...valid, classes: [...valid.classes, { id: 'provided', authorizationClass: 'A' }] },
-      { ...valid, classes: [{ id: 'unknown-id', authorizationClass: 'A' }, valid.classes[1]] },
-      { ...valid, confidence: 0.9 },
-      { ...valid, answer: 'A' },
-      { ...valid, scope: {} },
-      { ...valid, classes: [{ ...valid.classes[0], confidence: 0.9 }, valid.classes[1]] },
-      { ...valid, classes: [{ id: 'missing-a', authorizationClass: 'G' }, valid.classes[1]] },
-      { ...valid, contract: 'router-classification-contract/2' },
-      'not-json',
-    ]
-    for (const output of cases) {
-      const { result } = await classifyOutput(output)
-      assert.equal(result.kind, 'failed', JSON.stringify(output))
-      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
-    }
-  })
-
-  it('rejects prefix and suffix answer prose or fences around classification JSON', async () => {
-    const json = JSON.stringify(validClassification())
+  it('accepts a fenced verdict, surrounding prose, and unknown extra fields', async () => {
+    const json = JSON.stringify(validRoute())
     for (const output of [
-      `The answer is A.\n${json}`,
-      `${json}\nThe answer is A.`,
+      json,
+      `  \n${json}\n  `,
+      `The verdict is below.\n${json}`,
+      `${json}\nThat is the whole verdict.`,
       `\`\`\`json\n${json}\n\`\`\``,
-      `${json}\n${json}`,
+      JSON.stringify({ ...validRoute(), confidence: 0.8, scope: { workspaces: ['*'] }, answer: 'A', extra: true }),
     ]) {
-      const { result } = await classifyOutput(output)
-      assert.equal(result.kind, 'failed', JSON.stringify(output))
-      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
+      const { result } = await routeOutput(output)
+      assert.equal(result.kind, 'selected', JSON.stringify(output))
+      assert.equal(result.chosen, 'agent-b', JSON.stringify(output))
     }
   })
 
-  it('accepts the complete classification vocabulary but fails closed to authority outside A/B/C', async () => {
-    for (const authorizationClass of ['D', 'E', 'F', 'unknown']) {
-      const output = validClassification()
-      output.classes[0].authorizationClass = authorizationClass
-      const { result } = await classifyOutput(output)
-      assert.equal(result.kind, 'authority')
-      assert.equal(result.reason, 'unknown_class')
-      assert.equal(result.request.questions[1].authorizationClassSource, 'auto_classifier')
-    }
-  })
-
-  it('distinguishes truncated classification JSON and max-token finishes', async () => {
-    for (const [output, options] of [
-      ['{"contract":"router-classification-contract/1","classes":[', {}],
-      [validClassification(), { finishReason: 'max-tokens' }],
-    ]) {
-      const { result } = await classifyOutput(output, options)
-      assert.deepEqual(result, { kind: 'failed', reason: 'failure:truncated' })
-    }
-  })
-
-  it('rejects unknown agents, extra answer/scope/confidence fields, and invalid ambiguity', async () => {
-    const valid = validRoute()
+  it('keeps the required verdict shape strict and reports a closed invalidCode', async () => {
     const ambiguous = {
       contract: 'router-contract/1', outcome: 'ambiguous', reason: 'Overlapping preferences',
       ambiguity: { candidates: ['agent-a', 'agent-b'], conflict: 'Both claim this judgment' },
     }
     const cases = [
-      { ...valid, agentId: 'agent-unknown' },
-      { ...valid, confidence: 0.8 },
-      { ...valid, answer: 'A' },
-      { ...valid, scope: { workspaces: ['*'] } },
-      { ...valid, extra: true },
-      { ...valid, reason: '' },
-      { ...valid, reason: 'x'.repeat(201) },
-      { ...ambiguous, ambiguity: { candidates: [], conflict: 'Empty set' } },
-      { ...ambiguous, ambiguity: { candidates: ['agent-a', 'agent-a'], conflict: 'Duplicate is not a subset' } },
-      { ...ambiguous, ambiguity: { candidates: ['agent-unknown'], conflict: 'Unknown id' } },
-      { ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: '' } },
-      { ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: 'x'.repeat(201) } },
-      { ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: 'Conflict', extra: true } },
-      { contract: 'router-contract/1', outcome: 'none', reason: 'No match', agentId: 'agent-a' },
-      { ...valid, contract: 'router-contract/2' },
-      'not-json',
+      [{ ...validRoute(), agentId: 'agent-unknown' }, 'unknown_agent'],
+      [{ ...validRoute(), reason: '' }, 'reason_invalid'],
+      [{ ...validRoute(), reason: 'x'.repeat(201) }, 'reason_invalid'],
+      [{ ...validRoute(), contract: 'router-contract/2' }, 'missing_field'],
+      [{ contract: 'router-contract/1', outcome: 'maybe', reason: 'No such outcome' }, 'missing_field'],
+      [{ contract: 'router-contract/1', outcome: 'selected', reason: 'No agent id' }, 'missing_field'],
+      [{ ...ambiguous, ambiguity: { candidates: [], conflict: 'Empty set' } }, 'ambiguous_shape'],
+      [{ ...ambiguous, ambiguity: { candidates: ['agent-a', 'agent-a'], conflict: 'Duplicate is not a subset' } }, 'ambiguous_shape'],
+      [{ ...ambiguous, ambiguity: { candidates: ['agent-unknown'], conflict: 'Unknown id' } }, 'ambiguous_shape'],
+      [{ ...ambiguous, ambiguity: { candidates: ['agent-a'], conflict: '' } }, 'ambiguous_shape'],
+      [{ ...ambiguous, ambiguity: 'not-an-object' }, 'ambiguous_shape'],
+      ['not-json', 'not_json'],
+      ['[]', 'not_json'],
     ]
-    for (const output of cases) {
-      const { result } = await routeOutput(output)
+    // Both a fresh verdict and its single repair retry fail: the failure keeps
+    // the sub-reason and stays fail-closed.
+    for (const [output, invalidCode] of cases) {
+      const llm = fakeSequenceLlm([{ text: JSON.stringify(output) }, { text: JSON.stringify(output) }])
+      const result = await routeAuto({
+        request: request([question('q')]), scope: scope(),
+        profiles: [profile('agent-a'), profile('agent-b')], ...input(llm),
+      })
       assert.equal(result.kind, 'failed', JSON.stringify(output))
       assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
+      assert.equal(result.invalidCode, invalidCode, JSON.stringify(output))
+      assert.equal(llm.calls.length, 2, JSON.stringify(output))
     }
   })
 
-  it('rejects prefix and suffix answer prose or fences around router JSON', async () => {
-    const json = JSON.stringify(validRoute())
-    for (const output of [
-      `The answer is to use agent-b.\n${json}`,
-      `${json}\nThe answer is to use agent-b.`,
-      `\`\`\`json\n${json}\n\`\`\``,
-      `${json}\n${json}`,
-    ]) {
-      const { result } = await routeOutput(output)
-      assert.equal(result.kind, 'failed', JSON.stringify(output))
-      assert.equal(result.reason, 'failure:invalid_output', JSON.stringify(output))
-    }
+  it('repairs an unusable verdict exactly once with the verdict-JSON-only instruction', async () => {
+    const llm = fakeSequenceLlm([
+      { text: 'I would pick agent-b because it owns this.' },
+      { text: JSON.stringify(validRoute()) },
+    ])
+    const result = await routeAuto({
+      request: request([question('q')]), scope: scope(),
+      profiles: [profile('agent-a'), profile('agent-b')], ...input(llm),
+    })
+    assert.equal(result.kind, 'selected')
+    assert.equal(result.chosen, 'agent-b')
+    assert.equal(llm.calls.length, 2)
+    // The repair keeps the same budget and appends one explicit instruction.
+    assert.deepEqual(llm.calls.map(call => call.maxTokens), [4096, 4096])
+    const repair = llm.calls[1].messages.at(-1)
+    assert.equal(repair.role, 'user')
+    assert.match(typeof repair.content === 'string' ? repair.content : repair.content[0].text, /^Return only the verdict JSON object\./)
   })
 
   it('returns strict none and ambiguity outcomes with the existing candidate projection', async () => {
@@ -337,31 +256,17 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
     })
   })
 
-  it('distinguishes truncated router JSON and max-token finishes', async () => {
-    for (const [output, options] of [
-      ['{"contract":"router-contract/1"', {}],
-      [validRoute(), { finishReason: 'max-tokens' }],
-    ]) {
-      const { result } = await routeOutput(output, options)
-      assert.equal(result.kind, 'failed')
-      assert.equal(result.reason, 'failure:truncated')
-    }
-  })
-
-  it('fails closed before invocation when either sidecar exceeds its context budget', async () => {
-    const classification = await classifyOutput(validClassification(), { contextBudgetTokens: 1 })
-    assert.deepEqual(classification.result, { kind: 'failed', reason: 'failure:context_budget' })
-    assert.equal(classification.llm.calls.length, 0)
+  it('fails closed before invocation when the pack exceeds its context budget', async () => {
     const routing = await routeOutput(validRoute(), { contextBudgetTokens: 1 })
     assert.equal(routing.result.kind, 'failed')
     assert.equal(routing.result.reason, 'failure:context_budget')
     assert.equal(routing.llm.calls.length, 0)
   })
 
-  it('bounds Unicode text without dropping fixed ids, authorization metadata, or candidates', async () => {
+  it('bounds Unicode text without dropping fixed ids or candidates', async () => {
     const long = '界'.repeat(5000)
     const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
-    const req = request([{ ...question('fixed-id', 'A', long), header: long, detail: long }], { context: long })
+    const req = request([{ ...question('fixed-id', long), header: long, detail: long }], { context: long })
     const profiles = [
       profile('agent-a', { name: long, userDescription: { revision: 2, text: long } }),
       profile('agent-b', { name: long, userDescription: { revision: 3, text: long } }),
@@ -372,7 +277,6 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
     const raw = call.messages[0].content[0].text
     const payload = userPayload(call)
     assert.equal(payload.questions[0].id, 'fixed-id')
-    assert.equal(payload.questions[0].authorizationClass, 'A')
     assert.equal(payload.questions[0].question.length, 4000)
     assert.equal(payload.questions[0].header.length, 4000)
     assert.equal(payload.questions[0].detail.length, 4000)
@@ -387,7 +291,7 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
   })
 
   it('keeps generated memory, evidence hints, history, full sessions, and foreign profiles out of packs', async () => {
-    const req = request([{ ...question('q', 'A'), candidateProfile: 'FORBIDDEN_CANDIDATE_CLASS' }], {
+    const req = request([question('q')], {
       evidence: [{ path: 'secret', excerpt_hint: 'FORBIDDEN_EVIDENCE_HINT' }],
       history: 'FORBIDDEN_HISTORY', sessionLog: 'FORBIDDEN_FULL_SESSION',
     })
@@ -406,21 +310,34 @@ describe('Auto bounded packs and closed sidecar contracts', () => {
     for (const forbidden of ['FORBIDDEN_', 'generatedDescription', 'L2', 'L3', 'Snapshot', 'history', 'sessionLog', 'workspace']) {
       assert.equal(wire.includes(forbidden), false, `${forbidden} leaked into router pack`)
     }
-    const classification = await classifyOutput(validClassification())
-    const classificationWire = JSON.stringify(classification.llm.calls[0])
-    assert.equal(classificationWire.includes('candidates'), false)
-    assert.equal(classificationWire.includes('FORBIDDEN_'), false)
+  })
+
+  it('never reads generated descriptions, candidate model routes, domain memory, or history', async () => {
+    const req = request([question('q')])
+    for (const key of ['evidence', 'history', 'sessionLog']) {
+      Object.defineProperty(req, key, { get() { throw new Error(`forbidden request read: ${key}`) } })
+    }
+    const guarded = (id) => {
+      const value = profile(id)
+      for (const key of ['generatedDescription', 'modelRoute', 'memorySnapshot', 'L2', 'L3']) {
+        Object.defineProperty(value, key, { get() { throw new Error(`forbidden profile read: ${key}`) } })
+      }
+      return value
+    }
+    const llm = fakeLlm(validRoute())
+    const result = await routeAuto({
+      request: req, scope: scope(),
+      profiles: [guarded('agent-a'), guarded('agent-b')], ...input(llm),
+    })
+    assert.equal(result.kind, 'selected')
+    assert.equal(result.chosen, 'agent-b')
   })
 })
 
-describe('Auto shared sidecar routing and failure mapping', () => {
-  function classificationCall(llm, extra = {}) {
-    return classifyAutoRequest({ request: request([question('missing')]), ...input(llm, extra) })
-  }
-
+describe('Auto Router sidecar routing and failure mapping', () => {
   function routeCall(llm, extra = {}) {
     return routeAuto({
-      request: request([question('q', 'A')]), scope: scope(),
+      request: request([question('q')]), scope: scope(),
       profiles: [profile('agent-a'), profile('agent-b')], ...input(llm, extra),
     })
   }
@@ -450,68 +367,44 @@ describe('Auto shared sidecar routing and failure mapping', () => {
   }
 
   it('inherits only the stock session route and omits tools, purpose, and temperature', async () => {
-    const classificationLlm = fakeLlm({
-      contract: 'router-classification-contract/1', classes: [{ id: 'missing', authorizationClass: 'A' }],
-    })
-    assert.equal((await classificationCall(classificationLlm)).kind, 'classified')
-    const routeLlm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
-    assert.equal((await routeCall(routeLlm)).kind, 'none')
-    for (const call of [...classificationLlm.calls, ...routeLlm.calls]) {
-      assert.equal(call.provider, SESSION_ROUTE.provider)
-      assert.equal(call.model, SESSION_ROUTE.model)
-      assert.equal(call.reasoningEffort, SESSION_ROUTE.reasoningEffort)
-      // A 1600-token Attempt budget never bounds the router's own JSON.
-      assert.equal(call.maxTokens, 4096)
-      for (const key of ['tools', 'purpose', 'temperature', 'sessionId']) assert.equal(key in call, false)
-    }
+    const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
+    assert.equal((await routeCall(llm)).kind, 'none')
+    const call = llm.calls[0]
+    assert.equal(call.provider, SESSION_ROUTE.provider)
+    assert.equal(call.model, SESSION_ROUTE.model)
+    assert.equal(call.reasoningEffort, SESSION_ROUTE.reasoningEffort)
+    // A 1600-token Attempt budget never bounds the router's own JSON.
+    assert.equal(call.maxTokens, 4096)
+    for (const key of ['tools', 'purpose', 'temperature', 'sessionId']) assert.equal(key in call, false)
   })
 
-  it('skips classification when the whitelist is empty or no classes are missing', async () => {
+  it('maps timeout and model errors without leaking provider detail', async () => {
+    const timedLlm = hangingLlm()
+    assertFailure(await routeCall(timedLlm, { timeoutMs: 5 }), 'failure:timeout')
+    const failedLlm = throwingLlm()
+    assertFailure(await routeCall(failedLlm), 'failure:model_error')
+    assert.equal(JSON.stringify(failedLlm.calls).includes('UPSTREAM_429'), false)
+  })
+
+  it('maps route unavailability before model invocation', async () => {
     const llm = unusedLlm()
-    const classless = request([question('missing')])
-    const admission = autoAdmission(classless, [])
-    assert.deepEqual(admission, { ok: false, reason: 'missing_class' })
-    if (admission.ok) await classifyAutoRequest({ request: classless, ...input(llm) })
-    const provided = request([question('provided', 'A')])
-    const classified = await classifyAutoRequest({ request: provided, ...input(llm) })
-    assert.equal(classified.kind, 'classified')
-    assert.deepEqual(classified.request, provided)
+    assertFailure(await routeCall(llm, { sessionRoute: undefined }), 'failure:route_unavailable')
     assert.equal(llm.calls.length, 0)
   })
 
-  it('maps timeout and model errors for both sidecars without leaking provider detail', async () => {
-    for (const run of [classificationCall, routeCall]) {
-      const timedLlm = hangingLlm()
-      assertFailure(await run(timedLlm, { timeoutMs: 5 }), 'failure:timeout')
-      const failedLlm = throwingLlm()
-      assertFailure(await run(failedLlm), 'failure:model_error')
-      assert.equal(JSON.stringify(failedLlm.calls).includes('UPSTREAM_429'), false)
-    }
-  })
-
-  it('maps route unavailability before model invocation for both sidecars', async () => {
-    for (const run of [classificationCall, routeCall]) {
-      const llm = unusedLlm()
-      assertFailure(await run(llm, { sessionRoute: undefined }), 'failure:route_unavailable')
-      assert.equal(llm.calls.length, 0)
-    }
-  })
-
   it('maps an in-flight external abort instead of waiting for the hard timeout', async () => {
-    for (const run of [classificationCall, routeCall]) {
-      const llm = hangingLlm()
-      const controller = new AbortController()
-      const pending = run(llm, { timeoutMs: 30, signal: controller.signal })
-      setTimeout(() => controller.abort(new Error('caller cancelled')), 2)
-      assertFailure(await pending, 'failure:aborted')
-      assert.equal(llm.calls.length, 1)
-    }
+    const llm = hangingLlm()
+    const controller = new AbortController()
+    const pending = routeCall(llm, { timeoutMs: 30, signal: controller.signal })
+    setTimeout(() => controller.abort(new Error('caller cancelled')), 2)
+    assertFailure(await pending, 'failure:aborted')
+    assert.equal(llm.calls.length, 1)
   })
 
   it('keeps its own sidecar budget floor without widening a larger configured budget', async () => {
     for (const configured of [1600, 1024, 0, -1]) {
-      const llm = fakeLlm({ contract: 'router-classification-contract/1', classes: [{ id: 'missing', authorizationClass: 'A' }] })
-      assert.equal((await classificationCall(llm, { maxOutputTokens: configured })).kind, 'classified', String(configured))
+      const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'none', reason: 'No match' })
+      assert.equal((await routeCall(llm, { maxOutputTokens: configured })).kind, 'none', String(configured))
       assert.equal(llm.calls[0].maxTokens, 4096, String(configured))
     }
     for (const configured of [8192, 4096]) {
@@ -522,18 +415,9 @@ describe('Auto shared sidecar routing and failure mapping', () => {
   })
 
   it('retries a truncated verdict once with a doubled budget and recovers on the retry', async () => {
-    const classification = fakeSequenceLlm([
-      { text: '{"contract":"router-classification-contract/1","classes":[', finishReason: 'max-tokens' },
-      { text: classificationOutput('missing', 'A') },
-    ])
-    const classified = await classificationCall(classification)
-    assert.equal(classified.kind, 'classified')
-    assert.equal(classification.calls.length, 2)
-    assert.deepEqual(classification.calls.map(call => call.maxTokens), [4096, 8192])
-
     const routing = fakeSequenceLlm([
       { text: '{"contract":"router-contract/1"', finishReason: 'max-tokens' },
-      { text: JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Current preference' }) },
+      { text: JSON.stringify(validRoute()) },
     ])
     const routed = await routeCall(routing)
     assert.equal(routed.kind, 'selected')
@@ -543,16 +427,15 @@ describe('Auto shared sidecar routing and failure mapping', () => {
   })
 
   it('fails closed after a second truncation and reports the bounded output tokens', async () => {
-    for (const run of [classificationCall, routeCall]) {
-      const llm = fakeSequenceLlm([
-        { text: '{"contract":"router-', finishReason: 'max-tokens', outputTokens: 4096 },
-        { text: '{"contract":"router-', finishReason: 'max-tokens', outputTokens: 8192 },
-      ])
-      const result = await run(llm)
-      assertFailure(result, 'failure:truncated')
-      assert.equal(llm.calls.length, 2)
-      assert.equal(result.outputTokens, 8192)
-    }
+    const llm = fakeSequenceLlm([
+      { text: '{"contract":"router-', finishReason: 'max-tokens', outputTokens: 4096 },
+      { text: '{"contract":"router-', finishReason: 'max-tokens', outputTokens: 8192 },
+    ])
+    const result = await routeCall(llm)
+    assertFailure(result, 'failure:truncated')
+    assert.equal(result.invalidCode, 'truncated')
+    assert.equal(llm.calls.length, 2)
+    assert.equal(result.outputTokens, 8192)
     // The doubled retry is capped instead of growing without bound, and never
     // shrinks below the already configured budget.
     const capped = fakeSequenceLlm([
@@ -563,46 +446,30 @@ describe('Auto shared sidecar routing and failure mapping', () => {
     assert.deepEqual(capped.calls.map(call => call.maxTokens), [20000, 20000])
   })
 
-  it('never retries timeout, model error, route unavailability, an aborted signal, or the shadow opt-out', async () => {
-    for (const run of [classificationCall, routeCall]) {
-      const timed = hangingLlm()
-      assertFailure(await run(timed, { timeoutMs: 5 }), 'failure:timeout')
-      assert.equal(timed.calls.length, 1)
-      const failed = throwingLlm()
-      assertFailure(await run(failed), 'failure:model_error')
-      assert.equal(failed.calls.length, 1)
-      const unavailable = unusedLlm()
-      assertFailure(await run(unavailable, { sessionRoute: undefined }), 'failure:route_unavailable')
-      assert.equal(unavailable.calls.length, 0)
-      const aborted = new AbortController()
-      aborted.abort(new Error('caller cancelled'))
-      const truncated = fakeSequenceLlm([{ text: '{"contract":"router-', finishReason: 'max-tokens' }])
-      assertFailure(await run(truncated, { signal: aborted.signal }), 'failure:aborted')
-      assert.equal(truncated.calls.length, 0)
-      const single = fakeSequenceLlm([{ text: '{"contract":"router-', finishReason: 'max-tokens' }])
-      assertFailure(await run(single, { retryTruncated: false }), 'failure:truncated')
-      assert.equal(single.calls.length, 1)
-    }
-  })
-
-  it('never reads generated descriptions, candidate model routes, domain memory, or history', async () => {
-    const req = request([question('q', 'A')])
-    for (const key of ['evidence', 'history', 'sessionLog']) {
-      Object.defineProperty(req, key, { get() { throw new Error(`forbidden request read: ${key}`) } })
-    }
-    const guarded = (id) => {
-      const value = profile(id)
-      for (const key of ['generatedDescription', 'modelRoute', 'memorySnapshot', 'L2', 'L3']) {
-        Object.defineProperty(value, key, { get() { throw new Error(`forbidden profile read: ${key}`) } })
-      }
-      return value
-    }
-    const llm = fakeLlm({ contract: 'router-contract/1', outcome: 'selected', agentId: 'agent-b', reason: 'Current user preference' })
-    const result = await routeAuto({
-      request: req, scope: scope(),
-      profiles: [guarded('agent-a'), guarded('agent-b')], ...input(llm),
-    })
-    assert.equal(result.kind, 'selected')
-    assert.equal(result.chosen, 'agent-b')
+  it('never retries timeout, model error, route unavailability, an aborted signal, or a single-shot sample', async () => {
+    const timed = hangingLlm()
+    assertFailure(await routeCall(timed, { timeoutMs: 5 }), 'failure:timeout')
+    assert.equal(timed.calls.length, 1)
+    const failed = throwingLlm()
+    assertFailure(await routeCall(failed), 'failure:model_error')
+    assert.equal(failed.calls.length, 1)
+    const unavailable = unusedLlm()
+    assertFailure(await routeCall(unavailable, { sessionRoute: undefined }), 'failure:route_unavailable')
+    assert.equal(unavailable.calls.length, 0)
+    const aborted = new AbortController()
+    aborted.abort(new Error('caller cancelled'))
+    const truncated = fakeSequenceLlm([{ text: '{"contract":"router-', finishReason: 'max-tokens' }])
+    assertFailure(await routeCall(truncated, { signal: aborted.signal }), 'failure:aborted')
+    assert.equal(truncated.calls.length, 0)
+    // A truncation and an unusable verdict both stay single-call when the sample
+    // is diagnostic only (Shadow observation).
+    const single = fakeSequenceLlm([{ text: '{"contract":"router-', finishReason: 'max-tokens' }])
+    assertFailure(await routeCall(single, { singleShot: true }), 'failure:truncated')
+    assert.equal(single.calls.length, 1)
+    const singleInvalid = fakeSequenceLlm([{ text: 'not-json' }])
+    const invalid = await routeCall(singleInvalid, { singleShot: true })
+    assertFailure(invalid, 'failure:invalid_output')
+    assert.equal(invalid.invalidCode, 'not_json')
+    assert.equal(singleInvalid.calls.length, 1)
   })
 })
