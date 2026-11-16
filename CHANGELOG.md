@@ -7,6 +7,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Auto 路由不再依赖授权档位，自动回答收敛为单个开关（破坏性）**：删除分类器与 A/B/C/D/E/F 档位，Auto 路由改为纯粹的确定性候选过滤（enabled、未归档、paths/tags 覆盖）+ 仅多候选时的一次受限 Router；分类器不再补类、也不会再因 `unknown` 或非严格 JSON 阻断路由。设置页的 A/B/C 芯片换成布尔开关 `decisionAgentAutoAnswer`（默认关闭；旧的 `decisionAgentAutoAnswerClasses` 数组被忽略）。关闭时 Auto 仍会选出助手并把 Case 固定给它、进入有归属的授权待办，且不消耗领域评估；打开时结论通过全部证据与授权闸门后才可直接采纳。助手编辑器与候选原则编辑器的适用范围只保留 paths/tags；`decision_consult` 去掉 `authorization_class` 参数；授权边界由确定性排除（审批、计划评审、发布/部署/合并、删除、执行命令、凭据与不可逆动作）承担。历史 `authorizationClasses` 字段惰性兼容、不再写出。
+- **判断记录改为 profile 级并带来源标签与筛选**：判断记录默认读取本 profile 内全部 root 会话的 Case，没有聚焦会话时也能查看；每条显示来源工作区标签（客户端按来源会话本地映射），新增按来源会话筛选；Remote/Client payload 不携带真实路径或原始 `workspaceKey`。路由复盘与指标仍按会话读取，无聚焦会话时显示明确提示而不是空列表；数据导出在没有会话时禁用并说明原因。
+
+### Fixed
+
+- **自动路由失败原因可见且可冷读**：Router 判决从模型文本容错提取（代码围栏、前后说明、未知额外字段），非法输出获得一次有界修复重试（Shadow 保持单次），截断仍以双倍预算重试一次；失败带封闭 `invalidCode` 与输出 token 用量。卡片、收件箱与路由决定历史用普通语言显示具体原因（超时、截断、无法解析、模型路由不可用等）。`case-open`/`attempt`/`outcome` 审计补 `rootSessionId`，失败行真正写入工作区 `.weir/audit.jsonl`（此前该行只发进程内事件、从不落盘）。
+
 ## [2.4.0] - 2026-11-16
 
 ### Added
