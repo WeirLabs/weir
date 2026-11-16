@@ -117,6 +117,10 @@ export async function createPageHarness(options = {}) {
     // The model picker arrives on its own chunk's arrival state; absent means the
     // route editor renders its three plain inputs (never a JSON box).
     modelPicker: options.modelPicker,
+    // The host snapshots a page maps a source session with; both arrive as plain
+    // selector snapshots, so the harness passes them straight through.
+    useSessions: options.useSessions,
+    useWorkspaces: options.useWorkspaces,
     getSession: options.getSession ?? (() => undefined),
   }
   const render = () => {

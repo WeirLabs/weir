@@ -5,8 +5,9 @@ import { caseOf } from './cases.js'
 import { evidenceOf, expandEvidence } from './evidence.js'
 
 const WINDOW_MS = { '24h': 24 * 60 * 60 * 1000, '7d': 7 * 24 * 60 * 60 * 1000, '30d': 30 * 24 * 60 * 60 * 1000 }
-const FILTER_KEYS = ['agentId', 'state', 'outcome', 'reasonCode', 'scope', 'feedbackState']
+const FILTER_KEYS = ['agentId', 'state', 'outcome', 'reasonCode', 'scope', 'feedbackState', 'sessionId']
 const ROUTING_PAGE_SIZE = 20
+const RECORD_SOURCE_LIMIT = 50
 const ROUTING_SUMMARY_CHARS = 240
 
 export class DecisionQuery {
@@ -17,10 +18,16 @@ export class DecisionQuery {
   }
 
   /**
-   * @param {{sessionId:string,filter?:Record<string,unknown>,cursor?:string|{after?:string,limit?:number}}} input
+   * Judgment history (OpenSpec decision-records-profile-history D1). `sessionId`
+   * is optional: the user surface lists every root session of this profile, so a
+   * page opened without a focused session reads them all. A caller that names one
+   * — the export and the internal readers — still narrows on `root_session_id`,
+   * and `filter.sessionId` picks one source root session, which is what the
+   * records page's source menu offers.
+   * @param {{sessionId?:string,filter?:Record<string,unknown>,cursor?:string|{after?:string,limit?:number}}} input
    */
   records(input) {
-    requireSession(input.sessionId)
+    if (input.sessionId !== undefined) requireSession(input.sessionId)
     const filter = input.filter ?? {}
     for (const key of Object.keys(filter)) {
       if (!FILTER_KEYS.includes(key)) throw new DecisionContractError('INVALID_RECORD_FILTER', `unknown filter: ${key}`)
@@ -29,8 +36,16 @@ export class DecisionQuery {
     const limit = cursor.limit ?? 50
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new DecisionContractError('INVALID_CURSOR', 'limit must be an integer from 1 to 100')
 
-    const where = ['root_session_id=?']
-    const params = [input.sessionId]
+    // No session named means no `root_session_id` condition: this profile's
+    // whole history, whichever workspace or root session opened each Case.
+    const where = []
+    const params = []
+    if (input.sessionId !== undefined) { where.push('root_session_id=?'); params.push(input.sessionId) }
+    if (filter.sessionId !== undefined) {
+      if (typeof filter.sessionId !== 'string' || !filter.sessionId) throw new DecisionContractError('INVALID_RECORD_FILTER', 'sessionId must be a non-empty string')
+      where.push('root_session_id=?')
+      params.push(filter.sessionId)
+    }
     const simple = { agentId: 'agent_id', state: 'state', feedbackState: 'feedback_state' }
     for (const [key, column] of Object.entries(simple)) {
       if (filter[key] !== undefined) {
@@ -49,7 +64,7 @@ export class DecisionQuery {
       where.push("(json_extract(decision_json,'$.code')=? OR EXISTS(SELECT 1 FROM attempts a WHERE a.case_id=cases.case_id AND a.return_code=?))")
       params.push(filter.reasonCode, filter.reasonCode)
     }
-    let rows = this.store.db.prepare(`SELECT * FROM cases WHERE ${where.join(' AND ')} ORDER BY created_at DESC,case_id DESC`).all(...params).map(caseOf)
+    let rows = this.store.db.prepare(`SELECT * FROM cases${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at DESC,case_id DESC`).all(...params).map(caseOf)
     if (filter.scope !== undefined) rows = rows.filter(row => scopeMatches(row.scope, filter.scope))
     if (cursor.after !== undefined) {
       const after = decodeCursor(cursor.after)
@@ -61,6 +76,20 @@ export class DecisionQuery {
       records: page,
       nextCursor: rows.length > limit && last ? encodeCursor(last) : null,
     })
+  }
+
+  /**
+   * The source sessions that actually own Cases in this profile: one row per
+   * `root_session_id` with its Case count and its newest update, newest first and
+   * bounded to 50 (design D2). The records list names no session of its own, so
+   * this summary — never the profile's whole session history — is what its source
+   * filter offers.
+   * @returns {{sessionId:string,count:number,lastAt:number}[]}
+   */
+  recordSources() {
+    return deepFreeze(this.store.db.prepare(`SELECT root_session_id AS session_id,COUNT(*) AS count,MAX(updated_at) AS last_at
+      FROM cases GROUP BY root_session_id ORDER BY last_at DESC,session_id DESC LIMIT ?`).all(RECORD_SOURCE_LIMIT)
+      .map(row => ({ sessionId: row.session_id, count: row.count, lastAt: row.last_at })))
   }
 
   /**

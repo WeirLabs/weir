@@ -15,9 +15,14 @@ window.__ModuleLoader__.load({
     // absolute path or a record id, and it never reaches the page.
     const UNSAFE_PUBLIC_HINT = /^(?:[A-Za-z]:[\\/]|~[\\/]|\\\\|\/|file:)|\b(?:dc|ev|fb|lr|ms)_[A-Za-z0-9][A-Za-z0-9_-]{5,}/;
 
+    // The judgment history is the profile-level list: the Host attaches a source
+    // summary to its first page only. A payload without one keeps no `sources`
+    // key at all, so appending a later page never erases the source menu.
     function narrowRecords(payload) {
       const value = okValue(payload);
-      return { records: array(value?.records), nextCursor: typeof value?.nextCursor === "string" ? value.nextCursor : null };
+      const page = { records: array(value?.records), nextCursor: typeof value?.nextCursor === "string" ? value.nextCursor : null };
+      if (Array.isArray(value?.sources)) page.sources = narrowRecordSources(value.sources);
+      return page;
     }
     function narrowRoutingReview(payload) {
       const value = okValue(payload);
@@ -39,6 +44,16 @@ window.__ModuleLoader__.load({
         return Number.isNaN(parsed) ? 0 : parsed;
       }
       return 0;
+    }
+    // The Host's own source summary, normalized once at the boundary: a source is
+    // a root session that really owns Cases in this profile, never a session the
+    // page happens to know about.
+    function narrowRecordSources(value) {
+      return array(value).filter(item => item && typeof item === "object" && typeof item.sessionId === "string" && item.sessionId !== "").map(item => ({
+        sessionId: item.sessionId,
+        count: Number.isFinite(item.count) ? item.count : 0,
+        lastAt: updatedAtMs(item.lastAt),
+      }));
     }
     function narrowInbox(payload) {
       return array(okValue(payload)).filter(item => item && typeof item === "object" && typeof item.caseId === "string" && item.caseId !== "").map(item => {
@@ -161,6 +176,39 @@ window.__ModuleLoader__.load({
         .sort((left, right) => updatedAtMs(right.items[0]?.updatedAt) - updatedAtMs(left.items[0]?.updatedAt) || String(left.label).localeCompare(String(right.label)));
       const workspaceCount = new Set(rows.map(row => row.workspaceId ?? "")).size;
       return { by, groups: ordered, workspaceCount, switchable: workspaceCount >= 2 };
+    }
+
+    /**
+     * Workspace labels for the profile-level judgment history. One local mapping
+     * answers both the source filter (built from the Host's own `sources` summary,
+     * so the menu only offers root sessions that really own Cases) and every row's
+     * source label; a session the host snapshots cannot place reads as "other
+     * workspace" instead of blocking the page. Pure: the page passes the snapshots
+     * it already holds.
+     * @param {{records?:any[],sources?:any[]}} [page] narrowRecords() projection
+     * @param {{workspaces?:any,sessions?:any,t?:any}} [options]
+     */
+    function recordSourceView(page, options = {}) {
+      const input = object(options) ?? {};
+      const value = object(page) ?? {};
+      const t = translator(input.t);
+      const index = workspaceIndex(input.workspaces, input.sessions);
+      const otherLabel = t("decisionInboxOtherWorkspace");
+      const labelOf = sessionId => index.labeled.get(workspaceKeyOf(index, sessionId)) || otherLabel;
+      const labels = new Map();
+      for (const current of array(value.records)) {
+        const sessionId = text(current?.rootSessionId);
+        if (sessionId) labels.set(sessionId, labelOf(sessionId));
+      }
+      return {
+        allLabel: t("decisionAllSessions"),
+        otherLabel,
+        // One menu entry per source root session: two sessions of one workspace
+        // stay two choices, told apart by their own Case counts.
+        sources: array(value.sources).filter(item => item && typeof item === "object" && text(item.sessionId) !== "")
+          .map(item => ({ sessionId: text(item.sessionId), count: item.count, lastAt: item.lastAt, label: labelOf(item.sessionId) })),
+        labels,
+      };
     }
 
     function selectorOptions(payload) {
@@ -534,9 +582,17 @@ window.__ModuleLoader__.load({
       };
     }
 
+    /**
+     * Append one page to the existing list. The source menu is the first page's
+     * fact: `sources` comes back untouched from the existing state, so appending
+     * never widens or refreshes it.
+     * @param {any[]|{records?:any[],sources?:any[]}} existing
+     * @param {any} page raw or already projected page
+     */
     function appendRecordPage(existing, page) {
+      const current = Array.isArray(existing) ? { records: existing } : object(existing) ?? {};
       const next = narrowRecords(page);
-      const records = [...array(existing)];
+      const records = [...array(current.records)];
       const seen = new Set(records.map(record => record?.caseId).filter(caseId => typeof caseId === "string"));
       for (const record of next.records) {
         const caseId = record?.caseId;
@@ -546,7 +602,9 @@ window.__ModuleLoader__.load({
         }
         records.push(record);
       }
-      return { records, nextCursor: next.nextCursor };
+      const appended = { records, nextCursor: next.nextCursor };
+      if (Array.isArray(current.sources)) appended.sources = current.sources;
+      return appended;
     }
 
     const ROUTING_OUTCOME_KEYS = {
@@ -595,8 +653,10 @@ window.__ModuleLoader__.load({
       return { items, nextCursor: next.nextCursor };
     }
 
+    // The judgment history is profile-level (OpenSpec
+    // decision-records-profile-history D1): an empty list never reports "open a
+    // session", which belongs to the session-scoped reads only.
     function recordEmptyState(input = {}) {
-      if (!input.sessionId) return "decisionNoSession";
       if (input.loading) return "decisionLoading";
       if (input.permissionDenied || (input.error && errorKey(input.error) === "decisionNoPermission")) return "decisionNoPermission";
       if (input.error) return "decisionReadFailed";
@@ -876,6 +936,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionSelector: "Decision assistant", decisionOff: "Do not use an assistant", decisionAgents: "Assistants", decisionRecords: "Decision records",
         decisionInbox: "Needs your decision", decisionMetrics: "Metrics", decisionLoading: "Loading decisions…", decisionLoadingShort: "Loading…", decisionSaving: "Saving…", decisionFailed: "The decision information could not be read, or the requested action could not be completed. Existing page content is preserved. Review the current status and retry when ready; this failure does not confirm a new selection, enable automatic answers, or change approval and permission boundaries. The Advanced diagnostics section retains the original error for troubleshooting.",
         decisionInboxGrouping: "Group decisions by", decisionInboxGroupByWorkspace: "By workspace", decisionInboxGroupByAgent: "By assistant", decisionInboxOtherWorkspace: "Other workspace", decisionInboxUnownedAgent: "No assistant yet", decisionInboxAssistantFallback: "An assistant", decisionInboxSourceWorkspace: "Workspace", decisionInboxOpenSourceSession: "Open source session", decisionInboxSourceInactive: "The source session is not running. A ruling is still saved and delivered to it.", decisionDeliveryUnavailableTitle: "Ruling saved, not delivered", decisionDeliveryUnavailable: "Your ruling was saved, but the conclusion could not reach the source session. The decision record keeps it.", decisionDeliveryDismiss: "Dismiss",
+        decisionFilterSource: "Source", decisionAllSessions: "All sessions", decisionNoSessionMetrics: "Open a session to view routing review and metrics.",
         decisionEvidence: "Rationale", decisionSuggestions: "Suggestions", decisionPerQuestion: "Per-question conclusions", decisionRevision: "Revision", decisionHistory: "Open record", decisionNoRecord: "No decision records.", decisionMoreDetails: "More details", decisionMoreDetailsRouteIssue: "routing disagreement or failure", decisionMoreDetailsFailedAttempt: "a failed evaluation",
         decisionRecord: "Decision record", decisionNoSession: "Open a session to view decision records.", decisionReadFailed: "Decision records could not be loaded. Retry the read.",
         decisionNoPermission: "You do not have permission to read these decision records.", decisionRecordsCleaned: "Decision records were cleaned up.", decisionNoFilteredRecords: "No decision records match these filters.", decisionNoAgents: "No assistants yet. Create an assistant to get started.",
@@ -932,7 +993,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionScopeCurrentWorkspace: "this workspace", decisionAgentsShared: "These assistants are shared across every workspace of this profile.",
         decisionPublicMemory: "Public memory", decisionWorkspaceExperience: "Current workspace experience",
         decisionPublicGuidanceOnly: "Public memory is reviewed guidance, not evidence: automatic answers still need support from the current workspace.", decisionPrivateIsolation: "Private experience is readable only in the workspace where it was recorded.",
-        decisionExportAdvanced: "Data export", decisionExportHint: "Writes one JSON file of this workspace\u2019s decision records, private memory and the published public principle wording into the decision data directory\u2019s exports folder. Other workspaces, absolute paths and public-memory provenance are never included, and there is no import.", decisionExport: "Export decision data", decisionExporting: "Exporting\u2026",
+        decisionExportAdvanced: "Data export", decisionExportHint: "Writes one JSON file of this workspace\u2019s decision records, private memory and the published public principle wording into the decision data directory\u2019s exports folder. Other workspaces, absolute paths and public-memory provenance are never included, and there is no import.", decisionExportNeedsSession: "A data export needs a focused session: the Host derives which workspace to export from that session.", decisionExport: "Export decision data", decisionExporting: "Exporting\u2026",
         decisionExportTitle: "Export this workspace\u2019s decision data?", decisionExportConfirmation: "The file contains this workspace\u2019s decision records, private memory and the published public principle wording. It is written to the local decision data directory with owner-only permissions. Exporting changes nothing, grants nothing and cannot be undone into the app: there is no import.", decisionExportConfirm: "Export data",
         decisionExportSucceeded: "Export written", decisionExportFile: "File", decisionExportBytes: "Size", decisionExportChecksum: "Checksum", decisionExportCopyPath: "Copy path", decisionExportCopied: "Path copied", decisionExportRetry: "Retry export",
         decisionExportFailed: "The export did not complete, so no file is shown.", decisionExportUnavailable: "Data export is unavailable because decision assistants are off or the decision store could not be opened. Enable decision assistants, then retry.", decisionExportWriteFailed: "The exports folder could not be written. Check that the decision data directory is writable, then retry.", decisionExportTooLarge: "This workspace\u2019s decision data exceeds the 32 MiB export limit.", decisionExportInvalidResult: "The export returned an incomplete result, so no success is shown. Retry the export.",
@@ -962,6 +1023,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionSelector: "决策助手", decisionOff: "不启用助手", decisionAgents: "助手管理", decisionRecords: "判断记录",
         decisionInbox: "待你决定", decisionMetrics: "指标", decisionLoading: "正在加载判断记录…", decisionLoadingShort: "读取中…", decisionSaving: "保存中…", decisionFailed: "暂时无法读取决策信息或完成请求的操作。已有页面内容不会被清除。请核对当前状态并稍后重试；这次失败不会确认新的选择、启用自动回答或改变审批与权限边界。若需定位问题，可在高级诊断中查看原始错误。",
         decisionInboxGrouping: "分组方式", decisionInboxGroupByWorkspace: "按工作区", decisionInboxGroupByAgent: "按助手", decisionInboxOtherWorkspace: "其他工作区", decisionInboxUnownedAgent: "尚未选择助手", decisionInboxAssistantFallback: "某位助手", decisionInboxSourceWorkspace: "工作区", decisionInboxOpenSourceSession: "打开来源会话", decisionInboxSourceInactive: "来源会话未运行；裁决仍会保存并送达。", decisionDeliveryUnavailableTitle: "已裁决，未送达", decisionDeliveryUnavailable: "裁决已保存，但结论未能送达来源会话。判断记录仍会保留。", decisionDeliveryDismiss: "关闭",
+        decisionFilterSource: "来源", decisionAllSessions: "全部会话", decisionNoSessionMetrics: "打开会话后可查看路由复盘与指标。",
         decisionEvidence: "判断依据", decisionSuggestions: "暂定建议", decisionPerQuestion: "逐题结论", decisionRevision: "记录版本", decisionHistory: "打开记录", decisionNoRecord: "暂无判断记录。", decisionMoreDetails: "更多细节", decisionMoreDetailsRouteIssue: "路由存在分歧或失败", decisionMoreDetailsFailedAttempt: "有失败的处理",
         decisionRecord: "判断记录", decisionNoSession: "打开会话后可查看判断记录。", decisionReadFailed: "判断记录读取失败，请重试。",
         decisionNoPermission: "你没有读取这些判断记录的权限。", decisionRecordsCleaned: "判断记录已清理。", decisionNoFilteredRecords: "没有符合筛选条件的判断记录。", decisionNoAgents: "暂无助手，请先新建助手。",
@@ -1017,7 +1079,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionScopeCurrentWorkspace: "当前工作区", decisionAgentsShared: "这些助手在本 profile 的所有工作区之间共享。",
         decisionPublicMemory: "公共记忆", decisionWorkspaceExperience: "当前工作区经验",
         decisionPublicGuidanceOnly: "公共记忆只是经审阅的指导，不是判断依据：自动回答仍需要当前工作区的依据。", decisionPrivateIsolation: "私有经验只在记录它的当前工作区可读。",
-        decisionExportAdvanced: "数据导出", decisionExportHint: "把本工作区的判断记录、私有记忆与已发布的公共原则文本写成一个 JSON 文件，放在决策数据目录的 exports 子目录。不含其他工作区、绝对路径或公共来源谱系，也不提供导入。", decisionExport: "导出决策数据", decisionExporting: "正在导出…",
+        decisionExportAdvanced: "数据导出", decisionExportHint: "把本工作区的判断记录、私有记忆与已发布的公共原则文本写成一个 JSON 文件，放在决策数据目录的 exports 子目录。不含其他工作区、绝对路径或公共来源谱系，也不提供导入。", decisionExportNeedsSession: "导出需要先打开会话：Host 由该会话推导要导出的工作区。", decisionExport: "导出决策数据", decisionExporting: "正在导出…",
         decisionExportTitle: "导出本工作区的决策数据？", decisionExportConfirmation: "文件将包含本工作区的判断记录、私有记忆与已发布的公共原则文本，写入本地决策数据目录，且只对当前用户可读。导出不会改变或授权任何东西，也无法从应用内还原：本产品不提供导入。", decisionExportConfirm: "导出数据",
         decisionExportSucceeded: "导出已完成", decisionExportFile: "文件", decisionExportBytes: "大小", decisionExportChecksum: "校验和", decisionExportCopyPath: "复制路径", decisionExportCopied: "路径已复制", decisionExportRetry: "重试导出",
         decisionExportFailed: "导出没有完成，因此不显示任何文件。", decisionExportUnavailable: "决策助手已关闭或无法打开决策存储，暂时不能导出。请先启用决策助手再重试。", decisionExportWriteFailed: "exports 目录无法写入。请确认决策数据目录可写后重试。", decisionExportTooLarge: "本工作区的决策数据超过 32 MiB 导出上限。", decisionExportInvalidResult: "导出返回了不完整的结果，因此不显示成功。请重试导出。",
@@ -1103,6 +1165,9 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
     exports.narrowRecords = narrowRecords;
     exports.narrowInbox = narrowInbox;
     exports.groupInbox = groupInbox;
+    // Same local mapping as the inbox: the source filter and every row's label
+    // come from the host snapshots, never from another payload field.
+    exports.recordSourceView = recordSourceView;
     exports.reasonKey = reasonKey;
     exports.routeFailureReasonKey = routeFailureReasonKey;
     exports.errorKey = errorKey;

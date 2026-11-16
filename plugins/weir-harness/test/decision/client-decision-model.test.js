@@ -82,6 +82,58 @@ test('card and page projections are complete and malformed payloads stay neutral
   assert.deepEqual(model.narrowInbox([{ caseId: 'dc-plain' }]), [{ caseId: 'dc-plain', sessionId: '', sourceActive: true, updatedAt: 0 }])
 })
 
+// The judgment history is the profile-level list: the Host attaches a source
+// summary to its first page only, and an appended page never rewrites it.
+test('judgment records accept the host source summary and keep the first page as the menu', async () => {
+  const model = await load()
+  // A payload without a summary keeps no `sources` key at all.
+  assert.deepEqual(Object.keys(model.narrowRecords({ records: [], nextCursor: null })), ['records', 'nextCursor'])
+  const page = model.narrowRecords({ records: [{ caseId: 'dc-a', rootSessionId: 's-a' }], nextCursor: 'cursor-1', sources: [
+    { sessionId: 's-a', count: 2, lastAt: 30 },
+    { sessionId: '', count: 1, lastAt: 10 },
+    { count: 4 },
+    { sessionId: 's-b', count: 'unknown', lastAt: 'yesterday' },
+  ] })
+  // Only a real root session is a source; the counters are numbers or zero.
+  assert.deepEqual(page.sources, [{ sessionId: 's-a', count: 2, lastAt: 30 }, { sessionId: 's-b', count: 0, lastAt: 0 }])
+  // Appending dedupes and keeps the first page's summary, never the new one's.
+  const appended = model.appendRecordPage({ records: page.records, sources: page.sources }, {
+    records: [{ caseId: 'dc-b', rootSessionId: 's-b' }, { caseId: 'dc-a', rootSessionId: 's-a' }],
+    nextCursor: null, sources: [{ sessionId: 's-new', count: 9, lastAt: 1 }],
+  })
+  assert.deepEqual(appended.records.map(record => record.caseId), ['dc-a', 'dc-b'])
+  assert.deepEqual(appended.sources, page.sources)
+  // The array form still appends, and invents no summary of its own.
+  assert.deepEqual(Object.keys(model.appendRecordPage([{ caseId: 'dc-a' }], { records: [{ caseId: 'dc-b' }] })), ['records', 'nextCursor'])
+})
+
+test('source labels map each root session to a workspace and fall back to the other-workspace bucket', async () => {
+  const model = await load()
+  const view = model.recordSourceView(
+    {
+      records: [{ caseId: 'dc-a', rootSessionId: 's-a' }, { caseId: 'dc-b', rootSessionId: 's-b' }, { caseId: 'dc-c' }],
+      sources: [{ sessionId: 's-a', count: 3, lastAt: 20 }, { sessionId: 's-b', count: 1, lastAt: 10 }, { sessionId: 's-gone', count: 1, lastAt: 5 }],
+    },
+    {
+      workspaces: [
+        { workspaceId: 'w1', title: 'Orrery', sessionIds: ['s-a'] },
+        { workspaceId: 'w2', title: 'Atlas', path: '/work/atlas/' },
+      ],
+      sessions: { 's-b': { cwd: '/work/atlas' }, 's-gone': { cwd: '/work/gone' } },
+      t: key => key,
+    },
+  )
+  assert.equal(view.allLabel, 'decisionAllSessions')
+  assert.equal(view.otherLabel, 'decisionInboxOtherWorkspace')
+  // One entry per real source session with its own count, in the Host's order.
+  assert.deepEqual(view.sources.map(source => [source.sessionId, source.label, source.count]), [
+    ['s-a', 'Orrery', 3], ['s-b', 'Atlas', 1], ['s-gone', 'decisionInboxOtherWorkspace', 1],
+  ])
+  // Rows are labelled from their own root session; a session without one stays unlabelled.
+  assert.deepEqual([...view.labels], [['s-a', 'Orrery'], ['s-b', 'Atlas']])
+  assert.deepEqual(model.recordSourceView(undefined, {}).sources, [])
+})
+
 
 test('RPC uses /api weirDecision namespace and exposes readable failures', async () => {
   const model = await load()

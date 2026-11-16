@@ -1,12 +1,12 @@
 // JSON-only remote face. Every method takes one bare args object; no agent lookup
 // and no caller-supplied workspace or Agent ownership override.
 //
-// Scope rule (OpenSpec decision-pending-overview D1): the *user surface* is
-// profile-level — `inbox` and `record` take no caller session, and a Case action
-// derives its session and workspace from the Case itself — while *automation*
-// stays workspace-scoped: `records`/`metrics`/`routingReview`/`exportData`,
-// learning, the tool and Hook paths, and the Broker's `mutate` boundary check
-// are unchanged.
+// Scope rule (OpenSpec decision-pending-overview D1, decision-records-profile-history
+// D1): the *user surface* is profile-level — `inbox`, `records` and `record` take no
+// caller session, and a Case action derives its session and workspace from the Case
+// itself — while *automation* stays workspace-scoped: `metrics`/`routingReview`/
+// `exportData`, learning, the tool and Hook paths, and the Broker's `mutate` boundary
+// check are unchanged.
 import { DecisionContractError } from './contracts.js'
 
 export const DECISION_REMOTE_NAMESPACE = 'weirDecision'
@@ -85,8 +85,10 @@ export function createDecisionRemoteService(dependencies) {
       let value
       const needsContext = method === 'routingReview' || method === 'setSelector' || method === 'profileUpsert' || method === 'profileSetState' || method === 'profileDelete' || LEARNING_MUTATIONS.has(method) || EXPORT_METHODS.has(method)
       const context = needsContext ? await broker.sessionContext(args.sessionId) : undefined
-      // The two user-surface reads name no session: the inbox is every pending
-      // Case in this profile and a record is keyed by Case id alone.
+      // The user-surface reads name no session: the inbox is every pending Case
+      // in this profile, a record is keyed by Case id alone, and `records` falls
+      // through to the Broker with no session context — it lists this profile's
+      // whole judgment history.
       if (method === 'inbox') value = await broker.inbox()
       else if (method === 'record') value = await broker.record({ caseId: typeof args.caseId === 'string' ? args.caseId : '' })
       // Identity calls take no workspace: the caller cannot name one, and the

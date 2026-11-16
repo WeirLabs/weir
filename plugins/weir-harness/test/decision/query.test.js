@@ -78,7 +78,7 @@ test('records filter all six dimensions and paginate without duplicates', async 
   assert.deepEqual(cases({ reasonCode: 'OUT_OF_SCOPE' }), [third.current.caseId])
   assert.deepEqual(cases({ scope: { workspaces: ['/repo'], paths: ['docs'] } }), [second.current.caseId])
   assert.deepEqual(cases({ feedbackState: 'validated' }), [first.current.caseId])
-  assert.throws(() => cases({ sessionId: 'not-a-filter' }), error => error.code === 'INVALID_RECORD_FILTER')
+  assert.throws(() => cases({ workspaceKey: '/repo' }), error => error.code === 'INVALID_RECORD_FILTER')
 
   const page1 = query.records({ sessionId: 'root', cursor: { limit: 2 } })
   assert.equal(page1.records.length, 2)
@@ -237,4 +237,53 @@ test('startup sweep deletes only old unreviewed closed history and stores a body
   assert.equal(tombstone, '1')
   assert.ok(!tombstone.includes('sweep-delete'))
   assert.ok(!tombstone.includes('private question context'))
+})
+
+// The judgment history is the profile-level user surface (OpenSpec
+// decision-records-profile-history D1): no session means every root session of
+// this profile, and `filter.sessionId` picks one source root session.
+test('records reads every root session until a session or source filter narrows it', async t => {
+  const { query, add } = await fixture(t)
+  const mine = await add('mine', { state: 'answered' })
+  const other = await add('other-root', { state: 'answered', rootSessionId: 'other' })
+  // No session named: the whole profile, whichever root session opened each Case.
+  assert.deepEqual(query.records({}).records.map(row => row.caseId).sort(), [mine.current.caseId, other.current.caseId].sort())
+  // A named session still narrows to that root — the export and the internal
+  // readers keep their scope — and the source filter picks one root session.
+  assert.deepEqual(query.records({ sessionId: 'root' }).records.map(row => row.caseId), [mine.current.caseId])
+  assert.deepEqual(query.records({ filter: { sessionId: 'other' } }).records.map(row => row.caseId), [other.current.caseId])
+  // Naming both is the intersection, never a widened read.
+  assert.deepEqual(query.records({ sessionId: 'root', filter: { sessionId: 'other' } }).records, [])
+  assert.deepEqual(query.records({ filter: { sessionId: 'missing-root' } }).records, [])
+  assert.throws(() => query.records({ filter: { sessionId: '' } }), error => error.code === 'INVALID_RECORD_FILTER')
+  assert.throws(() => query.records({ sessionId: '' }), error => error.code === 'INVALID_SESSION')
+  // Pagination and the other filters live on top of the same read.
+  const first = query.records({ filter: { state: 'closed' }, cursor: { limit: 1 } })
+  assert.equal(first.records.length, 1)
+  assert.ok(first.nextCursor)
+  assert.equal(query.records({ filter: { state: 'closed' }, cursor: { after: first.nextCursor, limit: 1 } }).records.length, 1)
+})
+
+test('recordSources counts the Cases of each root session, newest first and bounded', async t => {
+  const { store, query, add } = await fixture(t)
+  assert.deepEqual(query.recordSources(), [])
+  await add('source-a1', { state: 'answered' })
+  await add('source-a2', { state: 'answered' })
+  await add('source-b1', { state: 'returned', rootSessionId: 'root-b' })
+  await add('source-c1', { state: 'cancelled', rootSessionId: 'root-c' })
+  store.db.prepare('UPDATE cases SET updated_at=? WHERE root_session_id=?').run(9_000, 'root')
+  store.db.prepare('UPDATE cases SET updated_at=? WHERE root_session_id=?').run(5_000, 'root-b')
+  store.db.prepare('UPDATE cases SET updated_at=? WHERE root_session_id=?').run(1_000, 'root-c')
+  // Newest update first, with the real Case count of each root session.
+  assert.deepEqual(query.recordSources(), [
+    { sessionId: 'root', count: 2, lastAt: 9_000 },
+    { sessionId: 'root-b', count: 1, lastAt: 5_000 },
+    { sessionId: 'root-c', count: 1, lastAt: 1_000 },
+  ])
+  assert.equal(Object.isFrozen(query.recordSources()), true)
+  // The menu is bounded: more sources exist than it offers.
+  for (let index = 0; index < 55; index++) await add(`source-bulk-${index}`, { state: 'cancelled', rootSessionId: `bulk-root-${index}` })
+  const sources = query.recordSources()
+  assert.equal(sources.length, 50)
+  assert.equal(sources.some(source => source.sessionId === 'root-c'), false)
 })

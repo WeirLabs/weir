@@ -139,13 +139,15 @@ test('record pages append without duplicates and empty states remain specific', 
     records: [first[0], page.records[1]], nextCursor: 'next',
   })
   assert.deepEqual(model.appendRecordPage([], page).records.map(item => item.caseId), ['dc-a', 'dc-b'])
-  assert.equal(model.recordEmptyState({ sessionId: null }), 'decisionNoSession')
-  assert.equal(model.recordEmptyState({ sessionId: 's', loading: true }), 'decisionLoading')
-  assert.equal(model.recordEmptyState({ sessionId: 's', error: new Error('x') }), 'decisionReadFailed')
-  assert.equal(model.recordEmptyState({ sessionId: 's', permissionDenied: true }), 'decisionNoPermission')
-  assert.equal(model.recordEmptyState({ sessionId: 's', cleaned: true }), 'decisionRecordsCleaned')
-  assert.equal(model.recordEmptyState({ sessionId: 's', filtered: true }), 'decisionNoFilteredRecords')
-  assert.equal(model.recordEmptyState({ sessionId: 's' }), 'decisionNoRecord')
+  // The judgment history is profile-level: no focused session is not an empty state.
+  assert.equal(model.recordEmptyState({ sessionId: null }), 'decisionNoRecord')
+  assert.equal(model.recordEmptyState({ sessionId: null, filtered: true }), 'decisionNoFilteredRecords')
+  assert.equal(model.recordEmptyState({ loading: true }), 'decisionLoading')
+  assert.equal(model.recordEmptyState({ error: new Error('x') }), 'decisionReadFailed')
+  assert.equal(model.recordEmptyState({ permissionDenied: true }), 'decisionNoPermission')
+  assert.equal(model.recordEmptyState({ cleaned: true }), 'decisionRecordsCleaned')
+  assert.equal(model.recordEmptyState({ filtered: true }), 'decisionNoFilteredRecords')
+  assert.equal(model.recordEmptyState({}), 'decisionNoRecord')
 })
 
 test('feedback actions and drafts follow state and Case/session boundaries', async () => {

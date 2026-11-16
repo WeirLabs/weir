@@ -64,6 +64,25 @@ test('every remote method reaches the Broker and wraps its value', async () => {
   assert.deepEqual(calls.find(call => call[0] === 'profileUpsert')[1], [{ caseId: 'dc-case', sessionId: 'child', agentId: 'ag', mode: 'agent', state: 'disabled' }])
 })
 
+// The judgment history is a user-surface read: the Remote forwards the caller's
+// filters and resolves no session context of its own (OpenSpec
+// decision-records-profile-history D1).
+test('records passes the caller filters through without resolving a session context', async () => {
+  const calls = []
+  const contexts = []
+  const broker = {
+    status: () => ({ available: true }),
+    sessionContext: async id => { contexts.push(id); return { rootSessionId: id, workspaceKey: `/ws-${id}` } },
+    records: async args => { calls.push(args); return { records: [], nextCursor: null, sources: [] } },
+  }
+  const service = createDecisionRemoteService({ broker: () => broker })
+  const result = await service.records({ filter: { sessionId: 'source-root', state: 'closed' }, cursor: { after: 'cursor-1' } })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(contexts, [])
+  assert.deepEqual(calls, [{ filter: { sessionId: 'source-root', state: 'closed' }, cursor: { after: 'cursor-1' } }])
+  assert.deepEqual(result.value, { records: [], nextCursor: null, sources: [] })
+})
+
 test('every Case action derives its context from the Case and drops a caller-named session or workspace', async () => {
   const actions = []
   const reads = []
