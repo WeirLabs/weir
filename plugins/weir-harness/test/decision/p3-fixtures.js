@@ -8,6 +8,7 @@ export async function brokerFixture(t) {
   const workspace = realpathSync(dir)
   const config = { decisionAgentsEnabled: true, decisionAgentRetentionDays: 0 }
   const requests = []
+  const audits = []
   let respond = () => ({ operations: [] })
   const agent = {
     id: 'root',
@@ -32,12 +33,13 @@ export async function brokerFixture(t) {
   const broker = new DecisionBroker({
     profileContext: { home: dir, name: 'test' }, ctx,
     config: () => config, now: () => 1_000,
+    audit: (kind, value) => audits.push({ kind, value }),
   })
   await broker.start()
   const profile = await broker.profileUpsert({ workspaceKey: workspace, name: 'A', userDescription: 'Prefer concise copy' })
   t.after(async () => { await broker.flush(); rmSync(dir, { recursive: true, force: true }) })
   return {
-    dir, workspace, config, ctx, agent, broker, profile, requests,
+    dir, workspace, config, ctx, agent, broker, profile, requests, audits,
     respond: fn => { respond = fn },
   }
 }

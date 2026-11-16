@@ -938,6 +938,15 @@ window.__ModuleLoader__.load({
       // new ref really exists.
       const exportFocusRef = react.useRef(false);
       const [editor, setEditor] = react.useState(null);
+      // Candidate review: at most one inline principle editor at a time, the running
+      // count of this review's user edits (for the publish confirmation) and the
+      // entry refs used to hand focus back after a write.
+      const [candidateEditor, setCandidateEditor] = react.useState(null);
+      const [candidateEditorError, setCandidateEditorError] = react.useState(null);
+      const [candidateEdits, setCandidateEdits] = react.useState(null);
+      const candidateEntryRefs = react.useRef({});
+      const candidateTextRef = react.useRef(null);
+      const lastActionErrorRef = react.useRef(null);
       // Local row state for the visual scope/route editors (paths, tags, classes,
       // rungs). It is derived from the staged texts and never authoritative:
       // agentVisualState re-initializes it whenever the editor target or the
@@ -977,7 +986,7 @@ window.__ModuleLoader__.load({
       const publicLoadRef = react.useRef(null);
       const publicCandidateRef = react.useRef(0);
       const [publicMemory, setPublicMemory] = react.useState(emptyPublicMemory);
-      const requestAgentFocus = target => setAgentFocusRequest({ target });
+      const requestAgentFocus = target => setAgentFocusRequest(typeof target === "string" ? { target } : target);
       react.useEffect(() => {
         if (!agentFocusRequest || tab !== "agents") return;
         const summaryControl = [...agentListRef.current?.querySelectorAll?.('[data-action="open-agent"]') ?? []].find(element => element.getAttribute("data-agent-id") === selectedAgentId);
@@ -987,6 +996,13 @@ window.__ModuleLoader__.load({
           : agentFocusRequest.target === "detail" ? [backControl, agentBackRef.current, agentDetailRef.current]
           : agentFocusRequest.target === "create-list" ? [createControl, agentCreateRef.current]
           : agentFocusRequest.target === "public" ? [publicZoneRef.current, agentDetailRef.current]
+          // A candidate write hands focus back to the entry it edited, or — after a
+          // deletion — to the neighbour that took its place, then the detail itself.
+          : agentFocusRequest.target === "candidate" ? [
+            ...[...(agentFocusRequest.principleIds ?? [])].map(principleId => candidateEntryRefs.current[`edit:${principleId}`]?.current),
+            agentDetailRef.current,
+          ]
+          : agentFocusRequest.target === "candidate-editor" ? [candidateTextRef.current, agentDetailRef.current]
           : [summaryControl, agentSummaryRef.current];
         for (const element of targets) {
           const style = element?.ownerDocument?.defaultView?.getComputedStyle?.(element);
@@ -1254,6 +1270,10 @@ window.__ModuleLoader__.load({
         const previous = resources.agent.value;
         const sameAgent = previous?.agentId === agentId;
         setSelectedAgentId(agentId);
+        // Switching assistants abandons the review in place: no draft wording and no
+        // edit counters may leak into another assistant's candidate. A re-read of the
+        // same assistant keeps both, so a save round-trip preserves the counts.
+        if (!sameAgent) { setCandidateEditor(null); setCandidateEditorError(null); setCandidateEdits(null); }
         // A learning/snapshot action reloads the assistant it just changed. Keep that
         // previous detail mounted while the authoritative read is in flight: resetting
         // to the loading state unmounts the whole detail for one frame, the page
@@ -1363,11 +1383,14 @@ window.__ModuleLoader__.load({
             publicActionRef.current = false;
             requestAgentFocus("public");
           }
+          lastActionErrorRef.current = null;
           setActionError(null);
           return result;
         } catch (reason) {
           if (epochRef.current === epoch && sessionId === requestSession) {
-            setActionError(asError(reason, "DECISION_ACTION_FAILED"));
+            const failure = asError(reason, "DECISION_ACTION_FAILED");
+            lastActionErrorRef.current = failure;
+            setActionError(failure);
             if (["snapshotPublish", "snapshotReject", "snapshotRollback"].includes(method)) {
               const selected = resources.agent.value;
               if (selected) await preserveDetailScroll(() => selectAgent(selected.agentId));
@@ -1375,6 +1398,104 @@ window.__ModuleLoader__.load({
           }
           return undefined;
         } finally { if (epochRef.current === epoch && sessionId === requestSession) { pendingRef.current = false; setPending(null); } }
+      };
+      /**
+       * The entries a deletion can hand focus to: the next editable one, else the
+       * previous one. Read from the same review projection the list renders, before
+       * the entry disappears.
+       */
+      const candidateNeighborIds = principleId => {
+        const detail = learningDetail?.candidate ? { agentId: learningDetail.agentId, ...learningDetail.candidate } : learningDetail;
+        const view = typeof props.learning?.learningView === "function"
+          ? props.learning.learningView({ agent: resources.agent.value, detail, candidateReadiness: model.candidateReadiness })
+          : null;
+        const order = (view?.changes ?? []).filter(change => change.editable).map(change => change.principleId);
+        const at = order.indexOf(principleId);
+        if (at < 0) return [];
+        return [order[at + 1], order[at - 1]].filter(value => typeof value === "string");
+      };
+      /** One stable ref object per candidate entry action, so focus can return to a
+       * row after the authoritative re-read replaced every node. */
+      const candidateEntryRef = (principleId, action = "edit") => {
+        const key = `${action}:${principleId}`;
+        const refs = candidateEntryRefs.current;
+        if (!refs[key]) refs[key] = { current: null };
+        return refs[key];
+      };
+      /** Seed the inline editor from the entry's current content. Only wording and
+       * the workspace-agnostic hints are editable; the scope's workspace list stays
+       * on the Host. */
+      const openCandidateEditor = item => {
+        const content = item?.after;
+        if (!content || typeof item.principleId !== "string" || pendingRef.current) return;
+        const scope = content.scope && typeof content.scope === "object" ? content.scope : {};
+        const classes = Array.isArray(scope.authorizationClasses) ? scope.authorizationClasses.filter(entry => ["A", "B", "C"].includes(entry)) : [];
+        setCandidateEditorError(null);
+        setCandidateEditor({
+          principleId: item.principleId,
+          text: typeof content.text === "string" ? content.text : "",
+          paths: Array.isArray(scope.paths) ? [...scope.paths] : [],
+          tags: Array.isArray(scope.tags) ? [...scope.tags] : [],
+          classes,
+        });
+        requestAgentFocus("candidate-editor");
+      };
+      const draftCandidateEditor = patch => setCandidateEditor(current => current && patch ? { ...current, ...patch } : current);
+      const closeCandidateEditor = () => {
+        const principleId = candidateEditor?.principleId;
+        setCandidateEditor(null); setCandidateEditorError(null);
+        if (principleId) requestAgentFocus({ target: "candidate", principleIds: [principleId] });
+      };
+      /** Count this review's own successful writes per candidate, so the publish
+       * confirmation can state them as a fact (and only for the same candidate). */
+      const recordCandidateEdit = (snapshotId, field) => {
+        setCandidateEdits(current => current && current.snapshotId === snapshotId
+          ? { ...current, [field]: (Number(current[field]) || 0) + 1 }
+          : { snapshotId, edited: 0, removed: 0, [field]: 1 });
+      };
+      /**
+       * One candidate update through the shared pending/epoch guard. A failure keeps
+       * the inline editor and its wording; a revision conflict additionally rereads
+       * the authoritative candidate, so the next save uses the current revision
+       * instead of silently overwriting what changed underneath.
+       */
+      const submitCandidateUpdate = async (target, edits) => {
+        const result = await run("snapshotUpdate", target.snapshotId, target.expectedRevision, edits);
+        if (result) { lastActionErrorRef.current = null; return result; }
+        const failure = lastActionErrorRef.current;
+        const conflict = failure?.code === "REVISION_CONFLICT" || failure?.code === "SNAPSHOT_STATE_CONFLICT";
+        setCandidateEditorError(conflict ? "decisionPrincipleConflict" : "decisionPrincipleSaveFailed");
+        if (conflict) {
+          const selected = resources.agent.value;
+          if (selected) await preserveDetailScroll(() => selectAgent(selected.agentId));
+        }
+        return undefined;
+      };
+      const saveCandidateEditor = async target => {
+        const editor = candidateEditor;
+        if (!editor || pendingRef.current) return;
+        const text = typeof editor.text === "string" ? editor.text : "";
+        if (text.trim().length === 0 || text.length > 600) return;
+        const scope = {};
+        const paths = [...new Set(editor.paths.map(row => row.trim()).filter(Boolean))];
+        if (paths.length) scope.paths = paths;
+        const tags = [...new Set(editor.tags.map(row => row.trim()).filter(Boolean))];
+        if (tags.length) scope.tags = tags;
+        const classes = ["A", "B", "C"].filter(entry => editor.classes.includes(entry));
+        if (classes.length) scope.authorizationClasses = classes;
+        const result = await submitCandidateUpdate(target, [{ principleId: editor.principleId, text, scope }]);
+        if (!result) return;
+        recordCandidateEdit(target.snapshotId, "edited");
+        setCandidateEditor(null); setCandidateEditorError(null);
+        requestAgentFocus({ target: "candidate", principleIds: [editor.principleId] });
+      };
+      const removeCandidatePrinciple = async action => {
+        if (!action || pendingRef.current) return;
+        const result = await submitCandidateUpdate(action, [{ principleId: action.principleId, remove: true }]);
+        if (!result) return;
+        recordCandidateEdit(action.snapshotId, "removed");
+        setCandidateEditor(null); setCandidateEditorError(null);
+        requestAgentFocus({ target: "candidate", principleIds: [...(action.neighborIds ?? [])] });
       };
       const startLearning = async agentId => {
         const selected = resources.agent.value;
@@ -1639,6 +1760,15 @@ window.__ModuleLoader__.load({
           },
           learningProps: {
             detail: learningDetail, run, pending, t, learning: props.learning, candidateReadiness: model.candidateReadiness,
+            candidateEditor, candidateEditorError, candidateEdits, candidateEntryRef: candidateEntryRef,
+            onCandidateEdit: openCandidateEditor,
+            onCandidateDraft: draftCandidateEditor,
+            onCandidateSave: target => saveCandidateEditor(target),
+            onCandidateCancel: closeCandidateEditor,
+            onCandidateRemove: (item, target) => {
+              const neighborIds = candidateNeighborIds(item.principleId);
+              return setConfirm({ kind: "candidate-remove", principleId: item.principleId, neighborIds, ...target });
+            },
             scopeSummary: model.scopeSummary,
             loading: learningLoading,
             onStart: () => startLearning(selectedAgent.agentId),
@@ -1695,6 +1825,12 @@ window.__ModuleLoader__.load({
         confirmLabel: t("decisionDeleteAgentConfirm"), cancelLabel: t("decisionCancel"), danger: true, pending: pending !== null,
         onCancel: () => setConfirm(null),
         onConfirm: () => { const { agentId, preview } = confirm; setConfirm(null); return run("profileDelete", agentId, preview.counts.cases); },
+      }) : confirm?.kind === "candidate-remove" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
+        id: "weir-da-candidate-remove",
+        title: t("decisionPrincipleRemoveTitle"), body: jsx.jsx("p", { children: t("decisionPrincipleRemoveBody") }),
+        confirmLabel: t("decisionPrincipleRemoveConfirm"), cancelLabel: t("decisionCancel"), danger: true, pending: pending !== null,
+        onCancel: () => setConfirm(null),
+        onConfirm: () => { const action = confirm; setConfirm(null); return removeCandidatePrinciple(action); },
       }) : confirm?.kind === "export" ? jsx.jsx(ui.ConfirmDialog, { ...confirmationFocus,
         id: "weir-da-export", returnFocus: exportButtonRef,
         title: t("decisionExportTitle"), body: jsx.jsx("p", { children: t("decisionExportConfirmation") }),
@@ -1714,6 +1850,11 @@ window.__ModuleLoader__.load({
           confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t("decisionApplyChangeCount")}: ${confirm.changeCount}` }, "count") : null,
           confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: `${t(confirm.public ? "decisionPublicParents" : "decisionApplyReplaceCurrent")}: ${confirm.currentVersion === null ? t(confirm.public ? "decisionPublicNoCurrentParent" : "decisionNoCurrentSnapshot") : `${t("decisionPrincipleVersion")} ${confirm.currentVersion}`}` }, "current") : null,
           confirm.kind === "snapshotPublish" ? jsx.jsx("p", { children: t("decisionApplyFutureOnly") }, "future") : null,
+          // Only when this review actually edited the candidate: a fact about the
+          // user's own work, never a before/after draft.
+          confirm.kind === "snapshotPublish" && (Number(confirm.edited) || 0) + (Number(confirm.removed) || 0) > 0
+            ? jsx.jsx("p", { "data-apply-user-edits": true, children: `${t("decisionApplyEditedCount")}: ${Number(confirm.edited) || 0} · ${t("decisionApplyRemovedCount")}: ${Number(confirm.removed) || 0}` }, "user-edits")
+            : null,
         ] }),
         confirmLabel: t(confirm.kind === "snapshotPublish" ? confirm.public ? "decisionPublicPublish" : "decisionPublish" : confirm.kind === "snapshotReject" ? "decisionReject" : confirm.public ? "decisionPublicRollback" : "decisionRollback"),
         cancelLabel: t("decisionCancel"), danger: confirm.kind !== "snapshotPublish", pending: pending !== null,

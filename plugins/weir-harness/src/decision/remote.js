@@ -14,14 +14,17 @@ export const DECISION_REMOTE_SERVICE_KEY = 'weirDecisionRemote'
 export const DECISION_REMOTE_METHODS = Object.freeze([
   'overview', 'agents', 'agent', 'records', 'record', 'inbox', 'metrics', 'routingReview', 'caseForCall', 'caseForToolCall', 'waitForToolCall',
   'setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify', 'profileUpsert', 'profileSetState', 'profileDeletePreview', 'profileDelete',
-  'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
+  'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'snapshotUpdate', 'memorySnapshot',
   'publicMemoryRefresh', 'publicCandidate', 'exportData',
 ])
 // User-surface Case actions. The caller owns only the action payload and the
 // Case id: the Host reads that Case and derives its root session and workspace,
 // so a caller-named `sessionId`/`workspaceKey` is dropped instead of trusted.
 const CASE_MUTATIONS = new Set(['decide', 'reassign', 'cancel', 'retry', 'feedback', 'correction', 'returnToCaller', 'clarify'])
-const LEARNING_MUTATIONS = new Set(['learningStart', 'snapshotPublish', 'snapshotReject', 'snapshotRollback'])
+// `snapshotUpdate` joins the same closed set: only its own edit payload is
+// caller-owned, while the session, workspace and the closed edit parse stay
+// Host-derived (a caller-named workspace or source never reaches the store).
+const LEARNING_MUTATIONS = new Set(['learningStart', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'snapshotUpdate'])
 const PUBLIC_MEMORY_METHODS = new Set(['publicMemoryRefresh', 'publicCandidate'])
 // The export forwards one caller value, its session: the Host derives the root
 // session, the workspace and the file location, so no field can widen the scope.

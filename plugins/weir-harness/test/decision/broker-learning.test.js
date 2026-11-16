@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DecisionBroker } from '../../src/decision/broker.js'
-import { brokerFixture, insertLearningRun, seedUserDecision, snapshotForRun, validAdd } from './p3-fixtures.js'
+import { brokerFixture, insertLearningRun, insertSnapshot, seedUserDecision, snapshotForRun, validAdd } from './p3-fixtures.js'
 
 test('learningStart freezes actual inputs and requestId retries share one model job and candidate', async t => {
   const f = await brokerFixture(t)
@@ -139,4 +139,89 @@ test('restart marks a persisted running Learning Run INTERRUPTED without candida
   assert.equal((await restarted.agent({ sessionId: 'root', agentId: f.profile.agentId })).currentSnapshotId, null)
   assert.equal(restarted.store.db.prepare('SELECT COUNT(*) AS n FROM memory_snapshots').get().n, 0)
   assert.equal(f.requests.length, 0)
+})
+
+test('snapshotUpdate authorizes a draft like the other Snapshot actions and audits counts alone', async t => {
+  const f = await brokerFixture(t)
+  const source = await seedUserDecision(f, 'update-source')
+  f.respond(() => ({ operations: [validAdd(f, [source.caseId])] }))
+  const agentInput = { sessionId: 'root', agentId: f.profile.agentId }
+  const candidate = await f.broker.learningStart({ ...agentInput, requestId: 'req-update' })
+  const snapshotId = snapshotForRun(f, candidate.learningRunId).snapshot_id
+  const draft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })
+  const principle = draft.principles[0]
+  f.audits.length = 0
+
+  const updated = await f.broker.snapshotUpdate({
+    ...agentInput, snapshotId, expectedRevision: draft.revision,
+    edits: [{ principleId: principle.principleId, text: 'The wording the user chose' }],
+  })
+  assert.equal(updated.snapshotId, snapshotId)
+  assert.equal(updated.revision, draft.revision + 1)
+  assert.equal(updated.principles[0].text, 'The wording the user chose')
+  const audited = f.audits.filter(entry => entry.kind === 'snapshot' && entry.value.action === 'candidate-update')
+  assert.equal(audited.length, 1)
+  assert.deepEqual(audited[0].value, {
+    snapshotId, learningRunId: candidate.learningRunId, agentId: f.profile.agentId, rootSessionId: 'root',
+    zone: 'workspace', action: 'candidate-update',
+    revisionBefore: draft.revision, revisionAfter: updated.revision, edited: 1, removed: 0,
+  })
+  assert.equal(JSON.stringify(f.audits).includes('The wording the user chose'), false, 'the audit never carries a principle body')
+  // Editing is not publishing: the draft stays a draft and the current version is untouched.
+  assert.equal(updated.state, 'draft')
+  assert.equal((await f.broker.agent(agentInput)).currentSnapshotId, null)
+  assert.equal((await f.broker.learningRun({ sessionId: 'root', learningRunId: candidate.learningRunId })).outcome, 'candidate')
+  assert.equal(f.requests.length, 1, 'editing never calls the model')
+})
+
+test('snapshotUpdate rejects a foreign workspace, a mismatched assistant and a forged edit field', async t => {
+  const f = await brokerFixture(t)
+  const source = await seedUserDecision(f, 'update-boundary-source')
+  f.respond(() => ({ operations: [validAdd(f, [source.caseId])] }))
+  const candidate = await f.broker.learningStart({ sessionId: 'root', agentId: f.profile.agentId, requestId: 'req-boundary' })
+  const snapshotId = snapshotForRun(f, candidate.learningRunId).snapshot_id
+  const draft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })
+  const principle = draft.principles[0]
+
+  const foreignWorkspace = `${f.workspace}-other`
+  insertLearningRun(f, 'lr_foreign_workspace', 'candidate', { workspaceKey: foreignWorkspace })
+  insertSnapshot(f, 'ms_foreign_workspace', 1, 'draft', { workspaceKey: foreignWorkspace, learningRunId: 'lr_foreign_workspace' })
+  f.audits.length = 0
+  await assert.rejects(
+    f.broker.snapshotUpdate({ sessionId: 'root', snapshotId: 'ms_foreign_workspace', expectedRevision: 1, edits: [{ principleId: principle.principleId, text: 'Foreign' }] }),
+    error => error.code === 'OUT_OF_SCOPE',
+  )
+  await assert.rejects(
+    f.broker.snapshotUpdate({ sessionId: 'root', agentId: 'ag_someone_else', snapshotId, expectedRevision: draft.revision, edits: [{ principleId: principle.principleId, text: 'Mismatched' }] }),
+    error => error.code === 'OUT_OF_SCOPE',
+  )
+  const boundary = f.audits.filter(entry => entry.kind === 'snapshot' && entry.value.action === 'boundary-reject')
+  assert.equal(boundary.length, 2)
+  assert.equal(boundary.every(entry => entry.value.snapshotId !== undefined && entry.value.rootSessionId === 'root'), true)
+
+  // A caller cannot smuggle a source or a state change into an edit.
+  await assert.rejects(
+    f.broker.snapshotUpdate({ sessionId: 'root', snapshotId, expectedRevision: draft.revision, edits: [{ principleId: principle.principleId, text: 'Forged', sources: ['ev_forged'] }] }),
+    error => error.code === 'UNKNOWN_FIELD',
+  )
+  assert.equal((await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })).revision, draft.revision)
+})
+
+test('an editing Agent does not need to be enabled, but publishing still does', async t => {
+  const f = await brokerFixture(t)
+  const source = await seedUserDecision(f, 'update-disabled-source')
+  f.respond(() => ({ operations: [validAdd(f, [source.caseId])] }))
+  const candidate = await f.broker.learningStart({ sessionId: 'root', agentId: f.profile.agentId, requestId: 'req-disabled' })
+  const snapshotId = snapshotForRun(f, candidate.learningRunId).snapshot_id
+  const draft = await f.broker.memorySnapshot({ sessionId: 'root', snapshotId })
+  await f.broker.profileSetState(f.profile.agentId, 'disabled')
+  const updated = await f.broker.snapshotUpdate({
+    sessionId: 'root', snapshotId, expectedRevision: draft.revision,
+    edits: [{ principleId: draft.principles[0].principleId, text: 'Reviewed while disabled' }],
+  })
+  assert.equal(updated.state, 'draft')
+  await assert.rejects(
+    f.broker.snapshotPublish({ sessionId: 'root', snapshotId, expectedRevision: updated.revision }),
+    error => error.code === 'AGENT_UNAVAILABLE',
+  )
 })

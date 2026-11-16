@@ -517,13 +517,17 @@ test('Client actions expose six P3 methods with sessionId, requestId, and expect
   await actions.snapshotReject('ms_one', 4)
   await actions.snapshotRollback('ms_one', 5)
   await actions.memorySnapshot('ms_one')
+  await actions.snapshotUpdate('ms_one', 6, [{ principleId: 'pr_a', text: 'Chosen wording' }])
   assert.deepEqual(calls.map(call => call.method), [
-    'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot',
+    'learningStart', 'learningRun', 'snapshotPublish', 'snapshotReject', 'snapshotRollback', 'memorySnapshot', 'snapshotUpdate',
   ])
   for (const call of calls) assert.equal(call.args.sessionId, 'child')
   assert.deepEqual(calls[0].args, { sessionId: 'child', agentId: 'agent-a', requestId: 'req-client' })
   assert.deepEqual(calls[2].args, { sessionId: 'child', snapshotId: 'ms_one', expectedRevision: 4 })
   assert.deepEqual(calls[4].args, { sessionId: 'child', snapshotId: 'ms_one', expectedRevision: 5 })
+  // A candidate update carries the session, the review's revision and the closed
+  // edit payload; nothing else about the candidate is caller-owned.
+  assert.deepEqual(calls[6].args, { sessionId: 'child', snapshotId: 'ms_one', expectedRevision: 6, edits: [{ principleId: 'pr_a', text: 'Chosen wording' }] })
 })
 
 test('Agent detail exposes the single candidate review path without a fifth view or automatic action', async () => {
@@ -726,5 +730,216 @@ test('learning review renders bounded Case and correction excerpts without expos
   assert.equal(text.includes('/repo'), false, 'a workspace realpath never renders')
   assert.equal(text.includes('DO_NOT_EXPOSE_TASK_SUMMARY'), false)
   for (const disclosure of disclosures) assert.deepEqual(findAll(disclosure, node => ['button', 'input', 'textarea', 'select'].includes(node.type) || node.type === host.ui.Button), [])
+  host.unmount()
+})
+
+// One readable draft candidate: p_change is reworded by this run, p_add is new,
+// p_remove exists only in the parent, p_keep is untouched by this run.
+function candidateReviewFixture(overrides = {}) {
+  const run = {
+    learningRunId: 'lr_candidate', agentId: 'a', outcome: 'candidate', revision: 4,
+    inputFrozen: { parentSnapshotId: 'ms_current', parentSnapshotRevision: 8, caseIds: ['dc_source'], feedbackIds: [] },
+    operations: [{ op: 'add', principleId: 'p_add', text: 'Added rule', scope: { paths: ['src/new'] }, sources: ['dc_source'] }],
+    replay: { passed: true, metrics: { operationCount: 1 }, finalHash: 'c'.repeat(64) },
+    sourceRecords: [],
+  }
+  const snapshot = {
+    snapshotId: 'ms_candidate', agentId: 'a', learningRunId: 'lr_candidate', state: 'draft', version: 4, revision: 9,
+    parentSnapshotId: 'ms_current', zone: 'workspace',
+    principles: [
+      { principleId: 'p_keep', text: 'Keep this rule', scope: { workspaces: ['/repo'] }, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_change', text: 'Use B', scope: { workspaces: ['/repo'], paths: ['src'] }, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_add', text: 'Added rule', scope: { paths: ['src/new'] }, sources: ['dc_source'], state: 'active' },
+    ],
+  }
+  const parentSnapshot = {
+    snapshotId: 'ms_current', agentId: 'a', state: 'published', version: 3, revision: 8,
+    principles: [
+      { principleId: 'p_keep', text: 'Keep this rule', scope: { workspaces: ['/repo'] }, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_change', text: 'Use A', scope: { workspaces: ['/repo'], paths: ['src'] }, sources: ['dc_source'], state: 'active' },
+      { principleId: 'p_remove', text: 'Remove this rule', scope: { tags: ['legacy'] }, sources: [], state: 'active' },
+    ],
+  }
+  return { agentId: 'a', candidate: { run, snapshot, parentSnapshot }, inspection: { run, snapshot, parentSnapshot }, ...overrides }
+}
+
+function candidateReviewAgent() {
+  return {
+    agentId: 'a', name: 'A', state: 'enabled', currentSnapshotId: 'ms_current',
+    learningRuns: [{ learningRunId: 'lr_candidate', outcome: 'candidate', revision: 4 }, { learningRunId: 'lr_current', outcome: 'published', revision: 5 }],
+    snapshots: [
+      { snapshotId: 'ms_candidate', state: 'draft', version: 4, revision: 2, learningRunId: 'lr_candidate', parentSnapshotId: 'ms_current' },
+      { snapshotId: 'ms_current', state: 'published', version: 3, revision: 8, learningRunId: 'lr_current', parentSnapshotId: null },
+    ],
+  }
+}
+
+function entryActions(rendered) {
+  return findAll(rendered, node => typeof node['data-principle-action'] === 'string')
+}
+
+test('only this review\'s added and changed entries are editable, and a settled candidate offers nothing', async () => {
+  const host = await createPageHarness({ actions: {} })
+  const agent = candidateReviewAgent()
+  const project = detail => learning.learningView({ agent, detail, candidateReadiness: host.model.candidateReadiness })
+  const view = project(candidateReviewFixture())
+  const editable = Object.fromEntries(view.changes.map(change => [change.principleId, change.editable]))
+  assert.deepEqual(editable, { p_change: true, p_remove: false, p_add: true })
+  assert.equal(view.candidateZone, 'workspace')
+
+  const props = { agent, detail: candidateReviewFixture(), ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness }
+  assert.deepEqual(entryActions(learning.AgentLearning(props)).map(node => `${node['data-principle-action']}:${node['data-principle-id']}`).sort(), [
+    'edit:p_add', 'edit:p_change', 'remove:p_add', 'remove:p_change',
+  ])
+
+  // A published candidate (or a read-only history read) has no write entry point.
+  const settled = candidateReviewFixture()
+  settled.candidate = { ...settled.candidate, snapshot: { ...settled.candidate.snapshot, state: 'published' } }
+  settled.candidate.run = { ...settled.candidate.run, outcome: 'published' }
+  assert.equal(project(settled).changes.every(change => change.editable === false), true)
+  assert.deepEqual(entryActions(learning.AgentLearning({ ...props, detail: settled })), [])
+  assert.equal(project(settled).canEditCandidate, false)
+
+  // An incomplete or stale review shows the entries but cannot write.
+  for (const blocked of [{ detail: null }, { loading: true }, { error: Object.assign(new Error('read failed'), { code: 'DECISION_REMOTE_FAILED' }) }]) {
+    const blockedView = learning.learningView({ agent, detail: candidateReviewFixture(), candidateReadiness: host.model.candidateReadiness, ...blocked })
+    assert.equal(blockedView.canEditCandidate, false, JSON.stringify(Object.keys(blocked)))
+  }
+  host.unmount()
+})
+
+test('a principle retired by this run is a removal, never an editable change', async () => {
+  const host = await createPageHarness({ actions: {} })
+  const agent = candidateReviewAgent()
+  const detail = candidateReviewFixture()
+  // The consolidator retires by keeping the entry with state 'retired' in the
+  // draft; the diff reads that as a content change, but it must stay read-only.
+  const retired = { principleId: 'p_retire', text: 'Retired this run', scope: { workspaces: ['/repo'] }, sources: ['dc_source'], state: 'active' }
+  detail.candidate.snapshot = { ...detail.candidate.snapshot, principles: [...detail.candidate.snapshot.principles, { ...retired, state: 'retired' }] }
+  detail.candidate.parentSnapshot = { ...detail.candidate.parentSnapshot, principles: [...detail.candidate.parentSnapshot.principles, retired] }
+  const view = learning.learningView({ agent, detail, candidateReadiness: host.model.candidateReadiness })
+  const change = view.changes.find(item => item.principleId === 'p_retire')
+  assert.equal(change.change, 'changed')
+  assert.equal(change.editable, false)
+  const props = { agent, detail, ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness }
+  assert.deepEqual(entryActions(learning.AgentLearning(props)).filter(node => node['data-principle-id'] === 'p_retire'), [])
+  host.unmount()
+})
+
+test('the inline editor shows the current content, bounded wording, scope rows, chips and its own states', async () => {
+  const host = await createPageHarness({ actions: {} })
+  const agent = candidateReviewAgent()
+  const detail = candidateReviewFixture()
+  const editor = { principleId: 'p_change', text: 'Use B', paths: ['src'], tags: [], classes: ['B'], principleId2: undefined }
+  const props = {
+    agent, detail, ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness,
+    candidateEditor: editor, onCandidateSave: () => {}, onCandidateCancel: () => {},
+  }
+  const rendered = learning.AgentLearning(props)
+  const text = textOf(rendered)
+  // The editor is the only place the wording is edited, and it reads the current
+  // content — no second "AI original vs. yours" view.
+  for (const key of ['decisionPrincipleText', 'decisionScopePaths', 'decisionScopeTags', 'decisionScopeClasses', 'decisionScopeCurrentWorkspace', 'decisionPrincipleWorkspaceFixed', 'decisionPrincipleSave', 'decisionCancel', 'decisionPrincipleLength']) {
+    assert.ok(text.includes(key), key)
+  }
+  const area = findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0]
+  assert.equal(area.value, 'Use B')
+  assert.equal(area.disabled, false)
+  assert.equal(findAll(rendered, node => node['data-principle-scope'] === 'path').length, 1)
+  assert.equal(findAll(rendered, node => node['data-principle-class'] === 'B')[0]['aria-pressed'], true)
+  assert.equal(findAll(rendered, node => node['data-principle-class'] === 'A')[0]['aria-pressed'], false)
+  // Open editor replaces the row actions of that entry only.
+  assert.deepEqual(entryActions(rendered).filter(node => ['edit', 'remove'].includes(node['data-principle-action'])).map(node => `${node['data-principle-action']}:${node['data-principle-id']}`), ['edit:p_add', 'remove:p_add'])
+  const save = entryActions(rendered).filter(node => node['data-principle-action'] === 'save')[0]
+  assert.equal(save.disabled, false)
+
+  // A public candidate's editor never shows a workspace line: the public zone has
+  // no workspace at all.
+  const publicDetail = candidateReviewFixture()
+  publicDetail.candidate = { ...publicDetail.candidate, snapshot: { ...publicDetail.candidate.snapshot, zone: 'public' } }
+  const publicEditor = { principleId: 'p_add', text: 'Added rule', paths: [], tags: [], classes: [] }
+  const publicRendered = learning.AgentLearning({ ...props, detail: publicDetail, candidateEditor: publicEditor })
+  assert.equal(findAll(publicRendered, node => node['data-principle-workspace']).length, 0, 'a public candidate never names a workspace')
+  assert.equal(learning.learningView({ agent, detail: publicDetail, candidateReadiness: host.model.candidateReadiness }).candidateZone, 'public')
+
+  // An empty or over-long wording cannot be saved; pending shows a read-only state.
+  for (const invalid of ['', 'x'.repeat(601)]) {
+    const blocked = learning.AgentLearning({ ...props, candidateEditor: { ...editor, text: invalid } })
+    const blockedSave = entryActions(blocked).filter(node => node['data-principle-action'] === 'save')[0]
+    assert.equal(blockedSave.disabled, true, String(invalid.length))
+    assert.equal(findAll(blocked, node => node.type === 'textarea')[0]['aria-invalid'], true)
+  }
+  const pending = learning.AgentLearning({ ...props, pending: 'snapshotUpdate' })
+  const pendingSave = entryActions(pending).filter(node => node['data-principle-action'] === 'save')[0]
+  assert.equal(pendingSave.disabled, true)
+  assert.equal(pendingSave.children, 'decisionPrincipleSaving')
+
+  // A local failure keeps the editor and names it in a live region.
+  const failed = learning.AgentLearning({ ...props, candidateEditorError: 'decisionPrincipleConflict' })
+  const alert = findAll(failed, node => node.role === 'alert')
+  assert.equal(alert.length, 1)
+  assert.equal(alert[0].children, 'decisionPrincipleConflict')
+  host.unmount()
+})
+
+test('editing and deleting are handed the review\'s own revision and never write from the list itself', async () => {
+  const host = await createPageHarness({ actions: {} })
+  const agent = candidateReviewAgent()
+  const detail = candidateReviewFixture()
+  const opened = []
+  const removed = []
+  const refKeys = []
+  const props = {
+    agent, detail, ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness,
+    onCandidateEdit: item => opened.push(item), onCandidateRemove: (item, target) => removed.push({ item, target }),
+    candidateEntryRef: (principleId, action) => { refKeys.push(`${action}:${principleId}`); return { current: null } },
+  }
+  const rendered = learning.AgentLearning(props)
+  // Every row action owns a stable ref, so focus can return to that exact entry
+  // after the authoritative re-read replaces the whole list.
+  assert.deepEqual(refKeys.sort(), ['edit:p_add', 'edit:p_change', 'remove:p_add', 'remove:p_change'])
+  assert.equal(findAll(rendered, node => node['data-principle-action'] === 'edit').every(node => node.ref && typeof node.ref === 'object'), true)
+  findAll(rendered, node => node['data-principle-action'] === 'edit').forEach(node => node.onClick())
+  // Entries keep the review's own group order: added, then changed.
+  assert.deepEqual(opened.map(item => item.principleId), ['p_add', 'p_change'])
+  assert.equal(opened[1].after.text, 'Use B')
+  findAll(rendered, node => node['data-principle-action'] === 'remove').forEach(node => node.onClick())
+  assert.deepEqual(removed.map(entry => entry.item.principleId), ['p_add', 'p_change'])
+  // The revision is the review's current draft revision, so the Host can reject a
+  // stale save instead of overwriting it.
+  assert.deepEqual(removed[1].target, { snapshotId: 'ms_candidate', expectedRevision: 9, zone: 'workspace' })
+  host.unmount()
+})
+
+test('candidate edit dictionaries are paired and the publish confirmation states only real edits', async () => {
+  const model = (await loadClientChunk('lib/client.decision-model.js')).exports
+  const keys = ['decisionPrincipleEdit', 'decisionPrincipleRemove', 'decisionPrincipleText', 'decisionPrincipleLength',
+    'decisionPrincipleSave', 'decisionPrincipleSaving', 'decisionPrincipleRemoveTitle', 'decisionPrincipleRemoveBody',
+    'decisionPrincipleRemoveConfirm', 'decisionPrincipleWorkspaceFixed', 'decisionPrincipleSaveFailed',
+    'decisionPrincipleConflict', 'decisionApplyEditedCount', 'decisionApplyRemovedCount']
+  for (const key of keys) {
+    assert.equal(typeof model.dictionaries.en[key], 'string', `en ${key}`)
+    assert.equal(typeof model.dictionaries.zh[key], 'string', `zh ${key}`)
+    assert.ok(model.dictionaries.en[key].length > 0 && model.dictionaries.zh[key].length > 0, key)
+  }
+  const host = await createPageHarness({ actions: {} })
+  const agent = candidateReviewAgent()
+  const detail = candidateReviewFixture()
+  const confirmations = []
+  const props = { agent, detail, ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness, confirmAction: action => confirmations.push(action) }
+  // No edits in this review: the publish confirmation carries no edit fact.
+  learning.AgentLearning(props)
+  findAll(learning.AgentLearning(props), node => node.type === host.ui.Button && node['data-action'] === 'learning-publish')[0].onClick()
+  assert.equal('edited' in confirmations[0], false)
+  // Two edits and one deletion: the fact is stated for this candidate only.
+  const edited = learning.AgentLearning({ ...props, candidateEdits: { snapshotId: 'ms_candidate', edited: 2, removed: 1 } })
+  findAll(edited, node => node.type === host.ui.Button && node['data-action'] === 'learning-publish')[0].onClick()
+  assert.equal(confirmations[1].edited, 2)
+  assert.equal(confirmations[1].removed, 1)
+  // Counts from another candidate never leak into this one.
+  learning.AgentLearning({ ...props, candidateEdits: { snapshotId: 'ms_other', edited: 3, removed: 0 } })
+  const other = learning.AgentLearning({ ...props, candidateEdits: { snapshotId: 'ms_other', edited: 3, removed: 0 } })
+  findAll(other, node => node.type === host.ui.Button && node['data-action'] === 'learning-publish')[0].onClick()
+  assert.equal('edited' in confirmations[2], false)
   host.unmount()
 })
