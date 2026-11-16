@@ -69,7 +69,7 @@ export async function apply(ctx) {
         effective: broker.config(),
         section: settings?.get('decisionAgent') ?? null,
         brokerSection: brokerSettings?.get('decisionAgent') ?? null,
-        decisionEnv: { enabled: process.env.WEIR_DECISION_GUI_ENABLED, selectorDefault: process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT, shadow: process.env.WEIR_DECISION_GUI_SHADOW, autoClasses: process.env.WEIR_DECISION_GUI_AUTO_CLASSES, timeoutMs: process.env.WEIR_DECISION_GUI_TIMEOUT_MS },
+        decisionEnv: { enabled: process.env.WEIR_DECISION_GUI_ENABLED, selectorDefault: process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT, shadow: process.env.WEIR_DECISION_GUI_SHADOW, autoAnswer: process.env.WEIR_DECISION_GUI_AUTO_ANSWER, timeoutMs: process.env.WEIR_DECISION_GUI_TIMEOUT_MS },
       }
     },
     async createSession(args) {

@@ -265,6 +265,9 @@ const SELECTOR_FORBIDDEN_COPY = [
   { label: 'Shadow', pattern: /\bShadow\b/i },
   { label: 'whitelist', pattern: /白名单|whitelist/i },
   { label: 'A/B/C codes', pattern: /\b[ABC]\s*\/\s*[ABC]\s*\/\s*[ABC]\b|\b[ABC]\s*,\s*[ABC](?:\s*,\s*[ABC])?\b/ },
+  // The retired class-list count must never come back: the answer permission is
+  // one boolean switch, so a numeric "allowed N categories" line is stale copy.
+  { label: 'answer-class count', pattern: /当前允许自动回答\s*\d+\s*类判断|allowed for\s*\d+\s*decision categories/i },
 ]
 
 export function selectorCopyProblems(value, expected = {}) {
@@ -274,10 +277,13 @@ export function selectorCopyProblems(value, expected = {}) {
   const required = zh
     ? [{ label: 'off task label', pattern: /不启用助手/ }, { label: 'auto task label', pattern: /自动选择助手/ }]
     : [{ label: 'off task label', pattern: /Do not use an assistant/i }, { label: 'auto task label', pattern: /Automatically choose an assistant/i }]
-  if (expected.emptyScope) required.push(
-    { label: 'routes but does not auto-answer', pattern: zh ? /仍会自动选择助手/ : /still chosen to evaluate/i },
-    { label: 'empty scope and continued asking', pattern: zh ? /自动回答尚未允许[；;，,。\s]*新判断仍会询问你/ : /not allowed yet[;,.\s]*new decisions will still ask you/i })
-  if (Number.isInteger(expected.allowedCount)) required.push({ label: `allowedCount ${expected.allowedCount}`, pattern: zh ? new RegExp(`当前允许自动回答\\s*${expected.allowedCount}\\s*类判断`) : new RegExp(`allowed for\\s*${expected.allowedCount}\\s*decision categories`, 'i') })
+  // The switch is the only answer permission: off still routes and pins the
+  // assistant but hands the conclusion to the user, on lets Auto adopt it.
+  if (expected.autoAnswer === true) required.push(
+    { label: 'auto answer enabled', pattern: zh ? /会自动选择助手，并在通过全部证据与授权闸门后采纳其结论/ : /assistant is chosen automatically and its conclusion may be adopted when every evidence and authority gate passes/i })
+  if (expected.autoAnswer === false) required.push(
+    { label: 'routes but does not auto-answer', pattern: zh ? /仍会自动选择助手并把判断固定给它/ : /still chosen automatically and pinned to each decision/i },
+    { label: 'automatic answers off', pattern: zh ? /自动回答未开启/ : /automatic answers are disabled/i })
   if (expected.unknown) required.push({ label: 'unknown automatic-answer state', pattern: zh ? /自动回答状态未知/ : /Automatic-answer status is unknown/i }, { label: 'unknown comparison state', pattern: zh ? /选择对比状态未知/ : /Selection comparison status is unknown/i })
   if (expected.shadow === true) required.push({ label: 'comparison on', pattern: zh ? /选择对比已开启/ : /Selection comparison is on/i })
   if (expected.shadow === false) required.push({ label: 'comparison off', pattern: zh ? /选择对比未开启/ : /Selection comparison is not enabled/i })
@@ -1317,7 +1323,7 @@ export function pendingOverviewProblems(state = {}) {
 // ---------------------------------------------------------------------------
 // Decision settings page (decision-assistant-settings-page D7/D8): the real
 // Desktop acceptance reads the third Weir settings section as rendered — the
-// navigation ledger, the two basic/advanced groups, the A/B/C class chips and
+// navigation ledger, the two basic/advanced groups, the boolean answer switch and
 // the assistant editor's visual scope/route controls. These guards take only
 // captured DOM data, so they are unit-tested without a browser.
 // ---------------------------------------------------------------------------
@@ -1368,11 +1374,11 @@ const pressedControls = row => (row?.controls ?? []).filter(control => control.p
 /**
  * The Decision assistant page as rendered on open: the active navigation row is
  * that page, the basic group is exactly the three ordered rows (master switch,
- * default selector, A/B/C chips) and the advanced group starts folded with no
- * body mounted. With the master switch off, only its own row survives and the
- * whole advanced group disappears (fold title included).
- * @param {{activeNav?:string|null,nav?:string[],groups?:string[],basics?:any,advanced?:any,classSet?:any}} dom
- * @param {{masterEnabled?:boolean}} expected
+ * default selector, the boolean answer switch) and the advanced group starts
+ * folded with no body mounted. With the master switch off, only its own row
+ * survives and the whole advanced group disappears (fold title included).
+ * @param {{activeNav?:string|null,nav?:string[],groups?:string[],basics?:any,advanced?:any}} dom
+ * @param {{masterEnabled?:boolean,autoAnswer?:boolean}} expected
  */
 export function decisionSettingsPageProblems(dom = {}, expected = {}) {
   const problems = []
@@ -1401,9 +1407,18 @@ export function decisionSettingsPageProblems(dom = {}, expected = {}) {
   const segmentIds = selectorTabs.map(control => String(control.id ?? ''))
   if (rows[1] && !segmentIds.every(id => /decisionAgentSelectorDefault-(?:off|auto)$/.test(id))) problems.push(`the default-selector segments are not the off/auto control: ${segmentIds.join(', ')}`)
   if (rows[1] && !DECISION_SETTINGS_LABELS.selector.test(readableText(rows[1]?.text))) problems.push('the second basic row does not name the new-session default')
-  // The third basic row is the answer switch: one boolean control, no chips.
+  // The third basic row is the answer switch: exactly one boolean switch and no
+  // chip control (the retired authorization-class chips are gone for good).
+  const answerControls = (rows[2]?.controls ?? []).filter(isSwitch)
   const chips = pressedControls(rows[2])
   if (rows[2] && chips.length !== 0) problems.push(`the answer row still renders ${chips.length} class chips`)
+  if (rows[2] && answerControls.length !== 1) problems.push(`the answer row renders ${answerControls.length} switches instead of one boolean answer switch`)
+  if (rows[2] && answerControls.length === 1) {
+    const answer = answerControls[0]
+    const answerText = readableText(answer.label) || readableText(rows[2]?.text)
+    if (!DECISION_SETTINGS_LABELS.answerSwitch.test(answerText)) problems.push(`the answer switch is labelled ${shortenedText(answer.label)}`)
+    if (typeof expected.autoAnswer === 'boolean' && answer.checked !== String(expected.autoAnswer)) problems.push(`the answer switch reads ${String(answer.checked)} instead of the authoritative ${expected.autoAnswer}`)
+  }
   if (rows[2] && !DECISION_SETTINGS_LABELS.answerSwitch.test(readableText(rows[2]?.text))) problems.push('the third basic row does not name the Auto answer switch')
   if (!dom.advanced) problems.push('the advanced group is missing while the master switch is on')
   else {
@@ -1456,12 +1471,10 @@ export function decisionSettingsAdvancedProblems(dom = {}, expected = {}) {
 }
 
 /**
- * The A/B/C chips after a real toggle: exactly three chips in row order, one
- * aria-pressed per chip naming the current selection, and the count marker
- * carrying the same selection in row order (the stored JSON is canonicalized
- * from the row order, never from click order).
- * @param {{chips?:any[],count?:number|null,countText?:string|null}|null} classSet
- * @param {string[]} expected
+ * The boolean Auto answer switch after a real toggle: the stored value is a
+ * boolean, never a class array, so the guard reads the rendered checked state.
+ * @param {{checked?:string|boolean|null}|null} answerSwitch
+ * @param {boolean} expected
  */
 export function decisionSettingsAnswerSwitchProblems(answerSwitch, expected) {
   const problems = []
@@ -1477,7 +1490,7 @@ export function decisionSettingsAnswerSwitchProblems(answerSwitch, expected) {
 
 /**
  * After Escape: the Settings dialog is gone AND the Decision assistant page
- * unmounted — no group, no class chips, no advanced fold, no assistant editor.
+ * unmounted — no group, no answer switch, no advanced fold, no assistant editor.
  * @param {{dialog?:boolean,groups?:string[],answerSwitches?:number,advancedToggles?:number,agentEditors?:number}} snapshot
  */
 export function decisionSettingsClosedProblems(snapshot = {}) {

@@ -863,6 +863,48 @@ describe('decision-ui-remote P1 brain', () => {
   })
 })
 
+// The classless Router retries an unusable verdict once with the original pack
+// plus one instruction message. The GUI brain must read that pack from the first
+// parsable user turn; reading only the last turn would make it throw and the
+// failure matrix would observe model_error instead of invalid_output.
+describe('decision-gui Router repair read', () => {
+  const pack = {
+    questions: [{ id: 'gui-auto-invalid', question: 'GUI_AUTO_INVALID: reject invalid Router output', options: [] }],
+    candidates: [{ agentId: 'ag_a', name: 'Decision Product QA Primary' }, { agentId: 'ag_b', name: 'Empty review assistant' }],
+  }
+  const repairOptions = () => ({
+    system: 'Auto candidate router contract: router-contract/1\nChoose the one assistant that should own this judgment.',
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: JSON.stringify(pack) }] },
+      { role: 'user', content: [{ type: 'text', text: 'Return only the routing verdict JSON.' }] },
+    ],
+    tools: [],
+  })
+
+  it('returns the invalid fixture verdict on the repair retry instead of throwing', () => {
+    const options = repairOptions()
+    const obs = extract(options)
+    assert.equal(obs.lastUser, 'Return only the routing verdict JSON.', 'the strict last-turn read cannot parse the repaired pack')
+    const [block] = blockEnds([...decisionGui.decideRouterRoute(options, obs)])
+    assert.equal(JSON.parse(block.text).contract, 'router-contract/1')
+    assert.equal(JSON.parse(block.text).agentId, 'ag_not_eligible', 'the repair answer is still the unusable verdict, so the product fails closed on invalid output')
+  })
+
+  it('observes the same repaired pack so the wire evidence keeps its question contract', () => {
+    const observed = decisionGui.observe(extract(repairOptions()))
+    assert.equal(observed.autoRouter.kind, 'route')
+    assert.equal(observed.autoRouter.pack.questions[0].id, 'gui-auto-invalid')
+    assert.deepEqual(observed.autoRouter.pack.candidates.map(candidate => candidate.agentId), ['ag_a', 'ag_b'])
+    assert.equal(observed.autoRouterHold, undefined)
+  })
+
+  it('keeps the ordinary single-turn read for the first call', () => {
+    const options = { messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(pack) }] }], tools: [] }
+    const [block] = blockEnds([...decisionGui.decideRouterRoute(options, extract(options))])
+    assert.equal(JSON.parse(block.text).agentId, 'ag_not_eligible')
+  })
+})
+
 describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !== '1' }, () => {
   it('emits the native structured question for GUI_A_ANSWER', () => {
     const first = blockEnds(run('decision-gui', userOptions('GUI_A_ANSWER')))[0]

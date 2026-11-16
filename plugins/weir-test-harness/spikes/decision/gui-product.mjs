@@ -598,8 +598,8 @@ async function createAgent(sessionId, name, preference) {
   return agent
 }
 
-// One structured read of the assistant editor's advanced area: the scope rows,
-// the A/B/C chips and the ordered route rungs exactly as they render.
+// One structured read of the assistant editor's advanced area: the scope rows, the
+// (retired) class-chip probe and the ordered route rungs exactly as they render.
 async function assistantVisualDom() {
   return instance.cdp.evaluate(`(() => {
     const form = document.querySelector('form[data-agent-editor]')
@@ -645,10 +645,11 @@ async function modelPickerMenuDom() {
 }
 
 // The assistant editor's visual scope/route controls, exercised end to end on a
-// throwaway private assistant: paths, tags and the A/B/C chips are edited through
-// the rendered rows, one route rung is picked from the real model catalog, and the
-// saved profile is read back from the authority. Callers disable the assistant
-// immediately afterwards, so its narrowed scope can never gate a real route.
+// throwaway private assistant: paths and tags are edited through the rendered rows
+// (the retired A/B/C chips must not render at all), one route rung is picked from
+// the real model catalog, and the saved profile is read back from the authority.
+// Callers disable the assistant immediately afterwards, so its narrowed scope can
+// never gate a real route.
 async function createAgentWithVisualSettings(sessionId, name, preference) {
   const scopePath = 'plugins/weir-harness/lib'
   const scopeTag = 'decision-settings'
@@ -706,7 +707,8 @@ async function createAgentWithVisualSettings(sessionId, name, preference) {
   await keyboardActivate('Save assistant', 'form[data-agent-editor] button[type="submit"]', { expectFocus: '.weir-da-agent-back,[data-agent-detail]' })
   const agents = await waitFor(async () => { const value = await rpc(sessionId, 'agent-create', 'agents'); return value.some(agent => agent.name === name) ? value : null }, 30_000)
   const agent = agents.find(item => item.name === name)
-  const expected = { paths: [scopePath], tags: [scopeTag], classes: ['A', 'B'], chain: [{ provider: chosen.provider, model: chosen.model, reasoningEffort: chosen.effort }] }
+  // The saved scope carries paths/tags only: no workspaces and no retired class list.
+  const expected = { paths: [scopePath], tags: [scopeTag], chain: [{ provider: chosen.provider, model: chosen.model, reasoningEffort: chosen.effort }] }
   const readbackProblems = assistantVisualReadbackProblems(agent, expected)
   check('assistantVisualScopeAndRouteSaveAndReadBack', readbackProblems.length === 0, { problems: readbackProblems, expected, scope: agent.scope, modelRoute: agent.modelRoute, chosen })
   writeJson(join(out, 'assistant-visual-readback.json'), { expected, chosen, profile: { agentId: agent.agentId, scope: agent.scope, modelRoute: agent.modelRoute } })
@@ -728,7 +730,7 @@ async function createAgentWithVisualSettings(sessionId, name, preference) {
   }
   const reopened = await waitFor(async () => { const value = await assistantVisualDom(); return value?.rungs?.length === 1 && resolvesSavedRoute(value) ? value : null }, 60_000)
   const reopenedProblems = assistantVisualEditorProblems(reopened)
-  check('assistantVisualEditorReopensTheSavedScopeAndRoute', reopenedProblems.length === 0 && resolvesSavedRoute(reopened) && reopened.scopePaths[0]?.value === scopePath && reopened.scopeTags[0]?.value === scopeTag && reopened.scopeClasses.filter(chip => chip.pressed === 'true').map(chip => chip.value).join(',') === 'A,B', { problems: reopenedProblems, rungs: reopened?.rungs, paths: reopened?.scopePaths, tags: reopened?.scopeTags, classes: reopened?.scopeClasses })
+  check('assistantVisualEditorReopensTheSavedScopeAndRoute', reopenedProblems.length === 0 && resolvesSavedRoute(reopened) && reopened.scopePaths[0]?.value === scopePath && reopened.scopeTags[0]?.value === scopeTag && reopened.scopeClasses === 0, { problems: reopenedProblems, rungs: reopened?.rungs, paths: reopened?.scopePaths, tags: reopened?.scopeTags, classes: reopened?.scopeClasses })
   await shot('assistant-visual-reopened')
   await keyboardActivate('Close the reopened assistant editor', 'button', { scope: 'form[data-agent-editor] .weir-da-actions', labels: ['取消', 'Cancel'], expectFocus: `.weir-da-agent-back,[data-agent-detail="${agent.agentId}"]` })
   return agent
@@ -836,7 +838,7 @@ async function openDecisionSettings() {
 
 // One structured read of the decision settings page as rendered. Every guard in
 // gui-product-lib.mjs takes this shape, so the page contract is asserted from
-// real DOM attributes (aria-expanded, aria-pressed, input ids) rather than text.
+// real DOM attributes (aria-expanded, aria-checked, input ids) rather than text.
 async function decisionSettingsDom() {
   return instance.cdp.evaluate(`(() => {
     const control = el => ({ tag: el.tagName.toLowerCase(), id: el.id || null, role: el.getAttribute('role'), label: el.getAttribute('aria-label'), checked: el.getAttribute('aria-checked') ?? (typeof el.checked === 'boolean' ? String(el.checked) : null), pressed: el.getAttribute('aria-pressed'), value: typeof el.value === 'string' ? el.value : null, disabled: el.disabled === true })
@@ -847,7 +849,9 @@ async function decisionSettingsDom() {
     const basics = document.querySelector('[data-group="decisionBasics"]')
     const advanced = document.querySelector('[data-group="decisionAdvanced"]')
     const body = advanced ? advanced.querySelector('[data-advanced-body]') : null
-    const answerSwitch = [...document.querySelectorAll('input[type="checkbox"]')].find(el => /允许自动回答|Allow automatic answers/.test(el.getAttribute('aria-label') ?? '')) ?? null
+    // The answer permission is one boolean switch (the product renders it through
+    // the shared Switch primitive: role=switch + aria-checked + aria-label).
+    const answerSwitch = [...document.querySelectorAll('[role="switch"],input[type="checkbox"]')].find(el => /允许自动回答|Allow automatic answers/.test(el.getAttribute('aria-label') ?? '')) ?? null
     return {
       nav: nav.map(row => row.text),
       activeNav: (nav.find(row => row.current === 'true') ?? null)?.text ?? null,
@@ -861,13 +865,15 @@ async function decisionSettingsDom() {
 }
 
 // After Escape the Settings dialog AND the Decision assistant page must be gone:
-// the close assertion is structural (no group, no chips, no fold, no editor),
-// never "the Auto Shadow text disappeared".
+// the close assertion is structural (no group, no answer switch, no fold, no
+// editor), never "the Auto Shadow text disappeared".
 async function decisionSettingsClosedState() {
   return instance.cdp.evaluate(`(() => ({
     dialog: Boolean([...document.querySelectorAll('[role="dialog"]')].find(item => { const rect = item.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && getComputedStyle(item).visibility === 'visible' })),
     groups: [...document.querySelectorAll('[data-group]')].map(el => el.getAttribute('data-group')),
-    answerSwitches: document.querySelectorAll('[data-decision-answer-switch]').length,
+    // The answer switch is identified by its accessible name: every other Weir
+    // settings page legitimately renders its own switches.
+    answerSwitches: [...document.querySelectorAll('[role="switch"],input[type="checkbox"]')].filter(el => /允许自动回答|Allow automatic answers/.test(el.getAttribute('aria-label') ?? '')).length,
     advancedToggles: document.querySelectorAll('[data-advanced-toggle]').length,
     agentEditors: document.querySelectorAll('form[data-agent-editor]').length,
   }))()`)
@@ -892,11 +898,8 @@ async function setDecisionAdvanced(open) {
   return waitFor(async () => { const value = await read(); return value && (value.expanded === 'true') === open && value.body === open ? value : null }, 30_000)
 }
 
-// One chip per authorization class: aria-pressed is the current value, a real
-// click stages the field immediately, and the stored JSON is canonicalized from
-// the A/B/C row order rather than from click order.
-// The answer permission is ONE boolean switch: a real click stages the field
-// immediately and the stored value is a boolean, never a class array.
+// The answer permission is ONE boolean switch: a real Space activation stages the
+// field immediately and the stored value is a boolean, never a class array.
 async function setDecisionAutoAnswer(wanted) {
   const selector = '[aria-label="允许自动回答"],[aria-label="Allow automatic answers"]'
   const read = () => instance.cdp.evaluate(`(() => { const el=[...document.querySelectorAll(${JSON.stringify(selector)})].find(item=>item.offsetParent!==null); return el?{checked: el.getAttribute('aria-checked')==='true'||el.checked===true}:null })()`)
@@ -944,17 +947,19 @@ async function setAutoSettings(phase, { shadow, autoAnswer, answerTimeoutMs }) {
 // the master switch is restored.
 async function verifyDecisionSettingsStructure(config) {
   const authority = { timeoutMs: config.effective?.decisionAgentAnswerTimeoutMs, shadow: config.effective?.decisionAgentAutoShadow === true }
-  // The config face reports the whitelist already normalized to an array (the raw
-  // config key is the JSON text), so accept both shapes.
+  // The answer permission is one boolean key: the config face reports it as a
+  // boolean, so the rendered switch must read the same value.
   const autoAnswer = config.effective?.decisionAgentAutoAnswer === true
   await openDecisionSettings()
   const opened = await decisionSettingsDom()
   writeJson(join(out, 'settings-page-open.json'), opened)
-  const openProblems = decisionSettingsPageProblems(opened, { masterEnabled: true })
-  check('decisionSettingsPageRendersThreeBasicRowsWithCollapsedAdvanced', openProblems.length === 0, { problems: openProblems, nav: opened.nav, groups: opened.groups, basicsRows: opened.basics?.rows?.length, advanced: opened.advanced })
+  const openProblems = decisionSettingsPageProblems(opened, { masterEnabled: true, autoAnswer })
+  check('decisionSettingsPageRendersThreeBasicRowsWithCollapsedAdvanced', openProblems.length === 0, { problems: openProblems, nav: opened.nav, groups: opened.groups, basicsRows: opened.basics?.rows?.length, advanced: opened.advanced, autoAnswer })
   await shot('settings-decision-basics')
-  const switchProblems = decisionSettingsAnswerSwitchProblems(opened.answerSwitch, autoAnswer)
-  check('decisionSettingsClassChipsShowTheAuthoritativeWhitelist', chipProblems.length === 0, { authority: whitelist, classSet: opened.classSet, problems: chipProblems })
+  // The third basic row is the boolean answer switch: the rendered checked state is
+  // the authority, and the retired A/B/C chips must not be there at all.
+  const answerSwitchProblems = decisionSettingsAnswerSwitchProblems(opened.answerSwitch, autoAnswer)
+  check('decisionSettingsAnswerSwitchShowsTheAuthoritativeBoolean', answerSwitchProblems.length === 0 && opened.basics?.rows?.[2]?.controls?.every(control => control.pressed === null || control.pressed === undefined), { authority: autoAnswer, answerSwitch: opened.answerSwitch, answerRow: opened.basics?.rows?.[2] ?? null, problems: answerSwitchProblems })
   await setDecisionAdvanced(true)
   const expanded = await decisionSettingsDom()
   writeJson(join(out, 'settings-page-advanced.json'), expanded)
@@ -977,10 +982,10 @@ async function verifyDecisionSettingsStructure(config) {
   check('decisionMasterOffRemovesAdvancedGroup', offProblems.length === 0, { problems: offProblems, groups: off.groups, basicsRows: off.basics?.rows?.length, advanced: off.advanced })
   await shot('settings-decision-master-off')
   await keyboardActivate('Turn the decision master switch back on', '[data-group="decisionBasics"] button[role="switch"]', { labels: ['决策 Agent', 'Decision Agents'], key: 'Space' })
-  const restored = await waitFor(async () => { const value = await decisionSettingsDom(); return decisionSettingsPageProblems(value, { masterEnabled: true }).length === 0 ? value : null }, 30_000)
+  const restored = await waitFor(async () => { const value = await decisionSettingsDom(); return decisionSettingsPageProblems(value, { masterEnabled: true, autoAnswer }).length === 0 ? value : null }, 30_000)
   requireEvidence(restored.saveBar === false, 'restoring the master switch returns the form to its saved state')
   const closed = await closeDecisionSettings('structure')
-  writeJson(join(out, 'settings-structure.json'), { authority, whitelist, opened: { groups: opened.groups, basicsRows: opened.basics?.rows?.length, advanced: opened.advanced, classSet: opened.classSet }, expanded: { rows: expanded.advanced?.rows?.length }, staged, discarded, off: { groups: off.groups, basicsRows: off.basics?.rows?.length, advanced: off.advanced }, closed })
+  writeJson(join(out, 'settings-structure.json'), { authority, autoAnswer, opened: { groups: opened.groups, basicsRows: opened.basics?.rows?.length, advanced: opened.advanced, answerSwitch: opened.answerSwitch }, expanded: { rows: expanded.advanced?.rows?.length }, staged, discarded, off: { groups: off.groups, basicsRows: off.basics?.rows?.length, advanced: off.advanced }, closed })
   return closed
 }
 
@@ -2325,7 +2330,14 @@ async function settleNativeSkip(sessionId, caseId, label) {
   check(`${label}NativeSkipIsNoOp`, JSON.stringify(after) === JSON.stringify(before), { caseId, skipSteps: steps.length })
 }
 
-async function unownedInbox(sessionId, caseId, label, routeRequired = true) {
+// A route failure must reach the user as ordinary language: the card and the inbox
+// route history render one closed dictionary sentence per closed failure reason.
+const ROUTE_FAILURE_SENTENCES = Object.freeze({
+  'failure:invalid_output': [/模型输出无法解析为路由判决/, /could not be parsed as a routing verdict/i],
+  'failure:timeout': [/模型调用超时/, /The model call timed out/i],
+})
+
+async function unownedInbox(sessionId, caseId, label, routeRequired = true, expectedFailure = null) {
   await openIsolatedSession(sessionId, true)
   const authority = await record(sessionId, `${label}-unowned`, caseId)
   await waitFor(async () => { const value=await cardState(caseId); return value.cards===1?value:null }, 30_000)
@@ -2343,6 +2355,14 @@ async function unownedInbox(sessionId, caseId, label, routeRequired = true) {
   const dom = await instance.cdp.evaluate(`(() => { const root=document.querySelector(${JSON.stringify(article)}); return {text:root.innerText,retry:root.querySelectorAll('[data-action="retry"]').length,feedback:root.querySelectorAll('[data-feedback]').length,routeText:root.querySelector('.weir-da-route-history')?.innerText??'',forms:root.querySelectorAll('form.weir-da-answers').length} })()`)
   if (!accessibility.unownedDecision) await captureAccessibility('unownedDecision', article)
   check(`${label}UnownedTruthfulUi`, authority.case.agentId === null && authority.case.state === 'awaiting_user' && authority.attempts.length === 0 && dom.retry === 0 && dom.feedback === 0 && dom.forms === 1 && (!routeRequired || dom.routeText.trim().length > 0) && (routeRequired || authority.routeDecisions.length === 0) && /尚未选择助手|No assistant selected/i.test(dom.text), { caseId, dom, awaitingReason: authority.case.awaitingReason, routeRequired })
+  // A route failure is only readable when the shipped dictionary sentence for that
+  // closed reason really renders, on the card and on the inbox row alike.
+  if (expectedFailure) {
+    const sentences = ROUTE_FAILURE_SENTENCES[expectedFailure] ?? null
+    requireEvidence(sentences, `the shipped ordinary-language sentence exists for ${expectedFailure}`)
+    const rendered = text => sentences.some(pattern => pattern.test(String(text ?? '')))
+    check(`${label}RouteFailureReasonIsReadable`, rendered(card.routeText) && rendered(dom.routeText), { expectedFailure, cardRoute: card.routeText, inboxRoute: dom.routeText })
+  }
   return { authority, dom, card }
 }
 
@@ -2362,8 +2382,8 @@ async function answerUnownedInbox(sessionId, caseId, label, answer) {
   return closed
 }
 
-async function cancelUnownedInbox(sessionId, caseId, label, routeRequired = true) {
-  await unownedInbox(sessionId, caseId, label, routeRequired)
+async function cancelUnownedInbox(sessionId, caseId, label, routeRequired = true, expectedFailure = null) {
+  await unownedInbox(sessionId, caseId, label, routeRequired, expectedFailure)
   const article = `article[data-case-id=${JSON.stringify(caseId)}]`
   await openDisclosure(`weir-da-recovery-${caseId}`)
   const originSelector = `${article} .weir-da-disclosure .weir-da-button[data-variant="danger"]`
@@ -2444,18 +2464,18 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   await submitMarker(instance, 'GUI_AUTO_EMPTY')
   const emptyPending = await waitCase(autoSession, 'gui-auto-empty', value => value.state === 'awaiting_user')
   const emptyWaiting = await record(autoSession, 'p4-empty-waiting', emptyPending.caseId)
-  // The whitelist gates only the answer now: the empty-whitelist request still
-  // classifies and routes, and the owned case parks as authority for the user.
+  // The answer switch gates only adoption: with it off Auto still routes and pins
+  // the assistant, and the owned Case parks as authority for the user with no Attempt.
   check('answerSwitchOffRoutesOwnedAuthorityWithoutAttempt', emptyWaiting.case.agentId === primary.agentId && emptyWaiting.case.awaitingReason === 'authority' && emptyWaiting.attempts.length === 0 && emptyWaiting.routeDecisions.length === 1 && emptyWaiting.routeDecisions[0].chosen === primary.agentId, { caseId: emptyPending.caseId, route: emptyWaiting.routeDecisions[0] })
-  await shot('p4-empty-whitelist-native')
+  await shot('p4-answer-off-native')
   await answerNative('Native empty')
   p4Evidence.empty = await waitCase(autoSession, 'gui-auto-empty', value => value.state === 'closed')
   await setAutoSettings('p4-allow-answer', { autoAnswer: true })
   await openIsolatedSession(autoSession)
   await selectorOpen()
   const autoCopy = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
-  const autoCopyProblems = selectorCopyProblems(autoCopy, { language: 'zh', allowedCount: 2, shadow: false })
-  check('autoSelectorShowsRealAllowedTwoAndComparisonCopy', autoCopyProblems.length === 0, { text: autoCopy, problems: autoCopyProblems })
+  const autoCopyProblems = selectorCopyProblems(autoCopy, { language: 'zh', autoAnswer: true, shadow: false })
+  check('autoSelectorShowsRealAnswerOnAndComparisonCopy', autoCopyProblems.length === 0, { text: autoCopy, problems: autoCopyProblems })
   await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
   await keyboardKey('Close Auto settings proof selector', 'Escape')
 
@@ -2519,13 +2539,13 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   const invalidPending = await waitCase(autoSession, 'gui-auto-invalid', value => value.state === 'awaiting_user')
   const invalidWaiting = await record(autoSession, 'p4-invalid-waiting', invalidPending.caseId)
   check('invalidOutputFailureHasNoOwnerOrAttempt', invalidWaiting.case.agentId === null && invalidWaiting.case.awaitingReason === 'no_route' && invalidWaiting.attempts.length === 0 && invalidWaiting.routeDecisions[0]?.reason === 'failure:invalid_output', { caseId: invalidPending.caseId })
-  p4Evidence.invalid = await cancelUnownedInbox(autoSession, invalidPending.caseId, 'p4-invalid')
+  p4Evidence.invalid = await cancelUnownedInbox(autoSession, invalidPending.caseId, 'p4-invalid', true, 'failure:invalid_output')
   await openIsolatedSession(autoSession)
   await submitMarker(instance, 'GUI_AUTO_TIMEOUT')
   const timeoutPending = await waitCase(autoSession, 'gui-auto-timeout', value => value.state === 'awaiting_user')
   const timeoutWaiting = await record(autoSession, 'p4-timeout-waiting', timeoutPending.caseId)
   check('timeoutFailureHasNoOwnerOrAttempt', timeoutWaiting.case.agentId === null && timeoutWaiting.case.awaitingReason === 'no_route' && timeoutWaiting.attempts.length === 0 && timeoutWaiting.routeDecisions[0]?.reason === 'failure:timeout', { caseId: timeoutPending.caseId })
-  p4Evidence.timeout = await cancelUnownedInbox(autoSession, timeoutPending.caseId, 'p4-timeout')
+  p4Evidence.timeout = await cancelUnownedInbox(autoSession, timeoutPending.caseId, 'p4-timeout', true, 'failure:timeout')
 
   writeJson(join(out, 'auto-control.json'), { explicitAgentId: secondary.agentId })
   await openIsolatedSession(autoSession)
@@ -2554,7 +2574,7 @@ async function runP4BeforeRestart(sessionId, primary, secondary) {
   await openIsolatedSession(shadowObservedSession)
   await selectorOpen()
   const shadowOnCopy = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
-  const shadowCopyProblems = selectorCopyProblems(shadowOnCopy, { language: 'zh', allowedCount: 2, shadow: true })
+  const shadowCopyProblems = selectorCopyProblems(shadowOnCopy, { language: 'zh', autoAnswer: true, shadow: true })
   check('selectorShowsRealShadowOnCopy', shadowCopyProblems.length === 0, { text: shadowOnCopy, problems: shadowCopyProblems })
   await captureAccessibility('selectorPanel', '#weir-da-selector-panel')
   await keyboardKey('Close Shadow-on selector proof', 'Escape')
@@ -2699,19 +2719,50 @@ function auditP4RawEvidence(state, primary, secondary) {
   const stockPath = join(out, 'stock-tool-calls.jsonl')
   const stock = readFileSync(stockPath, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line))
   const session = JSON.parse(readFileSync(join(out, 'p4-auto-session-before-restart.json'), 'utf8'))
-  const wiresFor = (marker, kind) => trace.filter(entry => entry.autoRouter?.kind === kind && entry.autoRouter.pack?.questions?.some(question => String(question.question).includes(marker)))
-  const selectedClassification = wiresFor('GUI_AUTO_SELECTED', 'classification')
-  const selectedRoute = wiresFor('GUI_AUTO_SELECTED', 'route')
+  // Classless Auto: there is no classifier any more, so every model call the
+  // router makes is one `router-contract/1` route verdict. Zero candidates and a
+  // single candidate never call the model; two or more call it exactly once (an
+  // unusable output earns exactly one bounded repair, so the invalid fixture has two).
+  const wiresFor = marker => trace.filter(entry => entry.autoRouter?.kind === 'route' && entry.autoRouter.pack?.questions?.some(question => String(question.question).includes(marker)))
+  const selectedRoute = wiresFor('GUI_AUTO_SELECTED')
   const selectedStock = stock.filter(entry => entry.phase === 'before-decision-hook' && entry.arguments?.questions?.some(question => question.id === 'gui-auto-selected'))
   const sessionStock = session.stockAskCalls.map(event => ({ event, arguments: typeof event.data?.arguments === 'string' ? JSON.parse(event.data.arguments) : event.data?.arguments })).filter(entry => entry.arguments?.questions?.some(question => question.id === 'gui-auto-selected'))
   const forbiddenWire = /generatedDescription|memorySnapshot|snapshotId|principles|feedback|attempts|history|FOREIGN WORKSPACE PRIVATE PROFILE/
   const cleanWire = entry => entry.autoRouter.tools.length === 0 && entry.autoRouter.hasTemperature === false && entry.autoRouter.provider === 'mock' && entry.autoRouter.model === 'mock-1' && !forbiddenWire.test(JSON.stringify(entry.autoRouter.pack))
+  const routerContractWire = entry => String(entry.autoRouter.system ?? '').split('\n', 1)[0].includes('router-contract/1')
   const classless = value => value?.questions?.every(question => !Object.hasOwn(question, 'authorizationClass') && !Object.hasOwn(question, 'authorizationClassSource') && !Object.hasOwn(question, 'authorization_class'))
-  const nativeWireCount = ['GUI_C_APPROVAL', 'GUI_C_PLAN', 'GUI_AUTO_HIGH_RISK', 'GUI_AUTO_EXECUTION'].reduce((sum, marker) => sum + wiresFor(marker, 'classification').length + wiresFor(marker, 'route').length, 0)
-  const pass = nativeWireCount === 0 && selectedClassification.length === 1 && selectedRoute.length === 1 && classless(selectedClassification[0].autoRouter.pack) && selectedClassification[0].autoRouter.pack.candidates === undefined && selectedRoute[0].autoRouter.pack.candidates.map(candidate => candidate.agentId).sort().join(',') === [primary.agentId, secondary.agentId].sort().join(',') && !JSON.stringify(selectedRoute[0]).includes(state.foreign.agentId) && selectedStock.length === 1 && classless(selectedStock[0].arguments) && sessionStock.length === 1 && classless(sessionStock[0].arguments) && trace.filter(entry => entry.autoRouter).every(cleanWire) && wiresFor('GUI_AUTO_EMPTY', 'classification').length === 1 && wiresFor('GUI_AUTO_EMPTY', 'route').length === 1 && wiresFor('GUI_AUTO_ZERO', 'classification').length === 1 && wiresFor('GUI_AUTO_ZERO', 'route').length === 0 && wiresFor('GUI_AUTO_ONE', 'classification').length === 1 && wiresFor('GUI_AUTO_ONE', 'route').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'classification').length === 0 && wiresFor('GUI_AUTO_EXPLICIT', 'route').length === 0 && wiresFor('GUI_AUTO_TIMEOUT', 'route')[0]?.emitted?.length === 0
-  const proof = { pass, nativeWireCount, selectedClassification, selectedRoute, selectedStock, sessionStock, emptyWires: wiresFor('GUI_AUTO_EMPTY', 'classification').length, zeroRouteWires: wiresFor('GUI_AUTO_ZERO', 'route').length, oneRouteWires: wiresFor('GUI_AUTO_ONE', 'route').length, explicitWires: wiresFor('GUI_AUTO_EXPLICIT', 'classification').length + wiresFor('GUI_AUTO_EXPLICIT', 'route').length, foreignAgentId: state.foreign.agentId, timeout: wiresFor('GUI_AUTO_TIMEOUT', 'route') }
+  // The retired classifier contract must appear nowhere in the whole run, neither
+  // in a router wire nor in any other traced model call.
+  const classifierWires = trace.filter(entry => /router-classification-contract/.test(JSON.stringify(entry)))
+  const nativeWireCount = ['GUI_C_APPROVAL', 'GUI_C_PLAN', 'GUI_AUTO_HIGH_RISK', 'GUI_AUTO_EXECUTION'].reduce((sum, marker) => sum + wiresFor(marker).length, 0)
+  const pass = classifierWires.length === 0 && nativeWireCount === 0 && selectedRoute.length === 1 && routerContractWire(selectedRoute[0]) && classless(selectedRoute[0].autoRouter.pack) && selectedRoute[0].autoRouter.pack.candidates.map(candidate => candidate.agentId).sort().join(',') === [primary.agentId, secondary.agentId].sort().join(',') && !JSON.stringify(selectedRoute[0]).includes(state.foreign.agentId) && selectedStock.length === 1 && classless(selectedStock[0].arguments) && sessionStock.length === 1 && classless(sessionStock[0].arguments) && trace.filter(entry => entry.autoRouter).every(entry => cleanWire(entry) && routerContractWire(entry)) && wiresFor('GUI_AUTO_EMPTY').length === 1 && wiresFor('GUI_AUTO_ZERO').length === 0 && wiresFor('GUI_AUTO_ONE').length === 0 && wiresFor('GUI_AUTO_EXPLICIT').length === 0 && wiresFor('GUI_AUTO_NONE').length === 1 && wiresFor('GUI_AUTO_AMBIGUOUS').length === 1 && wiresFor('GUI_AUTO_INVALID').length === 2 && wiresFor('GUI_AUTO_PENDING').length === 1 && wiresFor('GUI_AUTO_TIMEOUT').length === 1 && wiresFor('GUI_AUTO_TIMEOUT')[0]?.emitted?.length === 0
+  const proof = { pass, classifierWires: classifierWires.length, nativeWireCount, selectedRoute, selectedStock, sessionStock, emptyWires: wiresFor('GUI_AUTO_EMPTY').length, zeroRouteWires: wiresFor('GUI_AUTO_ZERO').length, oneRouteWires: wiresFor('GUI_AUTO_ONE').length, explicitWires: wiresFor('GUI_AUTO_EXPLICIT').length, noneWires: wiresFor('GUI_AUTO_NONE').length, ambiguousWires: wiresFor('GUI_AUTO_AMBIGUOUS').length, invalidWires: wiresFor('GUI_AUTO_INVALID').length, pendingWires: wiresFor('GUI_AUTO_PENDING').length, foreignAgentId: state.foreign.agentId, timeout: wiresFor('GUI_AUTO_TIMEOUT') }
   writeJson(join(out, 'stock-classification-proof.json'), proof)
-  check('stockSessionAndWireProveRealClasslessClassificationWithoutInjectionOrLeakage', pass, { selectedClassification: selectedClassification.length, selectedRoute: selectedRoute.length, stock: selectedStock.length, sessionStock: sessionStock.length, foreignExcluded: !JSON.stringify(selectedRoute).includes(state.foreign.agentId) })
+  check('stockSessionAndWireProveRealClasslessRoutingWithoutInjectionOrLeakage', pass, { selectedRoute: selectedRoute.length, stock: selectedStock.length, sessionStock: sessionStock.length, classifierWires: classifierWires.length, invalidWires: wiresFor('GUI_AUTO_INVALID').length, foreignExcluded: !JSON.stringify(selectedRoute).includes(state.foreign.agentId) })
+
+  // A router failure is a persisted, cold-readable audit fact: the workspace mirror
+  // must carry one `weir/decision/case-open` row per failed route with its root
+  // session, the closed reason and (when the output was unusable) the invalid-output
+  // code plus the output token count.
+  const auditLines = readAuditLines(LANE)
+  const failureAudit = caseId => auditLines.filter(line => line.type === 'weir/decision/case-open' && line.data?.caseId === caseId)
+  const invalidAudit = failureAudit(p4Evidence.invalid.case.caseId).at(-1) ?? null
+  const timeoutAudit = failureAudit(p4Evidence.timeout.case.caseId).at(-1) ?? null
+  const auditProblems = []
+  if (!invalidAudit) auditProblems.push('the invalid-output failure has no case-open audit line')
+  else {
+    if (invalidAudit.data?.rootSessionId !== state.autoSession) auditProblems.push(`invalid-output rootSessionId ${invalidAudit.data?.rootSessionId} != ${state.autoSession}`)
+    if (invalidAudit.data?.reason !== 'failure:invalid_output') auditProblems.push(`invalid-output reason ${invalidAudit.data?.reason}`)
+    if (typeof invalidAudit.data?.invalidCode !== 'string' || !invalidAudit.data.invalidCode) auditProblems.push('invalid-output audit carries no invalidCode')
+    if (!Number.isInteger(invalidAudit.data?.outputTokens) || invalidAudit.data.outputTokens <= 0) auditProblems.push('invalid-output audit carries no output token count')
+  }
+  if (!timeoutAudit) auditProblems.push('the timeout failure has no case-open audit line')
+  else {
+    if (timeoutAudit.data?.rootSessionId !== state.autoSession) auditProblems.push(`timeout rootSessionId ${timeoutAudit.data?.rootSessionId} != ${state.autoSession}`)
+    if (timeoutAudit.data?.reason !== 'failure:timeout') auditProblems.push(`timeout reason ${timeoutAudit.data?.reason}`)
+  }
+  writeJson(join(out, 'route-failure-audit.json'), { auditProblems, invalid: invalidAudit, timeout: timeoutAudit, file: join(LANE, '.weir', 'audit.jsonl') })
+  check('routeFailureCarriesRootSessionReasonAndInvalidCodeInWorkspaceAudit', auditProblems.length === 0, { problems: auditProblems, invalid: invalidAudit?.data ?? null, timeout: timeoutAudit?.data ?? null })
 
   const final = sqliteSnapshot('p4-final-audit')
   const named = { selected: p4Evidence.selected, one: p4Evidence.one, none: p4Evidence.none, ambiguous: p4Evidence.ambiguous, invalid: p4Evidence.invalid, timeout: p4Evidence.timeout, explicit: p4Evidence.explicit, returned: p4Evidence.returned }
@@ -3485,7 +3536,8 @@ async function runCrossWorkspaceMemoryMatrix(state, privateMemory) {
 
   // W3 has no private experience at all: Auto may select the shared assistant,
   // but it can never answer from public memory alone. The P4 restore leaves the
-  // answer-class whitelist empty, so Auto admits nothing until it is opened again.
+  // boolean answer switch off, so the first judgment here only routes until the
+  // switch is opened for this leg.
   await setAutoSettings(`${phase}-auto`, { shadow: false, autoAnswer: true, answerTimeoutMs: 150 })
   await openIsolatedSession(w3.sessionId)
   await submitMarker(instance, 'CROSS_AUTO_Q')
@@ -3579,7 +3631,7 @@ function writeReport(verdict, error = null) {
     '- `authoritative-rpc.json` 保存只读权威 RPC；驱动拒绝直接调用任何写方法。',
     '- `rpc-ui-comparisons.json` 对照记录 ID/revision/state/answers、Snapshot expectedRevision 与 UI。',
     '- `immutable-history.json` 检查 Attempt、Snapshot 原则内容与 RouteDecision 未改写或消失。',
-    '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 的原生 CDP 键盘事件触发；Auto 只使用测试显式配置的 A 白名单，Shadow 仅追加诊断，不做自动整理或发布。', '',
+    '- 所有 selector、助手、决定、反馈、纠正、整理、采用、放弃、恢复写操作均由真实 UI 的原生 CDP 键盘事件触发；Auto 无分类器，只由测试显式打开的「允许自动回答」布尔开关放行结论，Shadow 仅追加诊断，不做自动整理或发布。', '',
     '## 视觉、主题、缩放、键盘与可访问性', '',
     `- 已执行 ${visualAudits.length} 项视觉审计；目标为 360/768/1440 CSS px、light/dark、200% page scale，记录横向溢出、主操作裁切、控件名称与主题计算色。`,
     `- 已保存 ${Object.keys(accessibility).length} 组 CDP Accessibility 证据；keyboard-interactions.json 逐步记录 ${keyboardAudits.length} 组原生 Tab/Shift+Tab/Arrow/Enter/Space/Input.insertText 轨迹、activeElement、accessible name 与结果。`,
@@ -4022,7 +4074,6 @@ async function runStartupPreflight() {
     const preflight = JSON.parse(readFileSync(join(out, 'preflight.json'), 'utf8'))
     check('startupPreflightIsolated', preflight.pass && preflight.root === root && preflight.owner?.root === root && preflight.portProbe?.freeBeforeSpawn === true && preflight.databasePath === databasePath && preflight.databaseExists === false, preflight)
     check('startupProvenanceArtifacts', ['host.json', 'instance.json', 'preflight.json'].every(path => existsSync(join(out, path))))
-    const expectedClasses = process.env.WEIR_DECISION_GUI_AUTO_CLASSES ?? '[]'
     const expectedConfig = value => value.effective?.decisionAgentsEnabled === true && value.effective?.decisionAgentSelectorDefault === (process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT === 'auto' ? 'auto' : 'off') && value.effective?.decisionAgentAutoShadow === (process.env.WEIR_DECISION_GUI_SHADOW === '1') && value.effective?.decisionAgentAutoAnswer === (process.env.WEIR_DECISION_GUI_AUTO_ANSWER === '1')
     const config = await waitFor(async () => { const value = await decisionConfig('preflight'); return expectedConfig(value) ? value : null }, 30_000)
     check('startupEffectiveDecisionConfig', expectedConfig(config), config)
@@ -4078,7 +4129,9 @@ async function runSelectorFailureMatrix(sessionId, primary, secondary) {
   await instance.cdp.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
   const manyBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   const manyText = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
-  const manyCopyProblems = selectorCopyProblems(manyText, { language: 'zh', emptyScope: true, shadow: false })
+  // The answer switch is still at its default (off) for this leg: the panel must
+  // describe routing-without-adoption, never a class count.
+  const manyCopyProblems = selectorCopyProblems(manyText, { language: 'zh', autoAnswer: false, shadow: false })
   const manyCount = await instance.cdp.evaluate(`document.querySelectorAll('#weir-da-selector-panel input[type="radio"]').length`)
   check('selectorManyLongNamesUseOrdinaryCopy', manyCount === 4 && manyCopyProblems.length === 0 && manyText.includes(primary.name) && manyText.includes(secondary.name), { manyCount, problems: manyCopyProblems, text: manyText })
   const manyModal = await beginModalAudit('selector-many-compact-height', '#weir-da-selector-panel', trigger, { before: manyBefore, selector: { scale: 1, scrollable: true } })
@@ -4280,7 +4333,11 @@ async function runLearningResumeMatrix(sessionId, primary, candidate) {
 // the wording the user replaces it with. Both differ, so a stale render after the
 // save is distinguishable from the reviewed text.
 const CANDIDATE_EDIT_MODEL_TEXT = 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed class.'
-const CANDIDATE_EDIT_TEXT = 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed authorization class.'
+const CANDIDATE_EDIT_TEXT = 'Reviewed GUI successor principle: prefer the second source-backed answer under the reviewed scope hints.'
+// The classless candidate scope is paths/tags only: these two hints are staged
+// through the rendered rows and must come back from the authority untouched.
+const CANDIDATE_EDIT_PATH = 'plugins/weir-test-harness/spikes'
+const CANDIDATE_EDIT_TAG = 'reviewed-candidate-scope'
 
 /** The rendered candidate review of one assistant, read from its real detail pane. */
 async function candidateReviewDom(agentId) {
@@ -4322,7 +4379,8 @@ async function candidateReviewDom(agentId) {
 
 /**
  * decision-candidate-edit 6.1 on the real surface: review a candidate that lists
- * two added/changed principles, revise one entry (wording and an A/B/C class),
+ * two added/changed principles, revise one entry (wording and its paths/tags
+ * scope — the only editable scope the classless product keeps),
  * delete the other through its confirmation, accept the reviewed version, then
  * read the agreed Snapshot, its L2 guidance and the audit facts back from
  * authorities this driver never writes.
@@ -4358,12 +4416,32 @@ async function runCandidateEditMatrix(sessionId, agent, publishedParent) {
     const value = await candidateReviewDom(agent.agentId)
     return value?.editor?.principleId === changedEntry.principleId ? value : null
   }, 30_000)
-  requireEvidence(opened.editor.text === CANDIDATE_EDIT_MODEL_TEXT && opened.editor.classes.length === 3 && opened.editor.classes.every(chip => chip.pressed === 'false'), 'the editor starts from the reviewed wording and no selected class')
+  requireEvidence(opened.editor.text === CANDIDATE_EDIT_MODEL_TEXT && opened.editor.classes.length === 0, 'the editor starts from the reviewed wording and renders no authorization-class chip')
   requireEvidence(typeof opened.editor.workspace === 'string' && opened.editor.workspace.length > 0 && opened.editor.save && opened.editor.cancel, 'the private entry keeps its fixed workspace and both editor actions')
   await keyboardFill('Candidate principle wording', '[data-principle-text]', CANDIDATE_EDIT_TEXT)
-  await keyboardActivate('Toggle candidate principle class A', '[data-principle-class="A"]')
-  const toggled = await candidateReviewDom(agent.agentId)
-  requireEvidence(toggled.editor.classes.find(chip => chip.name === 'A')?.pressed === 'true' && toggled.editor.classes.filter(chip => chip.pressed === 'true').length === 1, 'the class chip reflects the toggle')
+  // The candidate scope is edited through its paths/tags rows only. Both rows are
+  // really staged through their add actions, then removed again through their own
+  // remove actions: a hint left on the entry would narrow it (a principle with a
+  // path/tag hint only covers requests that name the same hint), and this fixture's
+  // later judgments carry the workspace scope alone. The wire below proves the
+  // payload is paths/tags only, whatever those rows hold.
+  await keyboardActivate('Add a candidate principle scope path', '[data-principle-scope-add="path"]')
+  await keyboardFill('Candidate principle scope path', `[data-principle-scope="path"][data-row-index="${opened.editor.paths.length}"]`, CANDIDATE_EDIT_PATH)
+  await keyboardActivate('Add a candidate principle scope tag', '[data-principle-scope-add="tag"]')
+  await keyboardFill('Candidate principle scope tag', `[data-principle-scope="tag"][data-row-index="${opened.editor.tags.length}"]`, CANDIDATE_EDIT_TAG)
+  const staged = await candidateReviewDom(agent.agentId)
+  requireEvidence(staged.editor.classes.length === 0 && staged.editor.paths.includes(CANDIDATE_EDIT_PATH) && staged.editor.tags.includes(CANDIDATE_EDIT_TAG), 'the staged scope is paths/tags only and carries no class chip')
+  await keyboardActivate('Remove the staged candidate scope path', '[data-principle-scope-remove="path"]')
+  await keyboardActivate('Remove the staged candidate scope tag', '[data-principle-scope-remove="tag"]')
+  const restoredScope = await waitFor(async () => {
+    const value = await candidateReviewDom(agent.agentId)
+    return value?.editor && value.editor.paths.length === opened.editor.paths.length && value.editor.tags.length === opened.editor.tags.length ? value : null
+  }, 30_000)
+  // Only the rendered rows decide the hints, so a row the driver never staged can
+  // never sneak into the payload.
+  const stagedPaths = [...new Set(restoredScope.editor.paths.map(row => row.trim()).filter(Boolean))]
+  const stagedTags = [...new Set(restoredScope.editor.tags.map(row => row.trim()).filter(Boolean))]
+  const stagedScope = { ...(stagedPaths.length ? { paths: stagedPaths } : {}), ...(stagedTags.length ? { tags: stagedTags } : {}) }
   await shot('26-candidate-edit-editor')
   await keyboardActivate('Save candidate principle', '[data-principle-action="save"]')
   const editedSnapshot = await waitFor(async () => {
@@ -4372,8 +4450,11 @@ async function runCandidateEditMatrix(sessionId, agent, publishedParent) {
   }, 30_000)
   const editMutation = await expectMutation('snapshotUpdate', {
     sessionId, snapshotId, expectedRevision: reviewedSnapshot.revision,
-    edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: { paths: ['src'] } }],
+    edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: stagedScope }],
   })
+  // The rendered editor is the only source of the scope hints: the wire carries
+  // exactly the staged paths/tags and never a workspace or a class list.
+  requireEvidence(!Object.hasOwn(editMutation.args?.edits?.[0]?.scope ?? {}, 'workspaces') && !Object.hasOwn(editMutation.args?.edits?.[0]?.scope ?? {}, 'authorizationClasses'), 'the candidate update payload carries paths/tags only')
   const afterEdit = await waitFor(async () => {
     const value = await candidateReviewDom(agent.agentId)
     return value && !value.editor && value.reviewText.includes(CANDIDATE_EDIT_TEXT) ? value : null
@@ -4382,7 +4463,7 @@ async function runCandidateEditMatrix(sessionId, agent, publishedParent) {
   const editedPrinciple = editedSnapshot.principles.find(principle => principle.principleId === changedEntry.principleId)
   const untouchedPrinciple = reviewedSnapshot.principles.find(principle => principle.principleId === addedEntry.principleId)
   check('candidateEditShowsOnlyTheReviewedWording', afterEdit.rows.length === 2 && afterEdit.editEntries === 2 && !afterEdit.reviewText.includes(CANDIDATE_EDIT_MODEL_TEXT) && afterEdit.reviewText.includes(CANDIDATE_EDIT_TEXT), { entries: afterEdit.rows.map(row => ({ principleId: row.principleId, change: row.change })), editorOpen: afterEdit.editor !== null })
-  check('candidateEditPersistsWordingAndScopeOnlyInTheDraft', editedSnapshot.revision === reviewedSnapshot.revision + 1 && editedSnapshot.state === 'draft' && editedSnapshot.learningRunId === candidate.snapshot.learningRunId && editedSnapshot.principles.length === 2 && editedPrinciple?.text === CANDIDATE_EDIT_TEXT && JSON.stringify(editedPrinciple?.scope?.paths) === JSON.stringify(['src']) && !Object.hasOwn(editedPrinciple?.scope ?? {}, 'authorizationClasses') && JSON.stringify(editedPrinciple?.scope?.workspaces) === JSON.stringify(reviewedSnapshot.principles.find(principle => principle.principleId === changedEntry.principleId)?.scope?.workspaces) && JSON.stringify(editedSnapshot.principles.find(principle => principle.principleId === addedEntry.principleId)) === JSON.stringify(untouchedPrinciple), { revision: editedSnapshot.revision, scope: editedPrinciple?.scope, rpcId: editMutation.rpcId })
+  check('candidateEditPersistsWordingAndScopeOnlyInTheDraft', editedSnapshot.revision === reviewedSnapshot.revision + 1 && editedSnapshot.state === 'draft' && editedSnapshot.learningRunId === candidate.snapshot.learningRunId && editedSnapshot.principles.length === 2 && editedPrinciple?.text === CANDIDATE_EDIT_TEXT && JSON.stringify(editedPrinciple?.scope?.paths ?? []) === JSON.stringify(stagedScope.paths ?? []) && JSON.stringify(editedPrinciple?.scope?.tags ?? []) === JSON.stringify(stagedScope.tags ?? []) && !Object.hasOwn(editedPrinciple?.scope ?? {}, 'authorizationClasses') && JSON.stringify(editedPrinciple?.scope?.workspaces) === JSON.stringify(reviewedSnapshot.principles.find(principle => principle.principleId === changedEntry.principleId)?.scope?.workspaces) && JSON.stringify(editedSnapshot.principles.find(principle => principle.principleId === addedEntry.principleId)) === JSON.stringify(untouchedPrinciple), { revision: editedSnapshot.revision, scope: editedPrinciple?.scope, stagedScope, rpcId: editMutation.rpcId })
   check('candidateEditLeavesTheLearningRunUntouched', editedRun.revision === reviewedRun.revision && JSON.stringify(editedRun.operations) === JSON.stringify(reviewedRun.operations) && JSON.stringify(editedRun.replay) === JSON.stringify(reviewedRun.replay) && editedRun.outcome === 'candidate', { runRevision: [reviewedRun.revision, editedRun.revision], operations: editedRun.operations.length })
 
   await keyboardActivate('Request candidate principle removal', `[data-principle-action="remove"][data-principle-id="${addedEntry.principleId}"]`)
@@ -4560,7 +4641,7 @@ async function runEnglishVisualMatrix(sessionId) {
   const trigger = '[data-weir-decision-trigger="weir-decision-selector"]'
   const scrollBefore = (await selectorOpen({ scrollBaseline: 'stable' })).scrollBefore
   const text = await instance.cdp.evaluate(`document.querySelector('#weir-da-selector-panel').innerText`)
-  const copyProblems = selectorCopyProblems(text, { language: 'en', emptyScope: true, shadow: false })
+  const copyProblems = selectorCopyProblems(text, { language: 'en', autoAnswer: false, shadow: false })
   const scrollable = await instance.cdp.evaluate(`(() => {const body=document.querySelector('.weir-da-selector-body');return body.scrollHeight>body.clientHeight+1})()`)
   const audit = await beginModalAudit('selector-english', '#weir-da-selector-panel', trigger, { before: scrollBefore, selector: { scale: 1, scrollable } })
   const ax = await instance.cdp.accessibility('#weir-da-selector-panel')
@@ -4831,7 +4912,7 @@ async function runProductMatrix() {
 try {
   process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT = 'auto'
   process.env.WEIR_DECISION_GUI_SHADOW = '0'
-  process.env.WEIR_DECISION_GUI_AUTO_CLASSES = '[]'
+  process.env.WEIR_DECISION_GUI_AUTO_ANSWER = '0'
   process.env.WEIR_DECISION_GUI_TIMEOUT_MS = '150'
   check('portInitiallyFree', await portFree() && !portListeners())
   writeJson(join(GUI, 'latest.json'), { runId, root, out, port: PORT, status: 'running' })
@@ -4850,7 +4931,7 @@ try {
   const initialScrollBefore = (await selectorOpen({ scrollBaseline: 'immediate' })).scrollBefore
   const initialSelector = await instance.cdp.evaluate(`(() => { const panel=document.querySelector('#weir-da-selector-panel'); return {text:panel.innerText,radios:[...panel.querySelectorAll('input[type="radio"]')].map(el=>({value:el.value,name:el.getAttribute('aria-label'),checked:el.checked})),legacy:Boolean(document.querySelector('select[data-weir-decision-selector]'))} })()`)
   const initialAuthority = await rpc(sessionId, 'initial-fresh-auto', 'overview')
-  const initialCopyProblems = selectorCopyProblems(initialSelector.text, { language: 'zh', emptyScope: true, shadow: false })
+  const initialCopyProblems = selectorCopyProblems(initialSelector.text, { language: 'zh', autoAnswer: false, shadow: false })
   check('dedicatedFreshSelectorOffAutoAndPersistedDefaultAuto', !initialSelector.legacy && initialCopyProblems.length === 0 && initialSelector.radios.map(radio => radio.value).join(',') === 'off,auto' && initialSelector.radios.find(radio => radio.value === 'auto')?.checked === true && initialSelector.radios.every(radio => radio.name === (radio.value === 'off' ? '不启用助手' : '自动选择助手')) && selectorMatches(initialAuthority.selector, 'auto'), { initialSelector, authority: initialAuthority.selector, copyProblems: initialCopyProblems })
   await shot('01-selector-empty')
   const initialModal = await beginModalAudit('selector-empty-few', '#weir-da-selector-panel', '[data-weir-decision-trigger="weir-decision-selector"]', { before: initialScrollBefore, selector: { scale: 1, scrollable: false } })
@@ -4878,8 +4959,12 @@ try {
   await keyboardActivate('Open non-dirty assistant editor', `[data-agent-detail="${primary.agentId}"] [data-action="edit-agent"]`, { expectFocus: '[data-agent-field="name"]' })
   await keyboardActivate('Close non-dirty assistant editor', 'button', { scope: 'form[data-agent-editor] .weir-da-actions', labels: ['取消', 'Cancel'], expectFocus: `.weir-da-agent-back,[data-agent-detail="${primary.agentId}"]` })
   const edited = await waitAgent(sessionId, primary.agentId, value => value.name === editedName && value.userDescription?.text === editedPreference)
-  await expectMutation('profileUpsert', { sessionId, agentId: primary.agentId, name: editedName, userDescription: editedPreference, scope: primary.scope, modelRoute: primary.modelRoute })
-  check('assistantEditPreservesIdentity', edited.agentId === primary.agentId && edited.revision > primary.revision, { agentId: edited.agentId, before: primary.revision, after: edited.revision })
+  // A scope-less assistant keeps an empty scope: the visual editor writes nothing
+  // when neither paths nor tags are staged, so the payload carries no scope key at
+  // all (the retired class array never comes back).
+  const preservedScope = primary.scope && Object.keys(primary.scope).length > 0 ? { scope: primary.scope } : {}
+  await expectMutation('profileUpsert', { sessionId, agentId: primary.agentId, name: editedName, userDescription: editedPreference, ...preservedScope, modelRoute: primary.modelRoute })
+  check('assistantEditPreservesIdentity', edited.agentId === primary.agentId && edited.revision > primary.revision && JSON.stringify(edited.scope ?? {}) === JSON.stringify(primary.scope ?? {}) && !Object.hasOwn(edited.scope ?? {}, 'authorizationClasses') && !Object.hasOwn(edited.scope ?? {}, 'workspaces'), { agentId: edited.agentId, before: primary.revision, after: edited.revision, scope: edited.scope })
   await shot('02-assistant-edited')
   await openSession(instance, sessionId)
   await selectorOpen()

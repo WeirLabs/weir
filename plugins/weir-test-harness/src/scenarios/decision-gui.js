@@ -37,7 +37,7 @@ const QUESTIONS = {
   GUI_AUTO_AMBIGUOUS: { id: 'gui-auto-ambiguous', question: 'GUI_AUTO_AMBIGUOUS: candidates overlap', options: [{ label: 'Native ambiguity' }, { label: 'Other' }] },
   GUI_AUTO_INVALID: { id: 'gui-auto-invalid', question: 'GUI_AUTO_INVALID: reject invalid Router output', options: [{ label: 'Native invalid' }, { label: 'Other' }] },
   GUI_AUTO_TIMEOUT: { id: 'gui-auto-timeout', question: 'GUI_AUTO_TIMEOUT: hold the Router stream', options: [{ label: 'Native timeout' }, { label: 'Other' }] },
-  GUI_AUTO_EMPTY: { id: 'gui-auto-empty', question: 'GUI_AUTO_EMPTY: empty whitelist retains authority', options: [{ label: 'Native empty' }, { label: 'Other' }] },
+  GUI_AUTO_EMPTY: { id: 'gui-auto-empty', question: 'GUI_AUTO_EMPTY: answer switch off retains authority', options: [{ label: 'Native empty' }, { label: 'Other' }] },
   GUI_AUTO_ZERO: { id: 'gui-auto-zero', question: 'GUI_AUTO_ZERO: zero eligible candidates', options: [{ label: 'Native zero' }, { label: 'Other' }] },
   GUI_AUTO_ONE: { id: 'gui-auto-one', question: 'GUI_AUTO_ONE: one eligible candidate', options: [{ label: 'Auto one' }, { label: 'Other' }] },
   GUI_AUTO_PENDING: { id: 'gui-auto-pending', question: 'GUI_AUTO_PENDING: pending survives restart', options: [{ label: 'Pending user answer' }, { label: 'Other' }] },
@@ -195,8 +195,26 @@ function decideDecision(options, obs) {
   return textChunks(JSON.stringify({ outcome: 'escalate', missing: [`${question.question} requires a new user judgment`] }))
 }
 
+/**
+ * The repair retry carries the original pack plus one instruction message: a
+ * strict 'last user turn' read cannot parse it, so fall back to the first user
+ * turn that parses as the router pack (the same seam the headless Auto scenario
+ * needs). Without it the GUI Router brain would throw on the repair call and the
+ * failure matrix would see model_error instead of invalid_output.
+ * @param {any} options @param {any} obs
+ */
+function routerPack(options, obs) {
+  const direct = decisionPack(obs)
+  if (direct) return direct
+  const messages = Array.isArray(options?.messages) ? options.messages : Array.isArray(obs?.messages) ? obs.messages : []
+  for (const message of messages.filter(entry => entry?.role === 'user')) {
+    const content = Array.isArray(message.content) ? message.content.map(part => part?.text ?? '').join('') : String(message.content ?? '')
+    try { return JSON.parse(content) } catch { /* keep looking */ }
+  }
+  return null
+}
 function decideRouterRoute(options, obs) {
-  const pack = decisionPack(obs)
+  const pack = routerPack(options, obs)
   const question = pack?.questions?.[0]?.question ?? ''
   if (question.startsWith('GUI_AUTO_TIMEOUT')) return []
   if (question.startsWith('GUI_AUTO_NONE')) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No eligible GUI candidate matches this request' }))
@@ -229,7 +247,7 @@ function observe(obs) {
   const observation = observeDecision(obs)
   const contract = obs.system.split('\n', 1)[0]
   if (contract === 'Auto candidate router contract: router-contract/1') {
-    const pack = decisionPack(obs)
+    const pack = routerPack(null, obs)
     const question = pack?.questions?.[0]?.question ?? ''
     return {
       ...observation,

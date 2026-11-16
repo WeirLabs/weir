@@ -111,18 +111,20 @@ test('UIUX fixture provides independent bilingual long status names and cold con
   assert.notEqual(fixture.agents, second.agents)
 })
 
-test('selector default copy accepts approved bilingual task language and rejects legacy jargon', () => {
-  const emptyZh = '选择决策助手\n不启用助手\n自动选择助手\n仍会自动选择助手并交由其评估；自动回答尚未允许，新判断仍会询问你。\n选择对比未开启。'
-  assert.deepEqual(selectorCopyProblems(emptyZh, { language: 'zh', emptyScope: true, shadow: false }), [])
-  const allowedEn = 'Choose a decision assistant\nDo not use an assistant\nAutomatically choose an assistant\nAutomatic answers are currently allowed for 2 decision categories.\nSelection comparison is on; it never changes the actual result.'
-  assert.deepEqual(selectorCopyProblems(allowedEn, { language: 'en', allowedCount: 2, shadow: true }), [])
+test('selector default copy states the boolean answer switch in ordinary task language', () => {
+  const answerOffZh = '选择决策助手\n不启用助手\n自动选择助手\n仍会自动选择助手并把判断固定给它；结论交给你，且不消耗评估；自动回答未开启。\n选择对比未开启。'
+  assert.deepEqual(selectorCopyProblems(answerOffZh, { language: 'zh', autoAnswer: false, shadow: false }), [])
+  const answerOnEn = 'Choose a decision assistant\nDo not use an assistant\nAutomatically choose an assistant\nAn assistant is chosen automatically and its conclusion may be adopted when every evidence and authority gate passes.\nSelection comparison is on; it never changes the actual result.'
+  assert.deepEqual(selectorCopyProblems(answerOnEn, { language: 'en', autoAnswer: true, shadow: true }), [])
   const unknownZh = '不启用助手\n自动选择助手\n自动回答状态未知；不会假定可以自动回答。\n选择对比状态未知。'
   assert.deepEqual(selectorCopyProblems(unknownZh, { language: 'zh', unknown: true }), [])
-  for (const jargon of ['Off', 'Auto', 'Shadow', '白名单', 'whitelist', 'A/B/C', 'A, B, C']) {
-    assert.ok(selectorCopyProblems(`${emptyZh}\n${jargon}`, { language: 'zh', emptyScope: true, shadow: false }).some(problem => problem.includes('forbidden')), jargon)
+  for (const jargon of ['Off', 'Auto', 'Shadow', '白名单', 'whitelist', 'A/B/C', 'A, B, C', '当前允许自动回答 2 类判断']) {
+    assert.ok(selectorCopyProblems(`${answerOffZh}\n${jargon}`, { language: 'zh', autoAnswer: false, shadow: false }).some(problem => problem.includes('forbidden')), jargon)
   }
-  assert.match(selectorCopyProblems(emptyZh, { language: 'zh', allowedCount: 2, shadow: true }).join('\n'), /allowed two|allowedCount|选择对比/)
-  assert.match(selectorCopyProblems(allowedEn, { language: 'en', emptyScope: true, shadow: false }).join('\n'), /empty|comparison/)
+  // The two switch states are distinguishable: neither satisfies the other.
+  assert.match(selectorCopyProblems(answerOffZh, { language: 'zh', autoAnswer: true, shadow: true }).join('\n'), /missing auto answer enabled|missing comparison on/)
+  assert.match(selectorCopyProblems(answerOnEn, { language: 'en', autoAnswer: false, shadow: false }).join('\n'), /missing automatic answers off/)
+  assert.match(selectorCopyProblems(answerOffZh, { language: 'zh', autoAnswer: false, unknown: true }).join('\n'), /missing unknown/)
 })
 
 test('native modal guard requires genuine showModal top-layer semantics in the composer', () => {
