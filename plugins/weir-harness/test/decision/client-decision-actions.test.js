@@ -19,11 +19,16 @@ test('every user action maps to the same Host method with bare session args', as
   await actions.profileUpsert({ agentId: 'a', userDescription: 'v2' });
   await actions.profileSetState('a', 'disabled');
   await actions.routingReview('7d', 'cursor-1');
-  assert.deepEqual(calls.map(call => call.method), ['setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'feedback', 'correction', 'profileUpsert', 'profileSetState', 'routingReview']);
-  for (const call of calls) assert.equal(call.args.sessionId, 'child');
+  await actions.records({ state: 'closed' }, { after: 'cursor-1' });
+  assert.deepEqual(calls.map(call => call.method), ['setSelector', 'decide', 'reassign', 'cancel', 'retry', 'feedback', 'feedback', 'correction', 'profileUpsert', 'profileSetState', 'routingReview', 'records']);
+  // Every session-scoped call names the page's session; the profile-level
+  // judgment history names none, so it reads every root session of this profile.
+  for (const call of calls) if (call.method !== 'records') assert.equal(call.args.sessionId, 'child');
   assert.deepEqual(calls[6].args.payload, { text: 'nuance' });
   assert.deepEqual(calls[7].args, { sessionId: 'child', caseId: 'dc', direction: 'Use B', scope: { paths: ['src'] }, supersedes: ['dc'] });
   assert.deepEqual(calls[10].args, { sessionId: 'child', window: '7d', cursor: 'cursor-1' });
+  assert.deepEqual(calls[11].args, { filter: { state: 'closed' }, cursor: { after: 'cursor-1' } });
+  assert.equal('sessionId' in calls[11].args, false);
   assert.equal(calls.some(call => 'actor' in call.args), false);
 })
 

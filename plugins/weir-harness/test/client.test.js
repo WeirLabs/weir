@@ -2756,7 +2756,10 @@ describe('weir settings client half', () => {
     'decisionInboxGrouping', 'decisionInboxGroupByWorkspace', 'decisionInboxGroupByAgent',
     'decisionInboxOtherWorkspace', 'decisionInboxUnownedAgent', 'decisionInboxAssistantFallback',
     'decisionInboxSourceWorkspace', 'decisionInboxOpenSourceSession', 'decisionInboxSourceInactive',
-    'decisionDeliveryUnavailableTitle', 'decisionDeliveryUnavailable', 'decisionDeliveryDismiss'
+    'decisionDeliveryUnavailableTitle', 'decisionDeliveryUnavailable', 'decisionDeliveryDismiss',
+    // Profile-level judgment history: the source filter, the no-session wording of
+    // the still session-scoped advanced view, and the export gate copy.
+    'decisionFilterSource', 'decisionAllSessions', 'decisionNoSessionMetrics', 'decisionExportNeedsSession'
     ]
     const chunkRequire = (name) => {
       if (name === 'react') return { Component: class {} }

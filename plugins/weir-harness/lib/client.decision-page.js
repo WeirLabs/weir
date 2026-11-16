@@ -321,10 +321,15 @@ window.__ModuleLoader__.load({
       const outcomeKeys = { answer: "decisionOutcomeAnswer", return: "decisionOutcomeReturn", escalate: "decisionOutcomeEscalate", failed: "decisionOutcomeFailed" };
       const feedbackKeys = { none: "decisionFeedbackNone", validated: "decisionFeedbackValidated", disputed: "decisionFeedbackDisputed" };
       const options = (values, keys) => values.map(value => ({ value, label: t(keys[value]) }));
-      // One toolbar row: the two common filters, the apply action and both
-      // disclosure entries. Advanced filters expand underneath the row instead
-      // of adding a second full-width bar.
+      // One toolbar row: the three common filters (source workspace, assistant,
+      // status), the apply action and both disclosure entries. Advanced filters
+      // expand underneath the row instead of adding a second full-width bar.
+      const sourceMenu = props.sourceMenu ?? { allLabel: t("decisionAllSessions"), sources: [] };
+      // One entry per source root session that really owns Cases here; the real
+      // count tells apart two sessions of the same workspace.
+      const sourceOptions = sourceMenu.sources.map(source => ({ value: source.sessionId, label: `${source.label} (${source.count})` }));
       return jsx.jsxs("section", { className: "weir-da-filters", "aria-label": t("decisionRecordFilters"), children: [
+        FilterSelect({ name: "sessionId", label: t("decisionFilterSource"), allLabel: sourceMenu.allLabel, value: filter.sessionId, onChange: change("sessionId"), options: sourceOptions }),
         FilterSelect({ name: "agentId", label: t("decisionFilterAgent"), allLabel: t("decisionAllAssistants"), value: filter.agentId, onChange: change("agentId"), options: props.agents.map(agent => ({ value: agent.agentId, label: agent.name })) }),
         FilterSelect({ name: "state", label: t("decisionFilterState"), allLabel: t("decisionAllStates"), value: filter.state, onChange: change("state"), options: options(Object.keys(stateKeys), stateKeys) }),
         jsx.jsx(ui.Button, { variant: "primary", onClick: props.onApply, children: t("decisionApplyFilters") }, "apply"),
@@ -344,13 +349,16 @@ window.__ModuleLoader__.load({
     /**
      * The explicit data export lives in the records advanced area: one button, a
      * disclosure explaining the scope and the destination, and nothing that
-     * changes a list, a filter or a detail.
+     * changes a list, a filter or a detail. Its scope comes from the focused
+     * session, so the page disables the entry (with that reason) instead of
+     * offering a gesture the Host cannot authorize.
+     * @param {{view:any,ui:any,t:any,available?:boolean,buttonRef?:any,onRequest?:()=>void}} props
      */
     function RecordsAdvancedActions(props) {
       const { view, ui, t } = props;
       return jsx.jsx(ui.Disclosure, { id: "weir-da-records-advanced", label: t("decisionExportAdvanced"), revealOnOpen: "end", children: () => jsx.jsxs("div", { className: "weir-da-export", "data-record-export": true, children: [
-        jsx.jsx("p", { className: "weir-da-caption", children: t("decisionExportHint") }, "hint"),
-        jsx.jsx(ui.Button, { ref: props.buttonRef, "data-action": "export", disabled: view.busy, "aria-busy": view.busy, onClick: () => { if (!view.busy) return props.onRequest(); }, children: t(view.busy ? "decisionExporting" : "decisionExport") }, "start"),
+        jsx.jsx("p", { className: "weir-da-caption", children: t(props.available === false ? "decisionExportNeedsSession" : "decisionExportHint") }, "hint"),
+        jsx.jsx(ui.Button, { ref: props.buttonRef, "data-action": "export", disabled: view.busy || props.available === false, "aria-busy": view.busy, onClick: () => { if (!view.busy && props.available !== false) return props.onRequest(); }, children: t(view.busy ? "decisionExporting" : "decisionExport") }, "start"),
       ] }) }, "advanced");
     }
 
@@ -766,7 +774,7 @@ window.__ModuleLoader__.load({
     const emptyResource = () => ({ status: "idle", value: null, error: null });
     const emptyResources = () => ({
       agents: { ...emptyResource(), value: [] }, inbox: { ...emptyResource(), value: [] },
-      records: { ...emptyResource(), value: [], nextCursor: null, loadingMore: false },
+      records: { ...emptyResource(), value: [], nextCursor: null, sources: [], loadingMore: false },
       routingReview: { ...emptyResource(), value: [], summary: {}, window: "all", nextCursor: null, loadingMore: false, loadMoreError: null },
       details: {}, agent: emptyResource(), metrics: emptyResource(),
     });
@@ -995,8 +1003,11 @@ window.__ModuleLoader__.load({
       selectedCaseRef.current = selectedCaseId;
       routingWindowRef.current = resources.routingReview.window;
       const view = model.pageView({ tab, agents: resources.agents.value, records: resources.records.value, inbox: resources.inbox.value, metrics: resources.metrics.value });
-      const updateDraft = (caseId, field, value) => setDrafts(current => model.draftsReducer(current, { type: "update", sessionId, caseId, field, value }));
-      const clearDraft = (caseId, fields) => setDrafts(current => model.draftsReducer(current, { type: "clear", sessionId, caseId, fields }));
+      // Drafts are keyed by the page's draft scope, not by a live session: the
+      // profile-level judgment history keeps one bucket when nothing is focused
+      // instead of throwing on a missing scope.
+      const updateDraft = (caseId, field, value) => setDrafts(current => model.draftsReducer(current, { type: "update", sessionId: draftScope, caseId, field, value }));
+      const clearDraft = (caseId, fields) => setDrafts(current => model.draftsReducer(current, { type: "clear", sessionId: draftScope, caseId, fields }));
       const patchResource = (name, patch) => setResources(current => ({ ...current, [name]: { ...current[name], ...patch } }));
       const readFailure = reason => ["FORBIDDEN", "PERMISSION_DENIED", "UNAUTHORIZED", "WORKSPACE_MISMATCH", "ROOT_SESSION_MISMATCH"].includes(reason?.code) ? t("decisionNoPermission") : t("decisionReadFailed");
       const valid = (kind, token, epoch, requestSession, caseId) => epochRef.current === epoch && sessionId === requestSession
@@ -1025,18 +1036,20 @@ window.__ModuleLoader__.load({
           }
         } catch (reason) { if (valid("inbox", token, epoch, requestSession)) patchResource("inbox", { status: "error", error: asError(reason) }); }
       };
+      // The judgment history is the profile-level user surface: one read covers
+      // every root session of this profile, so it needs no focused session and the
+      // source menu only comes back with the first page.
       const loadRecords = async (nextFilter = appliedFilter, requestSession = sessionId, epoch = epochRef.current) => {
-        if (!requestSession) return;
         const token = ++requestsRef.current.records;
-        patchResource("records", { status: "loading", error: null, value: [], nextCursor: null, loadingMore: false, loadMoreError: null });
+        patchResource("records", { status: "loading", error: null, value: [], nextCursor: null, sources: [], loadingMore: false, loadMoreError: null });
         try {
           const page = model.narrowRecords(await actions.records(nextFilter));
-          if (valid("records", token, epoch, requestSession)) patchResource("records", { status: "ready", value: page.records, nextCursor: page.nextCursor, error: null });
+          if (valid("records", token, epoch, requestSession)) patchResource("records", { status: "ready", value: page.records, nextCursor: page.nextCursor, sources: page.sources ?? [], error: null });
         } catch (reason) { if (valid("records", token, epoch, requestSession)) patchResource("records", { status: "error", error: asError(reason) }); }
       };
       const loadMore = async () => {
         const cursor = resources.records.nextCursor;
-        if (!sessionId || !cursor || resources.records.status !== "ready" || resources.records.loadingMore) return;
+        if (!cursor || resources.records.status !== "ready" || resources.records.loadingMore) return;
         const requestSession = sessionId;
         const epoch = epochRef.current;
         const token = ++requestsRef.current.records;
@@ -1045,7 +1058,7 @@ window.__ModuleLoader__.load({
           const page = model.narrowRecords(await actions.records(appliedFilter, { after: cursor }));
           if (valid("records", token, epoch, requestSession)) {
             setResources(current => {
-              const appended = model.appendRecordPage(current.records.value, page);
+              const appended = model.appendRecordPage({ records: current.records.value, sources: current.records.sources }, page);
               return { ...current, records: { ...current.records, status: "ready", value: appended.records, nextCursor: appended.nextCursor, loadingMore: false, loadMoreError: null } };
             });
           }
@@ -1146,7 +1159,9 @@ window.__ModuleLoader__.load({
       const readRecord = async (caseId, options = {}) => {
         const requestSession = options.sessionId ?? sessionId;
         const epoch = options.epoch ?? epochRef.current;
-        if (!requestSession || !caseId) return null;
+        // The detail read is keyed by Case id alone (the Host reads any Case of
+        // this profile), so it runs with or without a focused session.
+        if (!caseId) return null;
         if (options.select) { setTab("records"); setSelectedCaseId(caseId); setDrillIn(true); }
         const cached = resources.details[caseId];
         if (!options.force && cached?.status === "ready") return cached.value;
@@ -1628,19 +1643,25 @@ window.__ModuleLoader__.load({
         setTab(openCaseId ? "records" : agentDestination ? "agents" : "inbox");
         loadInbox(sessionId, epoch);
         setDeliveryNotice(null);
+        // Assistants and the session-scoped advanced reads still need a focused
+        // session; the profile-level judgment history never does.
+        if (openCaseId) loadRecords({}, sessionId, epoch);
         if (sessionId) {
           loadAgents(sessionId, epoch);
-          if (openCaseId) { loadRecords({}, sessionId, epoch); readRecord(openCaseId, { select: true, sessionId, epoch, force: true }); }
+          if (openCaseId) readRecord(openCaseId, { select: true, sessionId, epoch, force: true });
         }
         const subscription = props.panelInfo?.subscribe?.(value => {
           if ((value?.activePanelId ?? value) !== PAGE_ID) return;
           loadInbox(sessionId, epoch);
-          if (!sessionId) return;
-          loadAgents(sessionId, epoch);
+          // The judgment history refreshes with the panel it lives in, with or
+          // without a focused session; the session-scoped reads below stay gated.
           if (tabRef.current === "records") {
             loadRecords(filterRef.current, sessionId, epoch);
             if (selectedCaseRef.current) readRecord(selectedCaseRef.current, { sessionId, epoch, force: true });
-          } else if (tabRef.current === "metrics") { loadMetrics(sessionId, epoch); loadRoutingReview(routingWindowRef.current, sessionId, epoch); }
+          }
+          if (!sessionId) return;
+          loadAgents(sessionId, epoch);
+          if (tabRef.current === "metrics") { loadMetrics(sessionId, epoch); loadRoutingReview(routingWindowRef.current, sessionId, epoch); }
         });
         return () => { subscription?.(); if (epochRef.current === epoch) epochRef.current += 1; };
       }, [sessionId]);
@@ -1649,6 +1670,9 @@ window.__ModuleLoader__.load({
         jsx.jsx(ui.Button, { onClick: retry, children: t("decisionRetry") }, "retry"),
       ] }) });
       const noSession = jsx.jsx(ui.EmptyState, { children: t("decisionNoSession") });
+      // The session-scoped advanced reads say what they need instead of showing an
+      // empty list: routing review and metrics read one root session at a time.
+      const noSessionMetrics = jsx.jsx(ui.EmptyState, { children: t("decisionNoSessionMetrics") });
       // Every pending Case of this profile, grouped for reading. The switch only
       // appears when the pending items actually span two or more workspaces.
       const inboxRows = resources.inbox.value;
@@ -1686,14 +1710,20 @@ window.__ModuleLoader__.load({
           ] })
         : jsx.jsx(ui.EmptyState, { children: t("decisionInboxEmpty") });
       const selectedDetail = selectedCaseId ? resources.details[selectedCaseId] : null;
-      const recordContent = !sessionId ? noSession
-        : selectedDetail?.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
+      const recordContent = selectedDetail?.status === "loading" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : selectedDetail?.status === "error" ? retryState(selectedDetail, () => readRecord(selectedCaseId, { force: true }))
         : selectedDetail?.value ? RecordDetail({
             detail: selectedDetail.value, agents: resources.agents.value, model, ui, t, run, pending,
-            draft: model.readDraft(drafts, sessionId, selectedCaseId), updateDraft: (field, value) => updateDraft(selectedCaseId, field, value),
+            draft: model.readDraft(drafts, draftScope, selectedCaseId), updateDraft: (field, value) => updateDraft(selectedCaseId, field, value),
           })
         : jsx.jsx(ui.EmptyState, { children: t("decisionSelectRecord") });
+      // The judgment history names its source workspace locally, from each record's
+      // own root session: no path or raw workspace key crosses the wire, and the
+      // same menu lists only root sessions that really own Cases.
+      const recordSources = model.recordSourceView(
+        { records: resources.records.value, sources: resources.records.sources },
+        { workspaces: hostWorkspaces, sessions: hostSessions, t },
+      );
       const listBody = resources.records.status === "error" ? retryState(resources.records, () => loadRecords())
         : resources.records.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : resources.records.value.length ? resources.records.value.map(record => {
@@ -1708,12 +1738,14 @@ window.__ModuleLoader__.load({
           return jsx.jsxs("div", { className: "weir-da-record-row", style: { display: "block", width: "100%", boxSizing: "border-box" }, "data-case-id": record.caseId, role: "button", tabIndex: 0, "aria-pressed": selectedCaseId === record.caseId, onClick: openRecordRow, onKeyDown: event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openRecordRow() } }, children: [
             jsx.jsx("strong", { children: summary?.title ?? t("decisionRecord") }, "title"),
             jsx.jsx("span", { children: `${summary?.agentName ?? t("decisionSelector")} · ${t(summary?.statusKey ?? "decisionStatusUnknown")}` }, "meta"),
+            jsx.jsxs("span", { className: "weir-da-caption", "data-record-source": record.rootSessionId ?? "", children: [`${t("decisionInboxSourceWorkspace")}: `, jsx.jsx("strong", { children: recordSources.labels.get(record.rootSessionId) ?? recordSources.otherLabel }, "label")] }, "source"),
             summary?.time ? jsx.jsx("time", { children: readableTime(summary.time) }, "time") : null,
           ] }, record.caseId);
-        }) : jsx.jsx(ui.EmptyState, { children: t(model.recordEmptyState({ sessionId, filtered: Object.values(appliedFilter).some(Boolean) })) });
+        }) : jsx.jsx(ui.EmptyState, { children: t(model.recordEmptyState({ filtered: Object.values(appliedFilter).some(Boolean) })) });
       const exportView = model.exportView(exportState);
-      const recordsContent = !sessionId ? noSession : jsx.jsxs("div", { className: "weir-da-records-view", children: [
-        RecordFilters({ filter, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters, advanced: RecordsAdvancedActions({ view: exportView, ui, t, buttonRef: exportButtonRef, onRequest: () => setConfirm({ kind: "export" }) }) }),
+      // The list is profile-level: it renders with or without a focused session.
+      const recordsContent = jsx.jsxs("div", { className: "weir-da-records-view", children: [
+        RecordFilters({ filter, sourceMenu: recordSources, agents: resources.agents.value, model, ui, t, onChange: filterField, onApply: applyFilters, advanced: RecordsAdvancedActions({ view: exportView, ui, t, available: Boolean(sessionId), buttonRef: exportButtonRef, onRequest: () => setConfirm({ kind: "export" }) }) }),
         ExportResult({ view: exportView, ui, t, onRetry: () => startExport({ focusResult: true }), onCopy: copyExportPath }),
         jsx.jsxs("div", { className: "weir-da-records-layout", "data-drill-in": drillIn, children: [
           jsx.jsxs("div", { className: "weir-da-record-list", "aria-label": t("decisionRecords"), children: [
@@ -1880,7 +1912,7 @@ window.__ModuleLoader__.load({
         onCancel: () => setConfirm(null),
         onConfirm: () => { const { kind, snapshotId, expectedRevision } = confirm; setConfirm(null); return run(kind, snapshotId, expectedRevision); },
       }) : null;
-      const metricsContent = !sessionId ? noSession : resources.metrics.status === "error" ? retryState(resources.metrics, () => loadMetrics())
+      const metricsContent = !sessionId ? noSessionMetrics : resources.metrics.status === "error" ? retryState(resources.metrics, () => loadMetrics())
         : resources.metrics.status !== "ready" ? jsx.jsx(ui.LoadingState, { children: t("decisionLoading") })
         : MetricsDetails({
           metrics: resources.metrics.value, model, ui, t, agents: resources.agents.value,

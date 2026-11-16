@@ -514,6 +514,52 @@ test('record filters expose common controls and advanced choices while preservin
   harness.unmount()
 })
 
+test('judgment records label their source workspace and filter by source session', async () => {
+  const calls = []
+  const record = (caseId, rootSessionId, question) => ({ caseId, agentId: 'a', rootSessionId, state: 'closed', closing: 'answered', request: { questions: [{ id: 'q', question }] } })
+  const harness = await createPageHarness({
+    actions: {
+      agents: async () => [{ agentId: 'a', name: 'Tone', state: 'enabled' }], inbox: async () => [],
+      // The Host lists the whole profile and ships its own source summary.
+      records: async (filter, cursor) => {
+        calls.push({ filter, cursor })
+        return {
+          records: [record('dc-orrery', 's-orrery', 'Orrery record'), record('dc-atlas', 's-atlas', 'Atlas record'), record('dc-stray', 's-stray', 'Stray record')],
+          nextCursor: null, sources: [{ sessionId: 's-atlas', count: 3, lastAt: 20 }, { sessionId: 's-orrery', count: 2, lastAt: 10 }],
+        }
+      },
+    },
+    // Two known workspaces, plus a session neither snapshot can place.
+    useWorkspaces: () => [
+      { workspaceId: 'w-orrery', title: 'Orrery', sessionIds: ['s-orrery'] },
+      { workspaceId: 'w-atlas', title: 'Atlas', sessionIds: ['s-atlas'] },
+    ],
+    useSessions: () => ({ 's-orrery': { cwd: '/work/orrery' }, 's-atlas': { cwd: '/work/atlas' }, 's-stray': { cwd: '/work/unknown' } }),
+  })
+  await harness.settle()
+  let tree = await openRecords(harness)
+  // Every row names its source workspace, mapped locally from the record's root
+  // session; an unplaceable session reads as "other workspace" instead of blank.
+  assert.deepEqual(findAll(tree, node => node['data-record-source']).map(node => [node['data-record-source'], textOf(node)]), [
+    ['s-orrery', 'decisionInboxSourceWorkspace: Orrery'],
+    ['s-atlas', 'decisionInboxSourceWorkspace: Atlas'],
+    ['s-stray', 'decisionInboxSourceWorkspace: decisionInboxOtherWorkspace'],
+  ])
+  // The menu offers the Host's own sources with their real Case counts.
+  const source = recordFilter(harness, tree, 'sessionId')
+  assert.equal(source['aria-label'], 'decisionFilterSource')
+  assert.deepEqual(source.children.map(option => [option.value, option.children]), [
+    ['', 'decisionAllSessions'], ['s-atlas', 'Atlas (3)'], ['s-orrery', 'Orrery (2)'],
+  ])
+  source.onChange({ target: { value: 's-atlas' } })
+  tree = harness.render()
+  findAll(tree, node => node.type === harness.ui.Button && node.children === 'decisionApplyFilters')[0].onClick()
+  await harness.flush()
+  // The filter travels as `filter.sessionId` on a read that names no session.
+  assert.deepEqual(calls.map(call => call.filter), [{}, { sessionId: 's-atlas' }])
+  harness.unmount()
+})
+
 test('record pagination appends and dedupes without replacing the selected detail, with narrow drill-in back navigation', async () => {
   const first = { caseId: 'dc-a', agentId: 'a', state: 'closed', closing: 'answered', createdAt: '2026-01-02T03:04:05.000Z', request: { questions: [{ id: 'q', question: 'Original A' }] } }
   const second = { caseId: 'dc-b', agentId: 'a', state: 'awaiting_user', createdAt: '2026-01-03T03:04:05.000Z', request: { questions: [{ id: 'q', question: 'Record B' }] } }
@@ -1668,30 +1714,44 @@ test('inbox loading, failure, retry, and empty states are local to the inbox vie
   harness.unmount()
 })
 
-test('the inbox loads without an open session while records and advanced metrics keep their gate', async () => {
+test('the profile-level judgment history reads without an open session while assistants and advanced metrics keep their gate', async () => {
   const calls = []
   const published = []
+  const record = { caseId: 'dc-cold', agentId: 'a', rootSessionId: 's-w1', state: 'awaiting_user', request: { questions: [{ id: 'q', question: 'Cold record' }] } }
   const harness = await createPageHarness({ sessionId: null, actions: {
     agents: async () => { calls.push('agents'); return [] }, inbox: async () => { calls.push('inbox'); return [] },
-    records: async () => { calls.push('records'); return { records: [], nextCursor: null } }, metrics: async () => { calls.push('metrics'); return {} },
+    records: async () => { calls.push('records'); return { records: [record], nextCursor: null, sources: [{ sessionId: 's-w1', count: 1, lastAt: 10 }] } }, metrics: async () => { calls.push('metrics'); return {} },
   } })
   harness.update({ publishPendingCount: count => published.push(count), refreshPending: () => calls.push('refresh') })
   await harness.settle()
-  // The profile-wide inbox is the one read that needs no session; it publishes
-  // its total to the entry's bubble.
+  // The profile-wide inbox is the one read that runs on mount; it publishes its
+  // total to the entry's bubble.
   assert.deepEqual(calls, ['inbox'])
   assert.deepEqual(published, [0])
   const inbox = findAll(harness.render(), node => node.type === 'section' && node['data-view'] === 'inbox')[0]
   assert.equal(textOf(inbox).includes('decisionInboxEmpty'), true)
   assert.equal(textOf(inbox).includes('decisionNoSession'), false)
-  for (const view of ['records', 'metrics']) {
-    findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === view)[0].onClick()
-    await harness.flush()
-    const section = findAll(harness.render(), node => node.type === 'section' && node['data-view'] === view)[0]
-    assert.equal(textOf(section).includes('decisionNoSession'), true, view)
-    assert.equal(findAll(section, node => node.type === harness.ui.LoadingState).length, 0, view)
-  }
-  assert.deepEqual(calls, ['inbox'])
+  // The judgment history is profile-level too: with no focused session it lists
+  // the whole profile and never reports the blocking "open a session" state.
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'records')[0].onClick()
+  await harness.flush()
+  const records = findAll(harness.render(), node => node.type === 'section' && node['data-view'] === 'records')[0]
+  assert.deepEqual(calls, ['inbox', 'records'])
+  assert.deepEqual(findAll(records, node => node.role === 'button' && node['data-case-id']).map(node => node['data-case-id']), ['dc-cold'])
+  const emptyStates = section => findAll(section, node => node.type === harness.ui.EmptyState).map(node => textOf(node))
+  assert.equal(emptyStates(records).includes('decisionNoSession'), false)
+  assert.deepEqual(recordFilter(harness, harness.render(), 'sessionId').children.map(option => option.children), ['decisionAllSessions', 'decisionInboxOtherWorkspace (1)'], 'the menu starts on every session and offers the one real source')
+  // Assistants and the session-scoped advanced reads keep their gate, and the
+  // advanced view says what it needs instead of showing an empty list.
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'agents')[0].onClick()
+  await harness.flush()
+  assert.deepEqual(emptyStates(findAll(harness.render(), node => node.type === 'section' && node['data-view'] === 'agents')[0]), ['decisionNoSession'])
+  findAll(harness.render(), node => node.type === harness.ui.Button && node['data-view'] === 'metrics')[0].onClick()
+  await harness.flush()
+  const metrics = findAll(harness.render(), node => node.type === 'section' && node['data-view'] === 'metrics')[0]
+  assert.deepEqual(emptyStates(metrics), ['decisionNoSessionMetrics'])
+  assert.equal(findAll(metrics, node => node.type === harness.ui.LoadingState).length, 0)
+  assert.deepEqual(calls, ['inbox', 'records'])
   harness.unmount()
 })
 function routingSummary(patch = {}) {

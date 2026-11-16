@@ -6,8 +6,11 @@ window.__ModuleLoader__.load({
     const exports = module.exports;
     function createDecisionActions(connection, sessionId, rpc) {
       const call = (method, args = {}) => rpc(connection, method, { sessionId, ...args });
+      // Judgment history is the profile-level user surface, so its read names no
+      // session: the page lists every root session of this profile even when no
+      // session is focused.
       return {
-        overview: () => call("overview"), agents: () => call("agents"), agent: agentId => call("agent", { agentId }), records: (filter, cursor) => call("records", { filter, cursor }),
+        overview: () => call("overview"), agents: () => call("agents"), agent: agentId => call("agent", { agentId }), records: (filter, cursor) => rpc(connection, "records", { filter, cursor }),
         record: caseId => call("record", { caseId }), inbox: () => call("inbox"), metrics: window => call("metrics", { window }),
         routingReview: (window, cursor) => call("routingReview", { window, ...(cursor === undefined ? {} : { cursor }) }),
         setSelector: (mode, agentId) => call("setSelector", { mode, agentId }),
