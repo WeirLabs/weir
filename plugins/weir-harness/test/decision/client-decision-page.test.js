@@ -2212,6 +2212,12 @@ test('a learning action reload restores the assistant detail pane scrollTop, cla
     // 3. The authoritative content commits after the read resolves: the hold must
     //    survive the commit frame, or anchoring rewrites the offset again.
     const frames = []
+    const settle = async (limit = 12) => {
+      for (let frame = 0; frame < limit && frames.length; frame += 1) {
+        frames.shift()()
+        await harness.flush()
+      }
+    }
     pane.ownerDocument = { defaultView: { requestAnimationFrame: callback => { frames.push(callback); return frames.length } } }
     pane.scrollTop = 690; pane.scrollHeight = 4518; pane.clientHeight = 532
     queueReload()
@@ -2225,10 +2231,24 @@ test('a learning action reload restores the assistant detail pane scrollTop, cla
     pane.scrollHeight = 4614
     pane.scrollTop = 446
     frames.shift()()
-    await framed
     await harness.flush()
     assert.equal(pane.scrollTop, 690, 'the commit frame pins the captured offset back')
-    assert.equal(style.overflowAnchor, '', 'the hold is released once the restored offset landed')
+    assert.equal(style.overflowAnchor, 'none', 'the hold survives the commit frame while the card is still moving')
+    assert.equal(frames.length, 1, 'a settle frame is requested before the inline rule is handed back')
+    // 4. The same action commits a second time (the measured 739 -> 705 drag):
+    //    the held pane re-pins instead of following the browser anchor.
+    pane.scrollHeight = 4717
+    pane.scrollTop = 705
+    frames.shift()()
+    await harness.flush()
+    assert.equal(pane.scrollTop, 690, 'a later commit cannot drag the held offset away')
+    assert.equal(style.overflowAnchor, 'none', 'the hold survives the second commit')
+    await settle()
+    await framed
+    await harness.flush()
+    assert.equal(frames.length, 0, 'the settle loop is bounded and ends on its own')
+    assert.equal(pane.scrollTop, 690, 'the settled range keeps the captured offset')
+    assert.equal(style.overflowAnchor, '', 'the hold is released once the range stopped moving')
     delete pane.ownerDocument
   } finally {
     harness.unmount()
@@ -2373,9 +2393,19 @@ test('a failed snapshot action holds the assistant detail pane scroll across the
     assert.equal(style.overflowAnchor, 'none', 'anchoring stays disabled until the restore lands')
     assert.equal(pane.scrollTop, 0, 'the commit frame is what would clamp the held offset')
     frames.shift()()
+    await harness.flush()
+    assert.equal(pane.scrollTop, 168, 'the commit frame clamps the held offset to the new maximum')
+    assert.equal(style.overflowAnchor, 'none', 'the hold survives the commit frame while the range settles')
+    const settle = async (limit = 12) => {
+      for (let frame = 0; frame < limit && frames.length; frame += 1) {
+        frames.shift()()
+        await harness.flush()
+      }
+    }
+    await settle()
     await clampFailure
     await harness.flush()
-    assert.equal(pane.scrollTop, 168, 'a shrunken card clamps the captured offset to scrollHeight - clientHeight')
+    assert.equal(pane.scrollTop, 168, 'a shrunken card keeps the clamped offset once the range settles')
     assert.equal(style.overflowAnchor, '', 'an empty prior rule leaves no inline anchoring residue')
     assert.deepEqual(removals, ['overflow-anchor'])
     assert.ok(actionError(), 'the failure still surfaces the same actionable error')
