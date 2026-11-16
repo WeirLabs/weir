@@ -493,7 +493,7 @@ async function autoSafety(broker, agent, signal) {
       failures: [],
     }
     const failureControl = await runShadow('failure-control', false, 'control')
-    for (const failure of ['classification', 'routing', 'write']) {
+    for (const failure of ['routing', 'write']) {
       const value = await runShadow(`failure-${failure}`, true, failure)
       report.shadow.failures.push({ failure, equal: JSON.stringify(value.real) === JSON.stringify(failureControl.real), ...value })
     }

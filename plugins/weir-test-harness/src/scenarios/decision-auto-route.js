@@ -71,8 +71,21 @@ function decide(options, obs) {
   return uniqueToolCall('decision_consult', { ...EXPLICIT_UNAVAILABLE, agent_id: agentId })
 }
 
+function routerPack(options, obs) {
+  // The repair retry carries the original pack plus one instruction message: a
+  // strict 'last user turn' read cannot parse it, so fall back to the first one.
+  const direct = decisionPack(obs)
+  if (direct) return direct
+  const messages = Array.isArray(options?.messages) ? options.messages : []
+  for (const message of messages.filter(entry => entry?.role === 'user')) {
+    const content = Array.isArray(message.content) ? message.content.map(part => part?.text ?? '').join('') : String(message.content ?? '')
+    try { return JSON.parse(content) } catch { /* keep looking */ }
+  }
+  return null
+}
+
 function decideRouterRoute(options, obs) {
-  const pack = decisionPack(obs)
+  const pack = routerPack(options, obs)
   const question = pack?.questions?.[0]?.question ?? ''
   if (question.startsWith('AUTO_SAFETY_SHADOW_FAILURE_CONTROL') && process.env.WEIR_IT_AUTO_SHADOW_FAILURE === 'routing') return textChunks('not-json')
   if (question.startsWith('AUTO_SAFETY_UNOWNED')) return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'none', reason: 'No Auto owner; preserve the unowned user decision boundary' }))
@@ -154,7 +167,7 @@ function observe(obs) {
   const contract = obs.system.split('\n', 1)[0]
   const routing = contract === 'Auto candidate router contract: router-contract/1'
   if (!routing) return base
-  const pack = decisionPack(obs)
+  const pack = routerPack(null, obs)
   const question = pack?.questions?.[0]?.question ?? ''
   return {
     ...base,
