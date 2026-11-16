@@ -168,12 +168,12 @@ test('a public candidate edit is scanned for paths and stays workspace-agnostic'
   const updated = await f.broker.learning.updateCandidate(listed.candidate.snapshotId, listed.candidate.revision, [{
     principleId: principle.principleId,
     text: 'Prefer the agreed option, worded by the user',
-    scope: { tags: ['release-notes'], authorizationClasses: ['A'] },
+    scope: { tags: ['release-notes'], paths: ['docs'] },
   }])
   // The public zone owns no workspace: the hints survive and no list appears.
-  assert.deepEqual(updated.snapshot.principles[0].scope, { tags: ['release-notes'], authorizationClasses: ['A'] })
+  assert.deepEqual(updated.snapshot.principles[0].scope, { tags: ['release-notes'], paths: ['docs'] })
   assert.equal(updated.snapshot.zone, 'public')
   const published = await f.broker.snapshotPublish({ sessionId: 'root1', snapshotId: listed.candidate.snapshotId, expectedRevision: updated.snapshot.revision })
   assert.equal(published.principles[0].text, 'Prefer the agreed option, worded by the user')
-  assert.deepEqual(published.principles[0].scope, { tags: ['release-notes'], authorizationClasses: ['A'] })
+  assert.deepEqual(published.principles[0].scope, { tags: ['release-notes'], paths: ['docs'] })
 })

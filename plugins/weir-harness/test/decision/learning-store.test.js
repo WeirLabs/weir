@@ -148,16 +148,15 @@ test('candidate updates revise wording and scope of this review and bump only th
   assert.equal(before.outcome, 'candidate')
 
   const result = await f.broker.learning.updateCandidate('ms_draft', 3, [
-    { principleId: 'p_change', text: 'Revised wording', scope: { paths: ['src/api'], authorizationClasses: ['B', 'A'] } },
+    { principleId: 'p_change', text: 'Revised wording', scope: { paths: ['src/api'], tags: ['api'] } },
   ])
   assert.equal(result.edited, 1)
   assert.equal(result.removed, 0)
   assert.equal(result.snapshot.revision, 4)
   const edited = result.snapshot.principles.find(principle => principle.principleId === 'p_change')
   assert.equal(edited.text, 'Revised wording')
-  // The workspace stays the candidate's own: the edit only rewrites hints, and
-  // the class list keeps the canonical A/B/C order.
-  assert.deepEqual(edited.scope, { workspaces: [f.workspace], paths: ['src/api'], authorizationClasses: ['A', 'B'] })
+  // The workspace stays the candidate's own: the edit only rewrites hints.
+  assert.deepEqual(edited.scope, { workspaces: [f.workspace], paths: ['src/api'], tags: ['api'] })
   assert.deepEqual(edited.sources, ['dc_source'])
   assert.equal(edited.state, 'active')
   assert.equal(result.snapshot.contentHash, (await f.broker.memorySnapshot({ sessionId: 'root', snapshotId: 'ms_draft' })).contentHash)
@@ -243,7 +242,7 @@ test('candidate updates reject an open or ambiguous edit shape without writing',
     [[{ principleId: 'p_add', text: 'x'.repeat(601) }], 'INVALID_PRINCIPLE'],
     [[{ principleId: 'p_add', text: '' }], 'INVALID_PRINCIPLE'],
     [[{ principleId: 'p_add', scope: { paths: ['a', 'a'] } }], 'INVALID_PRINCIPLE'],
-    [[{ principleId: 'p_add', scope: { authorizationClasses: ['D'] } }], 'INVALID_PRINCIPLE'],
+    [[{ principleId: 'p_add', scope: { authorizationClasses: ['D'] } }], 'UNKNOWN_FIELD'],
     [Array.from({ length: 33 }, (_, index) => ({ principleId: `p_${index}`, remove: true })), 'CANDIDATE_EDIT_LIMIT'],
   ]
   for (const [edits, code] of rejected) {

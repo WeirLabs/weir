@@ -191,8 +191,8 @@ test('the public memory zone is never the private snapshot, never L5, and cannot
     claims: [{ evidenceIds: [principleId] }],
     answers: [], questions: [{ id: 'q', options: [{ label: 'A' }] }],
     evidence: [], packEvidenceIds: [],
-    profile: { agentId: profile.agentId, scope: { authorizationClasses: ['A'] } },
-    workspaceKey: f.w1, scope: { workspaces: [f.w1] }, authorizationClass: 'A',
+    profile: { agentId: profile.agentId, scope: {} },
+    workspaceKey: f.w1, scope: { workspaces: [f.w1] },
     attemptStartedAt: 1,
   })
   assert.equal(gates.g1, false)

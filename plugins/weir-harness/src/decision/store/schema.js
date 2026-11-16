@@ -215,9 +215,8 @@ export function normalizeLegacyProfileScope(scopeJson) {
     const entries = scope[key]
     if (Array.isArray(entries) && entries.every(entry => typeof entry === 'string')) normalized[key] = [...entries]
   }
-  const classes = Array.isArray(scope.authorizationClasses) ? scope.authorizationClasses : []
-  const allowed = ['A', 'B', 'C'].filter(value => classes.includes(value))
-  normalized.authorizationClasses = allowed.length ? allowed : ['A', 'B', 'C']
+  // An inherited authorizationClasses array is inert legacy data: it is dropped
+  // here rather than migrated, because the class axis no longer exists.
   return normalized
 }
 

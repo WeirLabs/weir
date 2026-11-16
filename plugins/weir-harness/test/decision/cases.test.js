@@ -132,12 +132,10 @@ test('transitionWithRoute rolls back the appended route when the guarded Case up
 test('transitionWithRoute revalidates enabled, scope hints, and final classes before selection', async t => {
   const { store, cases, profiles } = fixture(t)
   // Workspace membership is not an identity field any more, so the only reasons
-  // a re-read may reject the candidate are disabled state, expertise hints and
-  // the final authorization classes.
+  // a re-read may reject the candidate are disabled state and expertise hints.
   const rejected = [
     { key: 'disabled', workspaceKey: '/repo', disable: true },
-    { key: 'narrow', workspaceKey: '/repo', scope: { paths: ['src'], authorizationClasses: ['A'] } },
-    { key: 'wrong-class', workspaceKey: '/repo', scope: { authorizationClasses: ['B'] } },
+    { key: 'narrow', workspaceKey: '/repo', scope: { paths: ['src'] } },
   ]
   for (const scenario of rejected) {
     const profile = await profiles.createProfile({ workspaceKey: scenario.workspaceKey, name: scenario.key, ...(scenario.scope ? { scope: scenario.scope } : {}) })

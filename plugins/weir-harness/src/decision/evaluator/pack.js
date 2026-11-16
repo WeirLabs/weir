@@ -32,7 +32,6 @@ export function buildContextPack(input) {
     userDescriptionRevision: input.profile.userDescription?.revision ?? 1,
     userDescription: input.profile.userDescription?.text ?? '',
     scope: input.profile.scope,
-    authorizationClasses: input.profile.scope?.authorizationClasses ?? [],
   }
   const request = normalizeRequest(input.request, omissions)
   const L4 = { entry: input.request.entry, request }
@@ -319,7 +318,7 @@ function sanitizeScope(value) {
     throw new DecisionContractError('INVALID_MEMORY_INPUT', 'Memory scope must contain workspace strings')
   }
   const result = { workspaces: [...value.workspaces] }
-  for (const key of ['paths', 'tags', 'authorizationClasses']) {
+  for (const key of ['paths', 'tags']) {
     if (value[key] === undefined) continue
     if (!Array.isArray(value[key]) || value[key].some(item => typeof item !== 'string' || !item)) {
       throw new DecisionContractError('INVALID_MEMORY_INPUT', `Memory scope.${key} must be a string array`)
@@ -335,13 +334,14 @@ function sanitizePublicScope(value) {
     throw new DecisionContractError('INVALID_MEMORY_INPUT', 'Public memory scope must be workspace-agnostic')
   }
   const result = {}
-  for (const key of ['paths', 'tags', 'authorizationClasses']) {
+  for (const key of ['paths', 'tags']) {
     if (value[key] === undefined) continue
     if (!Array.isArray(value[key]) || value[key].some(item => typeof item !== 'string' || !item)) {
       throw new DecisionContractError('INVALID_MEMORY_INPUT', `Public memory scope.${key} must be a string array`)
     }
     result[key] = [...value[key]]
   }
+  // A legacy A/B/C field is inert data, never a reason to reject a stored record.
   if (Object.keys(value).some(key => !['paths', 'tags', 'authorizationClasses'].includes(key))) {
     throw new DecisionContractError('INVALID_MEMORY_INPUT', 'Public memory scope must not carry workspace membership')
   }

@@ -155,9 +155,10 @@ test('schema v2 migrates workspace-owned profiles and private memory without row
   }
   assert.equal(byId.get('ag_one_w1').legacyOriginAlias, byId.get('ag_one_w1').legacyOriginAlias.toLowerCase())
 
-  // Scope JSON is normalized: the legacy workspace array is gone, hints kept.
+  // Scope JSON is normalized: the legacy workspace array and the inert class
+  // list are gone, the paths/tags hints are kept.
   for (const profile of list) {
-    assert.deepEqual(profile.scope, { paths: ['src'], authorizationClasses: ['A', 'B', 'C'] })
+    assert.deepEqual(profile.scope, { paths: ['src'] })
     assert.equal('workspaces' in profile.scope, false)
   }
 

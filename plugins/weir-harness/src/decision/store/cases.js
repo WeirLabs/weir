@@ -222,11 +222,7 @@ function autoTargetEligible(profile, current, change, chosen) {
   const request = change.request ?? current.request
   const scope = change.scope ?? current.scope
   const questions = Array.isArray(request?.questions) ? request.questions : []
-  const classes = questions.map(question => question?.authorizationClass)
-  return questions.length > 0
-    && classes.every(value => ['A', 'B', 'C'].includes(value))
-    && profileScopeCovers(profile.scope, scope)
-    && classes.every(value => profile.scope?.authorizationClasses?.includes(value))
+  return questions.length > 0 && profileScopeCovers(profile.scope, scope)
 }
 
 /** @param {any} row */

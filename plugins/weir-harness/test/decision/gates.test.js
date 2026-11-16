@@ -16,9 +16,9 @@ const base = () => ({
   questions: [{ id: 'q', question: 'Which?', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }],
   evidence: [{ evidenceId: 'ev_a', agentId: 'agent-a', source: 'user_decision', scope: { workspaces: ['/repo'], paths: ['src'] }, status: 'active' }],
   packEvidenceIds: ['ev_a'],
-  profile: { agentId: 'agent-a', scope: { workspaces: ['/repo'], paths: ['src'], authorizationClasses: ['A', 'B', 'C'] } },
+  profile: { agentId: 'agent-a', scope: { workspaces: ['/repo'], paths: ['src'] } },
   workspaceKey: '/repo', scope: { workspaces: ['/repo'], paths: ['src'] },
-  authorizationClass: 'A', attemptStartedAt: 100, attemptEndedAt: 200,
+  attemptStartedAt: 100, attemptEndedAt: 200,
 })
 
 test('all seven structural gates pass for a scoped evidence-backed matching answer', () => {
@@ -88,7 +88,7 @@ test('G3 rechecks a post-pack downvote without rewriting an old Attempt', async 
   const before = attempts.get(old.attemptId)
 
   await feedback.append({ actor: { kind: 'user' }, caseId: source.caseId, kind: 'rating_down' })
-  const input = { ...base(), claims: [{ text: 'Use A', evidenceIds: [ref.evidenceId] }], evidence: [ref], packEvidenceIds: [ref.evidenceId], scope: { workspaces: ['/repo'] }, profile: { ...base().profile, scope: { workspaces: ['/repo'], authorizationClasses: ['A'] } } }
+  const input = { ...base(), claims: [{ text: 'Use A', evidenceIds: [ref.evidenceId] }], evidence: [ref], packEvidenceIds: [ref.evidenceId], scope: { workspaces: ['/repo'] }, profile: { ...base().profile, scope: { workspaces: ['/repo'] } } }
   const gates = evaluateGates({ ...input, recheckEvidence: evidenceId => {
     const current = evidence.get(evidenceId)
     return { evidence: current, sourceCase: current.locator.kind === 'case' ? cases.getCase(current.locator.caseId) : undefined }
