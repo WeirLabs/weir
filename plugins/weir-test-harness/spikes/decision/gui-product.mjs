@@ -11,7 +11,7 @@ import {
   createSession, openSession, submitMarker as submitMarkerRaw,
 } from './gui-qa.mjs'
 import { waitFor } from './cdp.mjs'
-import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, browserZoomProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, browserZoomProblems, candidateEditConfirmationProblems, candidateUpdateAuditProblems, coldRevealProblems, confirmationFocusProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, mainRegionProblems, masterDetailProblems, memoryZoneProblems, nativeModalProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, recordProjectionProblems, routeHistoryProblems, scrollLockProblems, selectorCopyProblems, selectorEnvelope, selectorLayoutProblems, selectorMatches, sessionScrollerProblems, shutdownSocketClosureEntries, stageMigratedLegacyProfile, viewportMeasurementProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems } from './gui-product-lib.mjs'
 import { createUiuxFixture } from './gui-fixture/uiux.js'
 
 process.env.WEIR_DECISION_PRODUCT_UX = '1'
@@ -56,6 +56,7 @@ const accessibilityRequirements = {
   routingReview: { role: 'region', name: /路由复盘|Routing review/i },
   routingStatus: { role: 'status', name: '', properties: { live: 'polite' } },
   cancelDecisionDialog: { role: 'dialog', name: /取消这次判断|Cancel this decision/i },
+  candidateRemoveDialog: { role: 'dialog', name: /删除这条原则|Delete this principle/i },
 }
 const keyboardAudits = []
 // Pointer activations that open or close product disclosures and preferences.
@@ -1787,7 +1788,7 @@ async function startCandidate(sessionId, agent, expectedVersion) {
   return { agent: current, run, snapshot, dom, start }
 }
 
-async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
+async function confirmLearning(kind, sessionId, candidate, expectedCurrentId, label = kind) {
   const action = { snapshotPublish: 'learning-publish', snapshotReject: 'learning-reject', snapshotRollback: 'learning-rollback' }[kind]
   const dialog = { snapshotPublish: 'weir-da-learning-publish', snapshotReject: 'weir-da-learning-reject', snapshotRollback: 'weir-da-learning-rollback' }[kind]
   const snapshotId = candidate.snapshot.snapshotId
@@ -1796,6 +1797,9 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   const scrollBefore = (await keyboardActivate(`Request ${kind}`, originSelector, { scrollBaseline: 'immediate' })).scrollBefore
   await waitFor(() => instance.cdp.evaluate(`Boolean(document.querySelector('#${dialog}'))`), 30_000)
   const confirmation = await instance.cdp.evaluate(`document.querySelector('#${dialog}').innerText`)
+  // The user-edit fact line exists only when this very review changed the
+  // candidate, so it is read separately from the consequence copy.
+  const userEdits = await instance.cdp.evaluate(`document.querySelector('#${dialog} [data-apply-user-edits]')?.textContent ?? null`)
   requireEvidence(/只影响|历史|future|history/i.test(confirmation), `${kind} consequence confirmation`)
   await captureAccessibility(`${kind}Dialog`, `#${dialog}`)
   await shot(`${kind}-v${candidate.snapshot.version}-confirm`)
@@ -1833,9 +1837,9 @@ async function confirmLearning(kind, sessionId, candidate, expectedCurrentId) {
   const run = candidate.run?.learningRunId ? await rpc(sessionId, `${kind}-run`, 'learningRun', { learningRunId: candidate.run.learningRunId }) : null
   comparisons.push({ phase: kind, kind: 'learning', snapshotId, expectedRevision, rpcId: mutation.rpcId, response: mutation.response, authoritative: { currentSnapshotId: agent.currentSnapshotId ?? null, snapshotState: snapshot.state, snapshotRevision: snapshot.revision, runOutcome: run?.outcome ?? null } })
   writeJson(join(out, 'rpc-ui-comparisons.json'), comparisons)
-  sqliteSnapshot(kind)
+  sqliteSnapshot(label === kind ? kind : `${kind}-${label}`)
   await shot(`${kind}-v${candidate.snapshot.version}-done`)
-  return { agent, snapshot, run, mutation }
+  return { agent, snapshot, run, mutation, userEdits, confirmation }
 }
 
 async function normalizeDecisionHostChrome(zoom) {
@@ -2198,9 +2202,16 @@ async function runPendingOverviewMatrix(primary) {
   const decideCalls = networkRpc.slice(decideMark).filter(entry => entry.method === 'decide' && entry.args?.caseId === cases.remote.caseId)
   const delivered = decideCalls.at(-1)?.response?.result?.value?.value?.delivery?.state ?? null
   check('pendingOverviewCrossWorkspaceRulingDelivered', closedRemote.case.closing === 'escalated' && decideCalls.length === 1 && delivered === 'delivered', { caseId: cases.remote.caseId, calls: decideCalls.length, delivered, closing: closedRemote.case.closing })
-  const remoteScan = await scanSession(remoteSession, 'pending-overview-remote-delivery.json')
-  const deliveredMessage = remoteScan.userMessages.find(message => message.source === 'weir-decision' && message.text.includes(cases.remote.caseId))
-  check('pendingOverviewConclusionReachesSourceSession', Boolean(deliveredMessage), { caseId: cases.remote.caseId, source: deliveredMessage?.source ?? null, text: deliveredMessage?.text ?? null })
+  // Delivery resumes the source session and appends there; the ruling can be
+  // authoritative before that turn has written its message, so the scan is
+  // bounded-polled instead of read once.
+  const delivery = await waitFor(async () => {
+    const scan = await scanSession(remoteSession, 'pending-overview-remote-delivery.json')
+    const message = scan.userMessages.find(message => message.source === 'weir-decision' && message.text.includes(cases.remote.caseId))
+    return message ? { scan, message } : null
+  }, 60_000).catch(async () => ({ scan: await scanSession(remoteSession, 'pending-overview-remote-delivery.json'), message: null }))
+  const deliveredMessage = delivery.message
+  check('pendingOverviewConclusionReachesSourceSession', Boolean(deliveredMessage), { caseId: cases.remote.caseId, source: deliveredMessage?.source ?? null, text: deliveredMessage?.text ?? null, userMessages: delivery.scan.userMessages.filter(item => item.source === 'weir-decision').length })
   const onePending = await waitPendingBubble(state => state.present && state.text === String(baseline + 1), 'one-left')
   check('pendingBubbleDropsAfterRuling', pendingBubbleProblems(onePending, { count: baseline + 1 }).length === 0, onePending)
   await shot('24b-pending-inbox-cross-workspace-answered')
@@ -3834,6 +3845,7 @@ async function startScrollTimeline(kind) {
     const samples = []
     const started = performance.now()
     window.__weirUiuxScrollSamples = samples
+    const pane = document.querySelector('.weir-da-agent-detail-pane')
     const tick = () => {
       const el = document.querySelector('main.weir-da-page')
       samples.push({
@@ -3842,6 +3854,9 @@ async function startScrollTimeline(kind) {
         height: el ? el.scrollHeight : null,
         anchor: el ? getComputedStyle(el).overflowAnchor : null,
         stamped: Boolean(el && el.getAttribute('data-weir-uiux-audit') === ${JSON.stringify(kind)}),
+        paneTop: pane ? pane.scrollTop : null,
+        paneHeight: pane ? pane.scrollHeight : null,
+        active: document.activeElement ? (document.activeElement.getAttribute('data-action') ?? document.activeElement.tagName) : null,
       })
       if (performance.now() - started < 4000) requestAnimationFrame(tick)
     }
@@ -3889,7 +3904,9 @@ async function finishModalAudit(audit, { focus = null, focusProblems = [], conte
   const timeline = await readScrollTimeline().catch(() => [])
   audit.scrollTimeline = timeline
   audit.stampSurvived = await instance.cdp.evaluate(`(() => { const page=document.querySelector('main.weir-da-page'); return Boolean(page && page.getAttribute('data-weir-uiux-audit') === ${JSON.stringify(audit.kind)}) })()`).catch(() => null)
-  audit.scrollTrace = timeline.filter((sample, index) => index === 0 || index === timeline.length - 1 || sample.top !== timeline[index - 1]?.top || sample.height !== timeline[index - 1]?.height || sample.anchor !== timeline[index - 1]?.anchor).slice(0, 60)
+  // The trace keeps every frame whose page or assistant-detail offset moved: the
+  // pane offset is what the publish reload has to hold, so it is evidence too.
+  audit.scrollTrace = timeline.filter((sample, index) => index === 0 || index === timeline.length - 1 || sample.top !== timeline[index - 1]?.top || sample.height !== timeline[index - 1]?.height || sample.anchor !== timeline[index - 1]?.anchor || sample.paneTop !== timeline[index - 1]?.paneTop || sample.paneHeight !== timeline[index - 1]?.paneHeight).slice(0, 60)
   const nativeProblems = nativeModalProblems(audit.native, { requireComposer: Boolean(audit.selectorLayout) })
   audit.problems = [...nativeProblems, ...scrollLockProblems(audit, Object.keys(audit.before), ['wheel', 'touch', 'PageDown']), ...sessionScrollerProblems(audit), ...focusProblems]
   if (focus) audit.focus = focus
@@ -4267,6 +4284,167 @@ async function runLearningResumeMatrix(sessionId, primary, candidate) {
   await shot('uiux-learning-context-restored', { kind: 'learning-resume', measurement: restored, problems: evidence.problems })
   check('narrowLearningBackSameTargetPreservesRunSnapshotWithoutReread', evidence.problems.length === 0, { problems: evidence.problems, learning, readCount: [drillIn.readCount, returned.readCount, restored.readCount] })
   await instance.cdp.setViewport(1440, 900, false)
+}
+
+// The wording the isolated consolidation brain emits for the edited entry, and
+// the wording the user replaces it with. Both differ, so a stale render after the
+// save is distinguishable from the reviewed text.
+const CANDIDATE_EDIT_MODEL_TEXT = 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed class.'
+const CANDIDATE_EDIT_TEXT = 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed authorization class.'
+
+/** The rendered candidate review of one assistant, read from its real detail pane. */
+async function candidateReviewDom(agentId) {
+  return instance.cdp.evaluate(`(() => {
+    const detail=document.querySelector('[data-agent-detail=${JSON.stringify(agentId)}]')
+    if(!detail)return null
+    const visible=el=>el.offsetParent!==null
+    const review=detail.querySelector('[data-candidate-review]')
+    const editor=detail.querySelector('[data-principle-editor]')
+    const text=editor?.querySelector('[data-principle-text]')??null
+    const hintId=text?.getAttribute('aria-describedby')??null
+    return {
+      present:Boolean(review),
+      rows:[...detail.querySelectorAll('[data-principle-change][data-principle-id]')].map(row=>({
+        principleId:row.getAttribute('data-principle-id'),
+        change:row.getAttribute('data-principle-change'),
+        text:row.innerText,
+        actions:[...row.querySelectorAll('[data-principle-action]')].filter(visible).map(action=>action.getAttribute('data-principle-action')),
+        editor:Boolean(row.querySelector('[data-principle-editor]')),
+      })),
+      reviewText:review?.innerText??'',
+      editEntries:[...detail.querySelectorAll('[data-principle-action="edit"]')].filter(visible).length,
+      removeEntries:[...detail.querySelectorAll('[data-principle-action="remove"]')].filter(visible).length,
+      editor: editor ? {
+        principleId: editor.getAttribute('data-principle-editor'),
+        text: text?.value ?? null,
+        hint: hintId ? document.getElementById(hintId)?.textContent ?? null : null,
+        paths: [...editor.querySelectorAll('[data-principle-scope="path"]')].map(input=>input.value),
+        tags: [...editor.querySelectorAll('[data-principle-scope="tag"]')].map(input=>input.value),
+        classes: [...editor.querySelectorAll('[data-principle-class]')].map(chip=>({ name:chip.getAttribute('data-principle-class'), pressed:chip.getAttribute('aria-pressed') })),
+        workspace: editor.querySelector('[data-principle-workspace]')?.textContent ?? null,
+        save: !editor.querySelector('[data-principle-action="save"]')?.disabled,
+        cancel: !editor.querySelector('[data-principle-action="cancel"]')?.disabled,
+        error: editor.querySelector('[data-principle-editor-error]')?.textContent ?? null,
+      } : null,
+    }
+  })()`)
+}
+
+/**
+ * decision-candidate-edit 6.1 on the real surface: review a candidate that lists
+ * two added/changed principles, revise one entry (wording and an A/B/C class),
+ * delete the other through its confirmation, accept the reviewed version, then
+ * read the agreed Snapshot, its L2 guidance and the audit facts back from
+ * authorities this driver never writes.
+ * @param {string} sessionId @param {any} agent @param {any} publishedParent
+ */
+async function runCandidateEditMatrix(sessionId, agent, publishedParent) {
+  // One real consolidation emits the two-entry candidate for this assistant only;
+  // every other learning run in this matrix keeps its single-operation packet.
+  const control = join(out, 'candidate-edit-agent.json')
+  writeJson(control, { enabled: true, agentId: agent.agentId })
+  let candidate
+  try {
+    candidate = await startCandidate(sessionId, agent, 4)
+  } finally {
+    writeJson(control, { enabled: false, agentId: agent.agentId })
+  }
+  requireEvidence(candidate.run.operations.length === 2 && candidate.snapshot.principles.length === 2, 'the reviewed candidate carries exactly two entries')
+  const snapshotId = candidate.snapshot.snapshotId
+  const reviewedSnapshot = await rpc(sessionId, 'candidate-edit-before', 'memorySnapshot', { snapshotId })
+  const reviewedRun = await rpc(sessionId, 'candidate-edit-before', 'learningRun', { learningRunId: candidate.run.learningRunId })
+  const review = await waitFor(async () => {
+    const value = await candidateReviewDom(agent.agentId)
+    return value && value.editEntries === 2 && value.removeEntries === 2 ? value : null
+  }, 30_000)
+  const changedEntry = review.rows.find(row => row.change === 'changed')
+  const addedEntry = review.rows.find(row => row.change === 'added')
+  requireEvidence(changedEntry && addedEntry && [changedEntry, addedEntry].every(row => row.actions.includes('edit') && row.actions.includes('remove')), 'both listed entries offer edit and remove')
+  requireEvidence(review.reviewText.includes(CANDIDATE_EDIT_MODEL_TEXT) && review.reviewText.includes('Reviewed GUI second principle'), 'the review lists the real model wording of both entries')
+  await shot('25-candidate-review-before-edit')
+
+  await keyboardActivate('Edit candidate principle', `[data-principle-action="edit"][data-principle-id="${changedEntry.principleId}"]`)
+  const opened = await waitFor(async () => {
+    const value = await candidateReviewDom(agent.agentId)
+    return value?.editor?.principleId === changedEntry.principleId ? value : null
+  }, 30_000)
+  requireEvidence(opened.editor.text === CANDIDATE_EDIT_MODEL_TEXT && opened.editor.classes.length === 3 && opened.editor.classes.every(chip => chip.pressed === 'false'), 'the editor starts from the reviewed wording and no selected class')
+  requireEvidence(typeof opened.editor.workspace === 'string' && opened.editor.workspace.length > 0 && opened.editor.save && opened.editor.cancel, 'the private entry keeps its fixed workspace and both editor actions')
+  await keyboardFill('Candidate principle wording', '[data-principle-text]', CANDIDATE_EDIT_TEXT)
+  await keyboardActivate('Toggle candidate principle class A', '[data-principle-class="A"]')
+  const toggled = await candidateReviewDom(agent.agentId)
+  requireEvidence(toggled.editor.classes.find(chip => chip.name === 'A')?.pressed === 'true' && toggled.editor.classes.filter(chip => chip.pressed === 'true').length === 1, 'the class chip reflects the toggle')
+  await shot('26-candidate-edit-editor')
+  await keyboardActivate('Save candidate principle', '[data-principle-action="save"]')
+  const editedSnapshot = await waitFor(async () => {
+    const value = await rpc(sessionId, 'candidate-edit-wait', 'memorySnapshot', { snapshotId })
+    return value.revision === reviewedSnapshot.revision + 1 ? value : null
+  }, 30_000)
+  const editMutation = await expectMutation('snapshotUpdate', {
+    sessionId, snapshotId, expectedRevision: reviewedSnapshot.revision,
+    edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: { authorizationClasses: ['A'] } }],
+  })
+  const afterEdit = await waitFor(async () => {
+    const value = await candidateReviewDom(agent.agentId)
+    return value && !value.editor && value.reviewText.includes(CANDIDATE_EDIT_TEXT) ? value : null
+  }, 30_000)
+  const editedRun = await rpc(sessionId, 'candidate-edit-after', 'learningRun', { learningRunId: candidate.run.learningRunId })
+  const editedPrinciple = editedSnapshot.principles.find(principle => principle.principleId === changedEntry.principleId)
+  const untouchedPrinciple = reviewedSnapshot.principles.find(principle => principle.principleId === addedEntry.principleId)
+  check('candidateEditShowsOnlyTheReviewedWording', afterEdit.rows.length === 2 && afterEdit.editEntries === 2 && !afterEdit.reviewText.includes(CANDIDATE_EDIT_MODEL_TEXT) && afterEdit.reviewText.includes(CANDIDATE_EDIT_TEXT), { entries: afterEdit.rows.map(row => ({ principleId: row.principleId, change: row.change })), editorOpen: afterEdit.editor !== null })
+  check('candidateEditPersistsWordingAndScopeOnlyInTheDraft', editedSnapshot.revision === reviewedSnapshot.revision + 1 && editedSnapshot.state === 'draft' && editedSnapshot.learningRunId === candidate.snapshot.learningRunId && editedSnapshot.principles.length === 2 && editedPrinciple?.text === CANDIDATE_EDIT_TEXT && JSON.stringify(editedPrinciple?.scope?.authorizationClasses) === JSON.stringify(['A']) && JSON.stringify(editedPrinciple?.scope?.workspaces) === JSON.stringify(reviewedSnapshot.principles.find(principle => principle.principleId === changedEntry.principleId)?.scope?.workspaces) && JSON.stringify(editedSnapshot.principles.find(principle => principle.principleId === addedEntry.principleId)) === JSON.stringify(untouchedPrinciple), { revision: editedSnapshot.revision, scope: editedPrinciple?.scope, rpcId: editMutation.rpcId })
+  check('candidateEditLeavesTheLearningRunUntouched', editedRun.revision === reviewedRun.revision && JSON.stringify(editedRun.operations) === JSON.stringify(reviewedRun.operations) && JSON.stringify(editedRun.replay) === JSON.stringify(reviewedRun.replay) && editedRun.outcome === 'candidate', { runRevision: [reviewedRun.revision, editedRun.revision], operations: editedRun.operations.length })
+
+  await keyboardActivate('Request candidate principle removal', `[data-principle-action="remove"][data-principle-id="${addedEntry.principleId}"]`)
+  await waitFor(() => instance.cdp.evaluate('Boolean(document.querySelector("#weir-da-candidate-remove"))'), 30_000)
+  const removalDialog = await instance.cdp.evaluate('document.querySelector("#weir-da-candidate-remove").innerText')
+  requireEvidence(/不再包含|历史|no longer|history/i.test(removalDialog), 'the removal confirmation states the version no longer contains the entry')
+  await captureAccessibility('candidateRemoveDialog', '#weir-da-candidate-remove')
+  await shot('27-candidate-remove-confirm')
+  await keyboardActivate('Confirm candidate principle removal', '#weir-da-candidate-remove .weir-da-actions button:last-child')
+  const removedSnapshot = await waitFor(async () => {
+    const value = await rpc(sessionId, 'candidate-remove-wait', 'memorySnapshot', { snapshotId })
+    return value.revision === editedSnapshot.revision + 1 ? value : null
+  }, 30_000)
+  const removeMutation = await expectMutation('snapshotUpdate', {
+    sessionId, snapshotId, expectedRevision: editedSnapshot.revision,
+    edits: [{ principleId: addedEntry.principleId, remove: true }],
+  })
+  const afterRemove = await waitFor(async () => {
+    const value = await candidateReviewDom(agent.agentId)
+    return value && !value.rows.some(row => row.principleId === addedEntry.principleId) ? value : null
+  }, 30_000)
+  check('candidateRemovalDropsTheEntryFromAuthorityAndReview', removedSnapshot.state === 'draft' && removedSnapshot.revision === editedSnapshot.revision + 1 && removedSnapshot.principles.length === 1 && !removedSnapshot.principles.some(principle => principle.principleId === addedEntry.principleId) && afterRemove.rows.length === 1 && afterRemove.editEntries === 1 && afterRemove.removeEntries === 1, { revision: removedSnapshot.revision, principleIds: removedSnapshot.principles.map(principle => principle.principleId), rpcId: removeMutation.rpcId })
+
+  const published = await confirmLearning('snapshotPublish', sessionId, { ...candidate, snapshot: removedSnapshot }, publishedParent.snapshot.snapshotId, 'candidate-edit')
+  const confirmationProblems = candidateEditConfirmationProblems(published.userEdits, { edited: 1, removed: 1 })
+  check('publishStatesTheReviewedEditsAsAFact', confirmationProblems.length === 0, { text: published.userEdits, problems: confirmationProblems })
+  const publishedSnapshot = await rpc(sessionId, 'candidate-edit-published', 'memorySnapshot', { snapshotId })
+  const publishedAgent = await rpc(sessionId, 'candidate-edit-published', 'agent', { agentId: agent.agentId })
+  // The pane re-reads the assistant after the accepted write; wait for the review
+  // to actually retire before reading it.
+  const publishedReview = await waitFor(async () => {
+    const value = await candidateReviewDom(agent.agentId)
+    return value && value.editEntries === 0 && value.removeEntries === 0 ? value : null
+  }, 30_000)
+  check('acceptedVersionCarriesTheReviewedWordingOnly', published.snapshot.state === 'published' && published.agent.currentSnapshotId === snapshotId && publishedSnapshot.revision === removedSnapshot.revision + 1 && publishedSnapshot.principles.length === 1 && publishedSnapshot.principles[0].principleId === changedEntry.principleId && publishedSnapshot.principles[0].text === CANDIDATE_EDIT_TEXT && !publishedSnapshot.principles.some(principle => principle.principleId === addedEntry.principleId) && publishedAgent.currentSnapshotId === snapshotId, { revision: publishedSnapshot.revision, principleIds: publishedSnapshot.principles.map(principle => principle.principleId), currentSnapshotId: publishedAgent.currentSnapshotId })
+  check('publishedVersionOffersNoEditOrRemoveEntry', publishedReview.editEntries === 0 && publishedReview.removeEntries === 0 && publishedReview.editor === null && !publishedReview.reviewText.includes(addedEntry.principleId), { editEntries: publishedReview.editEntries, removeEntries: publishedReview.removeEntries, candidateReview: publishedReview.present })
+  await shot('28-candidate-edit-published')
+
+  // The accepted wording becomes the current L2 guidance: a real judgment opened
+  // afterwards pins this Snapshot and maps the edited principle to its L5 source.
+  await openSession(instance, sessionId)
+  await submitMarker(instance, 'GUI_LEARNING_AFTER_V2')
+  const editedCase = await waitCase(sessionId, 'gui-learning-after-v2', current => current.state === 'closed')
+  const editedDetail = await record(sessionId, 'candidate-edit-l2', editedCase.caseId)
+  const attempt = editedDetail.attempts[0] ?? null
+  const l2 = attempt?.packManifest?.memory?.L2 ?? null
+  check('acceptedCandidateEditBecomesTheCurrentL2Guidance', editedDetail.case.agentId === agent.agentId && editedDetail.case.closing === 'answered' && attempt?.pins?.memorySnapshotId === snapshotId && attempt.pins.memorySnapshotRevision === publishedSnapshot.revision && l2?.status === 'populated' && JSON.stringify(l2.principleIds) === JSON.stringify([changedEntry.principleId]) && l2.snapshotRevision === publishedSnapshot.revision && l2.items[0].evidenceIds.length > 0 && attempt.citedEvidenceIds.length > 0 && attempt.citedEvidenceIds.every(id => attempt.packManifest.evidenceIds.includes(id)), { caseId: editedCase.caseId, closing: editedDetail.case.closing, pins: attempt?.pins, L2: l2 ? { status: l2.status, principleIds: l2.principleIds, snapshotRevision: l2.snapshotRevision, evidenceIds: l2.items[0]?.evidenceIds } : null })
+  await shot('29-candidate-edit-l2-guidance')
+
+  const auditProblems = candidateUpdateAuditProblems(readAuditLines(LANE), { snapshotId })
+  check('candidateUpdateAuditCarriesCountsAndRevisionsOnly', auditProblems.length === 0, { problems: auditProblems, file: join(LANE, '.weir', 'audit.jsonl') })
+  return { candidate, reviewedSnapshot, editedSnapshot, removedSnapshot, publishedSnapshot, published }
 }
 
 async function runColdRevealMatrix(sessionId, caseId) {
@@ -5032,8 +5210,11 @@ try {
   const rejectedV3 = await confirmLearning('snapshotReject', sessionId, candidateV3, candidateV1.snapshot.snapshotId)
   check('discardRetainsUnpublishedCandidateAndCurrentV1', rejectedV3.run.outcome === 'rejected' && rejectedV3.snapshot.state === 'draft' && rejectedV3.snapshot.revision === 1 && rejectedV3.agent.currentSnapshotId === candidateV1.snapshot.snapshotId)
   await runLearningResumeMatrix(sessionId, primary, rejectedV3)
+  // Task 6.1: the reviewed candidate is revised and accepted on the real surface
+  // before the restart legs, so the restart reads the accepted edit back.
+  const candidateEdit = await runCandidateEditMatrix(sessionId, primary, publishedV1)
   const p4State = await runP4BeforeRestart(sessionId, primary, secondary)
-  const beforeRestart = { agent: rejectedV3.agent, run: rejectedV3.run, snapshot: rejectedV3.snapshot, learned: learnedDetail, selector: await rpc(sessionId, 'before-restart', 'overview') }
+  const beforeRestart = { agent: rejectedV3.agent, run: rejectedV3.run, snapshot: rejectedV3.snapshot, learned: learnedDetail, candidateEdit: candidateEdit.publishedSnapshot.snapshotId, selector: await rpc(sessionId, 'before-restart', 'overview') }
   writeJson(join(out, 'before-restart.json'), beforeRestart)
   const scanBefore = await scanSession(sessionId, 'session-before-restart.json')
   check('noCommandOrCustomDecisionSessionEvents', scanBefore.commandEvents.length === 0 && scanBefore.customDecisionEvents.length === 0)
@@ -5080,7 +5261,7 @@ try {
   const restartedSnapshot = await rpc(sessionId, 'restart', 'memorySnapshot', { snapshotId: rejectedV3.snapshot.snapshotId })
   const restartedAgent = await rpc(sessionId, 'restart', 'agent', { agentId: primary.agentId })
   const restartedRecord = await record(sessionId, 'restart', learned.caseId)
-  check('restartPersistsLearningFeedbackSelectorAndRecords', restartedRun.outcome === 'rejected' && restartedRun.revision === rejectedV3.run.revision && restartedSnapshot.state === 'draft' && restartedSnapshot.revision === rejectedV3.snapshot.revision && restartedAgent.currentSnapshotId === candidateV1.snapshot.snapshotId && JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail))
+  check('restartPersistsLearningFeedbackSelectorAndRecords', restartedRun.outcome === 'rejected' && restartedRun.revision === rejectedV3.run.revision && restartedSnapshot.state === 'draft' && restartedSnapshot.revision === rejectedV3.snapshot.revision && restartedAgent.currentSnapshotId === candidateEdit.publishedSnapshot.snapshotId && JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail))
   await openAgent(sessionId, primary.agentId)
   // The assistant detail merged all diagnostics into one disclosure (Nov-14
   // hierarchy pass); open the merged entry, which contains the learning

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, candidateEditConfirmationProblems, candidateUpdateAuditProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
 import decisionGui from '../src/scenarios/decision-gui.js'
 import { extract } from '../src/mock-kit.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
@@ -145,6 +145,54 @@ test('no-change decoration is scoped to the exact isolated assistant', () => {
   assert.equal(decorateDecisionText(original, options, 'da_other'), original)
 })
 
+test('the candidate-edit consolidation emits one refine and one add for its assistant only', () => {
+  const source = { caseId: 'dc_source', excerpt: 'Question gui-learning-source: Choose', scope: { workspaces: ['/ws'] } }
+  const correction = { feedbackId: 'fb_correction', kind: 'correction', direction: 'Use the corrected direction' }
+  const projection = {
+    agentId: 'da_edit', workspaceKey: '/ws', cases: [source], feedback: [correction],
+    parentSnapshot: { snapshotId: 'ms_v1', revision: 2, principles: [{ principleId: 'pr_1', text: 'Reviewed GUI correction principle', scope: { workspaces: ['/ws'] }, sources: ['fb_correction'], state: 'active' }] },
+  }
+  const options = { system: 'Decision consolidation contract v1\nstrict', messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(projection) }] }] }
+  const original = JSON.stringify({ operations: [{ op: 'add', principleId: 'temporary-gui-learning', text: 'Reviewed GUI successor principle: prefer the second source-backed answer.', scope: { workspaces: ['/ws'] }, sources: ['fb_correction'] }] })
+  const operations = JSON.parse(decorateDecisionText(original, options, null, 'da_edit')).operations
+  assert.equal(operations.length, 2)
+  assert.deepEqual(operations[0], { op: 'refine', principleId: 'pr_1', text: 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed class.', sources: ['fb_correction'] })
+  assert.equal(operations[1].op, 'add')
+  assert.equal(operations[1].principleId, 'temporary-gui-edit-second')
+  assert.deepEqual(operations[1].scope, { workspaces: ['/ws'] })
+  assert.deepEqual(operations[1].sources, ['fb_correction'])
+  assert.equal(decorateDecisionText(original, options, null, 'da_other'), original, 'another assistant keeps the single-operation packet')
+  assert.equal(decorateDecisionText(original, options, 'da_edit', 'da_edit'), '{"operations":[]}', 'the no-change control wins for its own assistant')
+  const withoutParent = { ...projection, parentSnapshot: null }
+  const bare = { system: options.system, messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(withoutParent) }] }] }
+  assert.equal(decorateDecisionText(original, bare, null, 'da_edit'), original, 'without a published parent the product packet is left alone')
+})
+
+test('candidate audit facts carry counts and revisions without any principle content', () => {
+  const line = (data, index) => ({ time: 1, session: 'root', type: 'weir/decision/snapshot', data: { snapshotId: 'ms_9', learningRunId: 'lr_9', agentId: 'da', rootSessionId: 'root', zone: 'workspace', action: 'candidate-update', revisionBefore: index, revisionAfter: index + 1, edited: index === 1 ? 1 : 0, removed: index === 2 ? 1 : 0, ...data } })
+  const lines = [line({}, 1), line({}, 2)]
+  assert.deepEqual(candidateUpdateAuditProblems(lines, { snapshotId: 'ms_9' }), [])
+  assert.match(candidateUpdateAuditProblems([], { snapshotId: 'ms_9' }).join('\n'), /audit count 0 != 2/)
+  assert.match(candidateUpdateAuditProblems([line({}, 1)], { snapshotId: 'ms_9' }).join('\n'), /audit count 1 != 2/)
+  assert.match(candidateUpdateAuditProblems([line({}, 1), line({}, 2)], { snapshotId: 'ms_other' }).join('\n'), /audit count 0 != 2/, 'another candidate never satisfies the check')
+  assert.match(candidateUpdateAuditProblems([line({}, 1), line({}, 2)].map(item => ({ ...item, data: { ...item.data, action: 'boundary-reject' } })), { snapshotId: 'ms_9' }).join('\n'), /audit count 0 != 2/, 'only candidate updates of this candidate count')
+  assert.match(candidateUpdateAuditProblems([line({ text: 'Reviewed GUI principle' }, 1), line({}, 2)], { snapshotId: 'ms_9' }).join('\n'), /non-fact field: text/)
+  assert.match(candidateUpdateAuditProblems([line({}, 1), line({}, 2)].map(item => ({ ...item, data: { ...item.data, scope: { paths: ['/x'] } } })), { snapshotId: 'ms_9' }).join('\n'), /non-fact field: scope/)
+  assert.match(candidateUpdateAuditProblems([line({}, 2), line({}, 3)], { snapshotId: 'ms_9' }).join('\n'), /audit 0 revisions 2->3 != 1->2/)
+  assert.match(candidateUpdateAuditProblems([line({ edited: 2 }, 1), line({}, 2)], { snapshotId: 'ms_9' }).join('\n'), /audit edited count 2 != 1/)
+  assert.match(candidateUpdateAuditProblems([line({}, 1), line({}, 2)].map(item => ({ ...item, data: { ...item.data, zone: 'public' } })), { snapshotId: 'ms_9' }).join('\n'), /zone public != workspace/)
+})
+
+test('the publish confirmation states this review\'s own edit counts', () => {
+  assert.deepEqual(candidateEditConfirmationProblems('其中 1 条由你编辑 · 已删除 1 条', { edited: 1, removed: 1 }), [])
+  assert.deepEqual(candidateEditConfirmationProblems('Edited by you: 1 · Removed: 1', { edited: 1, removed: 1 }), [])
+  assert.deepEqual(candidateEditConfirmationProblems(null, { edited: 1, removed: 1 }), ['the publish confirmation states no user edits'])
+  assert.match(candidateEditConfirmationProblems('其中 1 条由你编辑', { edited: 1, removed: 1 }).join('\n'), /edit fact count 1 != 2/)
+  assert.match(candidateEditConfirmationProblems('其中 2 条由你编辑 · 已删除 1 条', { edited: 1, removed: 1 }).join('\n'), /edited 2 != 1/)
+  assert.match(candidateEditConfirmationProblems('其中 1 条由你编辑 · 已删除 2 条', { edited: 1, removed: 1 }).join('\n'), /removed 2 != 1/)
+  assert.match(candidateEditConfirmationProblems('其中 1 条由你编辑 · 已删除 1 条 · Reviewed GUI successor principle', { edited: 1, removed: 1 }).join('\n'), /exposes the model wording/)
+})
+
 test('raw network envelopes preserve rpc id method and exact nested args', () => {
   const body = { type: 'client-request', rpcId: 'rpc-real', method: 'weirDecision/decide', payload: { args: { args: { sessionId: 'root', caseId: 'dc_1', answers: [{ id: 'q', selected: ['A'] }] } } } }
   const parsed = parseDecisionRequest('http://local/api/weirDecision/decide', JSON.stringify(body))
@@ -211,14 +259,22 @@ test('product driver consumes the shared correction preview guard', () => {
   assert.ok(!driver.includes('/scope|适用范围/i.test(preview)'))
 })
 
-test('immutable audit allows lifecycle revisions but rejects Attempt or Snapshot content rewrites', () => {
+test('immutable audit allows lifecycle revisions and draft revisions but rejects accepted Snapshot content rewrites', () => {
   const attempt = { attempt_id: 'at_1', revision: 1, claims_json: '[]' }
   const snapshot = { snapshot_id: 'ms_1', version: 1, state: 'draft', revision: 1, principles_json: '[]', generated_description_json: '{}', learning_run_id: 'lr_1', created_at: 1, schema_version: 1 }
   const before = { phase: 'before', rows: { attempts: [attempt], memory_snapshots: [snapshot] } }
-  const lifecycle = { phase: 'after', rows: { attempts: [attempt], memory_snapshots: [{ ...snapshot, state: 'published', revision: 2 }] } }
+  const lifecycle = { phase: 'after', rows: { attempts: [attempt], memory_snapshots: [{ ...snapshot, state: 'published', revision: 3 }] } }
   assert.deepEqual(immutableChanges([before, lifecycle]), [])
   const rewrite = { phase: 'rewrite', rows: { attempts: [{ ...attempt, claims_json: '[{"changed":true}]' }], memory_snapshots: [] } }
   assert.deepEqual(immutableChanges([before, rewrite]), [{ kind: 'attempt', id: 'at_1', phase: 'rewrite' }])
+  // A draft is what the user revises before accepting it: its principles may move
+  // while it stays a draft, and the accepted content is fixed from then on.
+  const revised = { phase: 'revised', rows: { attempts: [attempt], memory_snapshots: [{ ...snapshot, revision: 2, principles_json: '[{"principleId":"pr_1"}]' }] } }
+  assert.deepEqual(immutableChanges([before, revised]), [])
+  const accepted = { phase: 'accepted', rows: { attempts: [attempt], memory_snapshots: [{ ...snapshot, state: 'published', revision: 3, principles_json: '[{"principleId":"pr_1"}]' }] } }
+  assert.deepEqual(immutableChanges([before, revised, accepted]), [])
+  const acceptedRewrite = { phase: 'accepted-rewrite', rows: { attempts: [attempt], memory_snapshots: [{ ...snapshot, state: 'published', revision: 4, principles_json: '[{"principleId":"pr_2"}]' }] } }
+  assert.deepEqual(immutableChanges([before, revised, accepted, acceptedRewrite]), [{ kind: 'snapshot-content', id: 'ms_1', phase: 'accepted-rewrite' }])
 })
 
 test('product driver is wired only to new UI and real CDP capabilities', () => {
@@ -938,6 +994,82 @@ test('product learning candidates cite the real correction and advance beyond th
   }
 })
 
+// decision-candidate-edit 6.1 anchor: the accepted reviewed version must be reached
+// through the rendered review only, and every fact about it must come from an
+// authority this driver cannot write.
+test('the accepted candidate edit is driven through the real review and read back authoritatively', () => {
+  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const matrix = driver.match(/async function runCandidateEditMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(matrix, 'runCandidateEditMatrix exists')
+  const start = matrix.indexOf('candidate = await startCandidate(sessionId, agent, 4)')
+  const disabled = matrix.indexOf("writeJson(control, { enabled: false, agentId: agent.agentId })")
+  assert.ok(matrix.indexOf("writeJson(control, { enabled: true, agentId: agent.agentId })") >= 0 && start > 0 && disabled > start, 'the two-entry packet is enabled for the real learning start and switched off afterwards')
+  assert.match(matrix, /finally \{\s*writeJson\(control/, 'the control file is disabled even when the candidate start fails')
+  assert.ok(!/\.click\(|\.focus\(|INSERT INTO|UPDATE memory_snapshots/.test(matrix), 'the review is driven through native keyboard activation and the rendered controls, never a synthetic DOM or SQL write')
+  const order = [
+    "keyboardActivate('Edit candidate principle'",
+    "keyboardFill('Candidate principle wording'",
+    "keyboardActivate('Toggle candidate principle class A'",
+    "keyboardActivate('Save candidate principle'",
+    "expectMutation('snapshotUpdate'",
+    "keyboardActivate('Request candidate principle removal'",
+    "#weir-da-candidate-remove",
+    "keyboardActivate('Confirm candidate principle removal'",
+    "expectMutation('snapshotUpdate'",
+    "confirmLearning('snapshotPublish'",
+    "candidateEditConfirmationProblems(published.userEdits",
+    "await openSession(instance, sessionId)",
+    "submitMarker(instance, 'GUI_LEARNING_AFTER_V2')",
+    'candidateUpdateAuditProblems(',
+  ]
+  let cursor = -1
+  for (const token of order) {
+    const at = matrix.indexOf(token, cursor + 1)
+    assert.ok(at > cursor, `${token} runs in order`)
+    cursor = at
+  }
+  assert.ok(matrix.includes("edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: { authorizationClasses: ['A'] } }]"), 'the save carries the reviewed wording and the toggled class')
+  assert.ok(matrix.includes("edits: [{ principleId: addedEntry.principleId, remove: true }]"), 'the removal carries only the id and remove')
+  assert.ok(matrix.includes('JSON.stringify(editedRun.operations) === JSON.stringify(reviewedRun.operations)'), 'the learning run operations are compared byte-for-byte')
+  assert.ok(matrix.includes('JSON.stringify(editedRun.replay) === JSON.stringify(reviewedRun.replay)'), 'the structural replay is compared byte-for-byte')
+  assert.ok(driver.includes('await runCandidateEditMatrix(sessionId, primary, publishedV1)'), 'the chain starts from the still-published v1 parent')
+  assert.ok(driver.indexOf('candidateEdit: candidateEdit.publishedSnapshot.snapshotId') > driver.indexOf('const candidateEdit = await runCandidateEditMatrix'), 'the before-restart evidence names the accepted version')
+})
+
+// The fixture packet must be a packet the product really accepts: its own parser,
+// structural replay and source scope rules decide whether the two-entry candidate
+// exists at all. This runs those three real steps instead of trusting the shape.
+test('the candidate-edit packet passes the real parser, replay and source scope rules', async () => {
+  const { parseConsolidationCandidate, replayOperations, applyConsolidationOperations } = await import('../../weir-harness/src/decision/learning/consolidator.js')
+  const parentPrinciples = [{ principleId: 'pr_1', text: 'Reviewed GUI correction principle', scope: { workspaces: ['/ws'] }, sources: ['fb_correction'], state: 'active' }]
+  const projection = {
+    agentId: 'da_edit', workspaceKey: '/ws',
+    cases: [{ caseId: 'dc_source', excerpt: 'Question gui-learning-source: Choose', scope: { workspaces: ['/ws'] } }],
+    feedback: [{ feedbackId: 'fb_correction', kind: 'correction', direction: 'Use the corrected direction' }],
+    parentSnapshot: { snapshotId: 'ms_v1', revision: 2, principles: parentPrinciples },
+  }
+  const options = { system: 'Decision consolidation contract v1\nstrict', messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(projection) }] }] }
+  const original = JSON.stringify({ operations: [{ op: 'add', principleId: 'temporary-gui-learning', text: 'Reviewed GUI successor principle: prefer the second source-backed answer.', scope: { workspaces: ['/ws'] }, sources: ['fb_correction'] }] })
+  const raw = decorateDecisionText(original, options, null, 'da_edit')
+  const operations = parseConsolidationCandidate(raw, parentPrinciples)
+  assert.equal(operations.length, 2)
+  const authority = {
+    agentId: 'da_edit', workspaceKey: '/ws', parentPrinciples,
+    caseById: { dc_source: { caseId: 'dc_source', workspaceKey: '/ws', scope: { workspaces: ['/ws'] }, closing: 'escalated', feedbackState: 'none', decision: { kind: 'user_decision' } } },
+    feedbackById: { fb_correction: { feedbackId: 'fb_correction', caseId: 'dc_source', kind: 'correction' } },
+    corrections: { fb_correction: { feedbackId: 'fb_correction', active: true, scope: { workspaces: ['/ws'] } } },
+  }
+  const replay = replayOperations(parentPrinciples, operations, authority)
+  assert.equal(replay.passed, true, JSON.stringify(replay))
+  const principles = applyConsolidationOperations(parentPrinciples, operations, authority)
+  assert.equal(principles.length, 2, 'one refined parent entry and one added entry')
+  assert.equal(principles[0].principleId, 'pr_1')
+  assert.equal(principles[0].text, 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed class.')
+  assert.equal(principles[1].state, 'active')
+  assert.ok(principles[1].principleId.startsWith('pr_'), 'the product allocates the real id')
+  assert.deepEqual(principles[1].scope, { workspaces: ['/ws'] })
+})
+
 // Run 47hAKq regression anchor: global-off UI evidence passed, then the disabled process
 // issued learningRun and correctly received DECISION_UNAVAILABLE. Persistence authority
 // belongs to a fresh enabled process, never to the disabled-bypass phase.
@@ -991,7 +1123,8 @@ test('global off bypass and enabled restart persistence run in separate owned pr
   assert.ok(enabledOrder.every((index, position) => index >= 0 && (position === 0 || index > enabledOrder[position - 1])), 'enabled open → four authority rereads → original assertions/UI comparisons → count comparison → final scan stays ordered')
   assert.ok(enabled.includes("restartedRun.outcome === 'rejected' && restartedRun.revision === rejectedV3.run.revision"), 'the original learning-run persistence assertions remain')
   assert.ok(enabled.includes("restartedSnapshot.state === 'draft' && restartedSnapshot.revision === rejectedV3.snapshot.revision"), 'the original snapshot persistence assertions remain')
-  assert.ok(enabled.includes('restartedAgent.currentSnapshotId === candidateV1.snapshot.snapshotId'), 'the original current-snapshot assertion remains')
+  // The accepted reviewed version is what a restart must read back as current.
+  assert.ok(enabled.includes('restartedAgent.currentSnapshotId === candidateEdit.publishedSnapshot.snapshotId'), 'the current-snapshot assertion follows the accepted reviewed version')
   assert.ok(enabled.includes('JSON.stringify(restartedRecord) === JSON.stringify(learnedDetail)'), 'the original whole-record persistence assertion remains')
 
   const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''

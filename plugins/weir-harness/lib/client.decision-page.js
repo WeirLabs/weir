@@ -1298,32 +1298,75 @@ window.__ModuleLoader__.load({
       // A learning/snapshot action reloads the assistant the user is reading, and
       // Chromium's scroll anchoring then rewrites the pane's scrollTop in the same
       // frame the reloaded card commits (measured: 690 -> 446 while the scroll
-      // range grew). The pane holds its own offset across the reload instead:
-      // capture the offset, disable anchoring, then pin the captured offset back
-      // against the committed range and hand the inline rule back exactly.
-      const preserveDetailScroll = async reload => {
+      // range grew). The pane holds its own offset across the whole action instead:
+      // capture the offset once, disable anchoring, pin the captured offset back
+      // against every committed range, and hand the inline rule back exactly when
+      // the action has settled. The pending state clears after the reload and
+      // clearing it is itself a commit that reflows the card (measured 739 -> 705
+      // about 50ms after the first commit), so the hold outlives the reload.
+      const detailScrollHold = react.useRef(null);
+      const detailScrollEpoch = react.useRef(0);
+      const pinDetailScroll = hold => {
+        if (!hold?.pane) return;
+        hold.pane.scrollTop = Math.min(hold.captured, Math.max(0, (Number(hold.pane.scrollHeight) || 0) - (Number(hold.pane.clientHeight) || 0)));
+      };
+      const holdDetailScroll = () => {
+        // A new action can start while the previous one is still settling: it
+        // takes the existing hold over (same original inline rule, new offset)
+        // instead of stacking a second one that would hand back "none" later.
+        const existing = detailScrollHold.current;
+        if (existing) {
+          existing.captured = Math.max(0, Number(existing.pane?.scrollTop) || 0);
+          existing.epoch = detailScrollEpoch.current += 1;
+          if (existing.style) existing.style.overflowAnchor = "none";
+          return existing;
+        }
         const pane = agentDetailPaneRef.current;
         const style = pane?.style;
-        const previousAnchor = style?.overflowAnchor ?? "";
-        const captured = Math.max(0, Number(pane?.scrollTop) || 0);
-        const hold = () => { if (style) style.overflowAnchor = "none"; };
-        hold();
+        const hold = { pane, style, captured: Math.max(0, Number(pane?.scrollTop) || 0), previousAnchor: style?.overflowAnchor ?? "", epoch: detailScrollEpoch.current += 1 };
+        detailScrollHold.current = hold;
+        if (style) style.overflowAnchor = "none";
+        return hold;
+      };
+      const restoreDetailScrollAnchor = hold => {
+        if (!hold?.style) return;
+        // A modal owns these inline rules while it is open (its scroll lock hands
+        // them back itself); never write over an open dialog from here.
+        if (typeof hold.pane?.ownerDocument?.querySelector === "function" && hold.pane.ownerDocument.querySelector("dialog[open]")) return;
+        if (hold.previousAnchor) hold.style.overflowAnchor = hold.previousAnchor;
+        else if (typeof hold.style.removeProperty === "function") hold.style.removeProperty("overflow-anchor");
+        else hold.style.overflowAnchor = "";
+      };
+      const preserveDetailScroll = async reload => {
+        const hold = holdDetailScroll();
         try { return await reload(); } finally {
           // The authoritative read resolves before React commits the fresh card,
           // and a nested scroll lock (the publish dialog) hands its own anchoring
-          // rule back while it closes: hold until the commit frame, then restore.
-          hold();
-          const view = pane?.ownerDocument?.defaultView;
+          // rule back while it closes: hold until the commit frame and pin there.
+          if (hold.style) hold.style.overflowAnchor = "none";
+          const view = hold.pane?.ownerDocument?.defaultView;
           if (typeof view?.requestAnimationFrame === "function") {
             await new Promise(resolve => view.requestAnimationFrame(() => resolve()));
           }
-          if (pane) pane.scrollTop = Math.min(captured, Math.max(0, (Number(pane.scrollHeight) || 0) - (Number(pane.clientHeight) || 0)));
-          if (style) {
-            if (previousAnchor) style.overflowAnchor = previousAnchor;
-            else if (typeof style.removeProperty === "function") style.removeProperty("overflow-anchor");
-            else style.overflowAnchor = "";
+          pinDetailScroll(hold);
+        }
+      };
+      // Bounded settle: the frames right after the action's pending state clears,
+      // while a late commit can still reflow the card.
+      const settleDetailScroll = async () => {
+        const hold = detailScrollHold.current;
+        if (!hold) return;
+        const view = hold.pane?.ownerDocument?.defaultView;
+        if (typeof view?.requestAnimationFrame === "function") {
+          for (let frame = 0; frame < 10; frame += 1) {
+            await new Promise(resolve => view.requestAnimationFrame(() => resolve()));
+            if (hold.epoch !== detailScrollEpoch.current) return;
+            pinDetailScroll(hold);
           }
         }
+        if (hold.epoch !== detailScrollEpoch.current) return;
+        if (detailScrollHold.current === hold) detailScrollHold.current = null;
+        restoreDetailScrollAnchor(hold);
       };
       const run = async (method, ...args) => {
         if (pendingRef.current) return;
@@ -1397,7 +1440,16 @@ window.__ModuleLoader__.load({
             }
           }
           return undefined;
-        } finally { if (epochRef.current === epoch && sessionId === requestSession) { pendingRef.current = false; setPending(null); } }
+        } finally {
+          if (epochRef.current === epoch && sessionId === requestSession) {
+            pendingRef.current = false;
+            setPending(null);
+            // Clearing the pending state is the action's last commit, and it can
+            // reflow the card the user is reading: release the pane hold only
+            // after that commit and its settle frames have landed.
+            await settleDetailScroll();
+          }
+        }
       };
       /**
        * The entries a deletion can hand focus to: the next editable one, else the
