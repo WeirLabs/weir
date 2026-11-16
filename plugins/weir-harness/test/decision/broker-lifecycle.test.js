@@ -90,7 +90,7 @@ test('start recovers only interrupted work and preserves waiting states, selecto
 })
 
 test('recovered Auto intake replay returns interrupted waiting without rerouting or an Attempt', async t => {
-  const { dir, broker } = fixture(t, { decisionAgentAutoAnswerClasses: ['A'] })
+  const { dir, broker } = fixture(t, { decisionAgentAutoAnswer: true })
   const path = join(dir, 'weir', 'profiles', 'test', 'decisions', 'decision.db')
   const store = openDecisionDatabase(path)
   const profiles = new DecisionProfiles(store)

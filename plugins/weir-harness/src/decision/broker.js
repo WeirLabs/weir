@@ -23,7 +23,7 @@ import { PRIVATE_ZONE, PUBLIC_ZONE, memoryNamespace, workspaceAlias } from './le
 import { DecisionLearning } from './store/learning.js'
 import { EXPORT_DIR_NAME, assembleExportEnvelope, writeExportFile } from './store/export.js'
 import { decisionOrigin, excludedRequest, excludedStockHookRequest, sessionModelRoute } from './route.js'
-import { autoAdmission, classifyAutoRequest, routeAuto } from './router.js'
+import { routeAuto } from './router.js'
 import { userTextMessage } from '../shared/user-message.js'
 
 export class DecisionBroker {
@@ -249,7 +249,6 @@ export class DecisionBroker {
       ...(args.header === undefined ? {} : { header: args.header }),
       ...(args.options === undefined ? {} : { options: args.options }),
       ...(args.multi_select === undefined ? {} : { multiSelect: args.multi_select }),
-      ...(args.authorization_class === undefined ? {} : { authorizationClass: args.authorization_class }),
     }
     const request = { entry: 'consult', questions: [question], ...(args.context === undefined ? {} : { context: args.context, taskSummary: args.context }), ...(args.evidence === undefined ? {} : { evidence: args.evidence }), ...(toolCallId ? { toolCallId } : {}), excluded: [] }
     const idempotencyKey = args.request_id
@@ -288,7 +287,7 @@ export class DecisionBroker {
       if (automatic) return this.consultAuto({ current: opened.case, request, scope, origin, agent, signal: flightSignal, heldSlot: true })
       try {
         await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: explicit ? 'explicit' : 'pinned', candidates: [{ agentId: selected, enabled: profile?.state === 'enabled' }], chosen: profile?.state === 'enabled' ? selected : undefined, reason: explicit ? 'Explicit agent_id for one consultation' : 'Pinned by root session selector' })
-        if (explicit) this.audit('case-open', { caseId: opened.case.caseId, entry: 'consult', agentId: selected, explicit: true })
+        if (explicit) this.audit('case-open', { caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, entry: 'consult', agentId: selected, explicit: true })
         if (profile?.state !== 'enabled') {
           const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable'] } })
           return this.consultResult(waiting)
@@ -318,19 +317,22 @@ export class DecisionBroker {
     return Boolean(this.store.db.prepare("SELECT 1 FROM route_decisions WHERE case_id=? AND mode='auto' LIMIT 1").get(current.caseId))
   }
 
+  /** The single answer switch (default off). Auto ALWAYS routes; only the
+   * adoption of its conclusion is gated here, and the deterministic authority
+   * boundary stays in front of both. */
+  autoAnswerEnabled() {
+    return this.config().decisionAgentAutoAnswer === true
+  }
+
   assertAutoAttemptAuthority(request) {
-    const configured = this.config().decisionAgentAutoAnswerClasses
-    const allowedClasses = Array.isArray(configured) && configured.every(value => ['A', 'B', 'C'].includes(value))
-      ? [...new Set(configured)]
-      : []
-    if (excludedRequest(request) || allowedClasses.length === 0 || !autoAdmission(request, allowedClasses).ok) {
+    if (!this.autoAnswerEnabled() || excludedRequest(request)) {
       throw new DecisionContractError('AUTHORITY', 'This Auto Case requires native user authority')
     }
   }
 
   async consultAutoReplay({ current, request, scope, agent, signal, heldSlot }) {
     if (current.state === 'awaiting_revision'
-      && callerRevisionFingerprint(current.request, current.scope) !== callerRevisionFingerprint(request, scope)) {
+      && consultFingerprint(current.request, current.scope) !== consultFingerprint(request, scope)) {
       this.assertAutoAttemptAuthority(request)
       const selected = current.agentId
       if (typeof selected !== 'string' || !selected) throw new DecisionContractError('AGENT_UNAVAILABLE', 'An unowned Auto Case requires explicit reassignment')
@@ -413,13 +415,13 @@ export class DecisionBroker {
         if (!usable) {
           await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'none', candidates: [{ agentId: selected, enabled: false, rejectedBecause: 'pinned_agent_unavailable' }], reason: 'Pinned Agent is unavailable' })
           const waiting = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user', awaitingReason: 'no_route', escalation: { missing: ['The pinned Agent is unavailable; choose a route or answer the original question.'] } })
-          this.audit('case-open', { caseId: waiting.caseId, entry: 'hook', outcome: 'no_route' })
+          this.audit('case-open', { caseId: waiting.caseId, rootSessionId: origin.rootSessionId, entry: 'hook', outcome: 'no_route' })
           return { kind: 'pass', caseId: waiting.caseId, why: 'awaiting_user' }
         }
         await this.cases.recordRoute({ caseId: opened.case.caseId, rootSessionId: origin.rootSessionId, mode: 'pinned', candidates: [{ agentId: selected, enabled: true }], chosen: selected, reason: 'Pinned by user' })
         await this.observeShadow({ current: opened.case, request: opened.case.request, scope: opened.case.scope, origin, agent, signal: flightSignal })
         const evaluating = await this.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
-        this.audit('case-open', { caseId: evaluating.caseId, entry: 'hook', agentId: selected })
+        this.audit('case-open', { caseId: evaluating.caseId, rootSessionId: origin.rootSessionId, entry: 'hook', agentId: selected })
         return this.evaluateCase(evaluating, agent, flightSignal)
       } catch (error) {
         return this.recoverUnexpected(opened.case, error)
@@ -488,25 +490,14 @@ export class DecisionBroker {
       timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
       maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
       contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
-      // A Shadow sample is diagnostic only: it stays single-shot on truncation
-      // and never spends the retry the real Auto route gets.
-      retryTruncated: false,
+      // A Shadow sample is diagnostic only: it stays a single call and never
+      // spends either retry the real Auto route may use.
+      singleShot: true,
     }
     try {
       const pinned = this.profiles.getProfile(current.agentId)
       if (pinned.state !== 'enabled') return
-      const classified = await classifyAutoRequest({ request, ...sidecar })
-      let route
-      if (classified.kind === 'failed') {
-        route = { kind: 'failed', candidates: [], reason: classified.reason, ...(classified.outputTokens === undefined ? {} : { outputTokens: classified.outputTokens }) }
-      } else if (classified.kind === 'authority') {
-        route = { kind: 'none', candidates: [], reason: 'admission:authority' }
-      } else {
-        const profiles = this.profiles.listProfiles()
-        route = await routeAuto({
-          request: classified.request, scope, profiles, ...sidecar,
-        })
-      }
+      const route = await routeAuto({ request, scope, profiles: this.profiles.listProfiles(), ...sidecar })
       await this.cases.recordRoute({
         caseId: current.caseId, rootSessionId: current.rootSessionId, mode: 'auto_shadow',
         candidates: route.candidates, ...(route.kind === 'selected' ? { chosen: route.chosen } : {}),
@@ -518,51 +509,37 @@ export class DecisionBroker {
     }
   }
 
+  /**
+   * Auto routing is deterministic candidate filtering plus (only for a real
+   * choice) one bounded Router verdict. The deterministic authority boundary is
+   * the ONLY thing in front of it: a consultation that carries approval, plan
+   * review, release, deletion, execution or credential characteristics never
+   * reaches the candidate filter.
+   */
   async routeAutoCase({ current, request, scope, origin, agent, signal }) {
-    const authority = (normalized = request) => this.commitAutoRoute({
-      current, request: normalized, scope,
-      route: { kind: 'none', candidates: [], reason: 'admission:authority' }, awaitingReason: 'authority',
-    })
-    if (current.entry === 'consult' && excludedRequest(request)) return authority()
+    if (current.entry === 'consult' && excludedRequest(request)) {
+      return this.commitAutoRoute({
+        current, request, scope,
+        route: { kind: 'none', candidates: [], reason: 'admission:authority' }, awaitingReason: 'authority',
+      })
+    }
 
-    const configured = this.config().decisionAgentAutoAnswerClasses
-    const allowedClasses = Array.isArray(configured) && configured.every(value => ['A', 'B', 'C'].includes(value))
-      ? [...new Set(configured)]
-      : []
-    // The whitelist gates only the ANSWER, never the route: class-integrity
-    // failures (unknown/explicit D-F) still bypass routing, but a denied or
-    // empty whitelist routes normally and parks the owned case afterwards, so
-    // the user's ruling accumulates evidence instead of vanishing unowned.
-    const initial = autoAdmission(request, allowedClasses)
-    if (!initial.ok && initial.reason === 'unknown_class') return authority()
     const sidecar = {
       llm: this.ctx.llm, sessionRoute: sessionModelRoute(agent), signal,
       timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000,
       maxOutputTokens: this.config().decisionAgentMaxOutputTokens ?? 4096,
       contextBudgetTokens: this.config().decisionAgentContextBudgetTokens ?? 24000,
     }
-    let normalized = request
-    if (initial.reason === 'missing_class') {
-      const classified = await classifyAutoRequest({ request, ...sidecar })
-      if (classified.kind === 'failed') {
-        return this.commitAutoRoute({ current, request, scope, route: { kind: 'failed', candidates: [], reason: classified.reason, ...(classified.outputTokens === undefined ? {} : { outputTokens: classified.outputTokens }) }, awaitingReason: 'no_route' })
-      }
-      normalized = classified.request
-      if (classified.kind === 'authority') return authority(normalized)
-    }
-    const admitted = autoAdmission(normalized, allowedClasses)
-    if (!admitted.ok && admitted.reason === 'unknown_class') return authority(normalized)
-    const answerAuthorized = admitted.ok
-
     const profiles = this.profiles.listProfiles()
-    const route = await routeAuto({
-      request: normalized, scope, profiles, ...sidecar,
-    })
+    const route = await routeAuto({ request, scope, profiles, ...sidecar })
     const committed = await this.commitAutoRoute({
-      current, request: normalized, scope, route,
+      current, request, scope, route,
       awaitingReason: route.kind === 'ambiguous' ? 'route_ambiguous' : 'no_route',
     })
-    if (route.kind === 'selected' && !answerAuthorized) {
+    // The answer switch gates only the ANSWER: a routed Case keeps its selected
+    // assistant and parks as an OWNED authority todo without spending a domain
+    // Attempt, so the user's ruling still accumulates reusable evidence.
+    if (!this.autoAnswerEnabled()) {
       const latest = this.cases.getCase(current.caseId)
       if (latest.state === 'evaluating') {
         return this.cases.transition({ caseId: latest.caseId, expectedState: 'evaluating', expectedRevision: latest.revision, state: 'awaiting_user', awaitingReason: 'authority' })
@@ -590,7 +567,9 @@ export class DecisionBroker {
       // distinguishable from an invalid output or a timeout. No storage column.
       if (route.kind === 'failed') {
         this.audit('case-open', {
-          caseId: committed.caseId, entry: committed.entry, outcome: 'no_route', reason: route.reason,
+          caseId: committed.caseId, rootSessionId: committed.rootSessionId, entry: committed.entry, outcome: 'no_route',
+          reason: route.reason,
+          ...(route.invalidCode === undefined ? {} : { invalidCode: route.invalidCode }),
           ...(route.outputTokens === undefined ? {} : { outputTokens: route.outputTokens }),
         })
       }
@@ -611,7 +590,7 @@ export class DecisionBroker {
     await this.attempts.finish(attempt.attemptId, { outcome: 'failed', error: { kind: 'model_error', code: typeof error?.code === 'string' ? error.code : 'EVALUATION_ERROR', detail: 'Unexpected evaluation infrastructure failure' } })
     current = this.cases.getCase(current.caseId)
     const waiting = await this.cases.transition({ caseId: current.caseId, expectedState: 'evaluating', expectedRevision: current.revision, state: 'awaiting_user', awaitingReason: current.entry === 'consult' ? 'consult_escalate' : 'exhausted', escalation: { attemptId: attempt.attemptId, missing: ['Unexpected evaluation infrastructure failure'], gaps: [] } })
-    this.audit('attempt', { caseId: current.caseId, attemptId: attempt.attemptId, outcome: 'failed', failureKind: 'model_error' })
+    this.audit('attempt', { caseId: current.caseId, rootSessionId: current.rootSessionId, attemptId: attempt.attemptId, outcome: 'failed', failureKind: 'model_error' })
     return current.entry === 'consult' ? this.consultResult(waiting) : this.persistedVerdict(waiting)
   }
 
@@ -697,7 +676,6 @@ export class DecisionBroker {
         timeoutMs: this.config().decisionAgentAnswerTimeoutMs ?? 60000, signal: controller.signal,
         workspaceKey: current.workspaceKey, scope: current.scope,
         questions: current.request.questions, attemptStartedAt,
-        authorizationClass: domainAuthorizationClass(current.request, profile),
         intentKind: domainIntentKind(current.request),
         conflictPairs: retrieval.conflictPairs,
         currentObservationHashes: retrieval.currentObservationHashes,
@@ -716,10 +694,10 @@ export class DecisionBroker {
       if (afterRun.state === 'closed' && afterRun.closing === 'cancelled') return this.persistedVerdict(afterRun)
       await this.evidence.attach(attempt.attemptId, packed.packManifest.evidenceIds)
       const finished = await this.attempts.finish(attempt.attemptId, result)
-      this.audit('attempt', { caseId: current.caseId, attemptId: attempt.attemptId, outcome: result.outcome, failureKind: result.error?.kind })
+      this.audit('attempt', { caseId: current.caseId, rootSessionId: current.rootSessionId, attemptId: attempt.attemptId, outcome: result.outcome, failureKind: result.error?.kind })
       if (result.outcome === 'answer') {
         current = await this.cases.transition({ caseId: current.caseId, expectedState: 'evaluating', expectedRevision: current.revision, state: 'closed', closing: 'answered', decision: { kind: 'answer', attemptId: attempt.attemptId, answers: result.answers, decidedAt: this.now(), evidenceIds: result.citedEvidenceIds ?? packed.packManifest.evidenceIds } })
-        this.audit('outcome', { caseId: current.caseId, closing: 'answered', attemptId: attempt.attemptId })
+        this.audit('outcome', { caseId: current.caseId, rootSessionId: current.rootSessionId, closing: 'answered', attemptId: attempt.attemptId })
         return { kind: 'answer', caseId: current.caseId, answer: { answers: result.answers }, evidenceIds: result.citedEvidenceIds ?? [], pins: finished.pins }
       }
       const batchAnswers = Array.isArray(result.answers) ? result.answers : []
@@ -953,7 +931,7 @@ export class DecisionBroker {
       if (!latest || (latest.outcome !== 'return' && typeof bounce !== 'string')) continue
       await this.cases.transition({ caseId: current.caseId, expectedState: 'awaiting_revision', expectedRevision: current.revision, state: 'closed', closing: 'returned', decision: latest?.outcome === 'return' ? { kind: 'return', attemptId: latest.attemptId, code: latest.reasonCode, hint: latest.hint, decidedAt: this.now() } : { kind: 'return', hint: bounce, decidedAt: this.now() } })
       closed++
-      this.audit('outcome', { caseId: current.caseId, closing: 'returned', attemptId: latest?.attemptId })
+      this.audit('outcome', { caseId: current.caseId, rootSessionId: current.rootSessionId, closing: 'returned', attemptId: latest?.attemptId })
     }
     return { closed }
   }
@@ -1041,15 +1019,11 @@ Revise the question (consult again with the same request_id and better wording o
   async overview(input) {
     const context = await this.sessionContext(input.sessionId)
     const config = this.config()
-    const configuredClasses = config.decisionAgentAutoAnswerClasses
-    const answerClasses = Array.isArray(configuredClasses) && configuredClasses.every(value => ['A', 'B', 'C'].includes(value))
-      ? [...new Set(configuredClasses)]
-      : []
     return {
       status: this.status(),
       selector: this.store ? this.profiles.selector(context.rootSessionId) : { mode: 'off' },
       agents: this.store ? this.profiles.listProfiles({ includeArchived: true }) : [],
-      auto: { answerClasses, shadow: config.decisionAgentAutoShadow === true },
+      auto: { autoAnswer: this.autoAnswerEnabled(), shadow: config.decisionAgentAutoShadow === true },
     }
   }
 
@@ -1822,7 +1796,7 @@ function publicPrincipleRows(principles) {
  */
 function publicScopeHints(scope) {
   const hints = {}
-  for (const key of ['paths', 'tags', 'authorizationClasses']) {
+  for (const key of ['paths', 'tags']) {
     const entries = scope?.[key]
     if (!Array.isArray(entries)) continue
     const safe = entries.filter(entry => typeof entry === 'string' && entry.length <= 200 && publicContentIssues(entry, []).length === 0)
@@ -1838,19 +1812,6 @@ function consultFingerprint(request, scope) {
   return canonicalJson({ questions: request.questions, context: request.context, taskSummary: request.taskSummary, evidence: request.evidence, scope })
 }
 
-function callerRevisionFingerprint(request, scope) {
-  const questions = (request.questions ?? []).map(question => {
-    if (question?.authorizationClassSource !== 'auto_classifier' || !Object.hasOwn(question, 'authorizationClass')) return question
-    const { authorizationClass, authorizationClassSource, ...callerQuestion } = question
-    return callerQuestion
-  })
-  return canonicalJson({ questions, context: request.context, taskSummary: request.taskSummary, evidence: request.evidence, scope })
-}
-
-function domainAuthorizationClass(request, profile) {
-  const classes = (request.questions ?? []).map(question => question?.authorizationClass).filter(value => value !== undefined)
-  return classes.find(value => !profile.scope?.authorizationClasses?.includes(value)) ?? classes[0]
-}
 
 function domainIntentKind(request) {
   const kinds = (request.questions ?? []).map(question => question?.intent?.kind).filter(value => value !== undefined)

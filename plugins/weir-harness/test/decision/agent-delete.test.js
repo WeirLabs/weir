@@ -24,7 +24,7 @@ async function fixture(t) {
   }
   const broker = new DecisionBroker({
     profileContext: { home: dir, name: 'test' }, ctx,
-    config: () => ({ decisionAgentsEnabled: true, decisionAgentAutoAnswerClasses: ['A', 'B', 'C'] }),
+    config: () => ({ decisionAgentsEnabled: true, decisionAgentAutoAnswer: true }),
     audit: (kind, value) => audits.push({ kind, value }),
   })
   await broker.start()

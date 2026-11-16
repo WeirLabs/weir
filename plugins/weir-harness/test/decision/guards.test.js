@@ -31,7 +31,7 @@ test('Decision source has no session events, command channel, static host import
 test('Auto Router depends only on pure contracts, pure scope, and the existing sidecar', () => {
   const source = readFileSync(join(root, 'router.js'), 'utf8')
   const imports = [...source.matchAll(/from '([^']+)'/g)].map(match => match[1]).sort()
-  assert.deepEqual(imports, ['./contracts.js', './evaluator/sidecar.js', './scope.js'])
+  assert.deepEqual(imports, ['./contracts.js', './evaluator/sidecar.js', './json.js', './scope.js'])
   assert.equal(source.includes('setTimeout'), false)
   for (const forbidden of ['evaluateCase', 'DecisionContextRetriever', 'createAttempt', 'attempts.']) {
     assert.equal(source.includes(forbidden), false)
@@ -52,7 +52,7 @@ test('disabled Hook and tool fail while remote overview stays read-only without 
   const result = await remote.overview({ sessionId: 'root' })
   assert.deepEqual(result, {
     ok: true,
-    value: { status: { available: false, enabled: false, reason: 'disabled' }, selector: { mode: 'off' }, agents: [], auto: { answerClasses: [], shadow: false } },
+    value: { status: { available: false, enabled: false, reason: 'disabled' }, selector: { mode: 'off' }, agents: [], auto: { autoAnswer: false, shadow: false } },
   })
   assert.equal(existsSync(join(home, 'weir', 'profiles', 'test', 'decisions')), false)
   await broker.flush()

@@ -29,7 +29,7 @@ async function fixture(t) {
       yield { type: 'finish', reason: { kind: 'stop' } }
     })() },
   }
-  const config = { decisionAgentsEnabled: true, decisionAgentAutoAnswerClasses: ['A', 'B', 'C'] }
+  const config = { decisionAgentsEnabled: true, decisionAgentAutoAnswer: true }
   const broker = new DecisionBroker({ profileContext: { home: dir, name: 'test' }, ctx, config: () => config, audit: (kind, value) => audits.push({ kind, value }) })
   await broker.start()
   const a = await broker.profileUpsert({ workspaceKey: workspace, name: 'A' })

@@ -33,7 +33,7 @@
         decisionAgentsEnabled: false
         decisionAgentSelectorDefault: off
         decisionAgentAutoShadow: false
-        decisionAgentAutoAnswerClasses: '[]'
+        decisionAgentAutoAnswer: false
         decisionAgentAnswerTimeoutMs: 60000
         decisionAgentMaxAttemptsPerCase: 3
         decisionAgentContextBudgetTokens: 24000

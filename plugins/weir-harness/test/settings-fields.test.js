@@ -198,7 +198,7 @@ describe('FIELD_DEFAULTS (canonical product-default declaration)', () => {
 
   it('the boolean subset is exactly the 13 switch defaults the patch row declares', () => {
     const booleans = Object.entries(FIELD_DEFAULTS).filter(([, value]) => typeof value === 'boolean')
-    expect(booleans).toHaveLength(13)
+    expect(booleans).toHaveLength(14)
     const row = patchRowEntries()
     for (const [key, value] of booleans) {
       expect(row.get(key), `${key} must ride the patch row as a boolean product default`).toBe(String(value))
@@ -298,19 +298,19 @@ describe('Decision Agent Auto settings boundary', () => {
   it('declares exactly the three conservative Auto keys and keeps unrelated future knobs absent', () => {
     const selector = FIELDS.find(row => row.key === 'decisionAgentSelectorDefault')
     const shadow = FIELDS.find(row => row.key === 'decisionAgentAutoShadow')
-    const classes = FIELDS.find(row => row.key === 'decisionAgentAutoAnswerClasses')
+    const autoAnswer = FIELDS.find(row => row.key === 'decisionAgentAutoAnswer')
     expect(selector?.section).toBe('decisionAgent')
     expect(selector?.field).toBe('selectorDefault')
     expect(selector?.type).toEqual({ union: ['off', 'auto'] })
     expect(shadow?.section).toBe('decisionAgent')
     expect(shadow?.field).toBe('autoShadow')
     expect(shadow?.type).toBe('boolean')
-    expect(classes?.section).toBe('decisionAgent')
-    expect(classes?.field).toBe('autoAnswerClasses')
-    expect(classes?.type).toBe('string')
+    expect(autoAnswer?.section).toBe('decisionAgent')
+    expect(autoAnswer?.field).toBe('autoAnswer')
+    expect(autoAnswer?.type).toBe('boolean')
     expect(FIELD_DEFAULTS.decisionAgentSelectorDefault).toBe('off')
     expect(FIELD_DEFAULTS.decisionAgentAutoShadow).toBe(false)
-    expect(FIELD_DEFAULTS.decisionAgentAutoAnswerClasses).toBe('[]')
+    expect(FIELD_DEFAULTS.decisionAgentAutoAnswer).toBe(false)
     for (const key of ['decisionAgentDefaultMode', 'decisionAgentConsolidationSchedule', 'decisionAgentCrossWorkspace', 'decisionAgentExport']) {
       expect(FIELDS.some(row => row.key === key)).toBe(false)
       expect(Object.hasOwn(FIELD_DEFAULTS, key)).toBe(false)

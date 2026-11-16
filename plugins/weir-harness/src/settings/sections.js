@@ -45,7 +45,7 @@ const FIELDS = [
   { key: 'decisionAgentsEnabled', section: 'decisionAgent', field: 'enabled', type: 'boolean', description: 'Decision Agents master switch; Off performs no interception, consultation, sampling, or database creation' },
   { key: 'decisionAgentSelectorDefault', section: 'decisionAgent', field: 'selectorDefault', type: { union: ['off', 'auto'] }, description: 'Default selector only for genuinely new root sessions; existing and resumed sessions without a selector stay Off' },
   { key: 'decisionAgentAutoShadow', section: 'decisionAgent', field: 'autoShadow', type: 'boolean', description: 'Observe eligible pinned Cases with non-authoritative Auto Shadow routing; never changes the real answer' },
-  { key: 'decisionAgentAutoAnswerClasses', section: 'decisionAgent', field: 'autoAnswerClasses', type: 'string', description: 'JSON array of authorization classes Auto may answer; only A/B/C are allowed, duplicates are removed, and invalid stored values disable Auto admission' },
+  { key: 'decisionAgentAutoAnswer', section: 'decisionAgent', field: 'autoAnswer', type: 'boolean', description: 'Let Auto adopt its conclusion when every evidence and authority gate passes; off keeps the selected assistant and hands the conclusion to you' },
   { key: 'decisionAgentAnswerTimeoutMs', section: 'decisionAgent', field: 'answerTimeoutMs', type: 'number', description: 'Hard timeout for one Decision Attempt (ms)' },
   { key: 'decisionAgentMaxAttemptsPerCase', section: 'decisionAgent', field: 'maxAttemptsPerCase', type: 'number', description: 'Combined evaluation, revision, and retry budget per Case' },
   { key: 'decisionAgentContextBudgetTokens', section: 'decisionAgent', field: 'contextBudgetTokens', type: 'number', description: 'Bounded evaluator context budget; four characters approximate one token' },
@@ -124,7 +124,7 @@ export const FIELD_DEFAULTS = Object.freeze({
   decisionAgentsEnabled: false,
   decisionAgentSelectorDefault: 'off',
   decisionAgentAutoShadow: false,
-  decisionAgentAutoAnswerClasses: '[]',
+  decisionAgentAutoAnswer: false,
   decisionAgentAnswerTimeoutMs: 60000,
   decisionAgentMaxAttemptsPerCase: 3,
   decisionAgentContextBudgetTokens: 24000,
@@ -163,19 +163,6 @@ function fieldSchema(type) {
   return zs.string()
 }
 
-/** Strict save-time parser for the Auto authorization whitelist. Runtime callers
- * catch this error and substitute an empty list instead of widening authority. */
-function parseAutoAnswerClasses(raw) {
-  let parsed
-  try { parsed = typeof raw === 'string' ? JSON.parse(raw) : undefined } catch {
-    throw new Error('weir-settings: decisionAgentAutoAnswerClasses must be a JSON array containing only A/B/C (invalid JSON)')
-  }
-  if (!Array.isArray(parsed) || parsed.some(entry => !['A', 'B', 'C'].includes(entry))) {
-    throw new Error('weir-settings: decisionAgentAutoAnswerClasses must be a JSON array containing only A/B/C')
-  }
-  return [...new Set(parsed)]
-}
-
 /** The one-stop Weir settings tree (flat; auto-generated Settings page). */
 export const Config = zs.object(
   Object.fromEntries(FIELDS.map(({ key, type, description }) => [key, fieldSchema(type).volatile().description(description)])),
@@ -190,11 +177,6 @@ Object.defineProperty(Config, '~standard', { value: {
     const result = standardConfig.validate(raw)
     if (result.issues) return result
     const flat = flattenConfig(raw)
-    if (flat.decisionAgentAutoAnswerClasses !== undefined) {
-      try { parseAutoAnswerClasses(flat.decisionAgentAutoAnswerClasses) } catch (error) {
-        return { issues: [{ message: error instanceof Error ? error.message : String(error), path: ['decisionAgentAutoAnswerClasses'] }] }
-      }
-    }
     try {
       guardOptions({
         ...(flat.guardSoftThreshold === undefined ? {} : { softThreshold: flat.guardSoftThreshold }),
@@ -391,9 +373,6 @@ export function computeSections(config, { readDefaults } = {}) {
           if (Object.keys(parsed).length === 0) delete out.chains
           else out.chains = parsed
         }
-      }
-      if (Object.hasOwn(out, 'autoAnswerClasses')) {
-        try { out.autoAnswerClasses = parseAutoAnswerClasses(out.autoAnswerClasses) } catch { out.autoAnswerClasses = [] }
       }
     }
     if (key === 'contextGuard') guardOptions(out)

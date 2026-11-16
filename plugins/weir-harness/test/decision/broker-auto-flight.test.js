@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { DecisionBroker } from '../../src/decision/broker.js'
 import { openDecisionDatabase } from '../../src/decision/store/db.js'
 
-const CLASSIFICATION = 'router-classification-contract/1'
 const ROUTER = 'router-contract/1'
 const EVALUATOR = 'evaluator-contract/3'
 
@@ -21,7 +20,7 @@ async function fixture(t, overrides = {}) {
   const workspace = realpathSync(dir)
   const config = {
     decisionAgentsEnabled: true,
-    decisionAgentAutoAnswerClasses: ['A', 'B', 'C'],
+    decisionAgentAutoAnswer: true,
     decisionAgentAnswerTimeoutMs: 1000,
     decisionAgentMaxOutputTokens: 1600,
     decisionAgentContextBudgetTokens: 24000,
@@ -29,7 +28,6 @@ async function fixture(t, overrides = {}) {
   }
   const calls = []
   const holds = new Map()
-  let classification = { contract: CLASSIFICATION, classes: [{ id: 'question', authorizationClass: 'A' }] }
   let routing = { contract: ROUTER, outcome: 'none', reason: 'No matching Agent' }
   let evaluation = { outcome: 'escalate', missing: ['A new judgment is required'] }
   const ctx = {
@@ -37,15 +35,14 @@ async function fixture(t, overrides = {}) {
       stream(options) {
         calls.push(options)
         return (async function * () {
-          const contract = options.system.includes(CLASSIFICATION) ? CLASSIFICATION
-            : options.system.includes(ROUTER) ? ROUTER : EVALUATOR
+          const contract = options.system.includes(ROUTER) ? ROUTER : EVALUATOR
           const held = holds.get(contract)
           if (held) {
             holds.delete(contract)
             held.started.resolve(options)
             await held.release.promise
           }
-          const output = contract === CLASSIFICATION ? classification : contract === ROUTER ? routing : evaluation
+          const output = contract === ROUTER ? routing : evaluation
           yield { type: 'text-delta', text: typeof output === 'string' ? output : JSON.stringify(output) }
           yield { type: 'finish', reason: { kind: 'stop' } }
         })()
@@ -67,7 +64,6 @@ async function fixture(t, overrides = {}) {
   t.after(async () => { await broker.flush(); rmSync(dir, { recursive: true, force: true }) })
   return {
     broker, agent, makeAgent, workspace, config, calls,
-    classifyWith(value) { classification = value },
     routeWith(value) { routing = value },
     evaluateWith(value) { evaluation = value },
     hold(contract) {
@@ -75,6 +71,13 @@ async function fixture(t, overrides = {}) {
       const started = deferred()
       holds.set(contract, { release, started })
       return { release: () => release.resolve(), started: started.promise }
+    },
+    /** Two eligible assistants plus a scripted Router selection of the first. */
+    async twoCandidates() {
+      const fixed = await broker.profileUpsert({ workspaceKey: workspace, name: 'Fixed' })
+      await broker.profileUpsert({ workspaceKey: workspace, name: 'Other' })
+      routing = { contract: ROUTER, outcome: 'selected', agentId: fixed.agentId, reason: 'Fixed owns this decision' }
+      return fixed
     },
   }
 }
@@ -104,9 +107,8 @@ async function drainMicrotasks() {
 
 test('before-commit same-key Hook and consult deliveries join one Auto flight', async t => {
   const hookedFixture = await fixture(t)
-  await hookedFixture.broker.profileUpsert({ workspaceKey: hookedFixture.workspace, name: 'Only' })
-  hookedFixture.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'q', authorizationClass: 'A' }] })
-  const hookGate = hookedFixture.hold(CLASSIFICATION)
+  await hookedFixture.twoCandidates()
+  const hookGate = hookedFixture.hold(ROUTER)
   const request = hookRequest('join-hook')
   const firstHook = hookedFixture.broker.hook({ agent: hookedFixture.agent, request })
   let replaySettled = false
@@ -120,11 +122,11 @@ test('before-commit same-key Hook and consult deliveries join one Auto flight', 
   assert.deepEqual(replayed, hooked)
   assert.equal(hooked.why, 'awaiting_user')
   assert.deepEqual(counts(hookedFixture, hooked.caseId), { cases: 1, routes: 1, attempts: 1 })
-  assert.equal(callsOf(hookedFixture, CLASSIFICATION).length, 1)
+  assert.equal(callsOf(hookedFixture, ROUTER).length, 1)
 
   const consultedFixture = await fixture(t)
-  await consultedFixture.broker.profileUpsert({ workspaceKey: consultedFixture.workspace, name: 'Only' })
-  const consultGate = consultedFixture.hold(CLASSIFICATION)
+  await consultedFixture.twoCandidates()
+  const consultGate = consultedFixture.hold(ROUTER)
   const args = { question: 'Join this consultation?', request_id: 'join-consult' }
   let publishes = 0
   const publish = consultedFixture.broker.publishConsult.bind(consultedFixture.broker)
@@ -144,7 +146,7 @@ test('before-commit same-key Hook and consult deliveries join one Auto flight', 
   assert.equal(consulted.outcome, 'awaiting_user')
   assert.equal(publishes, 1)
   assert.deepEqual(counts(consultedFixture, consulted.caseId), { cases: 1, routes: 1, attempts: 1 })
-  assert.equal(callsOf(consultedFixture, CLASSIFICATION).length, 1)
+  assert.equal(callsOf(consultedFixture, ROUTER).length, 1)
   assert.equal(consultedFixture.broker.autoFlights.size, 0)
   assert.equal(consultedFixture.broker.routingControllers.size, 0)
   assert.equal(consultedFixture.broker.routingJobs.size, 0)
@@ -153,7 +155,9 @@ test('before-commit same-key Hook and consult deliveries join one Auto flight', 
 test('selector-change consult joins its existing Auto flight before pinned dispatch', async t => {
   const f = await fixture(t)
   const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
-  const gate = f.hold(CLASSIFICATION)
+  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Other' })
+  f.routeWith({ contract: ROUTER, outcome: 'selected', agentId: selected.agentId, reason: 'Fixed owns this decision' })
+  const gate = f.hold(ROUTER)
   const args = { question: 'Join after selector change?', request_id: 'selector-change-consult' }
   let publishes = 0
   const publish = f.broker.publishConsult.bind(f.broker)
@@ -173,15 +177,16 @@ test('selector-change consult joins its existing Auto flight before pinned dispa
   assert.deepEqual(replayed, consulted)
   assert.equal(publishes, 1)
   assert.deepEqual(counts(f, consulted.caseId), { cases: 1, routes: 1, attempts: 1 })
-  assert.equal(callsOf(f, CLASSIFICATION).length, 1)
+  assert.equal(callsOf(f, ROUTER).length, 1)
   assert.equal(f.broker.autoFlights.size, 0)
 })
 
 test('selector-change Hook joins its existing Auto flight before pinned dispatch', async t => {
   const f = await fixture(t)
   const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
-  f.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'q', authorizationClass: 'A' }] })
-  const gate = f.hold(CLASSIFICATION)
+  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Other' })
+  f.routeWith({ contract: ROUTER, outcome: 'selected', agentId: selected.agentId, reason: 'Fixed owns this decision' })
+  const gate = f.hold(ROUTER)
   const request = hookRequest('selector-change-hook')
   let firstSettled = false
   let replaySettled = false
@@ -198,18 +203,18 @@ test('selector-change Hook joins its existing Auto flight before pinned dispatch
   assert.deepEqual(replayed, hooked)
   assert.equal(hooked.why, 'awaiting_user')
   assert.deepEqual(counts(f, hooked.caseId), { cases: 1, routes: 1, attempts: 1 })
-  assert.equal(callsOf(f, CLASSIFICATION).length, 1)
+  assert.equal(callsOf(f, ROUTER).length, 1)
   assert.equal(f.broker.autoFlights.size, 0)
 })
 
-test('post-flight classless Auto replay is idempotent while authorized caller changes are real revisions', async t => {
+test('post-flight Auto replay is idempotent while caller changes are real revisions', async t => {
   const changes = [
     ['question', args => ({ ...args, question: 'Changed question?' })],
     ['options', args => ({ ...args, options: [{ label: 'C' }] })],
     ['context', args => ({ ...args, context: 'Changed task context' })],
     ['evidence', args => ({ ...args, evidence: [{ path: 'notes.md', excerpt_hint: 'evidence' }] })],
     ['scope', (args, f) => ({ ...args, scope: { workspaces: [f.workspace], paths: ['src'] } })],
-    ['caller class addition', args => ({ ...args, authorization_class: 'B' })],
+    ['header', args => ({ ...args, header: 'Changed header' })],
   ]
   for (const [label, change] of changes) {
     const f = await fixture(t)
@@ -223,26 +228,29 @@ test('post-flight classless Auto replay is idempotent while authorized caller ch
     assert.deepEqual(replay, first, label)
     assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 1 }, label)
 
-    const revised = await f.broker.consult({ agent: f.agent, args: { ...change(args, f), authorization_class: 'B' } })
+    const revised = await f.broker.consult({ agent: f.agent, args: change(args, f) })
     assert.equal(revised.caseId, first.caseId, label)
     assert.equal(revised.outcome, 'returned', label)
     assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 2 }, label)
     assert.equal(f.broker.cases.getCase(first.caseId).agentId, selected.agentId, label)
-    assert.equal(callsOf(f, CLASSIFICATION).length, 1, `${label}: revision must not rerun classification`)
-    assert.equal(callsOf(f, ROUTER).length, 0, `${label}: one candidate and revisions need no Router`)
+    // One candidate and revisions need no Router call at all.
+    assert.equal(callsOf(f, ROUTER).length, 0, `${label}: no Router call for a single candidate`)
   }
 
-  const removal = await fixture(t)
-  await removal.broker.profileUpsert({ workspaceKey: removal.workspace, name: 'Fixed' })
-  removal.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
-  const initial = { question: 'Caller class removal?', authorization_class: 'A', request_id: 'caller-class-removal' }
-  const first = await removal.broker.consult({ agent: removal.agent, args: initial })
-  const replay = await removal.broker.consult({ agent: removal.agent, args: initial })
+  // A legacy `authorization_class` argument is inert: adding or removing it
+  // changes nothing, so the replay stays byte-identical with no new Attempt.
+  const legacy = await fixture(t)
+  await legacy.broker.profileUpsert({ workspaceKey: legacy.workspace, name: 'Fixed' })
+  legacy.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
+  const initial = { question: 'Legacy caller class?', authorization_class: 'A', request_id: 'legacy-caller-class' }
+  const first = await legacy.broker.consult({ agent: legacy.agent, args: initial })
+  const replay = await legacy.broker.consult({ agent: legacy.agent, args: initial })
   assert.deepEqual(replay, first)
   const { authorization_class, ...classless } = initial
-  await assert.rejects(removal.broker.consult({ agent: removal.agent, args: classless }), error => error.code === 'AUTHORITY')
-  assert.deepEqual(counts(removal, first.caseId), { cases: 1, routes: 1, attempts: 1 })
-  assert.equal(callsOf(removal, CLASSIFICATION).length, 0, 'removing a caller class fails closed without reclassification')
+  assert.deepEqual(await legacy.broker.consult({ agent: legacy.agent, args: classless }), first)
+  assert.deepEqual(counts(legacy, first.caseId), { cases: 1, routes: 1, attempts: 1 })
+  assert.equal(legacy.broker.cases.getCase(first.caseId).request.questions[0].authorizationClass, undefined)
+  assert.equal(callsOf(legacy, ROUTER).length, 0)
 })
 
 test('Auto revision and retry keep the established Agent despite selector and Router changes', async t => {
@@ -251,7 +259,7 @@ test('Auto revision and retry keep the established Agent despite selector and Ro
   const b = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'B' })
   f.routeWith({ contract: ROUTER, outcome: 'selected', agentId: a.agentId, reason: 'A owns the initial Case' })
   f.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
-  const initial = { question: 'Initial Auto judgment?', authorization_class: 'A', request_id: 'fixed-auto-agent' }
+  const initial = { question: 'Initial Auto judgment?', request_id: 'fixed-auto-agent' }
   const first = await f.broker.consult({ agent: f.agent, args: initial })
   assert.equal(f.broker.cases.getCase(first.caseId).agentId, a.agentId)
 
@@ -271,17 +279,9 @@ test('Auto revision and retry keep the established Agent despite selector and Ro
   assert.equal(f.broker.attempts.forCase(first.caseId).at(-1).agentId, a.agentId)
   assert.equal(counts(f, first.caseId).routes, 1)
   assert.equal(callsOf(f, ROUTER).length, 1)
-  assert.equal(callsOf(f, CLASSIFICATION).length, 0)
 })
 
 const AUTO_REVISION_DENIALS = [
-  ['D', { authorization_class: 'D' }],
-  ['E', { authorization_class: 'E' }],
-  ['F', { authorization_class: 'F' }],
-  ['unknown', { authorization_class: 'unknown' }],
-  ['invalid', { authorization_class: 'G' }],
-  ['missing', {}],
-  ['unallowed', { authorization_class: 'B', allowedClasses: ['A'] }],
   ['approval', { question: 'Revised request: approve this deployment?' }],
   ['high-risk', { question: 'Revised request: execute this irreversible operation?' }],
   ['execution', { question: 'Revised request: edit this file with execution authority?' }],
@@ -292,54 +292,52 @@ for (const [label, denial] of AUTO_REVISION_DENIALS) {
     const f = await fixture(t)
     const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
     f.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
-    const initial = { question: 'Initial safe content?', options: [{ label: 'A' }, { label: 'B' }], authorization_class: 'A', request_id: `revision-denial-${label}` }
+    const initial = { question: 'Initial safe content?', options: [{ label: 'A' }, { label: 'B' }], request_id: `revision-denial-${label}` }
     const first = await f.broker.consult({ agent: f.agent, args: initial })
     const before = f.broker.cases.getCase(first.caseId)
-    if (denial.allowedClasses) f.config.decisionAgentAutoAnswerClasses = denial.allowedClasses
-    const revised = { ...initial, question: denial.question ?? `Revised ${label}?` }
-    if (denial.authorization_class === undefined) delete revised.authorization_class
-    else revised.authorization_class = denial.authorization_class
+    const revised = { ...initial, question: denial.question }
 
     await assert.rejects(f.broker.consult({ agent: f.agent, args: revised }), error => error.code === 'AUTHORITY')
     assert.deepEqual(f.broker.cases.getCase(first.caseId), before)
     assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 1 })
     assert.equal(before.agentId, selected.agentId)
-    assert.equal(callsOf(f, CLASSIFICATION).length, 0)
     assert.equal(callsOf(f, ROUTER).length, 0)
   })
 }
 
-test('a classless content revision cannot inherit a derived class from different content', async t => {
+test('the answer switch gates the revision too, not only the first Auto answer', async t => {
   const f = await fixture(t)
   await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Fixed' })
-  f.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'question', authorizationClass: 'A' }] })
   f.evaluateWith({ outcome: 'return', reasonCode: 'MISSING_CONTEXT', hint: 'Revise the request' })
-  const initial = { question: 'Original derived classification?', options: [{ label: 'A' }], request_id: 'derived-class-revision' }
+  const initial = { question: 'Original content?', options: [{ label: 'A' }], request_id: 'switch-gated-revision' }
   const first = await f.broker.consult({ agent: f.agent, args: initial })
   const before = f.broker.cases.getCase(first.caseId)
-  assert.equal(before.request.questions[0].authorizationClassSource, 'auto_classifier')
-
-  await assert.rejects(f.broker.consult({ agent: f.agent, args: { ...initial, question: 'Different content without a caller class?' } }), error => error.code === 'AUTHORITY')
+  // The switch is the single answer permission: turning it off blocks a revised
+  // Auto evaluation exactly like it blocks the first one.
+  f.config.decisionAgentAutoAnswer = false
+  await assert.rejects(
+    f.broker.consult({ agent: f.agent, args: { ...initial, question: 'Different content?' } }),
+    error => error.code === 'AUTHORITY',
+  )
   assert.deepEqual(f.broker.cases.getCase(first.caseId), before)
   assert.deepEqual(counts(f, first.caseId), { cases: 1, routes: 1, attempts: 1 })
-  assert.equal(callsOf(f, CLASSIFICATION).length, 1)
   assert.equal(callsOf(f, ROUTER).length, 0)
 })
+
 test('one Auto permit is held through routing and evaluation, then released for later work', async t => {
   const f = await fixture(t, { decisionAgentMaxConcurrentAttempts: 1 })
-  const selected = await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
+  const selected = await f.twoCandidates()
   await f.broker.setSelector('routing-root', 'agent', selected.agentId)
   await f.broker.setSelector('evaluation-root', 'agent', selected.agentId)
-  f.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'q', authorizationClass: 'A' }] })
-  const classificationGate = f.hold(CLASSIFICATION)
+  const routingGate = f.hold(ROUTER)
   const automatic = f.broker.hook({ agent: f.agent, request: hookRequest('held-slot') })
-  await classificationGate.started
+  await routingGate.started
   const routingSlotCount = f.broker.activeEvaluations
 
   const duringRouting = await f.broker.hook({ agent: f.makeAgent('routing-root'), request: hookRequest('blocked-during-routing') })
   const casesDuringRouting = f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n
   const evaluationGate = f.hold(EVALUATOR)
-  classificationGate.release()
+  routingGate.release()
   await evaluationGate.started
   const evaluationSlotCount = f.broker.activeEvaluations
 
@@ -368,8 +366,8 @@ test('one Auto permit is held through routing and evaluation, then released for 
 
 test('caller abort and Case cancellation abort routing without a late route or Attempt', async t => {
   const abortedFixture = await fixture(t)
-  await abortedFixture.broker.profileUpsert({ workspaceKey: abortedFixture.workspace, name: 'Only' })
-  const abortGate = abortedFixture.hold(CLASSIFICATION)
+  await abortedFixture.twoCandidates()
+  const abortGate = abortedFixture.hold(ROUTER)
   const controller = new AbortController()
   const consulting = abortedFixture.broker.consult({ agent: abortedFixture.agent, args: { question: 'Abort routing?', request_id: 'abort-routing' }, signal: controller.signal })
   const options = await abortGate.started
@@ -385,9 +383,8 @@ test('caller abort and Case cancellation abort routing without a late route or A
   assert.equal(abortedFixture.broker.routingControllers.size, 0)
 
   const cancelledFixture = await fixture(t)
-  await cancelledFixture.broker.profileUpsert({ workspaceKey: cancelledFixture.workspace, name: 'Only' })
-  cancelledFixture.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'q', authorizationClass: 'A' }] })
-  const cancelGate = cancelledFixture.hold(CLASSIFICATION)
+  await cancelledFixture.twoCandidates()
+  const cancelGate = cancelledFixture.hold(ROUTER)
   const hooked = cancelledFixture.broker.hook({ agent: cancelledFixture.agent, request: hookRequest('cancel-routing') })
   const hookOptions = await cancelGate.started
   const caseId = cancelledFixture.broker.store.db.prepare('SELECT case_id FROM cases').get().case_id
@@ -403,8 +400,8 @@ test('caller abort and Case cancellation abort routing without a late route or A
 
 test('flush aborts and awaits routing before store close, with no late writes', async t => {
   const f = await fixture(t)
-  await f.broker.profileUpsert({ workspaceKey: f.workspace, name: 'Only' })
-  const gate = f.hold(CLASSIFICATION)
+  await f.twoCandidates()
+  const gate = f.hold(ROUTER)
   let settled = false
   const consulting = f.broker.consult({ agent: f.agent, args: { question: 'Flush routing?', request_id: 'flush-routing' } })
     .then(value => { settled = true; return value }, error => { settled = true; throw error })
@@ -441,8 +438,7 @@ test('flush aborts and awaits routing before store close, with no late writes', 
 
 test('post-failure replay never fabricates a persisted Auto waiting state', async t => {
   const hookedFixture = await fixture(t)
-  await hookedFixture.broker.profileUpsert({ workspaceKey: hookedFixture.workspace, name: 'Only' })
-  hookedFixture.classifyWith({ contract: CLASSIFICATION, classes: [{ id: 'q', authorizationClass: 'A' }] })
+  await hookedFixture.twoCandidates()
   const hookCommit = hookedFixture.broker.cases.transitionWithRoute.bind(hookedFixture.broker.cases)
   let failHookCommit = true
   hookedFixture.broker.cases.transitionWithRoute = async (...args) => {
@@ -453,20 +449,20 @@ test('post-failure replay never fabricates a persisted Auto waiting state', asyn
   await assert.rejects(hookedFixture.broker.hook({ agent: hookedFixture.agent, request }), /Hook route store failed/)
   failHookCommit = false
   assert.deepEqual(await hookedFixture.broker.hook({ agent: hookedFixture.agent, request }), { kind: 'pass', why: 'bypass' })
-  assert.equal(callsOf(hookedFixture, CLASSIFICATION).length, 1)
+  assert.equal(callsOf(hookedFixture, ROUTER).length, 1)
   assert.equal(hookedFixture.broker.store.db.prepare('SELECT state FROM cases').get().state, 'received')
   assert.equal(hookedFixture.broker.store.db.prepare('SELECT COUNT(*) AS n FROM route_decisions').get().n, 0)
   assert.equal(hookedFixture.broker.store.db.prepare('SELECT COUNT(*) AS n FROM attempts').get().n, 0)
 
   const consultedFixture = await fixture(t)
-  await consultedFixture.broker.profileUpsert({ workspaceKey: consultedFixture.workspace, name: 'Only' })
+  await consultedFixture.twoCandidates()
   const consultCommit = consultedFixture.broker.cases.transitionWithRoute.bind(consultedFixture.broker.cases)
   let failConsultCommit = true
   consultedFixture.broker.cases.transitionWithRoute = async (...args) => {
     if (failConsultCommit) throw new Error('consult route store failed')
     return consultCommit(...args)
   }
-  const args = { question: 'Do not fake a waiting Case?', authorization_class: 'A', request_id: 'failed-commit-replay' }
+  const args = { question: 'Do not fake a waiting Case?', request_id: 'failed-commit-replay' }
   await assert.rejects(consultedFixture.broker.consult({ agent: consultedFixture.agent, args }), /consult route store failed/)
   failConsultCommit = false
   await assert.rejects(consultedFixture.broker.consult({ agent: consultedFixture.agent, args }), error => error.code === 'DECISION_UNAVAILABLE')
