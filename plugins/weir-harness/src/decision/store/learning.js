@@ -326,6 +326,10 @@ function editablePrincipleIds(parent, snapshot) {
   const before = new Map((parent?.principles ?? []).map(principle => [principle.principleId, principleContent(principle)]))
   const editable = new Set()
   for (const principle of snapshot.principles) {
+    // A retirement keeps the entry with state 'retired' in the draft; it is a
+    // removal, not a revision, so it never becomes an editable entry here even
+    // though its content identity changed.
+    if (principle.state !== 'active') continue
     const previous = before.get(principle.principleId)
     if (previous === undefined || previous !== principleContent(principle)) editable.add(principle.principleId)
   }

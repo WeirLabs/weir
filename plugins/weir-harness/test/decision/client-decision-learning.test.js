@@ -808,6 +808,24 @@ test('only this review\'s added and changed entries are editable, and a settled 
   host.unmount()
 })
 
+test('a principle retired by this run is a removal, never an editable change', async () => {
+  const host = await createPageHarness({ actions: {} })
+  const agent = candidateReviewAgent()
+  const detail = candidateReviewFixture()
+  // The consolidator retires by keeping the entry with state 'retired' in the
+  // draft; the diff reads that as a content change, but it must stay read-only.
+  const retired = { principleId: 'p_retire', text: 'Retired this run', scope: { workspaces: ['/repo'] }, sources: ['dc_source'], state: 'active' }
+  detail.candidate.snapshot = { ...detail.candidate.snapshot, principles: [...detail.candidate.snapshot.principles, { ...retired, state: 'retired' }] }
+  detail.candidate.parentSnapshot = { ...detail.candidate.parentSnapshot, principles: [...detail.candidate.parentSnapshot.principles, retired] }
+  const view = learning.learningView({ agent, detail, candidateReadiness: host.model.candidateReadiness })
+  const change = view.changes.find(item => item.principleId === 'p_retire')
+  assert.equal(change.change, 'changed')
+  assert.equal(change.editable, false)
+  const props = { agent, detail, ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness }
+  assert.deepEqual(entryActions(learning.AgentLearning(props)).filter(node => node['data-principle-id'] === 'p_retire'), [])
+  host.unmount()
+})
+
 test('the inline editor shows the current content, bounded wording, scope rows, chips and its own states', async () => {
   const host = await createPageHarness({ actions: {} })
   const agent = candidateReviewAgent()

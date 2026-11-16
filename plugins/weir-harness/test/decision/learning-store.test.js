@@ -201,6 +201,30 @@ test('candidate updates only accept this candidate added/changed entries', async
   assert.equal(snapshotBytes(f, 'ms_draft'), draftBefore)
 })
 
+test('a principle retired by the candidate is a removal, never an editable entry', async t => {
+  const f = await brokerFixture(t)
+  seedCandidate(f)
+  // A real retire keeps the entry in the draft with state 'retired' (the model
+  // never deletes it): its content identity changes, but it is not a revision.
+  const readPrinciples = snapshotId => JSON.parse(f.broker.store.db.prepare('SELECT principles_json FROM memory_snapshots WHERE snapshot_id=?').get(snapshotId).principles_json)
+  const writePrinciples = (snapshotId, principles) => f.broker.store.db.prepare('UPDATE memory_snapshots SET principles_json=? WHERE snapshot_id=?').run(JSON.stringify(principles), snapshotId)
+  const retired = { principleId: 'p_retired_now', text: 'Retired this run', scope: { workspaces: [f.workspace] }, sources: ['dc_source'], state: 'active' }
+  writePrinciples('ms_parent', [...readPrinciples('ms_parent'), retired])
+  writePrinciples('ms_draft', [...readPrinciples('ms_draft'), { ...retired, state: 'retired' }])
+  const draftBefore = snapshotBytes(f, 'ms_draft')
+  for (const edits of [
+    [{ principleId: 'p_retired_now', text: 'Rewritten retirement' }],
+    [{ principleId: 'p_retired_now', remove: true }],
+  ]) {
+    await assert.rejects(
+      f.broker.learning.updateCandidate('ms_draft', 3, edits),
+      error => error.code === 'CANDIDATE_ITEM_NOT_EDITABLE',
+      JSON.stringify(edits),
+    )
+  }
+  assert.equal(snapshotBytes(f, 'ms_draft'), draftBefore)
+})
+
 test('candidate updates reject an open or ambiguous edit shape without writing', async t => {
   const f = await brokerFixture(t)
   seedCandidate(f)

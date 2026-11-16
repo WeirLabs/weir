@@ -37,12 +37,14 @@ window.__ModuleLoader__.load({
       const currentRevision = currentSnapshot?.state === "published" && Number.isInteger(currentSnapshot.revision) ? currentSnapshot.revision : null;
       // Only this review's own added/changed entries can be revised, and only while
       // the draft is still a draft tied to a candidate run: a published, rejected or
-      // already removed entry never offers a write entry point.
+      // already removed entry never offers a write entry point. A retirement keeps
+      // its entry with state 'retired' and reads as a change here, so the active
+      // state is what makes an entry editable.
       const reviewable = candidateDetail?.snapshot?.state === "draft" && candidateDetail?.run?.outcome === "candidate";
       const changes = candidateDetail?.snapshot
         ? principleDiff(candidateDetail.parentSnapshot, candidateDetail.snapshot).map(change => ({
           ...change,
-          editable: reviewable && (change.change === "added" || change.change === "changed"),
+          editable: reviewable && change.after?.state === "active" && (change.change === "added" || change.change === "changed"),
         }))
         : [];
       const sourceRecords = rows(candidateDetail?.snapshot?.sourceRecords ?? candidateDetail?.run?.sourceRecords);
