@@ -1321,6 +1321,163 @@ export function pendingOverviewProblems(state = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Profile-level judgment history (OpenSpec decision-records-profile-history):
+// the records page lists every root session of this profile, names each row's
+// source workspace, filters by source root session and keeps its pagination
+// affordance truthful. These guards only consume captured DOM/wire data.
+// ---------------------------------------------------------------------------
+
+const NO_SESSION_RECORDS = /打开会话后可查看判断记录|Open a session to view decision records/
+const NO_SESSION_METRICS = /打开会话后可查看路由复盘与指标|Open a session to view routing review and metrics/
+const EXPORT_NEEDS_SESSION = /导出需要先打开会话|A data export needs a focused session/
+
+/**
+ * One rendered judgment-history page against the Host's own page: the rows are
+ * the Host's Cases in the Host's order, each row names its real source root
+ * session, and the source label is a workspace name — never the raw session id
+ * and never a path.
+ * @param {{rows?:any[],text?:string,detailCount?:number}} dom the records view probe
+ * @param {{records?:any[],sources?:any[],nextCursor?:string|null}} page the Host's page
+ * @param {{filterSessionId?:string,forbiddenPath?:string,unsorted?:boolean}} [options]
+ */
+export function recordHistoryProblems(dom = {}, page = {}, options = {}) {
+  const problems = []
+  const rows = (Array.isArray(dom.rows) ? dom.rows : []).filter(row => row && typeof row.caseId === 'string')
+  const records = (Array.isArray(page.records) ? page.records : []).filter(record => record && typeof record.caseId === 'string')
+  if (records.length === 0) problems.push('the Host returned no judgment record to compare')
+  else if (rows.length === 0) problems.push('the records page rendered no judgment record')
+  const sourceOf = new Map(records.map(record => [record.caseId, typeof record.rootSessionId === 'string' ? record.rootSessionId : '']))
+  for (const row of rows) {
+    if (!sourceOf.has(row.caseId)) { problems.push(`${row.caseId} is not on the Host's page`); continue }
+    const expected = sourceOf.get(row.caseId)
+    if (row.root !== expected) problems.push(`${row.caseId} names source ${shortenedText(row.root)} instead of ${shortenedText(expected)}`)
+    if (!readableText(row.sourceLabel)) problems.push(`${row.caseId} renders no source workspace label`)
+    else {
+      if (readableText(row.sourceLabel) === readableText(row.root)) problems.push(`${row.caseId} labels its source with the raw session id`)
+      if (options.forbiddenPath && readableText(row.sourceLabel).includes(options.forbiddenPath)) problems.push(`${row.caseId} leaks a path in its source label`)
+    }
+  }
+  if (options.unsorted !== true) {
+    const rendered = rows.map(row => row.caseId).join(',')
+    const hosted = records.slice(0, rows.length).map(record => record.caseId).join(',')
+    if (rendered !== hosted) problems.push('the rendered rows differ from the Host page, order included')
+  }
+  if (options.filterSessionId !== undefined) {
+    const stray = rows.filter(row => row.root !== options.filterSessionId)
+    if (stray.length > 0) problems.push(`${stray.length} row(s) outside the filtered source survived: ${stray.slice(0, 3).map(row => shortenedText(row.caseId)).join(', ')}`)
+  }
+  if (options.expectedCaseIds && Array.isArray(options.expectedCaseIds)) {
+    const rendered = new Set(rows.map(row => row.caseId))
+    for (const caseId of options.expectedCaseIds) if (!rendered.has(caseId)) problems.push(`the expected Case ${shortenedText(caseId)} is not listed`)
+  }
+  return problems
+}
+
+/**
+ * The source filter offers every source session the Host reports and nothing
+ * else: `all sessions` first, then one entry per source carrying its real count,
+ * and each entry names the same workspace its rows do.
+ * @param {{ariaLabel?:string,value?:string,options?:Array<{value?:string,label?:string}>}|null} menu
+ * @param {any[]} sources the Host's `sources` summary
+ * @param {{rowLabels?:Record<string,string>}} [options]
+ */
+export function recordSourceMenuProblems(menu, sources, options = {}) {
+  const problems = []
+  const list = (Array.isArray(sources) ? sources : []).filter(source => source && typeof source.sessionId === 'string' && source.sessionId !== '')
+  if (!menu || !Array.isArray(menu.options)) return ['the records toolbar renders no source filter']
+  if (!/来源|Source/i.test(readableText(menu.ariaLabel))) problems.push(`the source filter is labelled ${shortenedText(menu.ariaLabel)}`)
+  const all = menu.options[0] ?? null
+  if (!all || all.value !== '') problems.push('the source filter does not start with every source')
+  else if (!/全部会话|All sessions/.test(readableText(all.label))) problems.push(`the every-source option reads ${shortenedText(all.label)}`)
+  if (menu.options.length !== list.length + 1) problems.push(`the source filter offers ${menu.options.length} options for ${list.length} source sessions`)
+  const wanted = new Set(list.map(source => source.sessionId))
+  for (const [index, source] of list.entries()) {
+    const option = menu.options[index + 1] ?? null
+    if (!option) { problems.push(`the source filter offers no option for ${shortenedText(source.sessionId)}`); continue }
+    if (option.value !== source.sessionId) problems.push(`source option ${index + 1} carries ${shortenedText(option.value)} instead of ${shortenedText(source.sessionId)}`)
+    const label = readableText(option.label)
+    if (!label.endsWith(` (${source.count})`)) problems.push(`source option ${index + 1} does not show its real count ${source.count}: ${shortenedText(label)}`)
+    const named = label.replace(/\s*\(\d+\)\s*$/, '')
+    if (!named) problems.push(`source option ${index + 1} carries no workspace name`)
+    const rowLabel = options.rowLabels?.[source.sessionId]
+    if (typeof rowLabel === 'string' && named !== readableText(rowLabel)) problems.push(`source option ${index + 1} names ${shortenedText(named)} while its rows name ${shortenedText(rowLabel)}`)
+    if (!wanted.has(option.value)) problems.push(`source option ${index + 1} names a session the Host does not report`)
+  }
+  const stray = menu.options.slice(list.length + 1).filter(option => option && option.value !== '')
+  if (stray.length > 0) problems.push(`the source filter offers ${stray.length} session(s) the Host does not report`)
+  return problems
+}
+
+/**
+ * The judgment history read names no session on the wire: the page keeps reading
+ * the profile even while one session is focused, which is what makes another
+ * session's Case visible.
+ * @param {any[]} reads captured `records` network entries
+ */
+export function profileRecordsWireProblems(reads = []) {
+  const problems = []
+  const list = (Array.isArray(reads) ? reads : []).filter(entry => entry && entry.method === 'records')
+  if (list.length === 0) return ['the records page issued no judgment-history read']
+  for (const entry of list) {
+    const args = entry.args && typeof entry.args === 'object' ? entry.args : {}
+    if (Object.hasOwn(args, 'sessionId')) problems.push(`a judgment-history read named the caller session ${shortenedText(args.sessionId)}`)
+    if (args.filter !== undefined && args.filter !== null && typeof args.filter !== 'object') problems.push('a judgment-history read sent a non-object filter')
+  }
+  return problems
+}
+
+/**
+ * The session-less judgment history: it still lists this profile's Cases instead
+ * of asking for a session. Only the assistant tab, and the session-scoped export
+ * and metrics, keep their own focused-session explanation.
+ * @param {any} dom the records view probe
+ * @param {{expectedCaseIds?:string[]}} options
+ */
+export function noSessionHistoryProblems(dom = {}, options = {}) {
+  const problems = []
+  const text = readableText(dom.text)
+  if (NO_SESSION_RECORDS.test(text)) problems.push('the judgment history still claims it needs a focused session')
+  if (!Array.isArray(dom.rows) || dom.rows.length === 0) problems.push('no judgment record is listed without a focused session')
+  if (Array.isArray(options.expectedCaseIds)) {
+    const rendered = new Set((dom.rows ?? []).map(row => row.caseId))
+    for (const caseId of options.expectedCaseIds) if (!rendered.has(caseId)) problems.push(`the Case ${shortenedText(caseId)} created before the restart is not listed`)
+  }
+  return problems
+}
+
+/**
+ * The data export names a workspace, so it needs a focused session: without one
+ * the entry is disabled and says why, instead of offering a gesture the Host
+ * cannot authorize.
+ * @param {any} dom the records view probe with the export disclosure open
+ */
+export function sessionlessExportProblems(dom = {}) {
+  const problems = []
+  if (dom.exportDisabled !== true) problems.push('the data export stays enabled without a focused session')
+  if (!EXPORT_NEEDS_SESSION.test(readableText(dom.exportHint))) problems.push(`the data export does not explain the focused-session requirement: ${shortenedText(dom.exportHint)}`)
+  return problems
+}
+
+/**
+ * Routing review and metrics read one root session at a time, so without a
+ * focused session they explain what they need instead of showing an empty list or
+ * an error.
+ * @param {string} metricsText the rendered metrics view text
+ */
+export function sessionlessMetricsProblems(metricsText = '') {
+  const text = readableText(metricsText)
+  const problems = []
+  if (!NO_SESSION_METRICS.test(text)) problems.push(`routing review and metrics no longer explain the focused-session requirement: ${shortenedText(text)}`)
+  if (NO_SESSION_RECORDS.test(text)) problems.push('the metrics view shows the judgment-history explanation instead of its own')
+  return problems
+}
+
+/** The assistant tab still needs a focused session, and still says so. */
+export function sessionlessAssistantProblems(agentsText = '') {
+  return NO_SESSION_RECORDS.test(readableText(agentsText)) ? [] : ['the assistant tab lost the explanation it still needs']
+}
+
+// ---------------------------------------------------------------------------
 // Decision settings page (decision-assistant-settings-page D7/D8): the real
 // Desktop acceptance reads the third Weir settings section as rendered — the
 // navigation ledger, the two basic/advanced groups, the boolean answer switch and

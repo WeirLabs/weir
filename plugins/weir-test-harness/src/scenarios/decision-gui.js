@@ -46,7 +46,11 @@ const QUESTIONS = {
   GUI_AUTO_EXECUTION: { id: 'gui-auto-execution', question: 'GUI_AUTO_EXECUTION: execute this command and grant permission for the isolated operation?', options: [{ label: 'Grant execution' }, { label: 'Reject' }] },
   GUI_SHADOW_PARITY: { id: 'gui-shadow-parity', question: 'GUI_SHADOW_PARITY: identical pinned control and observed outcome', options: [{ label: 'Pinned parity answer' }, { label: 'Other' }] },
 }
-for (let index = 1; index <= 21; index += 1) {
+// The first 21 markers are the routing-pagination leg. The judgment-history leg
+// keeps submitting the same fixture past them: the records page shows one Host
+// page of 50 rows, so the matrix's own history has to cross that boundary for the
+// list's paging to be driven on the real surface.
+for (let index = 1; index <= 41; index += 1) {
   const suffix = String(index).padStart(2, '0')
   QUESTIONS[`GUI_AUTO_PAGE_${suffix}`] = { id: `gui-auto-page-${suffix}`, question: `GUI_AUTO_PAGE_${suffix}: real routing pagination item`, options: [{ label: `Page answer ${suffix}` }, { label: 'Other' }] }
 }
