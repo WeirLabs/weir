@@ -48,7 +48,7 @@ const REPLAY_DETAILS = new Set([
 // wording and the workspace-agnostic hints only. Sources and workspace
 // membership are never editable, so `workspaces` is not even a legal field here.
 const CANDIDATE_EDIT_FIELDS = Object.freeze(['principleId', 'text', 'scope', 'remove'])
-const CANDIDATE_SCOPE_FIELDS = Object.freeze(['paths', 'tags', 'authorizationClasses'])
+const CANDIDATE_SCOPE_FIELDS = Object.freeze(['paths', 'tags'])
 const CANDIDATE_EDIT_LIMIT = 32
 
 /** @param {unknown} value @param {string} label */
@@ -390,8 +390,8 @@ function candidatePrincipleScope(edited, snapshot) {
     if (edited[key] !== undefined) hints[key] = edited[key]
   }
   // Validate the caller's raw hints inside the candidate's own namespace shape,
-  // so a non-A/B/C class, a duplicated row or a stray field is rejected instead
-  // of being silently normalized away before the write.
+  // so a duplicated row or a stray field is rejected instead of being silently
+  // normalized away before the write.
   validateLearningScope(
     snapshot.zone === PUBLIC_ZONE ? { ...hints } : { workspaces: [snapshot.namespaceWorkspaceKey], ...hints },
     'candidateUpdate.edit.scope', snapshot.zone,
@@ -400,8 +400,7 @@ function candidatePrincipleScope(edited, snapshot) {
   for (const key of CANDIDATE_SCOPE_FIELDS) {
     const entries = hints[key]
     if (!Array.isArray(entries) || entries.length === 0) continue
-    // A/B/C keeps its canonical order; the other hints keep the user's order.
-    canonical[key] = key === 'authorizationClasses' ? ['A', 'B', 'C'].filter(entry => entries.includes(entry)) : entries
+    canonical[key] = entries
   }
   return snapshot.zone === PUBLIC_ZONE ? canonical : { workspaces: [snapshot.namespaceWorkspaceKey], ...canonical }
 }

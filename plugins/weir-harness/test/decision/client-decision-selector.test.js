@@ -137,7 +137,7 @@ const textOf = tree => JSON.stringify(tree)
 
 const enabledOverview = {
   status: { available: true, enabled: true }, selector: { mode: 'off' },
-  auto: { answerClasses: ['A', 'C'], shadow: true },
+  auto: { autoAnswer: true, shadow: true },
   agents: [
     { agentId: 'a', name: 'A very long assistant name that must remain readable', state: 'enabled' },
     { agentId: 'b', name: 'Beta', state: 'enabled' },
@@ -176,13 +176,13 @@ test('selector opens a native modal radio panel with localized options and enabl
   assert.equal(textOf(panel).includes('Disabled'), false)
   assert.equal(textOf(panel).includes('Archived'), false)
   assert.equal(textOf(panel).includes('Auto'), true)
-  assert.equal(textOf(panel).includes('decisionAutoWhitelist'), true)
+  assert.equal(textOf(panel).includes('decisionAutoAnswerOn'), true)
   assert.equal(textOf(panel).includes('A, C'), false)
   assert.equal(textOf(panel).includes('decisionAutoShadowOn'), true)
   assert.equal(findAll(tree, node => node.type === h.props.ui.DecisionStyles).length, 1)
 })
 
-test('selector renders localized compact option labels and a real category count without technical copy', async t => {
+test('selector renders localized compact option labels and the answer-switch copy without technical jargon', async t => {
   const h = await load(t, enabledOverview)
   h.props.t = key => h.model.dictionaries.en[key] ?? key
   h.render()
@@ -194,9 +194,9 @@ test('selector renders localized compact option labels and a real category count
   const text = textOf(panel)
   assert.equal(radioOf(tree, 'off')['aria-label'], 'Do not use an assistant')
   assert.equal(radioOf(tree, 'auto')['aria-label'], 'Automatically choose an assistant')
-  assert.equal(text.includes('Automatic answers are currently allowed for 2 decision categories.'), true)
+  assert.equal(text.includes('An assistant is chosen automatically and its conclusion may be adopted when every evidence and authority gate passes.'), true)
   assert.equal(text.includes('Selection comparison is on; it never changes the actual result.'), true)
-  for (const forbidden of ['A, C', 'Auto routes', 'authorization-class whitelist', 'Shadow diagnostics']) assert.equal(text.includes(forbidden), false, forbidden)
+  for (const forbidden of ['authorization class', 'A/B/C', 'Auto routes', 'authorization-class whitelist', 'Shadow diagnostics']) assert.equal(text.includes(forbidden), false, forbidden)
   assert.equal(text.includes('A very long assistant name that must remain readable'), true)
 })
 
@@ -426,14 +426,14 @@ test('unavailable, zero-agent, and globally disabled views never silently reassi
 
 test('Auto selection saves once with no agent id and accepts the persisted Auto result', async t => {
   let release
-  const emptyAuto = { ...enabledOverview, auto: { answerClasses: [], shadow: false } }
+  const emptyAuto = { ...enabledOverview, auto: { autoAnswer: false, shadow: false } }
   const h = await load(t, emptyAuto, { setSelector: () => new Promise(resolve => { release = resolve }) })
   h.render()
   await h.flush()
   let tree = h.render()
   triggerOf(tree).onClick()
   tree = h.render()
-  assert.equal(textOf(panelOf(tree)).includes('decisionAutoEmptyWhitelist'), true)
+  assert.equal(textOf(panelOf(tree)).includes('decisionAutoAnswerOff'), true)
   assert.equal(textOf(panelOf(tree)).includes('decisionAutoShadowOff'), true)
   const choose = radioOf(tree, 'auto').onChange
   choose()

@@ -6,8 +6,8 @@
 import { randomUUID } from 'node:crypto'
 import { assertSupportedSchemaVersion, DecisionContractError } from '../contracts.js'
 
-/** @typedef {{ workspaces: string[], paths?: string[], tags?: string[], authorizationClasses?: ('A'|'B'|'C')[] }} CaseScope */
-/** @typedef {{ paths?: string[], tags?: string[], authorizationClasses?: ('A'|'B'|'C')[] }} ProfileScope */
+/** @typedef {{ workspaces: string[], paths?: string[], tags?: string[] }} CaseScope */
+/** @typedef {{ paths?: string[], tags?: string[] }} ProfileScope */
 /** @typedef {{ provider: string, model: string, reasoningEffort?: string }} ModelRung */
 
 /**
@@ -31,18 +31,13 @@ export function parseScope(workspaceKey, scope) {
     }
     if (Array.isArray(entries)) result[key] = [...entries]
   }
-  const classes = input.authorizationClasses ?? ['A', 'B', 'C']
-  if (!Array.isArray(classes) || !classes.every(entry => ['A', 'B', 'C'].includes(entry))) {
-    throw new DecisionContractError('INVALID_AUTHORITY', 'authorizationClasses must contain only A/B/C')
-  }
-  result.authorizationClasses = [...new Set(classes)]
   return result
 }
 
 /**
- * Profile scope: optional paths/tags expertise hints plus global authorization
- * classes. It deliberately has no workspace membership — an empty hint list means
- * "no extra restriction", never "any workspace".
+ * Profile scope: optional paths/tags expertise hints only. It deliberately has
+ * no workspace membership — an empty hint list means "no extra restriction",
+ * never "any workspace".
  * @param {unknown} scope @returns {ProfileScope}
  */
 export function parseProfileScope(scope) {
@@ -57,11 +52,6 @@ export function parseProfileScope(scope) {
     }
     if (Array.isArray(entries) && entries.length) result[key] = [...entries]
   }
-  const classes = input.authorizationClasses ?? ['A', 'B', 'C']
-  if (!Array.isArray(classes) || !classes.every(entry => ['A', 'B', 'C'].includes(entry))) {
-    throw new DecisionContractError('INVALID_AUTHORITY', 'authorizationClasses must contain only A/B/C')
-  }
-  result.authorizationClasses = [...new Set(classes)]
   return result
 }
 

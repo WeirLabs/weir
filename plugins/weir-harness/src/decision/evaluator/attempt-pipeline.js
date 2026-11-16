@@ -52,7 +52,6 @@ export async function runDecisionAttempt(input) {
     profile: input.profile,
     workspaceKey: input.workspaceKey,
     scope: input.scope,
-    authorizationClass: input.authorizationClass,
     intentKind: input.intentKind,
     attemptStartedAt,
     attemptEndedAt: Date.now(),

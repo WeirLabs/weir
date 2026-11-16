@@ -19,7 +19,6 @@ window.__ModuleLoader__.load({
       const parts = [];
       if (Array.isArray(scope.workspaces) && scope.workspaces.length) parts.push(t("decisionScopeCurrentWorkspace"));
       for (const key of ["paths", "tags"]) for (const value of Array.isArray(scope[key]) ? scope[key] : []) if (typeof value === "string") parts.push(value);
-      if (Array.isArray(scope.authorizationClasses)) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
 
@@ -166,6 +165,7 @@ window.__ModuleLoader__.load({
       const badgeVariant = view.variant === "answered" ? "success" : view.variant === "failed" ? "error" : view.variant === "cancelled" ? "idle" : "warn";
       const summary = view.summary;
       const reason = view.reasonKey ? t(view.reasonKey) : null;
+      const reasonDetail = view.reasonDetailKey ? t(view.reasonDetailKey) : null;
       const waiting = view.state === "awaiting_user";
       const nativeAnswer = waiting && props.toolName === "ask_user_question";
       const directConsultAnswer = waiting && props.toolName === "decision_consult";
@@ -230,6 +230,7 @@ window.__ModuleLoader__.load({
             jsx.jsx("h3", { children: t("decisionReasonSummary") }, "title"),
             summary ? jsx.jsx("p", { children: summary }, "summary") : null,
             reason && reason !== summary ? jsx.jsx("p", { className: "weir-da-caption", children: reason }, "recorded-reason") : null,
+            reasonDetail ? jsx.jsx("p", { className: "weir-da-caption", "data-reason-detail": true, children: reasonDetail }, "reason-detail") : null,
           ] }, "reason") : null,
           nativeAnswer ? jsx.jsx("p", { className: "weir-da-state", "data-native-answer": true, children: t("decisionNativeAnswerHint") }, "native-answer") : null,
           waiting && !directConsultAnswer && (suggestions.length || perQuestion.length) ? jsx.jsxs("section", { className: "weir-da-suggestion-review", children: [

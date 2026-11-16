@@ -50,28 +50,23 @@ describe('settings Config schema', () => {
     expect(validate({ hashlineHideStockEdit: 'yes' }).issues).not.toBe(undefined)
   })
 
-  it('validates Auto selector, Shadow, and answer-class settings at save time', () => {
+  it('validates Auto selector, Shadow, and the answer switch at save time', () => {
     expect(validate({
-      decisionAgentSelectorDefault: 'auto', decisionAgentAutoShadow: true,
-      decisionAgentAutoAnswerClasses: '["A","A","C"]',
+      decisionAgentSelectorDefault: 'auto', decisionAgentAutoShadow: true, decisionAgentAutoAnswer: true,
     }).issues).toBe(undefined)
     for (const fields of [
       { decisionAgentSelectorDefault: 'agent' },
       { decisionAgentSelectorDefault: 'AUTO' },
       { decisionAgentAutoShadow: 'true' },
-      { decisionAgentAutoAnswerClasses: 'not-json' },
-      { decisionAgentAutoAnswerClasses: '{}' },
-      { decisionAgentAutoAnswerClasses: '["A","D"]' },
-      { decisionAgentAutoAnswerClasses: '["A",1]' },
-      { decisionAgentAutoAnswerClasses: '["unknown"]' },
+      { decisionAgentAutoAnswer: 'true' },
+      { decisionAgentAutoAnswer: '["A"]' },
     ]) expect(validate(fields).issues?.length > 0).toBe(true)
   })
 
-  it('normalizes valid classes and fails closed to an empty runtime whitelist', () => {
-    expect(computeSections({ decisionAgentAutoAnswerClasses: '["A","A","C"]' }).decisionAgent.autoAnswerClasses).toEqual(['A', 'C'])
-    for (const raw of ['not-json', '{}', '["A","D"]', '["A",1]', '["unknown"]', '', '   ']) {
-      expect(computeSections({ decisionAgentAutoAnswerClasses: raw }).decisionAgent.autoAnswerClasses).toEqual([])
-    }
+  it('projects the answer switch as one boolean and never as a class array', () => {
+    expect(computeSections({ decisionAgentAutoAnswer: true }).decisionAgent.autoAnswer).toBe(true)
+    // A retired class array is inert: it is not projected and never re-opens the switch.
+    expect(computeSections({ decisionAgentAutoAnswerClasses: '["A"]' }).decisionAgent).toBe(undefined)
   })
 
   it('rejects invalid guard threshold saves through the Loader standard validator', () => {

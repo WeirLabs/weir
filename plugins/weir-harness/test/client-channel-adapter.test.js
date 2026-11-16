@@ -101,7 +101,6 @@ describe('client channel adapters (composition root)', () => {
       './client.robash-model.js': {},
       './client.lsp-model.js': {},
       './client.notify-permissions.js': {},
-      './client.decision-class-editor.js': {},
       './client.model-picker.js': {},
       './client.notify-web.js': { startWebDelivery: (env) => { notifyWebStarts.push(env); return { stop: () => {} } } },
     }

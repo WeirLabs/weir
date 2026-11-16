@@ -195,15 +195,6 @@ function decideDecision(options, obs) {
   return textChunks(JSON.stringify({ outcome: 'escalate', missing: [`${question.question} requires a new user judgment`] }))
 }
 
-function decideRouterClassification(options, obs) {
-  const pack = decisionPack(obs)
-  if (!pack || !Array.isArray(pack.questions)) throw new Error('decision-gui: malformed classification pack')
-  return textChunks(JSON.stringify({
-    contract: 'router-classification-contract/1',
-    classes: pack.questions.map(question => ({ id: question.id, authorizationClass: 'A' })),
-  }))
-}
-
 function decideRouterRoute(options, obs) {
   const pack = decisionPack(obs)
   const question = pack?.questions?.[0]?.question ?? ''
@@ -237,19 +228,18 @@ function assert(run) {
 function observe(obs) {
   const observation = observeDecision(obs)
   const contract = obs.system.split('\n', 1)[0]
-  if (contract === 'Auto request classification contract: router-classification-contract/1' || contract === 'Auto candidate router contract: router-contract/1') {
-    const kind = contract.startsWith('Auto request') ? 'classification' : 'route'
+  if (contract === 'Auto candidate router contract: router-contract/1') {
     const pack = decisionPack(obs)
     const question = pack?.questions?.[0]?.question ?? ''
     return {
       ...observation,
       autoRouter: {
-        kind, pack, system: obs.system, sessionId: obs.sessionId ?? null,
+        kind: 'route', pack, system: obs.system, sessionId: obs.sessionId ?? null,
         tools: obs.toolNames, hasTemperature: obs.hasTemperature,
         provider: obs.provider, model: obs.model, maxTokens: obs.maxTokens,
       },
-      ...(kind === 'route' && question.startsWith('GUI_AUTO_TIMEOUT') ? { autoRouterHold: 'timeout' } : {}),
-      ...(kind === 'classification' && question.startsWith('GUI_AUTO_INTERRUPT') ? { autoRouterHold: 'interruption' } : {}),
+      ...(question.startsWith('GUI_AUTO_TIMEOUT') ? { autoRouterHold: 'timeout' } : {}),
+      ...(question.startsWith('GUI_AUTO_INTERRUPT') ? { autoRouterHold: 'interruption' } : {}),
     }
   }
   const learning = contract === 'Decision consolidation contract v1' || observation.decisionQuestionIds.some(id => GUI_LEARNING_QUESTION_IDS.includes(id))
@@ -269,4 +259,4 @@ function observe(obs) {
   return { ...observation, decisionGuiMemorySystem: obs.system, decisionGuiMemoryPack: pack }
 }
 
-export default { id, prompt, decide, decideConsolidation, decideDecision, decideRouterClassification, decideRouterRoute, observe, assert }
+export default { id, prompt, decide, decideConsolidation, decideDecision, decideRouterRoute, observe, assert }

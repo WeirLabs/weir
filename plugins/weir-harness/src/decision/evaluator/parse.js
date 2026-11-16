@@ -1,5 +1,6 @@
 // Strict text-JSON parser for evaluator output. Runtime failures stay distinct.
 import { ATTEMPT_OUTCOMES, DecisionContractError, parseAnswerItem, RETURN_CODES } from '../contracts.js'
+import { extractJsonObject } from '../json.js'
 
 const TOP_LEVEL = ['outcome', 'reasonCode', 'hint', 'claims', 'answers', 'missing', 'suggestion']
 
@@ -11,17 +12,14 @@ export function parseDecision(text, context = {}) {
     return failureOutcome(context.finishReason)
   }
   if (typeof text !== 'string') return invalid('Evaluator output must be text JSON')
-  const cleaned = clean(text)
-  if (!cleaned) return invalid('Evaluator output contains no JSON object')
-  let value
+  // Fences, surrounding prose and leading/trailing whitespace come from the
+  // shared extractor; a mid-object stop is a truncation, never invalid output.
+  const extracted = extractJsonObject(text)
+  if (extracted.status === 'empty') return invalid('Evaluator output contains no JSON object')
+  if (extracted.status === 'truncated') return failureOutcome('truncated')
+  if (extracted.status === 'invalid') return invalid('Evaluator output is not valid JSON')
   try {
-    value = JSON.parse(cleaned)
-  } catch (error) {
-    if (looksTruncated(text, cleaned, error)) return failureOutcome('truncated')
-    return invalid('Evaluator output is not valid JSON')
-  }
-  try {
-    return validate(value, new Set(context.evidenceIds ?? []))
+    return validate(extracted.value, new Set(context.evidenceIds ?? []))
   } catch (error) {
     if (error instanceof DecisionContractError) return invalid(error.message)
     throw error
@@ -40,22 +38,6 @@ export function failureOutcome(kind, code) {
       detail: failureDetail(normalized),
     },
   }
-}
-
-/** @param {string} text */
-function clean(text) {
-  let value = text.trim()
-  if (value.startsWith('```')) value = value.replace(/^```(?:json)?\s*/i, '')
-  if (value.endsWith('```')) value = value.slice(0, -3).trim()
-  const start = value.indexOf('{')
-  const end = value.lastIndexOf('}')
-  if (start < 0) return ''
-  return value.slice(start, end < start ? value.length : end + 1)
-}
-
-/** @param {string} original @param {string} cleaned @param {any} error */
-function looksTruncated(original, cleaned, error) {
-  return !original.includes('}') || !cleaned.endsWith('}') || /unexpected end|unterminated|end of (?:json )?(?:input|data)/i.test(error?.message ?? '')
 }
 
 /** @param {string} detail */

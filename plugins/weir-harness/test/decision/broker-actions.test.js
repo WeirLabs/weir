@@ -18,7 +18,7 @@ async function fixture(t) {
       yield { type: 'finish', reason: { kind: 'stop' } }
     })() },
   }
-  const config = { decisionAgentsEnabled: true, decisionAgentAutoAnswerClasses: ['A', 'B', 'C'] }
+  const config = { decisionAgentsEnabled: true, decisionAgentAutoAnswer: true }
   const broker = new DecisionBroker({ profileContext: { home: dir, name: 'test' }, ctx, config: () => config, audit: (kind, value) => audits.push({ kind, value }) })
   await broker.start()
   const a = await broker.profileUpsert({ workspaceKey: workspace, name: 'A' })
@@ -84,7 +84,7 @@ test('reassign rolls back Case ownership and state when the manual route write f
 test('unowned reassignment derives from no authoritative choice and appends an immutable target label', async t => {
   const f = await fixture(t)
   await f.broker.setSelector('root', 'auto')
-  const waiting = await f.broker.consult({ agent: f.agent, args: { question: 'Choose a route?', authorization_class: 'A', request_id: 'unowned-reassign' } })
+  const waiting = await f.broker.consult({ agent: f.agent, args: { question: 'Choose a route?', request_id: 'unowned-reassign' } })
   assert.equal(waiting.outcome, 'awaiting_user')
   assert.equal(f.broker.cases.getCase(waiting.caseId).agentId, null)
   const before = f.broker.store.db.prepare('SELECT mode,chosen,reason FROM route_decisions WHERE case_id=? ORDER BY rowid').all(waiting.caseId).map(row => ({ ...row }))
@@ -220,7 +220,7 @@ async function seedAutoWaiting(f, key, question = {}) {
     entry: 'consult',
     questions: [{
       id: 'question', question: `Auto recovery ${key}?`, options: [{ label: 'A' }, { label: 'B' }],
-      authorizationClass: 'A', ...question,
+      ...question,
     }],
   }
   let current = (await f.broker.cases.createCase({
@@ -239,13 +239,6 @@ async function seedAutoWaiting(f, key, question = {}) {
 }
 
 const AUTO_RECOVERY_DENIALS = [
-  ['D', { authorizationClass: 'D' }],
-  ['E', { authorizationClass: 'E' }],
-  ['F', { authorizationClass: 'F' }],
-  ['unknown', { authorizationClass: 'unknown' }],
-  ['invalid', { authorizationClass: 'G' }],
-  ['missing', { authorizationClass: undefined }],
-  ['unallowed', { authorizationClass: 'B', allowedClasses: ['A'] }],
   ['approval', { intent: { kind: 'approval' } }],
   ['plan-review', { intent: { kind: 'plan-review' } }],
   ['high-risk', { question: 'Approve this irreversible high-risk operation?' }],
@@ -257,7 +250,6 @@ for (const action of ['retry', 'reassign']) {
     test(`Auto ${action} rejects ${label} authority before changing the Case or starting an Attempt`, async t => {
       const f = await fixture(t)
       const current = await seedAutoWaiting(f, `${action}-${label}`, denial)
-      if (denial.allowedClasses) f.config.decisionAgentAutoAnswerClasses = denial.allowedClasses
       const before = f.broker.cases.getCase(current.caseId)
       const pending = action === 'retry'
         ? f.broker.retry({ caseId: current.caseId })
@@ -271,31 +263,35 @@ for (const action of ['retry', 'reassign']) {
   }
 }
 
-test('domain G2 receives the actual Auto request class instead of defaulting it to A', async t => {
+test('narrowed expertise hints cannot be bypassed by an Auto route on retry', async t => {
   const f = await fixture(t)
-  const current = await seedAutoWaiting(f, 'gate-class-metadata', { authorizationClass: 'B' })
-  const narrowed = await f.broker.profileUpsert({
+  const current = await seedAutoWaiting(f, 'gate-scope-metadata')
+  // The retried profile now demands a `src` path prefix the request scope does
+  // not carry: its own profile evidence no longer covers the request either, so
+  // the Attempt fails closed instead of answering through the old Auto route.
+  await f.broker.profileUpsert({
     agentId: f.a.agentId, workspaceKey: f.workspace,
-    scope: { workspaces: [f.workspace], authorizationClasses: ['A'] },
+    scope: { workspaces: [f.workspace], paths: ['src'] },
   })
-  const ref = await f.broker.ensureProfileEvidence(narrowed, f.workspace)
   f.respond({
-    outcome: 'answer', claims: [{ text: 'This answer must still pass through G2', evidenceIds: [ref.evidenceId] }],
+    outcome: 'answer', claims: [{ text: 'This answer must still respect the narrowed scope', evidenceIds: ['ev_never_in_pack'] }],
     answers: [{ id: 'question', selected: ['A'] }],
   })
 
   await f.broker.retry({ caseId: current.caseId })
-  const attempt = f.broker.attempts.forCase(current.caseId).at(-1)
-  assert.equal(attempt.gates.g2, false)
-  assert.equal(attempt.gates.g6, true)
-  assert.equal(f.broker.cases.getCase(current.caseId).state, 'awaiting_revision')
+  const attempts = f.broker.attempts.forCase(current.caseId)
+  assert.equal(attempts.length, current.maxAttempts)
+  assert.equal(attempts.every(attempt => attempt.outcome === 'failed'), true)
+  const settled = f.broker.cases.getCase(current.caseId)
+  assert.equal(settled.awaitingReason, 'exhausted')
+  assert.equal(settled.decision, null)
 })
 
 test('domain G6 receives persisted approval intent instead of an empty default', async t => {
   const f = await fixture(t)
   const request = {
     entry: 'consult',
-    questions: [{ id: 'question', question: 'Choose under persisted approval intent?', options: [{ label: 'A' }], authorizationClass: 'A', intent: { kind: 'approval' } }],
+    questions: [{ id: 'question', question: 'Choose under persisted approval intent?', options: [{ label: 'A' }], intent: { kind: 'approval' } }],
   }
   let current = (await f.broker.cases.createCase({
     workspaceKey: f.workspace, rootSessionId: 'root', entry: 'consult', agentId: f.a.agentId,

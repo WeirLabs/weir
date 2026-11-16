@@ -826,11 +826,11 @@ test('a principle retired by this run is a removal, never an editable change', a
   host.unmount()
 })
 
-test('the inline editor shows the current content, bounded wording, scope rows, chips and its own states', async () => {
+test('the inline editor shows the current content, bounded wording, scope rows and its own states', async () => {
   const host = await createPageHarness({ actions: {} })
   const agent = candidateReviewAgent()
   const detail = candidateReviewFixture()
-  const editor = { principleId: 'p_change', text: 'Use B', paths: ['src'], tags: [], classes: ['B'], principleId2: undefined }
+  const editor = { principleId: 'p_change', text: 'Use B', paths: ['src'], tags: [], principleId2: undefined }
   const props = {
     agent, detail, ui: host.ui, t: key => key, candidateReadiness: host.model.candidateReadiness,
     candidateEditor: editor, onCandidateSave: () => {}, onCandidateCancel: () => {},
@@ -839,15 +839,15 @@ test('the inline editor shows the current content, bounded wording, scope rows, 
   const text = textOf(rendered)
   // The editor is the only place the wording is edited, and it reads the current
   // content — no second "AI original vs. yours" view.
-  for (const key of ['decisionPrincipleText', 'decisionScopePaths', 'decisionScopeTags', 'decisionScopeClasses', 'decisionScopeCurrentWorkspace', 'decisionPrincipleWorkspaceFixed', 'decisionPrincipleSave', 'decisionCancel', 'decisionPrincipleLength']) {
+  for (const key of ['decisionPrincipleText', 'decisionScopePaths', 'decisionScopeTags', 'decisionScopeCurrentWorkspace', 'decisionPrincipleWorkspaceFixed', 'decisionPrincipleSave', 'decisionCancel', 'decisionPrincipleLength']) {
     assert.ok(text.includes(key), key)
   }
   const area = findAll(rendered, node => node.type === 'textarea' && node['data-principle-text'] === true)[0]
   assert.equal(area.value, 'Use B')
   assert.equal(area.disabled, false)
   assert.equal(findAll(rendered, node => node['data-principle-scope'] === 'path').length, 1)
-  assert.equal(findAll(rendered, node => node['data-principle-class'] === 'B')[0]['aria-pressed'], true)
-  assert.equal(findAll(rendered, node => node['data-principle-class'] === 'A')[0]['aria-pressed'], false)
+  // The retired authorization-class chips are gone from the editor.
+  assert.equal(findAll(rendered, node => node['data-principle-class'] !== undefined).length, 0)
   // Open editor replaces the row actions of that entry only.
   assert.deepEqual(entryActions(rendered).filter(node => ['edit', 'remove'].includes(node['data-principle-action'])).map(node => `${node['data-principle-action']}:${node['data-principle-id']}`), ['edit:p_add', 'remove:p_add'])
   const save = entryActions(rendered).filter(node => node['data-principle-action'] === 'save')[0]
@@ -857,7 +857,7 @@ test('the inline editor shows the current content, bounded wording, scope rows, 
   // no workspace at all.
   const publicDetail = candidateReviewFixture()
   publicDetail.candidate = { ...publicDetail.candidate, snapshot: { ...publicDetail.candidate.snapshot, zone: 'public' } }
-  const publicEditor = { principleId: 'p_add', text: 'Added rule', paths: [], tags: [], classes: [] }
+  const publicEditor = { principleId: 'p_add', text: 'Added rule', paths: [], tags: [] }
   const publicRendered = learning.AgentLearning({ ...props, detail: publicDetail, candidateEditor: publicEditor })
   assert.equal(findAll(publicRendered, node => node['data-principle-workspace']).length, 0, 'a public candidate never names a workspace')
   assert.equal(learning.learningView({ agent, detail: publicDetail, candidateReadiness: host.model.candidateReadiness }).candidateZone, 'public')

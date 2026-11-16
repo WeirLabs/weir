@@ -21,7 +21,7 @@ test('profile scope is workspace-agnostic, keeps hints, and names stay case-inse
   assert.equal(created.state, 'enabled')
   // A profile never carries workspace membership — not even as an echo.
   assert.equal('workspaces' in created.scope, false)
-  assert.deepEqual(created.scope, { authorizationClasses: ['A', 'B', 'C'] })
+  assert.deepEqual(created.scope, {})
   assert.equal('workspaceKey' in created, false)
   assert.equal('legacyOriginAlias' in created, false)
 
@@ -33,7 +33,8 @@ test('profile scope is workspace-agnostic, keeps hints, and names stay case-inse
     workspaceKey: '/repo', name: 'other',
     scope: { workspaces: ['/other'], paths: ['src'], tags: ['copy'], authorizationClasses: ['A'] },
   })
-  assert.deepEqual(hinted.scope, { paths: ['src'], tags: ['copy'], authorizationClasses: ['A'] })
+  // A legacy A/B/C field is inert: kept out of the stored scope, never an error.
+  assert.deepEqual(hinted.scope, { paths: ['src'], tags: ['copy'] })
 
   // A rename can never take another identity's name: both identities survive.
   await assert.rejects(profiles.updateProfile(hinted.agentId, { name: 'Taste' }), error => error.code === 'PROFILE_NAME_TAKEN')

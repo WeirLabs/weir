@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 import { join } from 'node:path'
 import { viewportMeasurementProblems } from '../spikes/decision/gui-product-lib.mjs'
 import { createUiuxFixture } from '../spikes/decision/gui-fixture/uiux.js'
@@ -53,7 +55,7 @@ test('CDP viewport and keyboard probes retain real zoom fields CSS rect and Page
 })
 
 test('Desktop UIUX preflight uses native dialog capabilities without running the product matrix', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const probe = driver.match(/async function runUiuxCapabilityPreflight\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(probe, 'the isolated UIUX capability preflight exists')
   for (const token of ["document.createElement('dialog')", '.showModal()', "matches(':modal')", 'nativeModalProblems', 'measureNativeModal', 'measureScrollContainers', 'browserZoomProblems', 'measureViewport', 'setPageZoom(2)', 'devicePixelRatio', '100dvh', "cdp.key('PageDown')", "cdp.key('Escape')", 'uiux-preflight.json']) assert.ok(probe.includes(token), token)
@@ -72,7 +74,7 @@ test('Desktop UIUX preflight uses native dialog capabilities without running the
 })
 
 test('isolated UIUX fixture controls real Decision RPC settlement without product changes', () => {
-  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  const fixture = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   for (const token of ['controlDecision', 'releaseDecisionControl', 'decisionControlState', "action==='fail'", "action==='hold'", "action==='unknown-auto'", "action==='delivery-unavailable'", 'originalRpcCall', 'JSON.stringify(control.args)']) assert.ok(fixture.includes(token), token)
   assert.ok(fixture.includes('connection.rpc.call=controlledCall'), 'the isolated client wraps the live RPC method')
   assert.match(fixture, /controlledConnection\.rpc\.call=originalRpcCall/, 'fixture disposal restores the exact original RPC method')
@@ -80,7 +82,7 @@ test('isolated UIUX fixture controls real Decision RPC settlement without produc
 })
 
 test('held cold failure stays pending until release and then fails exactly once', async () => {
-  const source = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  const source = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   let registration = null
   const window = { __ModuleLoader__: { load(value) { registration = value } } }
   new Function('window', source)(window)
@@ -110,7 +112,7 @@ test('held cold failure stays pending until release and then fails exactly once'
 })
 
 test('5.2 product matrix wires raw modal scroll and settled-focus audits into every confirmation family', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const matrix = driver.match(/async function runProductMatrix\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix.includes('installUiuxInstrumentation'), 'product dialogs are instrumented before the first selector opens')
   for (const helper of ['agentState', 'confirmLearning', 'cancelUnownedInbox']) {
@@ -126,7 +128,7 @@ test('5.2 product matrix wires raw modal scroll and settled-focus audits into ev
 })
 
 test('Desktop focus oracle requires save success and non-dirty close without dropping prior transitions', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const source = driver.match(/const requiredFocusTransitions = (\[[^\n]+\])/)?.[1]
   assert.ok(source, 'the required assistant focus transition list exists')
   const required = Function(`return (${source})`)()
@@ -142,7 +144,7 @@ test('Desktop focus oracle requires save success and non-dirty close without dro
 })
 
 test('raw modal inline snapshots include paddingBottom alongside scrollbar compensation', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const measure = driver.match(/async function measureScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(measure)
   const inline = measure.match(/const computed=getComputedStyle\(el\);return \[name,\{[\s\S]*?inline:Object\.fromEntries\((\[[\s\S]*?\])\.map/ )?.[1] ?? ''

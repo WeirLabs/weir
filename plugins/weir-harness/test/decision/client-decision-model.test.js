@@ -11,7 +11,7 @@ async function load() {
 test('selector offers localized Off/Auto labels, sanitized readiness, and enabled Agents as distinct modes', async () => {
   const model = await load()
   const options = model.selectorOptions({ ok: true, value: {
-    auto: { answerClasses: ['A', 'A', 'B', 'D'], shadow: true },
+    auto: { autoAnswer: true, shadow: true },
     agents: [
       { agentId: 'a', name: 'A', state: 'enabled' },
       { agentId: 'b', name: 'B', state: 'disabled' },
@@ -24,12 +24,12 @@ test('selector offers localized Off/Auto labels, sanitized readiness, and enable
   assert.equal(options[1].labelKey, 'decisionAuto')
   assert.equal(options[1].label, undefined)
   assert.equal(options[1].mode, 'auto')
-  assert.deepEqual(options[1].auto, { known: true, answerClasses: ['A', 'B'], shadow: true, ready: true })
-  assert.equal(options[1].descriptionKey, 'decisionAutoWhitelist')
+  assert.deepEqual(options[1].auto, { known: true, autoAnswer: true, shadow: true, ready: true })
+  assert.equal(options[1].descriptionKey, 'decisionAutoAnswerOn')
   assert.equal(options[1].shadowKey, 'decisionAutoShadowOn')
 
-  const empty = model.selectorOptions({ auto: { answerClasses: [], shadow: false }, agents: [] })
-  assert.equal(empty[1].descriptionKey, 'decisionAutoEmptyWhitelist')
+  const empty = model.selectorOptions({ auto: { autoAnswer: false, shadow: false }, agents: [] })
+  assert.equal(empty[1].descriptionKey, 'decisionAutoAnswerOff')
   assert.equal(empty[1].shadowKey, 'decisionAutoShadowOff')
   const unknown = model.selectorOptions({ agents: [] })
   assert.equal(unknown[1].auto.ready, false)
@@ -45,17 +45,18 @@ test('selector dictionaries use ordinary bilingual task language without hiding 
   assert.equal(zh.decisionOff, '不启用助手')
   assert.equal(en.decisionAuto, 'Automatically choose an assistant')
   assert.equal(zh.decisionAuto, '自动选择助手')
-  assert.equal(zh.decisionAutoEmptyWhitelist, '仍会自动选择助手并交由其评估；自动回答尚未允许，新判断仍会询问你。')
-  assert.match(en.decisionAutoEmptyWhitelist, /still chosen to evaluate/i)
-  assert.match(en.decisionAutoEmptyWhitelist, /new decisions will still ask you/i)
-  assert.equal(en.decisionAutoWhitelist, 'Automatic answers are currently allowed for {count} decision categories.')
-  assert.equal(zh.decisionAutoWhitelist, '当前允许自动回答 {count} 类判断。')
+  assert.match(zh.decisionAutoAnswerOff, /仍会自动选择助手/)
+  assert.match(zh.decisionAutoAnswerOff, /自动回答未开启/)
+  assert.match(en.decisionAutoAnswerOff, /still chosen automatically/i)
+  assert.match(en.decisionAutoAnswerOff, /automatic answers are disabled/i)
+  assert.match(en.decisionAutoAnswerOn, /may be adopted/i)
+  assert.match(zh.decisionAutoAnswerOn, /采纳其结论/)
   assert.match(en.decisionAutoReadinessUnknown, /status is unknown/i)
   assert.match(zh.decisionAutoReadinessUnknown, /状态未知/)
   assert.match(en.decisionAutoShadowOn, /Selection comparison/)
   assert.match(zh.decisionAutoShadowOn, /选择对比/)
   assert.match(en.decisionAutoShadowOn, /never changes the actual result/)
-  for (const key of ['decisionOff', 'decisionAuto', 'decisionAutoWhitelist', 'decisionAutoEmptyWhitelist', 'decisionAutoReadinessUnknown', 'decisionAutoShadowOn', 'decisionAutoShadowOff', 'decisionAutoShadowUnknown']) {
+  for (const key of ['decisionOff', 'decisionAuto', 'decisionAutoAnswerOn', 'decisionAutoAnswerOff', 'decisionAutoReadinessUnknown', 'decisionAutoShadowOn', 'decisionAutoShadowOff', 'decisionAutoShadowUnknown']) {
     assert.doesNotMatch(en[key], /\b(?:Off|Auto|Shadow)\b|whitelist|A\/B\/C/i, key)
     assert.doesNotMatch(zh[key], /\b(?:Off|Auto|Shadow)\b|白名单|A\/B\/C/i, key)
   }

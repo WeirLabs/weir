@@ -85,7 +85,6 @@ window.__ModuleLoader__.load({
       const parts = [];
       if (Array.isArray(scope.workspaces) && scope.workspaces.length) parts.push(t("decisionScopeCurrentWorkspace"));
       for (const key of ["paths", "tags"]) for (const value of Array.isArray(scope[key]) ? scope[key] : []) if (typeof value === "string") parts.push(value);
-      if (Array.isArray(scope.authorizationClasses)) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
     function AgentLearning(props) {
@@ -228,8 +227,8 @@ window.__ModuleLoader__.load({
     /**
      * The inline editor of one candidate entry. Wording is a bounded textarea; the
      * apply-to scope is the same ordinary control language the assistant editor
-     * uses (path/tag rows plus A/B/C chips). The workspace is read-only text for a
-     * private candidate and absent for a public one: neither can be changed here.
+     * uses (path/tag rows only). The workspace is read-only text for a private
+     * candidate and absent for a public one: neither can be changed here.
      */
     function CandidatePrincipleEditor(props) {
       const t = props.t ?? (key => key);
@@ -238,7 +237,6 @@ window.__ModuleLoader__.load({
       const text = typeof editor.text === "string" ? editor.text : "";
       const paths = Array.isArray(editor.paths) ? editor.paths : [];
       const tags = Array.isArray(editor.tags) ? editor.tags : [];
-      const classes = Array.isArray(editor.classes) ? editor.classes : [];
       const id = `weir-da-candidate-${editor.principleId ?? "entry"}`;
       const pending = props.pending === true;
       const tooLong = text.length > 600;
@@ -264,10 +262,6 @@ window.__ModuleLoader__.load({
           children: t("decisionScopeAdd"),
         }, "add"),
       ] }, kind);
-      const toggleClass = entry => {
-        const next = classes.includes(entry) ? classes.filter(value => value !== entry) : ["A", "B", "C"].filter(value => value === entry || classes.includes(value));
-        patch({ classes: next });
-      };
       return jsx.jsxs("div", { className: "weir-da-candidate-editor", "data-principle-editor": editor.principleId ?? "" , children: [
         jsx.jsxs("div", { className: "weir-da-field", "data-field": `${id}-text`, children: [
           jsx.jsx("label", { htmlFor: `${id}-text`, children: t("decisionPrincipleText") }, "label"),
@@ -280,13 +274,6 @@ window.__ModuleLoader__.load({
         ] }, "text"),
         scopeRows("path", paths),
         scopeRows("tag", tags),
-        jsx.jsx("div", { className: "weir-da-scope-list", "data-principle-class-set": true, children: [
-          jsx.jsx("p", { className: "weir-da-caption", children: t("decisionScopeClasses") }, "label"),
-          jsx.jsx("div", { className: "weir-da-scope-class-row", role: "group", "aria-label": t("decisionScopeClasses"), children: ["A", "B", "C"].map(entry => jsx.jsx("button", {
-            type: "button", "data-principle-class": entry, "aria-pressed": classes.includes(entry), disabled: pending,
-            onClick: () => toggleClass(entry), children: entry,
-          }, entry)) }),
-        ] }, "classes"),
         props.zone === "public" ? null : jsx.jsx("p", { className: "weir-da-caption", "data-principle-workspace": "fixed", children: `${t("decisionScopeCurrentWorkspace")} · ${t("decisionPrincipleWorkspaceFixed")}` }, "workspace"),
         props.error ? jsx.jsx("p", { role: "alert", className: "weir-da-field-error", "data-principle-editor-error": true, children: t(props.error) }, "error") : null,
         jsx.jsxs("div", { className: "weir-da-actions", children: [

@@ -631,15 +631,6 @@ function decideConsolidation(options, obs) {
   return textChunks(JSON.stringify({ operations: [{ op: 'add', principleId: 'local-principle', text: LOCAL_PRINCIPLE_TEXT, scope: { workspaces: [projection.workspaceKey] }, sources }] }))
 }
 
-function decideRouterClassification(options, obs) {
-  const pack = decisionPack(obs)
-  if (!pack || !Array.isArray(pack.questions)) throw new Error('decision-cross-workspace: malformed classification pack')
-  return textChunks(JSON.stringify({
-    contract: 'router-classification-contract/1',
-    classes: pack.questions.map(question => ({ id: question.id, authorizationClass: 'A' })),
-  }))
-}
-
 function decideRouterRoute(options, obs) {
   const pack = decisionPack(obs)
   const candidates = pack?.candidates ?? []
@@ -669,9 +660,8 @@ function observe(obs) {
   const kind = contract === 'Decision evaluator contract v3' ? 'evaluator'
     : contract === 'Decision consolidation contract v1' ? 'private-consolidation'
       : contract === 'Decision public consolidation contract v1' ? 'public-consolidation'
-        : contract === 'Auto request classification contract: router-classification-contract/1' ? 'router-classification'
-          : contract === 'Auto candidate router contract: router-contract/1' ? 'router-route'
-            : null
+        : contract === 'Auto candidate router contract: router-contract/1' ? 'router-route'
+          : null
   const pack = decisionPack(obs)
   return {
     xwsPhase: process.env.WEIR_IT_XWS_PHASE ?? null,
@@ -694,9 +684,9 @@ function assert(view) {
   else view.check('cross-workspace matrix driver', true, message)
 }
 
-export { id, prompt, PHASES, MARKERS, AGENT_NAME, CROSS_WIRE, LEARNING_WIRE, stepsFor, observe, decide, decideDecision, decideConsolidation, decideRouterClassification, decideRouterRoute, assert }
+export { id, prompt, PHASES, MARKERS, AGENT_NAME, CROSS_WIRE, LEARNING_WIRE, stepsFor, observe, decide, decideDecision, decideConsolidation, decideRouterRoute, assert }
 
 export default {
   id, prompt, PHASES, decide, decideDecision, decideConsolidation,
-  decideRouterClassification, decideRouterRoute, observe, assert,
+  decideRouterRoute, observe, assert,
 }

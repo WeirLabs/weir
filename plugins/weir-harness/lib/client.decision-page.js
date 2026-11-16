@@ -79,7 +79,6 @@ window.__ModuleLoader__.load({
       const parts = [];
       if (Array.isArray(scope.workspaces) && scope.workspaces.length) parts.push(t("decisionScopeCurrentWorkspace"));
       for (const key of ["paths", "tags"]) for (const value of Array.isArray(scope[key]) ? scope[key] : []) if (typeof value === "string") parts.push(value);
-      if (Array.isArray(scope.authorizationClasses)) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
 
@@ -104,9 +103,6 @@ window.__ModuleLoader__.load({
         for (const entry of Array.isArray(value[key]) ? value[key] : []) {
           if (typeof entry === "string" && entry && !UNSAFE_PUBLIC_HINT.test(entry)) parts.push(entry);
         }
-      }
-      for (const entry of Array.isArray(value.authorizationClasses) ? value.authorizationClasses : []) {
-        if (typeof entry === "string" && entry) parts.push(`${t("decisionAuthorizationClasses")}: ${entry}`);
       }
       return parts.join(" · ");
     }
@@ -268,6 +264,7 @@ window.__ModuleLoader__.load({
         // The escalation reason is the one thing the user must not miss: it is
         // an accent-barred notice, not another flat paragraph.
         jsx.jsx(ui.Notice, { tone: "warn", children: current.escalation?.missing?.[0] ?? t(evidenceView?.reasonKey ?? summary?.reasonKey ?? "decisionReasonUnknown") }, "reason"),
+        (evidenceView?.reasonDetailKey ?? summary?.reasonDetailKey) ? jsx.jsx("p", { className: "weir-da-caption", "data-inbox-reason-detail": true, children: t(evidenceView?.reasonDetailKey ?? summary?.reasonDetailKey) }, "reason-detail") : null,
         // The tentative suggestions are rendered once, inside the shared answer
         // form, so the inbox card hosts no second copy above it.
         jsx.jsx(ui.DecisionAnswers, {
@@ -383,10 +380,6 @@ window.__ModuleLoader__.load({
       return state === "enabled" ? "decisionAgentStateEnabled" : state === "disabled" ? "decisionAgentStateDisabled" : state === "archived" ? "decisionAgentStateArchived" : "decisionStatusUnknown";
     }
     // ---- assistant expertise scope and model route (visual editing) ----
-    // The closed authorization class set, in canonical order: the same three
-    // values the settings whitelist accepts. The generated scope arrays follow
-    // this order, never the click order.
-    const AGENT_SCOPE_CLASSES = ["A", "B", "C"];
 
     /** Trimmed, de-duplicated, non-empty entries — empty rows stay in the local
      * row list (so the user keeps their unfinished line) but never enter JSON. */
@@ -394,32 +387,25 @@ window.__ModuleLoader__.load({
       return [...new Set((Array.isArray(rows) ? rows : []).map(row => row.trim()).filter(row => row.length > 0))];
     }
 
-    /** The staged scope JSON as local editor state: paths/tags as typed rows and
-     * the selected authorization classes. A missing `authorizationClasses` key
-     * (the create form's empty text, or a legacy text without the key) opens
-     * with every class selected — the server's own default; an EXPLICIT empty
-     * array stays empty, because that stored profile answers nothing and the
-     * editor must not silently grant classes on an unrelated row edit. */
+    /** The staged scope JSON as local editor state: paths/tags as typed rows. A
+     * legacy `authorizationClasses` field in the staged text is ignored, never
+     * rendered and never written back. */
     function parseScopeText(text) {
       let value = null;
       try { value = JSON.parse(text); } catch { value = null; }
       const readList = key => Array.isArray(value?.[key]) ? value[key].filter(entry => typeof entry === "string") : [];
-      const classes = Array.isArray(value?.authorizationClasses)
-        ? [...new Set(value.authorizationClasses.filter(entry => AGENT_SCOPE_CLASSES.includes(entry)))]
-        : [...AGENT_SCOPE_CLASSES];
-      return { paths: readList("paths"), tags: readList("tags"), classes };
+      return { paths: readList("paths"), tags: readList("tags") };
     }
 
     /** The visual scope state as the staged JSON text — paths/tags only when
-     * actually filled, authorization classes always, and NEVER `workspaces`
-     * (an assistant is profile-global; workspace membership is not its setting). */
+     * actually filled, and NEVER `workspaces` or `authorizationClasses` (an
+     * assistant is profile-global; the class axis no longer exists). */
     function composeScopeText(visual) {
       const scope = {};
       const paths = nonEmptyRows(visual.paths);
       if (paths.length > 0) scope.paths = paths;
       const tags = nonEmptyRows(visual.tags);
       if (tags.length > 0) scope.tags = tags;
-      scope.authorizationClasses = AGENT_SCOPE_CLASSES.filter(entry => (visual.classes ?? []).includes(entry));
       return JSON.stringify(scope);
     }
 
@@ -505,34 +491,14 @@ window.__ModuleLoader__.load({
       ] });
     }
 
-    /** The assistant's expertise scope: path prefixes, tags and the A/B/C
-     * authorization classes. Every change re-synthesizes scopeText; at least
-     * one class always stays selected (the profile has no "no class" state). */
+    /** The assistant's expertise scope: path prefixes and tags only. Every
+     * change re-synthesizes scopeText; the workspace and any legacy class field
+     * are never part of it. */
     function AgentScopeEditor(props) {
       const { visual, ui, t, pending } = props;
-      const classes = visual.classes ?? [];
-      const toggleClass = entry => {
-        if (classes.includes(entry)) {
-          if (classes.length === 1) return;
-          props.onPatch({ classes: classes.filter(value => value !== entry) });
-          return;
-        }
-        props.onPatch({ classes: AGENT_SCOPE_CLASSES.filter(value => value === entry || classes.includes(value)) });
-      };
       return jsx.jsxs("div", { className: "weir-da-scope-editor", "data-scope-editor": true, children: [
         AgentScopeRowList({ kind: "path", labelKey: "decisionScopePaths", values: visual.paths ?? [], ui, t, pending, onChange: paths => props.onPatch({ paths }) }),
         AgentScopeRowList({ kind: "tag", labelKey: "decisionScopeTags", values: visual.tags ?? [], ui, t, pending, onChange: tags => props.onPatch({ tags }) }),
-        jsx.jsxs("div", { className: "weir-da-scope-classes", children: [
-          jsx.jsx("p", { className: "weir-da-caption", children: t("decisionScopeClasses") }, "label"),
-          jsx.jsx("div", { className: "weir-da-scope-class-row", role: "group", "aria-label": t("decisionScopeClasses"), "data-scope-class-set": true, children: AGENT_SCOPE_CLASSES.map(entry => {
-            const selected = classes.includes(entry);
-            return jsx.jsx("button", {
-              type: "button", id: `weir-da-agent-scope-class-${entry}`, "data-scope-class": entry, "aria-pressed": selected,
-              "aria-disabled": selected && classes.length === 1, disabled: pending, onClick: () => toggleClass(entry), children: entry,
-            }, entry);
-          }) }),
-          jsx.jsx("p", { className: "weir-da-caption", "data-scope-class-minimum": true, children: t("decisionScopeClassMinimum") }, "minimum"),
-        ] }, "classes"),
       ] });
     }
 
@@ -947,8 +913,8 @@ window.__ModuleLoader__.load({
       const candidateEntryRefs = react.useRef({});
       const candidateTextRef = react.useRef(null);
       const lastActionErrorRef = react.useRef(null);
-      // Local row state for the visual scope/route editors (paths, tags, classes,
-      // rungs). It is derived from the staged texts and never authoritative:
+      // Local row state for the visual scope/route editors (paths, tags, rungs).
+      // It is derived from the staged texts and never authoritative:
       // agentVisualState re-initializes it whenever the editor target or the
       // staged text changes, so switching assistants cannot leak rows.
       const [agentVisual, setAgentVisual] = react.useState(null);
@@ -1481,14 +1447,12 @@ window.__ModuleLoader__.load({
         const content = item?.after;
         if (!content || typeof item.principleId !== "string" || pendingRef.current) return;
         const scope = content.scope && typeof content.scope === "object" ? content.scope : {};
-        const classes = Array.isArray(scope.authorizationClasses) ? scope.authorizationClasses.filter(entry => ["A", "B", "C"].includes(entry)) : [];
         setCandidateEditorError(null);
         setCandidateEditor({
           principleId: item.principleId,
           text: typeof content.text === "string" ? content.text : "",
           paths: Array.isArray(scope.paths) ? [...scope.paths] : [],
           tags: Array.isArray(scope.tags) ? [...scope.tags] : [],
-          classes,
         });
         requestAgentFocus("candidate-editor");
       };
@@ -1533,8 +1497,6 @@ window.__ModuleLoader__.load({
         if (paths.length) scope.paths = paths;
         const tags = [...new Set(editor.tags.map(row => row.trim()).filter(Boolean))];
         if (tags.length) scope.tags = tags;
-        const classes = ["A", "B", "C"].filter(entry => editor.classes.includes(entry));
-        if (classes.length) scope.authorizationClasses = classes;
         const result = await submitCandidateUpdate(target, [{ principleId: editor.principleId, text, scope }]);
         if (!result) return;
         recordCandidateEdit(target.snapshotId, "edited");
@@ -1580,11 +1542,16 @@ window.__ModuleLoader__.load({
       const backToAgents = () => { setAgentDrillIn(false); requestAgentFocus(editor?.mode === "create" ? "create-list" : "summary"); };
       const saveEditor = async () => {
         if (!editor || pendingRef.current) return;
+        // The visual scope state is the single source of truth: the staged text
+        // is re-synthesized from it, so a legacy `authorizationClasses` field in
+        // the opened JSON can never be written back (paths/tags only).
+        const visual = agentVisualState(editor, agentVisual);
+        const scope = visual ? JSON.parse(composeScopeText(visual)) : undefined;
         let payload;
         try {
           payload = {
             ...(editor.agentId ? { agentId: editor.agentId } : {}), name: editor.name.trim(), userDescription: editor.preference,
-            ...(editor.scopeText.trim() ? { scope: JSON.parse(editor.scopeText) } : {}),
+            ...(scope && Object.keys(scope).length ? { scope } : {}),
             ...(editor.routeText.trim() ? { modelRoute: JSON.parse(editor.routeText) } : {}),
           };
         } catch (reason) { setActionError(asError(reason, "INVALID_ADVANCED_SETTINGS")); return; }
@@ -1770,7 +1737,7 @@ window.__ModuleLoader__.load({
       const patchEditorVisual = patch => {
         if (!editor || !editorVisual) return;
         const next = { ...editorVisual, ...patch };
-        if ("paths" in patch || "tags" in patch || "classes" in patch) next.scopeText = composeScopeText(next);
+        if ("paths" in patch || "tags" in patch) next.scopeText = composeScopeText(next);
         if ("rungs" in patch) next.routeText = composeRouteText(next);
         setAgentVisual(next);
         setEditor(current => {

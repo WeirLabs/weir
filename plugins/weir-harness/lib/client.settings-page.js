@@ -41,12 +41,6 @@ window.__ModuleLoader__.load({
 		// Object.keys(DEFAULT_CATEGORIES) from src/delegate/categories.js, so a
 		// registry change cannot drift the two sides.
 		const CATEGORY_NAMES = ["quick", "deep", "deep-plus", "visual", "writing", "general-low", "general-high", "artistry", "architect"];
-		// The closed Auto authorization-class set, in canonical order — the SINGLE
-		// client-side source for the A/B/C chip editors (settings whitelist and
-		// assistant scope alike). The server accepts exactly these three values
-		// (src/settings/sections.js parseAutoAnswerClasses) and this order is the
-		// one the synthesized JSON arrays use.
-		const CLASS_SET_ROWS = ["A", "B", "C"];
 		// Restart-required settings keys, in registry order — the SINGLE
 		// client-side source for the post-save restart reminder AND the
 		// always-on inline restart tag (same list, one source; do not
@@ -122,7 +116,7 @@ window.__ModuleLoader__.load({
 			{ id: "decisionBasics", page: "decision", fields: [
 				{ field: "decisionAgentsEnabled", kind: "boolean" },
 				{ field: "decisionAgentSelectorDefault", kind: "enum", values: ["off", "auto"], parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") },
-				{ field: "decisionAgentAutoAnswerClasses", kind: "custom", slot: "classSet", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") }
+				{ field: "decisionAgentAutoAnswer", kind: "boolean", parent: "decisionAgentsEnabled", when: enabledWhen("decisionAgentsEnabled") }
 			] },
 			{ id: "decisionAdvanced", page: "decision", advanced: true, fields: [
 				{ field: "decisionAgentAnswerTimeoutMs", kind: "number", when: enabledWhen("decisionAgentsEnabled") },
@@ -224,7 +218,7 @@ window.__ModuleLoader__.load({
 			decisionAgentsEnabled: false,
 			decisionAgentSelectorDefault: "off",
 			decisionAgentAutoShadow: false,
-			decisionAgentAutoAnswerClasses: "[]",
+			decisionAgentAutoAnswer: false,
 			decisionAgentAnswerTimeoutMs: 60000,
 			decisionAgentMaxAttemptsPerCase: 3,
 			decisionAgentContextBudgetTokens: 24000,
@@ -986,23 +980,6 @@ window.__ModuleLoader__.load({
 						const MaintenanceField = props.editors?.EditLockMaintenanceField;
 						return typeof MaintenanceField === "function" ? wrap(react_jsx_runtime.jsx(MaintenanceField, { t })) : null;
 					}
-					if (node.slot === "classSet") {
-						// The Auto whitelist is a CLOSED A/B/C set: three chips synthesize
-						// the stored JSON array, never a hand-typed box. An unbound editor
-						// (chunk still in flight) leaves the card intact.
-						const ClassSetField = props.editors?.ClassSetEditorField;
-						if (typeof ClassSetField !== "function") return null;
-						return wrap(react_jsx_runtime.jsx(ClassSetField, {
-							field: node.field,
-							rows: CLASS_SET_ROWS,
-							text: field?.text ?? "",
-							overridden: field?.overridden ?? false,
-							edit: (name, text) => props.edit(name, text),
-							onReset: () => props.resetField(node.field),
-							t,
-							disabled
-						}));
-					}
 					// notifyPermissions: the macOS-only permission entry
 					return wrap(react_jsx_runtime.jsx(props.editors.NotifyPermissionsField, { t }));
 				}
@@ -1146,7 +1123,7 @@ window.__ModuleLoader__.load({
 			en: {
 				description: "One-stop configuration for the Weir preset: intent classification, auto-continuation, context pressure, file editing, worktree lanes, read-only shell, LSP, and notifications; model routing is a separate page.",
 				routingDescription: "Which models delegated children run on: per task category or curated agent, with ordered fallbacks.",
-				decisionDescription: "The decision assistant's everyday policy: the master switch, the default for new root sessions, and which authorization classes Auto may answer; runtime limits and the Auto Shadow diagnostic live in the collapsed advanced section.",
+				decisionDescription: "The decision assistant's everyday policy: the master switch, the default for new root sessions, and whether Auto may adopt its conclusion; runtime limits and the Auto Shadow diagnostic live in the collapsed advanced section.",
 				unavailable: "This plugin is not loaded, so it cannot be configured right now.",
 				readOnly: "This deployment stores settings read-only.",
 				saveFailed: "The deployment did not accept these values; they were left for you to correct.",
@@ -1235,8 +1212,8 @@ window.__ModuleLoader__.load({
 				decisionAgentSelectorDefaultOptionAuto: "Auto",
 				decisionAgentAutoShadow: "Auto Shadow diagnostics",
 				decisionAgentAutoShadowHint: "Observe eligible pinned Cases without changing their Agent, answer, evidence, Attempts, or delivery (default off).",
-				decisionAgentAutoAnswerClasses: "Auto answer classes",
-				decisionAgentAutoAnswerClassesHint: "Authorization classes Auto may answer. Classes you leave off are still classified, routed, and evaluated, but the conclusion waits for you; an invalid stored value opens with every class off.",
+				decisionAgentAutoAnswer: "Allow automatic answers",
+				decisionAgentAutoAnswerHint: "When on, an Auto conclusion is adopted only after every evidence and authority gate passes. When off (the default), Auto still chooses the assistant and evaluates, but the conclusion waits for you; a stored value that is not a boolean opens as off.",
 				decisionAgentAnswerTimeoutMs: "Attempt timeout (ms)",
 				decisionAgentAnswerTimeoutMsHint: "Hard deadline for one evaluation before native user escalation (default 60000).",
 				decisionAgentMaxAttemptsPerCase: "Attempt budget",
@@ -1389,8 +1366,8 @@ window.__ModuleLoader__.load({
 				decisionAgentSelectorDefaultOptionAuto: "Auto",
 				decisionAgentAutoShadow: "Auto Shadow 诊断",
 				decisionAgentAutoShadowHint: "只观察合格的钉选 Case，不改变其 Agent、答案、证据、Attempt 或投递（默认关闭）。",
-				decisionAgentAutoAnswerClasses: "自动回答类别",
-				decisionAgentAutoAnswerClassesHint: "允许 Auto 自动回答的授权类别。未允许的类别仍会分类、路由并评估，但结论交给你；存储值非法时以全部关闭打开。",
+				decisionAgentAutoAnswer: "允许自动回答",
+				decisionAgentAutoAnswerHint: "打开后，Auto 的结论只有通过全部证据与授权闸门才会被采纳。关闭（默认）时 Auto 仍会选择助手并评估，但结论交给你；存储值不是布尔时以关闭打开。",
 				decisionAgentAnswerTimeoutMs: "Attempt 超时（毫秒）",
 				decisionAgentAnswerTimeoutMsHint: "单次评估的硬期限，超时后走原生用户升级（默认 60000）。",
 				decisionAgentMaxAttemptsPerCase: "Attempt 次数上限",
@@ -1460,7 +1437,6 @@ window.__ModuleLoader__.load({
 		exports.displayText = displayText;
 		exports.CURATED_AGENT_NAMES = CURATED_AGENT_NAMES;
 		exports.CATEGORY_NAMES = CATEGORY_NAMES;
-		exports.CLASS_SET_ROWS = CLASS_SET_ROWS;
 		exports.RESTART_FIELDS = RESTART_FIELDS;
 		exports.FIELDS = FIELDS;
 		exports.fieldsForPage = fieldsForPage;

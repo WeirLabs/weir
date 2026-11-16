@@ -167,14 +167,14 @@ window.__ModuleLoader__.load({
       const value = okValue(payload) ?? payload;
       const agents = array(value?.agents).filter(agent => agent && agent.state === "enabled" && typeof agent.agentId === "string");
       const autoValue = object(value?.auto);
-      const known = autoValue !== null && Array.isArray(autoValue.answerClasses) && typeof autoValue.shadow === "boolean";
-      const answerClasses = known ? [...new Set(autoValue.answerClasses.filter(item => ["A", "B", "C"].includes(item)))] : [];
-      const auto = { known, answerClasses, shadow: known ? autoValue.shadow : false, ready: known && answerClasses.length > 0 };
+      const known = autoValue !== null && typeof autoValue.autoAnswer === "boolean" && typeof autoValue.shadow === "boolean";
+      const autoAnswer = known ? autoValue.autoAnswer : false;
+      const auto = { known, autoAnswer, shadow: known ? autoValue.shadow : false, ready: known && autoAnswer };
       return [
         { value: "off", mode: "off", labelKey: "decisionOff" },
         {
           value: "auto", mode: "auto", labelKey: "decisionAuto", auto,
-          descriptionKey: !known ? "decisionAutoReadinessUnknown" : auto.ready ? "decisionAutoWhitelist" : "decisionAutoEmptyWhitelist",
+          descriptionKey: !known ? "decisionAutoReadinessUnknown" : auto.ready ? "decisionAutoAnswerOn" : "decisionAutoAnswerOff",
           shadowKey: !known ? "decisionAutoShadowUnknown" : auto.shadow ? "decisionAutoShadowOn" : "decisionAutoShadowOff",
         },
         ...agents.map(agent => ({ value: agent.agentId, mode: "agent", label: text(agent.name, agent.agentId), agent })),
@@ -255,6 +255,24 @@ window.__ModuleLoader__.load({
     };
     const ROUTE_FAILURE_REASONS = ["failure:timeout", "failure:model_error", "failure:invalid_output", "failure:truncated", "failure:aborted", "failure:route_unavailable", "failure:candidate_limit", "failure:context_budget"];
 
+    // The specific sub-reason a routing failure carries, in plain language: a
+    // failed route must never surface as a bare "routing failed".
+    const ROUTE_FAILURE_REASON_KEYS = {
+      "failure:timeout": "decisionRouteFailureTimeout",
+      "failure:truncated": "decisionRouteFailureTruncated",
+      "failure:invalid_output": "decisionRouteFailureInvalidOutput",
+      "failure:route_unavailable": "decisionRouteFailureRouteUnavailable",
+      "failure:model_error": "decisionRouteFailureModelError",
+      "failure:context_budget": "decisionRouteFailureContextBudget",
+      "failure:candidate_limit": "decisionRouteFailureCandidateLimit",
+      "failure:aborted": "decisionRouteFailureAborted",
+    };
+
+    function routeFailureReasonKey(reason) {
+      if (typeof reason !== "string" || !reason) return null;
+      return ROUTE_FAILURE_REASON_KEYS[reason] ?? "decisionRouteFailureUnknown";
+    }
+
     function routeStatus(route) {
       if (typeof route?.chosen === "string" && route.chosen) return "selected";
       if (ROUTE_FAILURE_REASONS.includes(route?.reason)) return "failure";
@@ -273,6 +291,13 @@ window.__ModuleLoader__.load({
       return "decisionReasonUnownedNoRoute";
     }
 
+    /** The bounded sub-reason of the latest authoritative failed route, if any. */
+    function unownedRouteDetailKey(routes, routeStatusHint) {
+      const latest = [...array(routes)].reverse().find(route => object(route) !== null && text(route.mode) !== "auto_shadow");
+      const status = latest ? routeStatus(latest) : ["selected", "failure", "ambiguous", "none"].includes(routeStatusHint) ? routeStatusHint : null;
+      return status === "failure" ? routeFailureReasonKey(latest?.reason) : null;
+    }
+
     function routeDecisionHistory(routes, agents, locale) {
       const t = translator(locale);
       const name = agentId => typeof agentId === "string" && agentId ? array(agents).find(agent => agent?.agentId === agentId)?.name ?? null : null;
@@ -286,6 +311,7 @@ window.__ModuleLoader__.load({
           ...route, mode, modeKey: ROUTE_MODE_KEYS[mode] ?? "decisionRouteModeUnknown",
           statusKey: `decisionRouteStatus${status[0].toUpperCase()}${status.slice(1)}`,
           choiceName: chosen ? name(chosen) ?? t("decisionSelectionUnavailable") : null,
+          failureReasonKey: status === "failure" ? routeFailureReasonKey(route.reason) : null,
         };
         if (mode === "manual_reassign") {
           item.from = authoritative;
@@ -325,6 +351,7 @@ window.__ModuleLoader__.load({
         variant: status.variant,
         statusKey: status.statusKey,
         reasonKey: !assigned && current.awaitingReason === "no_route" ? unownedRouteReasonKey(routes, current.routeStatus) : reasonKey(current.awaitingReason ?? current.decision?.code),
+        reasonDetailKey: !assigned && current.awaitingReason === "no_route" ? unownedRouteDetailKey(routes, current.routeStatus) : null,
         time: text(current.createdAt, text(current.updatedAt, text(current.closedAt))),
         feedbackState: current.feedbackState,
       };
@@ -359,6 +386,7 @@ window.__ModuleLoader__.load({
         variant: status.variant,
         statusKey: status.statusKey,
         reasonKey: !assigned && current.awaitingReason === "no_route" ? unownedRouteReasonKey(detail.routeDecisions, current.routeStatus) : reasonKey(current.awaitingReason ?? decision?.code ?? currentAttempt?.reasonCode),
+        reasonDetailKey: !assigned && current.awaitingReason === "no_route" ? unownedRouteDetailKey(detail.routeDecisions, current.routeStatus) : null,
         questionSummary: questionSummary(current),
         answerSummary: answerSummary(decision),
         summary,
@@ -425,7 +453,6 @@ window.__ModuleLoader__.load({
       const parts = [];
       if (array(scope.workspaces).length) parts.push(t("decisionScopeCurrentWorkspace"));
       for (const key of ["paths", "tags"]) for (const value of array(scope[key])) if (typeof value === "string") parts.push(value);
-      if (array(scope.authorizationClasses).length) parts.push(`${t("decisionAuthorizationClasses")}: ${scope.authorizationClasses.join(", ")}`);
       return parts.length ? parts.join(" · ") : t("decisionCurrentScope");
     }
 
@@ -685,7 +712,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
     function publicScopeHints(scope) {
       const value = object(scope) ?? {};
       const hints = {};
-      for (const key of ["paths", "tags", "authorizationClasses"]) {
+      for (const key of ["paths", "tags"]) {
         const entries = array(value[key]).filter(item => typeof item === "string" && item.length > 0 && item.length <= 200 && !UNSAFE_PUBLIC_HINT.test(item));
         if (entries.length) hints[key] = entries;
       }
@@ -842,7 +869,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionPageDescription: "Let assistants handle repeatable decisions with evidence; important authority remains with you.", decisionPrimaryNavigation: "Decision assistant tasks", decisionInboxEmpty: "Nothing needs your decision right now.", decisionSelectRecord: "Choose a decision record to read its details.", decisionNoAnswer: "No answer is recorded.", decisionReasonSummary: "Why this decision was made", decisionCurrentEvidence: "Evidence for the current evaluation", decisionNoEvidence: "No verifiable evidence is attached to the current evaluation.", decisionEvidenceUnavailable: "The evidence exists, but no readable excerpt is available.", decisionEvidenceDeleted: "This supporting material was deleted.", decisionEvidenceSuperseded: "This supporting material has been superseded.", decisionRecoveryActions: "Recovery actions", decisionChooseAssistant: "Choose an assistant", decisionViewAssistant: "View assistant",
         decisionNativeAnswerHint: "Answer in the original question above; this card only explains the decision.", decisionCancelTitle: "Cancel this decision?", decisionCancelConfirmation: "The pending request will be cancelled. Its read-only history remains available.", decisionKeepEditing: "Keep editing",
         decisionRecordFilters: "Record filters", decisionFilterAgent: "Assistant", decisionFilterState: "Status", decisionFilterOutcome: "Evaluation result", decisionFilterReason: "Return reason", decisionFilterScope: "Scope contains", decisionFilterFeedback: "Feedback", decisionAllAssistants: "All assistants", decisionAllStates: "All statuses", decisionAllOutcomes: "All results", decisionAllReasons: "All reasons", decisionAllFeedback: "All feedback", decisionMoreFilters: "More filters", decisionApplyFilters: "Apply filters", decisionLoadMore: "Load more", decisionBackToRecords: "Back to decision records", decisionStatusClosed: "Closed", decisionOutcomeAnswer: "Answered by the assistant", decisionOutcomeReturn: "Returned for more input", decisionOutcomeEscalate: "Escalated to you", decisionOutcomeFailed: "Evaluation failed", decisionFeedbackNone: "No rating", decisionFeedbackValidated: "Confirmed", decisionFeedbackDisputed: "Disputed",
-        decisionReviewedPrinciplesUsed: "Reviewed principles were available as non-authoritative guidance", decisionPinnedEmpty: "A principle version was pinned, but no reviewed principles were loaded.", decisionNoReviewedPrinciples: "No reviewed principles were used.", decisionHistoricalContextUsed: "Historical references were included", decisionNoHistoricalContext: "No historical references were used.", decisionLegacyMemory: "No reviewed-principle or historical-reference use was recorded for this evaluation.", decisionEvaluationNumber: "Evaluation", decisionEvaluationHistory: "Evaluation history", decisionNoEarlierEvaluations: "No earlier evaluations.", decisionFeedbackHistory: "Feedback history", decisionNoFeedback: "No feedback has been recorded.", decisionNoteNoEffect: "A note is retained with this record and does not change future decisions.", decisionAddNote: "Add note", decisionCorrectionScope: "Applies to", decisionCorrectionTarget: "Supersedes the answer to", decisionCorrectionFutureOnly: "Only future decisions are affected; the original answer remains unchanged.", decisionSubmitCorrection: "Submit correction", decisionCurrentScope: "The current record scope", decisionAuthorizationClasses: "Authorization classes",
+        decisionReviewedPrinciplesUsed: "Reviewed principles were available as non-authoritative guidance", decisionPinnedEmpty: "A principle version was pinned, but no reviewed principles were loaded.", decisionNoReviewedPrinciples: "No reviewed principles were used.", decisionHistoricalContextUsed: "Historical references were included", decisionNoHistoricalContext: "No historical references were used.", decisionLegacyMemory: "No reviewed-principle or historical-reference use was recorded for this evaluation.", decisionEvaluationNumber: "Evaluation", decisionEvaluationHistory: "Evaluation history", decisionNoEarlierEvaluations: "No earlier evaluations.", decisionFeedbackHistory: "Feedback history", decisionNoFeedback: "No feedback has been recorded.", decisionNoteNoEffect: "A note is retained with this record and does not change future decisions.", decisionAddNote: "Add note", decisionCorrectionScope: "Applies to", decisionCorrectionTarget: "Supersedes the answer to", decisionCorrectionFutureOnly: "Only future decisions are affected; the original answer remains unchanged.", decisionSubmitCorrection: "Submit correction", decisionCurrentScope: "The current record scope",
         decisionAgentStateEnabled: "Enabled", decisionAgentStateDisabled: "Disabled", decisionAgentStateArchived: "Archived", decisionNoPreference: "No decision preference recorded.", decisionVersionUnavailable: "Version unavailable in the summary", decisionPrincipleDetailsOnOpen: "Open the assistant to review principle versions.", decisionPendingReview: "Changes await review", decisionEditAgent: "Edit assistant", decisionAgentName: "Name", decisionAgentPreference: "Decision preference (optional)", decisionAgentPreferenceHint: "Plain-language guidance for this assistant.", decisionAdvancedSettings: "Advanced settings", decisionAdvancedSettingsHint: "Expertise scope and model routing are edited as ordinary rows and chips. Assistants carry no workspace ownership setting.", decisionDisableAgent: "Disable assistant", decisionEnableAgent: "Enable assistant", decisionArchiveAgent: "Archive assistant", decisionProfileHistory: "Preference version history", decisionDiscardTitle: "Discard unsaved changes?", decisionDiscardConfirmation: "Your unsaved assistant edits will be lost.", decisionDiscard: "Discard changes", decisionArchiveTitle: "Archive this assistant?", decisionArchiveConfirmation: "The assistant can no longer receive new decisions. Existing records and history are retained.", decisionDisableTitle: "Disable this assistant?", decisionDisableConfirmation: "New decisions will not be routed to this assistant until it is enabled again.", decisionEnableTitle: "Enable this assistant?", decisionEnableConfirmation: "This assistant can receive new decisions again.",
         decisionDeleteAgent: "Delete assistant", decisionDeleteAgentTitle: "Permanently delete this assistant?", decisionDeleteAgentLead: "This cannot be undone. The assistant and every record it owns across ALL workspaces of this profile will be permanently deleted:", decisionDeleteCountCases: "Decision records (with their evaluations)", decisionDeleteCountEvidence: "Evidence", decisionDeleteCountFeedback: "Feedback and corrections", decisionDeleteCountLearning: "Learning runs and memory versions (including public memory)", decisionDeleteAgentConfirm: "Delete permanently", decisionDeleteStale: "The assistant gained new records since the preview; open the delete confirmation again.",
         decisionMetricActivity: "Activity", decisionMetricReturns: "Returns by reason", decisionMetricEvidenceFailures: "Evidence issues", decisionMetricFeedback: "Feedback", decisionMetricCasesOpened: "Decisions opened", decisionMetricAttemptsTotal: "Evaluations", decisionMetricAutoAnswered: "Automatically answered", decisionMetricAutoAnswerRate: "Automatic answer rate", decisionMetricEscalated: "Decided by you", decisionMetricExhausted: "Needs attention", decisionMetricCancelled: "Cancelled", decisionMetricInterrupted: "Interrupted evaluations", decisionMetricCorrections: "Corrections", decisionMetricReassignments: "Reassignments", decisionMetricFeedbackParticipation: "Records with feedback", decisionMetricSelectorOffBypasses: "Off bypasses (not sampled)", decisionMetricMeanLatency: "Mean evaluation latency", decisionMetricEvidenceStale: "Stale evidence", decisionMetricEvidenceConflicting: "Conflicting evidence", decisionMetricEvidenceDeleted: "Deleted evidence", decisionMetricRatingsUp: "Confirmations", decisionMetricRatingsDown: "Disputes", decisionMetricRatingsUndone: "Undone ratings", decisionMetricWindow: "Window", decisionMetricWindowAll: "All time", decisionMetricWindow24h: "Last 24 hours", decisionMetricWindow7d: "Last 7 days", decisionMetricWindow30d: "Last 30 days", decisionRawMetrics: "Raw metric values",
@@ -855,11 +882,17 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionUp: "Confirm", decisionDown: "Dispute", decisionUndo: "Undo rating", decisionUndoUp: "Undo confirmation", decisionUndoDown: "Undo dispute", decisionComment: "Note", decisionCorrect: "Correction", decisionConfirmConsequence: "Confirmation supports this answer only within its original scope.", decisionDisputeConsequence: "Dispute immediately stops this answer from being used alone for automatic answers; it does not infer the opposite answer.", decisionFeedbackHintShort: "Confirm supports this answer only within its original scope; dispute stops it from answering alone.", decisionCustomAnswer: "Custom…", decisionCustomAnswerPlaceholder: "Answer in your own words", decisionClarify: "Ask for more context", decisionClarifyHint: "The assistant answers from this decision\u2019s current evidence only; nothing new is decided.", decisionClarifyPlaceholder: "Ask about the evidence or scope of this decision", decisionClarifySubmit: "Ask", decisionClarifyLimit: "The clarification limit for this decision has been reached.", decisionClarifyYouAsked: "You asked", decisionClarifyAnswer: "The assistant added", decisionClarifyRecord: "Clarification", decisionBounce: "Return to initiator", decisionBounceHint: "The initiator is asked to rework the question; without a revision this decision closes as returned at the end of the turn.", decisionBouncePlaceholder: "Why does this question need rework? (required)", decisionBounceSubmit: "Return",
         decisionDecide: "Submit decision", decisionReassign: "Reassign", decisionCancel: "Cancel", decisionRetry: "Retry", decisionSave: "Save", decisionUseSuggestions: "Use suggestions", decisionAnswersIncomplete: "Answer every question before submitting.",
         decisionSelectTitle: "Choose a decision assistant", decisionSelectorSafety: "Assistants are shared across this profile\u2019s workspaces; approvals and high-risk actions still ask you.", decisionManageAgents: "Manage assistants", decisionCreateAgent: "New assistant",
-        decisionAuto: "Automatically choose an assistant", decisionAutoWhitelist: "Automatic answers are currently allowed for {count} decision categories.", decisionAutoEmptyWhitelist: "An assistant is still chosen to evaluate each decision, but automatic answers are not allowed yet; new decisions will still ask you.", decisionAutoReadinessUnknown: "Automatic-answer status is unknown; no automatic-answer capability is assumed.", decisionAutoShadowOn: "Selection comparison is on; it never changes the actual result.", decisionAutoShadowOff: "Selection comparison is not enabled.",
+        decisionAuto: "Automatically choose an assistant", decisionAutoAnswerOn: "An assistant is chosen automatically and its conclusion may be adopted when every evidence and authority gate passes.", decisionAutoAnswerOff: "An assistant is still chosen automatically and evaluates each decision, but the conclusion is handed to you; automatic answers are disabled.", decisionAutoReadinessUnknown: "Automatic-answer status is unknown; no automatic-answer capability is assumed.", decisionAutoShadowOn: "Selection comparison is on; it never changes the actual result.", decisionAutoShadowOff: "Selection comparison is not enabled.",
         decisionAutoShadowUnknown: "Selection comparison status is unknown.",
         decisionRoutingReview: "Routing review", decisionRoutingDiagnostic: "Route comparisons and counts are diagnostic only, not a quality score or automatic promotion.", decisionRoutingAgreement: "Shadow and pinned selections agree", decisionRoutingDisagreement: "Shadow and pinned selections differ", decisionRoutingShadowNone: "Shadow found no assistant", decisionRoutingShadowAmbiguous: "Shadow was ambiguous", decisionRoutingShadowFailure: "Shadow routing failed", decisionRoutingAutoNone: "Auto found no assistant", decisionRoutingAutoAmbiguous: "Auto was ambiguous", decisionRoutingAutoFailure: "Auto routing failed", decisionRoutingManualReassign: "Manually reassigned", decisionRoutingUncomparable: "Not comparable; no usable pinned baseline is recorded", decisionRoutingBaseline: "Pinned baseline for Shadow comparison", decisionRoutingAutoSelected: "Auto selected an assistant", decisionRoutingNoData: "No routing decisions in this window.", decisionRoutingOpenRecord: "Open the authorized decision record for", decisionRoutingShown: "Routing records shown",
         decisionRoutingDirection: "Reassignment direction (from → to)", decisionNoAssignedAgent: "No assistant selected",
         decisionRouteHistory: "Route decision history", decisionNoRouteHistory: "No routing decisions recorded.", decisionRouteModePinned: "Pinned assistant", decisionRouteModeExplicit: "Explicit consultation", decisionRouteModeAuto: "Auto route", decisionRouteModeShadow: "Shadow observation (diagnostic only)", decisionRouteModeManual: "Manual reassignment", decisionRouteModeNone: "No route", decisionRouteModeUnknown: "Unknown route mode", decisionRouteStatusSelected: "Assistant selected", decisionRouteStatusNone: "No assistant selected", decisionRouteStatusAmbiguous: "Routing is ambiguous", decisionRouteStatusFailure: "Routing failed", decisionReasonUnownedNoRoute: "No assistant was selected. You can answer directly or explicitly reassign this decision.", decisionReasonRouteFailure: "Automatic routing failed. You can answer directly or explicitly reassign this decision.",
+        // The specific route-failure reason: never leave the headline alone.
+        decisionRouteFailureTimeout: "The model call timed out.", decisionRouteFailureTruncated: "The model output was truncated before the verdict was complete.",
+        decisionRouteFailureInvalidOutput: "The model output could not be parsed as a routing verdict.", decisionRouteFailureRouteUnavailable: "The session model route is unavailable.",
+        decisionRouteFailureModelError: "The model call failed.", decisionRouteFailureContextBudget: "The context budget is too small for a routing verdict.",
+        decisionRouteFailureCandidateLimit: "There are more candidate assistants than the router accepts.", decisionRouteFailureAborted: "The routing call was cancelled.",
+        decisionRouteFailureUnknown: "The routing failure could not be classified.",
         decisionGlobalOff: "Decision assistants are off globally.", decisionGlobalOffHint: "No automatic decisions are made. Enable them in Settings → Weir → Decision assistants.",
         decisionAdvancedDiagnostics: "Advanced diagnostics", decisionStructuralQualityWarning: "Structural validation does not guarantee content quality.", decisionRateNotQuality: "Automatic answer rate is not a quality metric.", decisionHistoricalNotEvidence: "Historical context is not evidence for a decision.",
         decisionSelectionUnavailable: "The current selection is unavailable.", decisionErrorConflict: "The record changed. Reload the latest version before retrying.", decisionErrorUnavailable: "The selected assistant is unavailable. Choose another assistant or Off.",
@@ -922,7 +955,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionPageDescription: "让助手依据证据处理重复判断；重要权限仍由你决定。", decisionPrimaryNavigation: "决策助手任务", decisionInboxEmpty: "当前没有待你决定的事项。", decisionSelectRecord: "选择一条判断记录以查看详情。", decisionNoAnswer: "暂无记录的答案。", decisionReasonSummary: "判断理由", decisionCurrentEvidence: "本次处理的判断依据", decisionNoEvidence: "本次处理没有关联的可核验依据。", decisionEvidenceUnavailable: "依据存在，但没有可阅读的摘录。", decisionEvidenceDeleted: "该支持材料已删除。", decisionEvidenceSuperseded: "该支持材料已被取代。", decisionRecoveryActions: "恢复操作", decisionChooseAssistant: "选择助手", decisionViewAssistant: "查看助手",
         decisionNativeAnswerHint: "请在上方的原生问题中作答；此卡片仅说明判断情况。", decisionCancelTitle: "取消这次判断？", decisionCancelConfirmation: "待处理请求将被取消，只读历史仍会保留。", decisionKeepEditing: "继续编辑",
         decisionRecordFilters: "记录筛选", decisionFilterAgent: "助手", decisionFilterState: "状态", decisionFilterOutcome: "处理结果", decisionFilterReason: "返回原因", decisionFilterScope: "适用范围包含", decisionFilterFeedback: "反馈", decisionAllAssistants: "全部助手", decisionAllStates: "全部状态", decisionAllOutcomes: "全部结果", decisionAllReasons: "全部原因", decisionAllFeedback: "全部反馈", decisionMoreFilters: "更多筛选", decisionApplyFilters: "应用筛选", decisionLoadMore: "加载更多", decisionBackToRecords: "返回判断记录", decisionStatusClosed: "已结束", decisionOutcomeAnswer: "助手已回答", decisionOutcomeReturn: "返回等待补充", decisionOutcomeEscalate: "交由你决定", decisionOutcomeFailed: "处理失败", decisionFeedbackNone: "未评分", decisionFeedbackValidated: "已认可", decisionFeedbackDisputed: "已不认可",
-        decisionReviewedPrinciplesUsed: "本次处理使用了经审阅原则作为非权威指导", decisionPinnedEmpty: "本次处理固定了原则版本，但没有装入经审阅原则。", decisionNoReviewedPrinciples: "本次处理未使用经审阅原则。", decisionHistoricalContextUsed: "本次处理包含历史参考", decisionNoHistoricalContext: "本次处理未使用历史参考。", decisionLegacyMemory: "本次处理没有记录经审阅原则或历史参考的使用情况。", decisionEvaluationNumber: "处理", decisionEvaluationHistory: "处理历史", decisionNoEarlierEvaluations: "没有更早的处理记录。", decisionFeedbackHistory: "反馈历史", decisionNoFeedback: "暂无反馈记录。", decisionNoteNoEffect: "备注会保留在此记录中，不影响之后的判断。", decisionAddNote: "添加备注", decisionCorrectionScope: "适用于", decisionCorrectionTarget: "取代以下问题的答案", decisionCorrectionFutureOnly: "只影响之后的判断，原回答保留不变。", decisionSubmitCorrection: "提交纠正", decisionCurrentScope: "当前记录的适用范围", decisionAuthorizationClasses: "授权类",
+        decisionReviewedPrinciplesUsed: "本次处理使用了经审阅原则作为非权威指导", decisionPinnedEmpty: "本次处理固定了原则版本，但没有装入经审阅原则。", decisionNoReviewedPrinciples: "本次处理未使用经审阅原则。", decisionHistoricalContextUsed: "本次处理包含历史参考", decisionNoHistoricalContext: "本次处理未使用历史参考。", decisionLegacyMemory: "本次处理没有记录经审阅原则或历史参考的使用情况。", decisionEvaluationNumber: "处理", decisionEvaluationHistory: "处理历史", decisionNoEarlierEvaluations: "没有更早的处理记录。", decisionFeedbackHistory: "反馈历史", decisionNoFeedback: "暂无反馈记录。", decisionNoteNoEffect: "备注会保留在此记录中，不影响之后的判断。", decisionAddNote: "添加备注", decisionCorrectionScope: "适用于", decisionCorrectionTarget: "取代以下问题的答案", decisionCorrectionFutureOnly: "只影响之后的判断，原回答保留不变。", decisionSubmitCorrection: "提交纠正", decisionCurrentScope: "当前记录的适用范围",
         decisionAgentStateEnabled: "已启用", decisionAgentStateDisabled: "已停用", decisionAgentStateArchived: "已归档", decisionNoPreference: "暂无判断偏好。", decisionVersionUnavailable: "摘要中没有版本信息", decisionPrincipleDetailsOnOpen: "打开助手以查看原则版本。", decisionPendingReview: "有待审变化", decisionEditAgent: "编辑助手", decisionAgentName: "名称", decisionAgentPreference: "判断偏好（可选）", decisionAgentPreferenceHint: "用普通语言描述此助手的判断偏好。", decisionAdvancedSettings: "高级设置", decisionAdvancedSettingsHint: "专长范围与模型路由以普通行与芯片编辑；助手没有工作区归属设置。", decisionDisableAgent: "停用助手", decisionEnableAgent: "启用助手", decisionArchiveAgent: "归档助手", decisionProfileHistory: "判断偏好版本历史", decisionDiscardTitle: "放弃未保存的修改？", decisionDiscardConfirmation: "未保存的助手修改将丢失。", decisionDiscard: "放弃修改", decisionArchiveTitle: "归档此助手？", decisionArchiveConfirmation: "助手将不再接收新判断，既有记录和历史会保留。", decisionDisableTitle: "停用此助手？", decisionDisableConfirmation: "重新启用前，新判断不会路由到此助手。", decisionEnableTitle: "启用此助手？", decisionEnableConfirmation: "此助手可再次接收新判断。",
         decisionDeleteAgent: "删除助手", decisionDeleteAgentTitle: "永久删除此助手？", decisionDeleteAgentLead: "此操作不可撤销。将永久删除该助手以及它在本 profile 全部工作区中的以下记录：", decisionDeleteCountCases: "判断记录（含处理历史）", decisionDeleteCountEvidence: "判断依据", decisionDeleteCountFeedback: "反馈与纠正", decisionDeleteCountLearning: "学习整理与原则版本（含公共记忆）", decisionDeleteAgentConfirm: "永久删除", decisionDeleteStale: "预览后该助手又产生了新记录，请重新打开删除确认。",
         decisionMetricActivity: "活动", decisionMetricReturns: "按原因返回", decisionMetricEvidenceFailures: "依据问题", decisionMetricFeedback: "反馈", decisionMetricCasesOpened: "已开启判断", decisionMetricAttemptsTotal: "处理次数", decisionMetricAutoAnswered: "自动回答", decisionMetricAutoAnswerRate: "自动回答率", decisionMetricEscalated: "由你决定", decisionMetricExhausted: "需要处理", decisionMetricCancelled: "已取消", decisionMetricInterrupted: "中断的处理", decisionMetricCorrections: "纠正", decisionMetricReassignments: "改派", decisionMetricFeedbackParticipation: "有反馈的记录", decisionMetricSelectorOffBypasses: "关闭旁路（不采样）", decisionMetricMeanLatency: "平均处理耗时", decisionMetricEvidenceStale: "依据过期", decisionMetricEvidenceConflicting: "依据冲突", decisionMetricEvidenceDeleted: "依据已删除", decisionMetricRatingsUp: "认可", decisionMetricRatingsDown: "不认可", decisionMetricRatingsUndone: "撤销评分", decisionMetricWindow: "时间范围", decisionMetricWindowAll: "全部时间", decisionMetricWindow24h: "最近 24 小时", decisionMetricWindow7d: "最近 7 天", decisionMetricWindow30d: "最近 30 天", decisionRawMetrics: "原始指标值",
@@ -935,11 +968,16 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
         decisionUp: "认可", decisionDown: "不认可", decisionUndo: "撤销评分", decisionUndoUp: "撤销认可", decisionUndoDown: "撤销不认可", decisionComment: "备注", decisionCorrect: "纠正", decisionConfirmConsequence: "认可仅在原适用范围内支持此回答作为依据。", decisionDisputeConsequence: "不认可会立即停止此回答单独用于自动回答，但不会反推相反答案。", decisionFeedbackHintShort: "认可仅在原范围支持此回答；不认可立即停止其单独自动回答。", decisionCustomAnswer: "自定义…", decisionCustomAnswerPlaceholder: "用自己的话回答", decisionClarify: "需要更多上下文", decisionClarifyHint: "助手只用这次判断的现有依据回答；不会产生新结论。", decisionClarifyPlaceholder: "就这次判断的依据或适用范围提问", decisionClarifySubmit: "提问", decisionClarifyLimit: "这次判断的澄清次数已用完。", decisionClarifyYouAsked: "你问", decisionClarifyAnswer: "助手补充", decisionClarifyRecord: "澄清", decisionBounce: "退回给发起者", decisionBounceHint: "退回后由发起者重新组织问题；本回合结束前未修订则记为退回。", decisionBouncePlaceholder: "为什么这个问题需要重新组织？（必填）", decisionBounceSubmit: "退回",
         decisionDecide: "提交决定", decisionReassign: "改派", decisionCancel: "取消", decisionRetry: "重试", decisionSave: "保存", decisionUseSuggestions: "使用建议", decisionAnswersIncomplete: "请回答全部问题后再提交。",
         decisionSelectTitle: "选择决策助手", decisionSelectorSafety: "助手在本 profile 的各工作区之间共享；审批和高风险操作仍会询问你。", decisionManageAgents: "管理助手", decisionCreateAgent: "新建助手",
-        decisionAuto: "自动选择助手", decisionAutoWhitelist: "当前允许自动回答 {count} 类判断。", decisionAutoEmptyWhitelist: "仍会自动选择助手并交由其评估；自动回答尚未允许，新判断仍会询问你。", decisionAutoReadinessUnknown: "自动回答状态未知；不会假定可以自动回答。", decisionAutoShadowOn: "选择对比已开启；不会影响实际结果。", decisionAutoShadowOff: "选择对比未开启。",
+        decisionAuto: "自动选择助手", decisionAutoAnswerOn: "会自动选择助手，并在通过全部证据与授权闸门后采纳其结论。", decisionAutoAnswerOff: "仍会自动选择助手并评估每个判断，但结论交给你；自动回答未开启。", decisionAutoReadinessUnknown: "自动回答状态未知；不会假定可以自动回答。", decisionAutoShadowOn: "选择对比已开启；不会影响实际结果。", decisionAutoShadowOff: "选择对比未开启。",
         decisionAutoShadowUnknown: "选择对比状态未知。",
         decisionRoutingReview: "路由复盘", decisionRoutingDiagnostic: "路由比较与计数仅用于诊断，不是质量评分或自动晋升依据。", decisionRoutingAgreement: "Shadow 与钉选选择一致", decisionRoutingDisagreement: "Shadow 与钉选选择不同", decisionRoutingShadowNone: "Shadow 未选择助手", decisionRoutingShadowAmbiguous: "Shadow 路由存在歧义", decisionRoutingShadowFailure: "Shadow 路由失败", decisionRoutingAutoNone: "Auto 未选择助手", decisionRoutingAutoAmbiguous: "Auto 路由存在歧义", decisionRoutingAutoFailure: "Auto 路由失败", decisionRoutingManualReassign: "已手动改派", decisionRoutingUncomparable: "不可比较；没有可用的钉选基线记录", decisionRoutingBaseline: "Shadow 比较的钉选基线", decisionRoutingAutoSelected: "Auto 已选择助手", decisionRoutingNoData: "此时间范围内没有路由决定。", decisionRoutingOpenRecord: "打开以下内容的已授权判断记录", decisionRoutingShown: "已显示的路由记录数",
         decisionRoutingDirection: "改派方向（原助手 → 新助手）", decisionNoAssignedAgent: "尚未选择助手",
         decisionRouteHistory: "路由决定历史", decisionNoRouteHistory: "暂无路由决定记录。", decisionRouteModePinned: "钉选助手", decisionRouteModeExplicit: "显式咨询", decisionRouteModeAuto: "Auto 路由", decisionRouteModeShadow: "Shadow 观察（仅诊断）", decisionRouteModeManual: "手动改派", decisionRouteModeNone: "无路由", decisionRouteModeUnknown: "未知路由模式", decisionRouteStatusSelected: "已选择助手", decisionRouteStatusNone: "未选择助手", decisionRouteStatusAmbiguous: "路由存在歧义", decisionRouteStatusFailure: "路由失败", decisionReasonUnownedNoRoute: "尚未选择助手。你可以直接回答或明确改派这次判断。", decisionReasonRouteFailure: "自动路由失败。你可以直接回答，或明确改派这次判断。",
+        decisionRouteFailureTimeout: "模型调用超时。", decisionRouteFailureTruncated: "模型输出在判决完整前被截断。",
+        decisionRouteFailureInvalidOutput: "模型输出无法解析为路由判决。", decisionRouteFailureRouteUnavailable: "会话模型路由不可用。",
+        decisionRouteFailureModelError: "模型调用失败。", decisionRouteFailureContextBudget: "上下文预算不足，无法容纳路由判决。",
+        decisionRouteFailureCandidateLimit: "候选助手数量超过路由器上限。", decisionRouteFailureAborted: "路由调用已取消。",
+        decisionRouteFailureUnknown: "未能归类这次路由失败。",
         decisionGlobalOff: "决策助手已在全局关闭。", decisionGlobalOffHint: "当前不会自动决策。可在“设置 → Weir → 决策助手”中开启。",
         decisionAdvancedDiagnostics: "高级诊断", decisionStructuralQualityWarning: "结构校验通过不代表内容质量。", decisionRateNotQuality: "自动回答率不是质量指标。", decisionHistoricalNotEvidence: "历史参考不是判断依据。",
         decisionSelectionUnavailable: "当前选择的助手不可用。", decisionErrorConflict: "记录已变化，请先读取最新版本再重试。", decisionErrorUnavailable: "当前助手不可用，请选择其他助手或关闭。",
@@ -1000,18 +1038,16 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
       },
     };
     // The assistant editor's visual scope/route controls: ordinary-language
-    // labels for the rows, chips and the picker fallback. The values are the
-    // staged JSON's own vocabulary (paths, tags, authorization classes, model
-    // rungs), never a second format the user would have to learn.
+    // labels for the rows and the picker fallback. The values are the staged
+    // JSON's own vocabulary (paths, tags, model rungs), never a second format
+    // the user would have to learn.
     Object.assign(dictionaries.en, {
       decisionScopeTitle: "Expertise scope",
       decisionScopeHint: "Which requests this assistant applies to. Leave both lists empty to consider every request.",
       decisionScopePaths: "Path prefixes",
       decisionScopeTags: "Tags",
-      decisionScopeClasses: "Authorization classes",
       decisionScopeAdd: "Add",
       decisionScopeRemove: "Remove",
-      decisionScopeClassMinimum: "The last selected class cannot be removed; with no class selected this assistant does not answer.",
       decisionRouteTitle: "Model route",
       decisionRouteHint: "Ordered fallbacks: the first available model answers. An empty route inherits the session model.",
       decisionRouteProvider: "Provider",
@@ -1027,10 +1063,8 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
       decisionScopeHint: "此助手适用于哪些请求；两个清单都留空表示考虑所有请求。",
       decisionScopePaths: "路径前缀",
       decisionScopeTags: "标签",
-      decisionScopeClasses: "授权类别",
       decisionScopeAdd: "添加",
       decisionScopeRemove: "移除",
-      decisionScopeClassMinimum: "最后一个已选类别不能被取消；一个类别都不选时此助手不会自动回答。",
       decisionRouteTitle: "模型路由",
       decisionRouteHint: "按顺序尝试的后备模型：可用的第一个模型作答；空路由继承会话模型。",
       decisionRouteProvider: "Provider",
@@ -1070,6 +1104,7 @@ const emptyDraft = () => ({ answers: {}, comment: "", correction: "", reassignTa
     exports.narrowInbox = narrowInbox;
     exports.groupInbox = groupInbox;
     exports.reasonKey = reasonKey;
+    exports.routeFailureReasonKey = routeFailureReasonKey;
     exports.errorKey = errorKey;
     exports.selectorOptions = selectorOptions;
     exports.selectorView = selectorView;

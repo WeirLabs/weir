@@ -96,7 +96,7 @@ test('legacy v1 history opens read-only while only fresh or explicit actions app
 
   const config = {
     decisionAgentsEnabled: true, decisionAgentSelectorDefault: 'auto', decisionAgentRetentionDays: 0,
-    decisionAgentAutoAnswerClasses: [], decisionAgentAutoShadow: false,
+    decisionAgentAutoAnswer: false, decisionAgentAutoShadow: false,
   }
   broker = new DecisionBroker({ config: () => ({ ...config, decisionAgentStorePath: dir }) })
   await broker.start()

@@ -16,7 +16,7 @@ async function seedLearningDecision(broker, agent, input) {
   const opened = await broker.cases.createCase({
     workspaceKey: input.workspaceKey, rootSessionId: agent.id, entry: 'hook', agentId: input.agentId,
     request: { entry: 'hook', questions: [{ id: `decision-learning-${input.key}`, question: `LEARNING_FIXTURE ${input.key}`, options: [{ label: input.selected }] }] },
-    scope: { workspaces: [input.workspaceKey], authorizationClasses: ['A', 'B', 'C'] },
+    scope: { workspaces: [input.workspaceKey] },
     idempotencyKey: `decision-learning:${input.key}`,
   })
   let current = await broker.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'awaiting_user' })
@@ -33,7 +33,7 @@ async function seedLearningAnswer(broker, agent, input) {
   const opened = await broker.cases.createCase({
     workspaceKey: input.workspaceKey, rootSessionId: agent.id, entry: 'hook', agentId: input.agentId,
     request: { entry: 'hook', questions: [{ id: questionId, question: `LEARNING_ANSWER ${input.key}`, options: [{ label: 'Neutral answer' }] }] },
-    scope: { workspaces: [input.workspaceKey], authorizationClasses: ['A', 'B', 'C'] },
+    scope: { workspaces: [input.workspaceKey] },
     idempotencyKey: `decision-learning:${input.key}`,
   })
   let current = await broker.cases.transition({ caseId: opened.case.caseId, expectedState: 'received', expectedRevision: opened.case.revision, state: 'evaluating' })
@@ -56,10 +56,10 @@ async function learningSeed(broker, agent) {
   const otherWorkspace = join(workspaceKey, 'decision-learning-other')
   mkdirSync(otherWorkspace, { recursive: true })
   const otherWorkspaceKey = realpathSync(otherWorkspace)
-  const scope = { workspaces: [workspaceKey], authorizationClasses: ['A', 'B', 'C'] }
+  const scope = { workspaces: [workspaceKey] }
   const agentA = await broker.profileUpsert({ workspaceKey, name: 'Decision Learning A', scope, userDescription: 'Use the reviewed principle only with its evidence.', modelRoute: { chain: [] } })
   const agentB = await broker.profileUpsert({ workspaceKey, name: 'Decision Learning B', scope, userDescription: 'Independent Agent namespace.', modelRoute: { chain: [] } })
-  const agentC = await broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'Decision Learning W2', scope: { workspaces: [otherWorkspaceKey], authorizationClasses: ['A', 'B', 'C'] }, userDescription: 'Foreign workspace namespace.', modelRoute: { chain: [] } })
+  const agentC = await broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'Decision Learning W2', scope: { workspaces: [otherWorkspaceKey] }, userDescription: 'Foreign workspace namespace.', modelRoute: { chain: [] } })
   await broker.setSelector(agent.id, 'agent', agentA.agentId)
   const sourceA = await seedLearningDecision(broker, agent, { key: 'source-a', selected: 'Source A', agentId: agentA.agentId, workspaceKey })
   const sourceB = await seedLearningDecision(broker, agent, { key: 'source-b', selected: 'Source B', agentId: agentA.agentId, workspaceKey })
@@ -98,11 +98,11 @@ async function autoSetup(broker, agent) {
   const workspaceKey = realpathSync(agent.session.header.cwd)
   const base = { workspaces: [workspaceKey] }
   const agentA = await broker.profileUpsert({
-    workspaceKey, name: 'Decision Auto A', scope: { ...base, authorizationClasses: ['A'] },
+    workspaceKey, name: 'Decision Auto A', scope: { ...base },
     userDescription: 'Auto A private profile body: select the evidenced A answer.', modelRoute: { chain: [] },
   })
   const agentB = await broker.profileUpsert({
-    workspaceKey, name: 'Decision Auto B', scope: { ...base, authorizationClasses: ['A', 'B'] },
+    workspaceKey, name: 'Decision Auto B', scope: { ...base },
     userDescription: 'Auto B private profile body: select the evidenced B answer.', modelRoute: { chain: [] },
   })
   const initialSelector = broker.selector(agent.id)
@@ -240,7 +240,7 @@ async function autoReplay(broker, agent) {
   const initialQuestion = initialCase.request.questions[0]
   const initial = {
     caseId: first.caseId, outcome: first.outcome, state: initialCase.state, flights: broker.autoFlights.size,
-    derivedClass: initialQuestion.authorizationClass, derivedSource: initialQuestion.authorizationClassSource,
+    request: initialQuestion,
     ...autoCaseCounts(broker, first.caseId),
   }
   const replayResult = await broker.consult({ agent, args: original })
@@ -258,7 +258,7 @@ async function autoReplay(broker, agent) {
   const revisions = []
   let currentArgs = original
   for (const [field, change] of changes) {
-    currentArgs = { ...change(currentArgs), authorization_class: 'B' }
+    currentArgs = { ...change(currentArgs) }
     const result = await broker.consult({ agent, args: currentArgs })
     const current = broker.cases.getCase(first.caseId)
     revisions.push({
@@ -269,9 +269,8 @@ async function autoReplay(broker, agent) {
   const denials = []
   const eligibleArgs = currentArgs
   for (const [label, change] of [
-    ['D', args => ({ ...args, authorization_class: 'D' })],
-    ['missing', args => { const value = { ...args }; delete value.authorization_class; return value }],
     ['approval', args => ({ ...args, question: 'AUTO_REPLAY: approve this revised deployment?' })],
+    ['high-risk', args => ({ ...args, question: 'AUTO_REPLAY: execute this irreversible operation?' })],
     ['execution', args => ({ ...args, question: 'AUTO_REPLAY: edit this file with execution authority?' })],
   ]) {
     const before = broker.cases.getCase(first.caseId)
@@ -351,7 +350,7 @@ async function autoSafety(broker, agent, signal) {
     const config = {
       decisionAgentsEnabled: true, decisionAgentStorePath: storePath,
       decisionAgentSelectorDefault: 'off', decisionAgentAutoShadow: false,
-      decisionAgentAutoAnswerClasses: ['A', 'B', 'C'], decisionAgentAnswerTimeoutMs: 100,
+      decisionAgentAutoAnswer: true, decisionAgentAnswerTimeoutMs: 100,
       decisionAgentMaxOutputTokens: 1600, decisionAgentContextBudgetTokens: 24000,
       ...overrides,
     }
@@ -362,7 +361,7 @@ async function autoSafety(broker, agent, signal) {
   }
   const setupAgents = async value => {
     const workspaceKey = realpathSync(agent.session.header.cwd)
-    const scope = { workspaces: [workspaceKey], authorizationClasses: ['A', 'B', 'C'] }
+    const scope = { workspaces: [workspaceKey] }
     const pinned = await value.broker.profileUpsert({ workspaceKey, name: 'Decision Auto A', scope, userDescription: 'Auto A private profile body: pinned safety evidence.', modelRoute: { chain: [] } })
     const alternative = await value.broker.profileUpsert({ workspaceKey, name: 'Decision Auto B', scope, userDescription: 'Auto B private profile body: alternative safety evidence.', modelRoute: { chain: [] } })
     return { pinned, alternative, workspaceKey }
@@ -410,16 +409,16 @@ async function autoSafety(broker, agent, signal) {
     const excludedRequests = [
       autoSafetyRequest('APPROVAL', { intent: { kind: 'approval' } }),
       autoSafetyRequest('PLAN_REVIEW', { intent: { kind: 'plan-review' } }),
-      ...['D', 'E', 'F'].map(authorizationClass => autoSafetyRequest(`CLASS_${authorizationClass}`, { authorizationClass })),
       autoSafetyRequest('HIGH_RISK', { question: 'AUTO_SAFETY_HIGH_RISK: approve this irreversible high-risk operation?' }),
       autoSafetyRequest('EXECUTION', { question: 'AUTO_SAFETY_EXECUTION: edit this file with execution authority?' }),
+      autoSafetyRequest('CREDENTIAL', { question: 'AUTO_SAFETY_CREDENTIAL: read this credential secret?' }),
     ]
     report.excluded = { before: beforeExcluded, hookResults: [] }
     for (const request of excludedRequests) report.excluded.hookResults.push(await excluded.broker.hook({ agent, request, signal }))
     report.excluded.afterHooks = autoSafetyCounts(excluded.broker)
     report.excluded.consults = []
     for (const [requestId, args] of [
-      ['auto-safety-consult-d', { question: 'AUTO_SAFETY_CONSULT_D: native authority', authorization_class: 'D' }],
+      ['auto-safety-consult-delete', { question: 'AUTO_SAFETY_CONSULT_DELETE: delete this deployment?' }],
       ['auto-safety-consult-approval', { question: 'AUTO_SAFETY_CONSULT_APPROVAL: approve this native operation?' }],
     ]) {
       const result = await excluded.broker.consult({ agent, args: { ...args, options: [{ label: 'Native authority' }], request_id: requestId }, signal })
@@ -427,30 +426,32 @@ async function autoSafety(broker, agent, signal) {
     }
     await excluded.broker.setSelector(agent.id, 'auto')
     report.excluded.beforeAuto = autoSafetyCounts(excluded.broker)
-    report.excluded.autoHook = await excluded.broker.hook({ agent, request: autoSafetyRequest('AUTO_CLASS_D', { authorizationClass: 'D' }), signal })
+    report.excluded.autoHook = await excluded.broker.hook({ agent, request: autoSafetyRequest('AUTO_APPROVAL', { intent: { kind: 'approval' } }), signal })
     report.excluded.afterAuto = autoSafetyCounts(excluded.broker)
 
+    // Classless admission: with nothing eligible the request routes nowhere and
+    // never reaches a model; it is still an owned-free native handoff.
     const admission = await make('admission')
-    await setupAgents(admission)
     await admission.broker.setSelector(agent.id, 'auto')
-    const unknown = await admission.broker.hook({ agent, request: autoSafetyRequest('UNKNOWN'), signal })
-    const mixedRequest = { questions: [
-      { ...autoSafetyRequest('MIXED_PROVIDED').questions[0], authorizationClass: 'A' },
-      ...autoSafetyRequest('MIXED_MISSING').questions,
-    ], wait: { callId: 'auto-safety-mixed' } }
-    const mixed = await admission.broker.hook({ agent, request: mixedRequest, signal })
+    const zero = await admission.broker.hook({ agent, request: autoSafetyRequest('ZERO'), signal })
     report.admission = {
-      unknown: { verdict: unknown, case: admission.broker.cases.getCase(unknown.caseId), counts: autoSafetyCounts(admission.broker) },
-      mixed: { verdict: mixed, case: admission.broker.cases.getCase(mixed.caseId) },
+      zero: { verdict: zero, case: admission.broker.cases.getCase(zero.caseId), counts: autoSafetyCounts(admission.broker) },
       final: autoSafetyCounts(admission.broker),
     }
+
+    // One eligible assistant is a deterministic selection: no Router call at all.
+    const single = await make('single')
+    const singleAgent = await single.broker.profileUpsert({ workspaceKey: realpathSync(agent.session.header.cwd), name: 'Decision Auto Single', userDescription: 'Single candidate fixture', modelRoute: { chain: [] } })
+    await single.broker.setSelector(agent.id, 'auto')
+    const singleVerdict = await single.broker.hook({ agent, request: autoSafetyRequest('SINGLE'), signal })
+    report.single = { agentId: singleAgent.agentId, verdict: singleVerdict, case: single.broker.cases.getCase(singleVerdict.caseId), route: single.broker.store.db.prepare('SELECT mode,chosen,reason FROM route_decisions WHERE case_id=?').all(singleVerdict.caseId) }
 
     const isolation = await make('isolation')
     const local = await setupAgents(isolation)
     const otherWorkspace = join(root, 'ws', 'decision-auto-safety-other-workspace')
     mkdirSync(otherWorkspace, { recursive: true })
     const otherWorkspaceKey = realpathSync(otherWorkspace)
-    const foreign = await isolation.broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'FORBIDDEN FOREIGN ROUTER CANDIDATE', scope: { workspaces: [otherWorkspaceKey], authorizationClasses: ['A', 'B', 'C'] }, userDescription: 'FOREIGN WORKSPACE PRIVATE PROFILE BODY', modelRoute: { chain: [] } })
+    const foreign = await isolation.broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'FORBIDDEN FOREIGN ROUTER CANDIDATE', scope: { workspaces: [otherWorkspaceKey] }, userDescription: 'FOREIGN WORKSPACE PRIVATE PROFILE BODY', modelRoute: { chain: [] } })
     await isolation.broker.setSelector(agent.id, 'auto')
     const isolated = await isolation.broker.hook({ agent, request: autoSafetyRequest('ISOLATION'), signal })
     report.isolation = {
@@ -492,7 +493,7 @@ async function autoSafety(broker, agent, signal) {
       failures: [],
     }
     const failureControl = await runShadow('failure-control', false, 'control')
-    for (const failure of ['classification', 'routing', 'write']) {
+    for (const failure of ['routing', 'write']) {
       const value = await runShadow(`failure-${failure}`, true, failure)
       report.shadow.failures.push({ failure, equal: JSON.stringify(value.real) === JSON.stringify(failureControl.real), ...value })
     }
@@ -501,7 +502,7 @@ async function autoSafety(broker, agent, signal) {
     const unownedAgents = await setupAgents(unowned)
     await unowned.broker.setSelector(agent.id, 'auto')
     const open = async action => {
-      const args = { question: `AUTO_SAFETY_UNOWNED_${action.toUpperCase()}: user must decide`, options: [{ label: 'Unowned user answer' }, { label: 'Other' }], authorization_class: 'A', request_id: `auto-safety-unowned-${action}` }
+      const args = { question: `AUTO_SAFETY_UNOWNED_${action.toUpperCase()}: user must decide`, options: [{ label: 'Unowned user answer' }, { label: 'Other' }], request_id: `auto-safety-unowned-${action}` }
       const result = await unowned.broker.consult({ agent, args, signal })
       return { args, result, case: unowned.broker.cases.getCase(result.caseId) }
     }
@@ -529,12 +530,12 @@ async function autoSafety(broker, agent, signal) {
     await retryAuthority.broker.setSelector(agent.id, 'auto')
     const retryOpened = await retryAuthority.broker.consult({ agent, args: {
       question: 'AUTO_SAFETY_RETRY: owned Auto Case must revalidate exclusion', options: [{ label: 'Retry must be denied' }],
-      authorization_class: 'A', request_id: 'auto-safety-retry-authority',
+      request_id: 'auto-safety-retry-authority',
     }, signal })
     const retryOwned = retryAuthority.broker.cases.getCase(retryOpened.caseId)
     const retryDeniedRequest = {
       ...retryOwned.request,
-      questions: retryOwned.request.questions.map(question => ({ ...question, authorizationClass: 'D' })),
+      questions: retryOwned.request.questions.map(question => ({ ...question, intent: { kind: 'approval' } })),
     }
     await retryAuthority.broker.store.write(db => {
       db.prepare('UPDATE cases SET request_json=? WHERE case_id=?').run(JSON.stringify(retryDeniedRequest), retryOwned.caseId)
@@ -551,10 +552,10 @@ async function autoSafety(broker, agent, signal) {
     const reassignAgents = await setupAgents(reassignAuthority)
     await reassignAuthority.broker.setSelector(agent.id, 'auto')
     const reassignOpened = await reassignAuthority.broker.consult({ agent, args: {
-      question: 'AUTO_SAFETY_UNOWNED_REASSIGN_AUTHORITY: current whitelist must be rechecked',
-      options: [{ label: 'Reassign must be denied' }], authorization_class: 'A', request_id: 'auto-safety-reassign-authority',
+      question: 'AUTO_SAFETY_UNOWNED_REASSIGN_AUTHORITY: current answer switch must be rechecked',
+      options: [{ label: 'Reassign must be denied' }], request_id: 'auto-safety-reassign-authority',
     }, signal })
-    reassignAuthority.config.decisionAgentAutoAnswerClasses = []
+    reassignAuthority.config.decisionAgentAutoAnswer = false
     const reassignBefore = reassignAuthority.broker.cases.getCase(reassignOpened.caseId)
     const reassignError = await reassignAuthority.broker.reassign({ caseId: reassignOpened.caseId, agentId: reassignAgents.pinned.agentId }).catch(error => ({ code: error.code }))
     const reassignAfter = reassignAuthority.broker.cases.getCase(reassignOpened.caseId)
@@ -679,10 +680,10 @@ export function apply(ctx, config = {}) {
           const otherWorkspace = join(workspaceKey, 'decision-isolation-other')
           mkdirSync(otherWorkspace, { recursive: true })
           const otherWorkspaceKey = realpathSync(otherWorkspace)
-          const scope = { workspaces: [workspaceKey], authorizationClasses: ['A', 'B', 'C'] }
+          const scope = { workspaces: [workspaceKey] }
           const agentA = await broker.profileUpsert({ workspaceKey, name: 'Decision Isolation A', scope, userDescription: 'A private profile marker must never reach Agent B.', modelRoute: { chain: [] } })
           const agentB = await broker.profileUpsert({ workspaceKey, name: 'Decision Isolation B', scope, userDescription: 'B has an independent namespace and no prior decision.', modelRoute: { chain: [] } })
-          const agentC = await broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'Decision Isolation W2', scope: { workspaces: [otherWorkspaceKey], authorizationClasses: ['A', 'B', 'C'] }, userDescription: 'W2 has no W1 evidence.', modelRoute: { chain: [] } })
+          const agentC = await broker.profileUpsert({ workspaceKey: otherWorkspaceKey, name: 'Decision Isolation W2', scope: { workspaces: [otherWorkspaceKey] }, userDescription: 'W2 has no W1 evidence.', modelRoute: { chain: [] } })
           await broker.setSelector(agent.id, 'agent', agentA.agentId)
           return { completed: true, op: args.op, agentA: agentA.agentId, agentB: agentB.agentId, agentC: agentC.agentId, workspaceKey, otherWorkspace: otherWorkspaceKey }
         }
@@ -704,7 +705,7 @@ export function apply(ctx, config = {}) {
         }
         if (args.op === 'route-setup') {
           const workspaceKey = realpathSync(agent.session.header.cwd)
-          const scope = { workspaces: [workspaceKey], authorizationClasses: ['A', 'B', 'C'] }
+          const scope = { workspaces: [workspaceKey] }
           const agentA = await broker.profileUpsert({ workspaceKey, name: 'Decision Route A', scope, userDescription: 'For a pinned Decision Route request, select Pinned A.', modelRoute: { chain: [] } })
           const agentB = await broker.profileUpsert({ workspaceKey, name: 'Decision Route B', scope, userDescription: 'For an explicit Decision Route consultation, select Explicit B.', modelRoute: { chain: [] } })
           await broker.setSelector(agent.id, 'agent', agentA.agentId)
@@ -726,7 +727,7 @@ export function apply(ctx, config = {}) {
         const profile = await broker.profileUpsert({
           workspaceKey,
           name: `Decision ${process.env.WEIR_IT_SCENARIO ?? 'integration'} QA`,
-          scope: { workspaces: [workspaceKey], authorizationClasses: ['A', 'B', 'C'] },
+          scope: { workspaces: [workspaceKey] },
           userDescription: 'For Decision Hook QA, prefer the Concise title when that option is available.',
           modelRoute: { chain: [] },
         })

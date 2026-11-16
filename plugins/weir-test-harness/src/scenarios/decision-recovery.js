@@ -41,25 +41,23 @@ function decideDecision(options, obs) {
   return textChunks(JSON.stringify({ outcome: 'escalate', missing: ['Unknown recovery evaluation fixture'] }))
 }
 
-function decideRouterClassification(options, obs) {
+function decideRouterRoute(options, obs) {
   let pack
   try { pack = JSON.parse(obs.lastUser) } catch { pack = null }
-  if (!Array.isArray(pack?.questions)) throw new Error('decision-recovery: malformed Auto classification pack')
-  return textChunks(JSON.stringify({
-    contract: 'router-classification-contract/1',
-    classes: pack.questions.map(question => ({ id: question.id, authorizationClass: 'A' })),
-  }))
+  if (!Array.isArray(pack?.candidates) || pack.candidates.length === 0) throw new Error('decision-recovery: malformed Auto Router pack')
+  const selected = pack.candidates[0]
+  return textChunks(JSON.stringify({ contract: 'router-contract/1', outcome: 'selected', agentId: selected.agentId, reason: 'Recovery fixture routes deterministically' }))
 }
 
 function observe(obs) {
   const base = { ...observeDecision(obs), decisionRecoveryReplay: parseDecisionToolResult(obs.lastTool) }
-  const classification = obs.system.split('\n', 1)[0] === 'Auto request classification contract: router-classification-contract/1'
-  if (!classification) return base
+  const routing = obs.system.split('\n', 1)[0] === 'Auto candidate router contract: router-contract/1'
+  if (!routing) return base
   let pack
   try { pack = JSON.parse(obs.lastUser) } catch { pack = null }
   const question = pack?.questions?.[0]?.question ?? ''
   return {
-    ...base, autoRecoveryClassification: true, autoRecoveryQuestionIds: pack?.questions?.map(item => item.id) ?? [],
+    ...base, autoRecoveryRoute: true, autoRecoveryQuestionIds: pack?.questions?.map(item => item.id) ?? [],
     ...(question.startsWith('AUTO_RECOVERY_INTERRUPT') ? { autoRouterHold: 'interruption' } : {}),
   }
 }
@@ -76,7 +74,7 @@ async function waitForAutoIntake(root, storePath, readyPath) {
     }
     await new Promise(resolve => setTimeout(resolve, 20))
   }
-  throw new Error('Timed out waiting for the real received+null Auto intake and held classification')
+  throw new Error('Timed out waiting for the real received+null Auto intake and held Router verdict')
 }
 
 async function run(driver) {
@@ -91,7 +89,7 @@ async function run(driver) {
     const outcome = await driver.spawnHeadless(args, driver.scenarioEnv(id, trace, {
       WEIR_IT_DECISION: '1', WEIR_IT_DECISION_RECOVERY: '1', WEIR_IT_DECISION_EVENTS: events,
       WEIR_IT_DECISION_STORE_PATH: storePath, WEIR_IT_DECISION_PHASE: phase,
-      ...(phase.startsWith('auto-') ? { WEIR_IT_DECISION_AUTO_CLASSES: '["A","B","C"]', WEIR_IT_DECISION_TIMEOUT_MS: '30000' } : {}),
+      ...(phase.startsWith('auto-') ? { WEIR_IT_DECISION_AUTO_ANSWER: '1', WEIR_IT_DECISION_TIMEOUT_MS: '30000' } : {}),
     }), onChild)
     const resolvedSessionId = sessionId ?? parseJsonlLines(outcome.stdout).find(row => row?.type === 'session')?.sessionId
     const value = { ...outcome, sessionId: resolvedSessionId, phase }
@@ -176,8 +174,8 @@ function assert(run) {
   const autoInterruptRun = processes?.processRuns?.find(item => item.phase === 'auto-before')
   run.check('exact-PID SIGKILL captures a real received+null Auto intake before any route, answer, or Attempt', autoKilled?.interruption?.killRequested === true && autoKilled.interruption.outcome?.signal === 'SIGKILL' && autoKilled.interruption.ready?.pid === autoKilled.interruption.outcome?.pid && autoInterruptRun?.signal === 'SIGKILL' && autoKilledCase?.state === 'received' && autoKilledCase?.agent_id === null && autoKilledCase?.decision === null && autoKilled.store.routes.length === 0 && autoKilled.store.attempts.length === 0, JSON.stringify({ interruption: autoKilled?.interruption, autoKilledCase, autoInterruptRun }))
 
-  const autoClassifications = run.requests.filter(request => request.autoRecoveryClassification)
-  run.check('restart and same-key replay recover interrupted waiting without automatic answer, reroute, late write, or new model work', autoAfterCase?.case_id === autoKilledCase?.case_id && autoAfterCase?.state === 'awaiting_user' && autoAfterCase?.awaiting_reason === 'interrupted' && autoAfterCase?.agent_id === null && autoAfterCase?.decision === null && autoAfter?.selectors?.[0]?.mode === 'auto' && autoAfter?.routes?.length === 0 && autoAfter?.attempts?.length === 0 && autoAfter?.evidence?.length === 0 && autoAfter?.inbox?.some(item => item.caseId === autoAfterCase.case_id) && autoReplay?.outcome === 'awaiting_user' && autoReplay?.reason === 'interrupted' && autoAfter?.lateStable === true && autoClassifications.length === 1 && run.stdout.includes('DECISION_RECOVERY_AUTO_AFTER_DONE'), JSON.stringify({ autoAfterCase, selector: autoAfter?.selectors, autoReplay, lateStable: autoAfter?.lateStable, autoClassifications }))
+  const autoRoutes = run.requests.filter(request => request.autoRecoveryRoute)
+  run.check('restart and same-key replay recover interrupted waiting without automatic answer, reroute, late write, or new model work', autoAfterCase?.case_id === autoKilledCase?.case_id && autoAfterCase?.state === 'awaiting_user' && autoAfterCase?.awaiting_reason === 'interrupted' && autoAfterCase?.agent_id === null && autoAfterCase?.decision === null && autoAfter?.selectors?.[0]?.mode === 'auto' && autoAfter?.routes?.length === 0 && autoAfter?.attempts?.length === 0 && autoAfter?.evidence?.length === 0 && autoAfter?.inbox?.some(item => item.caseId === autoAfterCase.case_id) && autoReplay?.outcome === 'awaiting_user' && autoReplay?.reason === 'interrupted' && autoAfter?.lateStable === true && autoRoutes.length === 1 && run.stdout.includes('DECISION_RECOVERY_AUTO_AFTER_DONE'), JSON.stringify({ autoAfterCase, selector: autoAfter?.selectors, autoReplay, lateStable: autoAfter?.lateStable, autoRoutes }))
 
   const auditPath = join(run.ws, '.weir', 'audit.jsonl')
   const audit = existsSync(auditPath) ? readFileSync(auditPath, 'utf8') : ''
@@ -186,4 +184,4 @@ function assert(run) {
   run.check('both real headless recovery processes exited cleanly', run.code === 0 && run.stdout.includes('DECISION_RECOVERY_BEFORE_DONE') && run.stdout.includes('DECISION_RECOVERY_AFTER_DONE'), `processes=${JSON.stringify(run.processRuns)} stderr=${run.stderr.slice(-500)}`)
 }
 
-export default { id, prompt, decide, decideDecision, decideRouterClassification, observe, run, assert }
+export default { id, prompt, decide, decideDecision, decideRouterRoute, observe, run, assert }

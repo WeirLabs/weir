@@ -123,7 +123,7 @@ test('a decided consultation reread returns the authoritative user answer and ev
 test('an unowned Auto decision rereads the user answer with empty evidence and no future retrieval', async t => {
   const f = await fixture(t)
   await f.broker.setSelector('root', 'auto')
-  f.config.decisionAgentAutoAnswerClasses = []
+  f.config.decisionAgentAutoAnswer = false
   const args = { question: 'Which?', options: [{ label: 'A' }, { label: 'B' }], request_id: 'unowned-decided-reread' }
   const waiting = await f.broker.consult({ agent: f.agent, args })
   assert.equal(waiting.outcome, 'awaiting_user')
@@ -190,19 +190,19 @@ test('Off, globally disabled and explicit unavailable Agent fail before creating
   assert.equal(f.broker.store.db.prepare('SELECT COUNT(*) AS n FROM cases').get().n, afterShared)
 })
 
-test('Auto consult preserves explicit precedence, caller class, unavailable failure, and Off bypass', async t => {
+test('Auto consult preserves explicit precedence, classless request, unavailable failure, and Off bypass', async t => {
   const f = await fixture(t)
   await f.broker.setSelector('root', 'auto')
-  f.config.decisionAgentAutoAnswerClasses = ['A']
+  f.config.decisionAgentAutoAnswer = true
   const result = await f.broker.consult({
     agent: f.agent,
-    args: { question: 'Explicit under Auto?', authorization_class: 'A', agent_id: f.b.agentId, request_id: 'auto-explicit' },
+    args: { question: 'Explicit under Auto?', agent_id: f.b.agentId, request_id: 'auto-explicit' },
   })
   assert.equal(result.outcome, 'awaiting_user')
   const current = f.broker.cases.getCase(result.caseId)
   assert.equal(current.agentId, f.b.agentId)
-  assert.equal(current.request.questions[0].authorizationClass, 'A')
-  assert.equal(current.request.questions[0].authorizationClassSource, undefined)
+  // The explicit path never classifies and never appends a derived class.
+  assert.equal(Object.hasOwn(current.request.questions[0], 'authorizationClass'), false)
   assert.deepEqual(f.broker.selector('root'), { mode: 'auto' })
   assert.equal(f.broker.store.db.prepare('SELECT mode FROM route_decisions WHERE case_id=?').get(result.caseId).mode, 'explicit')
 

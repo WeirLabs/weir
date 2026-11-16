@@ -16,10 +16,7 @@ async function fixture(t, { enabled = true, reader } = {}) {
         calls.push(options)
         return (async function * () {
           let output
-          if (options.system.includes('router-classification-contract/1')) {
-            const pack = JSON.parse(options.messages[0].content[0].text)
-            output = { contract: 'router-classification-contract/1', classes: pack.questions.map(question => ({ id: question.id, authorizationClass: 'A' })) }
-          } else if (options.system.includes('router-contract/1')) {
+          if (options.system.includes('router-contract/1')) {
             output = { contract: 'router-contract/1', outcome: 'none', reason: 'No matching Agent' }
           } else {
             output = { outcome: 'escalate', missing: ['A new judgment is required'] }
@@ -33,7 +30,7 @@ async function fixture(t, { enabled = true, reader } = {}) {
       ...(reader ? { readSession: async id => { reads.push(id); return reader(id) } } : {}),
     },
   }
-  const broker = new DecisionBroker({ profileContext: { home: dir, name: 'test' }, ctx, config: () => ({ decisionAgentsEnabled: enabled, decisionAgentAutoAnswerClasses: ['A', 'B', 'C'] }) })
+  const broker = new DecisionBroker({ profileContext: { home: dir, name: 'test' }, ctx, config: () => ({ decisionAgentsEnabled: enabled, decisionAgentAutoAnswer: true }) })
   await broker.start()
   if (enabled) await broker.setSelector('root', 'auto')
   const agent = { id: 'root', session: { header: { id: 'root', cwd: dir, delegationDepth: 0 }, requestContext: () => ({ provider: 'p', model: 'm' }) } }
@@ -245,15 +242,14 @@ test('a valid ordinary stock call remains classless Auto and does not persist ra
   assert.equal(verdict.caseId !== undefined, true)
   const current = f.broker.cases.getCase(verdict.caseId)
   assert.equal(current.awaitingReason, 'no_route')
-  assert.deepEqual(current.request, { entry: 'hook', questions: [{ ...liveQuestions[0], authorizationClass: 'A', authorizationClassSource: 'auto_classifier' }] })
-  assert.equal(current.request.questions[0].authorizationClass, 'A')
-  assert.equal(current.request.questions[0].authorizationClassSource, 'auto_classifier')
+  // No classifier ran and no derived class field was appended.
+  assert.deepEqual(current.request, { entry: 'hook', questions: [{ ...liveQuestions[0] }] })
   assert.equal(current.request.questions[0].detail, undefined)
   assert.equal(current.request.questions[0].intent, undefined)
   assert.deepEqual({ questions: request.questions, wait: request.wait }, before)
   assert.deepEqual(f.reads, ['root'])
-  assert.equal(f.calls.filter(call => call.system.includes('router-classification-contract/1')).length, 1)
-  assert.equal(f.calls.filter(call => call.system.includes('router-contract/1')).length, 0)
+  // Zero eligible candidates never reach a model: no classifier, no Router.
+  assert.equal(f.calls.length, 0)
   assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
 })
 
@@ -267,11 +263,11 @@ test('an ordinary legacy no-wait stock call remains Auto and never persists raw 
 
   assert.equal(verdict.why, 'awaiting_user')
   const current = f.broker.cases.getCase(verdict.caseId)
-  assert.deepEqual(current.request, { entry: 'hook', questions: [{ ...liveQuestions[0], authorizationClass: 'A', authorizationClassSource: 'auto_classifier' }] })
+  assert.deepEqual(current.request, { entry: 'hook', questions: [{ ...liveQuestions[0] }] })
   assert.equal(current.request.questions[0].detail, undefined)
   assert.equal(current.request.questions[0].intent, undefined)
   assert.deepEqual(f.reads, ['root'])
-  assert.equal(f.calls.filter(call => call.system.includes('router-classification-contract/1')).length, 1)
+  assert.equal(f.calls.length, 0)
   assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
 })
 
@@ -281,7 +277,7 @@ test('a no-wait direct Broker call without Host request.agent retains legacy Aut
   assert.equal(verdict.why, 'awaiting_user')
   assert.deepEqual(f.reads, [])
   assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
-  assert.equal(f.calls.filter(call => call.system.includes('router-classification-contract/1')).length, 1)
+  assert.equal(f.calls.length, 0)
 })
 
 test('an untimed direct Broker call without Host request.agent retains legacy Auto without a session read', async t => {
@@ -291,7 +287,7 @@ test('an untimed direct Broker call without Host request.agent retains legacy Au
   assert.equal(verdict.why, 'awaiting_user')
   assert.deepEqual(f.reads, [])
   assert.deepEqual(counts(f.broker), { cases: 1, routes: 1, attempts: 0 })
-  assert.equal(f.calls.filter(call => call.system.includes('router-classification-contract/1')).length, 1)
+  assert.equal(f.calls.length, 0)
 })
 
 test('direct exclusions and Off bypass without session reads or Decision artifacts', async t => {

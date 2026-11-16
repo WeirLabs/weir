@@ -9,14 +9,14 @@ import { planAutoRoute, routeAuto } from '../../src/decision/router.js'
 import { insertSnapshot } from './p3-fixtures.js'
 import { publicAdd, publicMemoryFixture } from './public-fixtures.js'
 
-const asked = { id: 'q', question: 'Which option?', options: [{ label: 'A' }, { label: 'B' }], authorizationClass: 'A' }
-const scope = { workspaces: ['/repo'], paths: ['src/ui'], tags: ['decision'], authorizationClasses: ['A', 'B', 'C'] }
+const asked = { id: 'q', question: 'Which option?', options: [{ label: 'A' }, { label: 'B' }] }
+const scope = { workspaces: ['/repo'], paths: ['src/ui'], tags: ['decision'] }
 const sessionRoute = { provider: 'p', model: 'm' }
 
 function autoProfile(agentId) {
   return {
     agentId, name: `Agent ${agentId}`, state: 'enabled',
-    scope: { paths: ['src'], tags: ['decision'], authorizationClasses: ['A', 'B', 'C'] },
+    scope: { paths: ['src'], tags: ['decision'] },
     userDescription: { revision: 1, text: `USER DESCRIPTION ${agentId}` },
     generatedDescription: { revision: 0, text: '' },
     modelRoute: { chain: [] },
@@ -51,7 +51,7 @@ test('the Router candidate pack is a closed identity projection', async () => {
   assert.deepEqual(Object.keys(payload).sort(), ['candidates', 'context', 'contract', 'questions'])
   for (const candidate of payload.candidates) {
     assert.deepEqual(Object.keys(candidate).sort(), ['agentId', 'name', 'scope', 'userDescription'])
-    assert.deepEqual(Object.keys(candidate.scope).sort(), ['authorizationClasses', 'paths', 'tags'])
+    assert.deepEqual(Object.keys(candidate.scope).sort(), ['paths', 'tags'])
   }
   const wire = JSON.stringify(llm.calls[0])
   for (const forbidden of ['PRIVATE PRINCIPLE', 'PUBLIC GUIDANCE', 'ms_private', 'ms_public', 'origin_', 'snapshot', 'principle', '/repo/w1']) {
@@ -63,7 +63,7 @@ test('the Router candidate pack is a closed identity projection', async () => {
 })
 
 test('a real Auto hook sends no memory to the Router but still sends public guidance to the evaluator', async t => {
-  const f = await publicMemoryFixture(t, { decisionAgentAutoAnswerClasses: ['A', 'B', 'C'] })
+  const f = await publicMemoryFixture(t, { decisionAgentAutoAnswer: true })
   const w1Source = await f.seedDecision({ workspaceKey: f.w1, rootSessionId: 'root1', key: 'router-w1' })
   await f.seedDecision({ workspaceKey: f.w2, rootSessionId: 'root2', key: 'router-w2' })
   insertSnapshot(f, 'ms_private_router', 1, 'published', {
@@ -84,10 +84,13 @@ test('a real Auto hook sends no memory to the Router but still sends public guid
   const before = f.requests.length
   const verdict = await f.broker.hook({ agent: f.agents.root1, request: { questions: [asked] } })
   assert.ok(before >= 1)
-  // The final two calls are the Router decision and the domain evaluation.
-  const [routerCall, evaluatorCall] = f.requests.slice(-2)
-  assert.match(routerCall.system, /Auto candidate router contract/)
-  assert.match(evaluatorCall.system, /Decision evaluator contract/)
+  // The Router decision and the domain evaluation are the last two calls of
+  // this Hook (no classifier call exists anymore).
+  const tail = f.requests.slice(-2)
+  const routerCall = tail.find(call => call.system.includes('Auto candidate router contract'))
+  const evaluatorCall = tail.find(call => call.system.includes('Decision evaluator contract'))
+  assert.ok(routerCall, 'the Router verdict is one of the last two calls')
+  assert.ok(evaluatorCall, 'the domain evaluation is one of the last two calls')
   const routerWire = JSON.stringify(routerCall.messages)
   for (const forbidden of ['PUBLIC GUIDANCE TEXT', 'PRIVATE PRINCIPLE TEXT', 'ms_public', 'ms_private_router', 'origin_', f.w1, f.w2, 'pr_private_router']) {
     assert.equal(routerWire.includes(forbidden), false, forbidden)

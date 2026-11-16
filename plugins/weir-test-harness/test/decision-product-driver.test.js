@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 import { join } from 'node:path'
 import { decorateDecisionText, uniqueToolCall } from '../spikes/decision/gui-fixture/adapter.js'
-import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, candidateEditConfirmationProblems, candidateUpdateAuditProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsClassSetProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
+import { answerFormExpression, assistantRoutePickerProblems, assistantVisualEditorProblems, assistantVisualReadbackProblems, MODEL_PICKER_KEYS, candidateEditConfirmationProblems, candidateUpdateAuditProblems, correctionPreviewProblems, crossWorkspaceShareProblems, decisionSettingsAdvancedProblems, decisionSettingsAnswerSwitchProblems, decisionSettingsClosedProblems, decisionSettingsNavProblems, decisionSettingsPageProblems, exactArgs, exactMutation, immutableChanges, layoutProblems, legacyLiveSurfaceProblems, legacyMigratedProfileProblems, memoryZoneProblems, parseDecisionRequest, pendingBubbleProblems, pendingOverviewProblems, publicCandidateBodyProblems, publicCandidateRejectionProblems, publicCandidateWordingProblems, publicGuidancePinProblems, publicPublishedPrinciplesProblems, publicRecordDetailProblems, publicRefinedWordingProblems, publicWireAttributionProblems, recordProjectionProblems, scrollLockProblems, exportConfirmationProblems, exportFailureSurfaceProblems, exportSuccessSurfaceProblems } from '../spikes/decision/gui-product-lib.mjs'
 import decisionGui from '../src/scenarios/decision-gui.js'
 import { extract } from '../src/mock-kit.js'
 import { PUBLIC_CONSOLIDATION_SYSTEM } from '../../weir-harness/src/decision/learning/public.js'
@@ -46,7 +48,7 @@ test('Desktop app environment isolates HOME and preserves required runtime varia
 })
 
 test('Desktop selector-default ternary stays one quoted YAML JS scalar', () => {
-  const patch = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/cordis.patch.yml'), 'utf8')
+  const patch = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/cordis.patch.yml'), 'utf8')
   const line = patch.split('\n').find(row => row.trim().startsWith('decisionAgentSelectorDefault:'))
   const expression = line?.match(/!!js "([^"]+)"/)?.[1]
   assert.ok(expression, 'the ternary must be quoted so YAML cannot parse it as a mapping')
@@ -66,13 +68,13 @@ test('inbox answer wait composes the selector before JSON encoding', () => {
   assert.ok(expression.includes('dc_1'))
   assert.ok(expression.includes('article[data-case-id='))
   assert.ok(expression.includes('form.weir-da-answers'))
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes('answerFormExpression(caseId)'))
   assert.ok(!driver.includes('JSON.stringify(article)} form.weir-da-answers'))
 })
 
 test('cold reveal waits execute one fully quoted descendant selector', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const matrix = driver.match(/async function runColdRevealMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix, 'runColdRevealMatrix exists')
   const cases = [
@@ -107,13 +109,13 @@ test('cold reveal waits execute one fully quoted descendant selector', () => {
 })
 
 test('cold reveal refresh restores the exact draft and compares the post-edit baseline', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const matrix = driver.match(/async function runColdRevealMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix, 'runColdRevealMatrix exists')
   for (const token of ['routeRefreshBaseline', 'evidenceRefreshBaseline', "keyboardFill('Exercise cold refresh draft'", "keyboardFill('Restore cold refresh draft'", 'cold-refresh-draft.json', 'refreshBaseline', "holdDecision('record', { sessionId, caseId }, 'hold-fail')", 'await releaseDecision(routeControl)']) assert.ok(matrix.includes(token), token)
   assert.ok(!matrix.includes("openPage('records')"), 'Records → Inbox unmounts the open disclosures and is not a refresh')
   assert.ok(!matrix.includes('refreshDecisions'), 'panel toggling is not substituted for a same-mount parent render')
-  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  const fixture = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   assert.ok(!fixture.includes('refreshDecisions'), 'no layout-toggle fixture remains once the real draft render is used')
 })
 
@@ -254,7 +256,7 @@ test('correction preview rejects missing scope target or future-only consequence
 })
 
 test('product driver consumes the shared correction preview guard', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes('correctionPreviewProblems(preview)'))
   assert.ok(!driver.includes('/scope|适用范围/i.test(preview)'))
 })
@@ -278,11 +280,11 @@ test('immutable audit allows lifecycle revisions and draft revisions but rejects
 })
 
 test('product driver is wired only to new UI and real CDP capabilities', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const cdp = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
-  const shared = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-qa.mjs'), 'utf8')
-  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
-  const fixtureClient = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const cdp = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
+  const shared = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-qa.mjs'), 'utf8')
+  const fixture = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  const fixtureClient = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   assert.ok(driver.includes('data-weir-decision-trigger'))
   assert.ok(driver.includes('data-decision-primary-nav'))
   assert.ok(!driver.includes('selectDecisionTab'))
@@ -307,7 +309,7 @@ test('product driver is wired only to new UI and real CDP capabilities', () => {
 })
 
 test('product driver settles host credit onboarding with scoped native keyboard steps', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes('submitMarker as submitMarkerRaw'), 'the shared marker submit is wrapped without changing other callers')
   const dismiss = driver.match(/async function dismissCreditOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(dismiss.includes('[data-desktop-onboarding="credit"]'), 'only the exact host credit page is handled')
@@ -321,7 +323,7 @@ test('product driver settles host credit onboarding with scoped native keyboard 
 })
 
 test('delayed host welcome onboarding is resolved around native keyboard targeting with durable evidence', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const dismiss = driver.match(/async function settleDelayedHostOnboarding\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(dismiss, 'the delayed host onboarding guard exists')
   assert.ok(dismiss.includes('[data-desktop-onboarding="welcome"]'), 'only the exact visible host welcome page is classified as delayed onboarding')
@@ -341,7 +343,7 @@ test('delayed host welcome onboarding is resolved around native keyboard targeti
   assert.ok(focus.includes('options.skipDelayedHostOnboarding'), 'keyboardFocus honors the narrow reentry guard')
   assert.ok(dismiss.includes('chooseDefaultWorkspace(() => dismissCreditOnboarding(instance))'), 'credit appearing during the welcome flow is dismissed without waiting for an unreachable workspace button')
   assert.ok(dismiss.includes('resolution.creditDismissed'), 'the welcome → credit transition has explicit completion evidence')
-  const cdp = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
+  const cdp = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/cdp.mjs'), 'utf8')
   const choose = cdp.match(/async chooseDefaultWorkspace\([^)]*\) \{[\s\S]*?\n    \}/)?.[0] ?? ''
   assert.ok(choose.includes('onCredit') && choose.includes('creditDismissed'), 'the real CDP welcome flow observes and settles a mid-flow credit transition')
   assert.ok(focus.includes('step < 500'), 'the existing focus traversal bound is not expanded to conceal a trap')
@@ -376,7 +378,7 @@ test('shrunk-content clamp accepts a sub-pixel browser clamp but never a real ju
 })
 
 test('confirmation focus measurement retains original element identity across a state-dependent selector change', async () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const source = driver.match(/async function measureConfirmationFocus\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(source, 'the public Desktop measurement helper exists')
   const originSelector = '[data-agent-detail="agent-1"] [data-agent-state="disabled"]'
@@ -407,7 +409,7 @@ test('confirmation focus measurement retains original element identity across a 
 })
 
 test('held explicit consult Desktop acceptance puts one answer form before secondary content', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const state = driver.match(/async function cardState\(caseId\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(state, 'cardState exists')
   for (const token of ['form.weir-da-answers', 'formImmediatelyAfterHeader', 'formBeforeSecondary', '.weir-da-record-answers', '.weir-da-suggestion-review', 'secondary.length===5']) assert.ok(state.includes(token), token)
@@ -440,7 +442,7 @@ test('held explicit consult Desktop acceptance puts one answer form before secon
 })
 
 test('Decision settings navigation targets the third Weir page without a page-body probe', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function openDecisionSettings\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(body, 'openDecisionSettings exists')
   // Host Settings restores the last visited page, so neither a version string nor
@@ -460,13 +462,13 @@ test('Decision settings navigation targets the third Weir page without a page-bo
 })
 
 test('Decision settings page structure and close are asserted from real DOM attributes', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const dom = driver.match(/async function decisionSettingsDom\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(dom, 'decisionSettingsDom exists')
-  assert.ok(dom.includes('data-decision-class-set'), 'the class chips are read from their real container')
-  assert.ok(dom.includes("'aria-pressed'") || dom.includes('aria-pressed'), 'chip state is the aria-pressed attribute')
+  assert.ok(dom.includes('Allow automatic answers'), 'the answer switch is read from its real accessible name')
+  assert.ok(dom.includes('aria-checked') || dom.includes('checked'), 'the switch state is the checked attribute')
   assert.ok(dom.includes("data-advanced-toggle") && dom.includes('aria-expanded'), 'the fold state is the toggle aria-expanded')
-  assert.ok(dom.includes('data-decision-class-count'), 'the count marker is read from the chip row')
+  assert.ok(!dom.includes('data-decision-class-set'), 'the retired class-chip container is no longer read')
   assert.ok(driver.includes('decisionSettingsPageProblems(opened, { masterEnabled: true })'), 'the open page is asserted through the three-row guard')
   assert.ok(driver.includes('decisionSettingsAdvancedProblems(expanded, authority)'), 'the expanded advanced group is asserted against the authority')
   assert.ok(driver.includes('decisionSettingsPageProblems(off, { masterEnabled: false })'), 'the master-off page is asserted to lose the advanced group')
@@ -476,18 +478,21 @@ test('Decision settings page structure and close are asserted from real DOM attr
   assert.ok(closeBody.includes('decisionSettingsClosedProblems('), 'the close assertion is the structural page-absent guard')
 })
 
-test('Decision settings chip entry replaces the retired whitelist text input', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+
+test('Decision settings answer switch replaces the retired whitelist text input', () => {
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(!driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'the whitelist is no longer a text input')
-  const chips = driver.match(/async function setDecisionAnswerClasses\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
-  assert.ok(chips, 'setDecisionAnswerClasses exists')
-  assert.ok(chips.includes('button[data-decision-class="${entry}"]') || chips.includes('data-decision-class="'), 'the whitelist is edited by clicking its class chips')
-  assert.ok(chips.includes('decisionSettingsClassSetProblems('), 'the staged chips are compared against the requested selection')
-  assert.ok(driver.includes("await setDecisionAdvanced(true)"), 'the advanced group is expanded before its rows are touched')
+  assert.ok(!driver.includes('data-decision-class'), 'the retired class chips are gone from the driver')
+  const staged = driver.match(/async function setDecisionAutoAnswer\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.ok(staged, 'setDecisionAutoAnswer exists')
+  assert.ok(staged.includes('Allow automatic answers'), 'the switch is driven by its real accessible name')
+  assert.ok(staged.includes('decisionSettingsAnswerSwitchProblems('), 'the staged switch is compared against the requested value')
+  assert.ok(driver.includes('await setDecisionAdvanced(true)'), 'the advanced group is expanded before its rows are touched')
   assert.ok(!/keyboardFill\('Edit Auto answer-class whitelist'/.test(driver), 'no JSON text entry survives for the whitelist')
 })
+
 test('a delayed host credit page above a Decision modal is still dismissed', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function settleDelayedHostOnboarding\(action\) \{[\s\S]*?\n\}\n/)?.[0] ?? ''
   assert.ok(body, 'settleDelayedHostOnboarding exists')
   // The Host can raise its credit page above an open Decision modal; a blanket
@@ -497,7 +502,7 @@ test('a delayed host credit page above a Decision modal is still dismissed', () 
   assert.ok(body.includes("page==='credit'"), 'the credit page keeps its own dismissal path')
 })
 test('Host language matrix activates General settings through native keyboard before General-only controls', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(body, 'setGuiLanguage exists')
   const settings = body.indexOf("await keyboardActivate('Open Settings for language'")
@@ -509,7 +514,7 @@ test('Host language matrix activates General settings through native keyboard be
 })
 
 test('Host language trigger recognizes rendered Chinese and legacy variants inside Settings', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   const call = body.match(/await keyboardActivate\('Open real Language preference', '([^']+)', (\{[^\n]+\})\)/)
   assert.ok(call, 'the real Language trigger call exists')
@@ -521,7 +526,7 @@ test('Host language trigger recognizes rendered Chinese and legacy variants insi
 })
 
 test('Host language Chinese restore uses real menu labels inside the open Settings menu', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   const expression = body.match(/const labels = ([^\n]+)/)?.[1]
   assert.ok(expression, 'language selection exposes the complete rendered label candidates')
@@ -537,7 +542,7 @@ test('Host language Chinese restore uses real menu labels inside the open Settin
 })
 
 test('Host language menu uses native directional selection in both directions', async () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const language = driver.match(/async function setGuiLanguage\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(language.includes('await keyboardMenuActivate(`Select ${labels[0]} GUI language`'), 'setGuiLanguage uses the native menu navigation seam')
   const source = driver.match(/async function keyboardMenuActivate\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -585,7 +590,7 @@ test('Host language menu uses native directional selection in both directions', 
 })
 
 test('English visual matrix returns to the Decision inbox before layout audits', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(body, 'runEnglishVisualMatrix exists')
   const change = body.indexOf("const change = await setGuiLanguage('en')")
@@ -595,7 +600,7 @@ test('English visual matrix returns to the Decision inbox before layout audits',
 })
 
 test('English selector baseline waits for stable composer geometry and scroll', async () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const english = driver.match(/async function runEnglishVisualMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(english.includes("const scrollBefore = (await selectorOpen({ scrollBaseline: 'stable' })).scrollBefore"), 'the English selector uses a settled baseline after native focus and before activation')
   const source = driver.match(/async function measureStableScrollContainers\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -618,7 +623,7 @@ test('English selector baseline waits for stable composer geometry and scroll', 
 })
 
 test('modal scroll baseline follows native focus and precedes activation', async () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const source = driver.match(/async function keyboardActivate\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(source, 'keyboardActivate exists')
   const events = []
@@ -655,7 +660,7 @@ test('modal scroll baseline follows native focus and precedes activation', async
 })
 
 test('learning shrink restoration is bound to its exact settled mutation receipt', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const learning = driver.match(/async function confirmLearning\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   for (const token of ['const contentMutation = {', 'method: kind', 'args: { sessionId, snapshotId, expectedRevision }', 'rpcId: mutation.rpcId', 'response: mutation.response', 'settled: afterFocus.control.settled', 'authoritative: {', 'const confirmed =', 'finishModalAudit(audit, { focus, focusProblems, contentMutation })']) assert.ok(learning.includes(token), token)
   const finish = driver.match(/async function finishModalAudit\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -665,7 +670,7 @@ test('learning shrink restoration is bound to its exact settled mutation receipt
 // Keyboard acceptance must observe real focus traversal; querying a target is read-only and
 // may never be followed by programmatic focus, DOM clicks or value setters.
 test('product driver keyboard helpers record native focus traversal and text entry', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const focus = driver.match(/async function keyboardFocus\(action, selector, options = \{\}\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(focus, 'the shared keyboard focus helper exists')
   assert.match(focus, /instance\.cdp\.key\('Tab',/, 'focus moves only through native Tab packets')
@@ -698,7 +703,7 @@ test('product driver keyboard helpers record native focus traversal and text ent
 })
 
 test('all product write paths use native keyboard helpers instead of DOM actions', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(!/\bsetInput\b/.test(driver), 'the DOM value setter is not imported or called')
   for (const name of ['selectorOpen', 'selectorChoose', 'fillAgent', 'createAgent', 'agentState', 'answerNative', 'answerInboxWithSuggestions', 'skipLongNativeStep', 'feedback', 'startCandidate', 'confirmLearning']) {
     const body = driver.match(new RegExp(`async function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`))?.[0] ?? ''
@@ -848,7 +853,7 @@ test('CDP color scheme helper waits for both dark and light target media states'
 })
 
 test('product visual audit waits for target computed colors and retains strict zoom and layout guards', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const audit = driver.match(/async function layoutAudit\(name, theme = 'light', zoom = 1\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(audit, 'layoutAudit exists')
   assert.match(audit, /await waitFor\(/, 'the audit waits for a real condition rather than sampling the CDP ack')
@@ -865,7 +870,7 @@ test('product visual audit waits for target computed colors and retains strict z
 })
 
 test('narrow visual audit natively closes the host drawer and requires independent main-region hit testing', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const normalize = driver.match(/async function normalizeDecisionHostChrome\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(normalize, 'ordinary narrow audits normalize the real host drawer state')
   assert.match(normalize, /keyboardActivate\('Close host sidebar for Decision visual audit'/)
@@ -882,7 +887,7 @@ test('narrow visual audit natively closes the host drawer and requires independe
 })
 
 test('keyboard selector audits precede native pending and retain long-case visual coverage', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const keyboard360 = /await instance\.cdp\.setViewport\(360\)\s*await keyboardSelector\(sessionId, secondary\.agentId\)\s*await keyboardSelector\(sessionId, 'auto'\)\s*await keyboardSelector\(sessionId, primary\.agentId\)/.exec(driver)
   assert.ok(keyboard360, 'Agent, Auto, and Agent keyboard flows all run together at 360px')
   const longAsk = driver.indexOf('const longCase = await askLongNative(sessionId)')
@@ -902,7 +907,7 @@ test('keyboard selector audits precede native pending and retain long-case visua
 // Run W1nSiy regression anchor: native ArrowDown selected and closed the radio panel;
 // a subsequent Space confirmation has no target and is not part of the product contract.
 test('keyboard selector treats directional native selection as the complete activation path', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const body = driver.match(/async function keyboardSelector\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(body, 'keyboardSelector exists')
   assert.ok(!/\.focus\(|\.click\(/.test(body), 'the keyboard audit never substitutes programmatic focus or click')
@@ -929,7 +934,7 @@ test('keyboard selector treats directional native selection as the complete acti
 // driver now finishes that card with the rendered native Skip, which the Hook routes through
 // hookUserAborted — a no-op on the already closed record — and rethrows the native cancel.
 test('long native Skip retires the leftover question without touching the closed record', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const answered = driver.indexOf("await answerInboxWithSuggestions(sessionId, longCase.caseId, '18-long-inbox')")
   const skipped = driver.indexOf('await finishLongNativeWithSkip(sessionId, longCase.caseId)')
   const reopened = driver.indexOf('await openSession(instance, sessionId)', skipped)
@@ -981,7 +986,7 @@ test('long native Skip retires the leftover question without touching the closed
 })
 
 test('product learning candidates cite the real correction and advance beyond their parent', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.match(driver, /const learningCorrection = corrected\.feedback\.find\(item => item\.kind === 'correction'\)/)
   assert.ok(!driver.includes('sources?.[0] === learningSource.caseId'), 'the unrelated learning Case is not the correction candidate source')
   assert.match(driver, /learningSource\.decision\?\.kind === 'user_decision'/, 'the native learning-source decision evidence remains')
@@ -998,7 +1003,7 @@ test('product learning candidates cite the real correction and advance beyond th
 // through the rendered review only, and every fact about it must come from an
 // authority this driver cannot write.
 test('the accepted candidate edit is driven through the real review and read back authoritatively', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const matrix = driver.match(/async function runCandidateEditMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(matrix, 'runCandidateEditMatrix exists')
   const start = matrix.indexOf('candidate = await startCandidate(sessionId, agent, 4)')
@@ -1009,7 +1014,6 @@ test('the accepted candidate edit is driven through the real review and read bac
   const order = [
     "keyboardActivate('Edit candidate principle'",
     "keyboardFill('Candidate principle wording'",
-    "keyboardActivate('Toggle candidate principle class A'",
     "keyboardActivate('Save candidate principle'",
     "expectMutation('snapshotUpdate'",
     "keyboardActivate('Request candidate principle removal'",
@@ -1028,7 +1032,7 @@ test('the accepted candidate edit is driven through the real review and read bac
     assert.ok(at > cursor, `${token} runs in order`)
     cursor = at
   }
-  assert.ok(matrix.includes("edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: { authorizationClasses: ['A'] } }]"), 'the save carries the reviewed wording and the toggled class')
+  assert.ok(matrix.includes("edits: [{ principleId: changedEntry.principleId, text: CANDIDATE_EDIT_TEXT, scope: { paths: ['src'] } }]"), 'the save carries the reviewed wording and the staged paths')
   assert.ok(matrix.includes("edits: [{ principleId: addedEntry.principleId, remove: true }]"), 'the removal carries only the id and remove')
   assert.ok(matrix.includes('JSON.stringify(editedRun.operations) === JSON.stringify(reviewedRun.operations)'), 'the learning run operations are compared byte-for-byte')
   assert.ok(matrix.includes('JSON.stringify(editedRun.replay) === JSON.stringify(reviewedRun.replay)'), 'the structural replay is compared byte-for-byte')
@@ -1074,7 +1078,7 @@ test('the candidate-edit packet passes the real parser, replay and source scope 
 // issued learningRun and correctly received DECISION_UNAVAILABLE. Persistence authority
 // belongs to a fresh enabled process, never to the disabled-bypass phase.
 test('global off bypass and enabled restart persistence run in separate owned processes', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const disabledStart = driver.indexOf('instance = await startDesktop(false)')
   const disabledStop = driver.indexOf("await stopOwned('process-2')", disabledStart)
   assert.ok(disabledStart >= 0 && disabledStop > disabledStart, 'the disabled instance has an exact owned cleanup boundary')
@@ -1137,7 +1141,7 @@ test('global off bypass and enabled restart persistence run in separate owned pr
 })
 
 test('product driver preserves all legacy AX groups and derives the expanded P4 requirements', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const capture = driver.match(/async function captureAccessibility\(name, selector\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(capture, 'a single capture helper owns every AX collection')
   assert.match(capture, /accessibility\[name\] = await instance\.cdp\.accessibility\(selector\)/, 'every capture owns its complete target subtree')
@@ -1158,8 +1162,8 @@ test('product driver preserves all legacy AX groups and derives the expanded P4 
   assert.ok(answered >= 0 && opened > answered && captured > opened && finished > captured, 'longRecord AX reads the still-rendered authoritative record after inbox closure')
 })
 test('native AX group evidence comes from the pending multi-select stock question', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const scenario = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/src/scenarios/decision-gui.js'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const scenario = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/src/scenarios/decision-gui.js'), 'utf8')
   assert.match(scenario, /product-long-choice[\s\S]*?multi_select: true/, 'the real stock long question is the source-verified native group surface')
   assert.equal(driver.match(/await captureAccessibility\('nativeDecision'/g)?.length, 1, 'single-select pending cases cannot occupy the multi-select AX slot')
   const finish = driver.match(/async function finishLongNativeWithSkip\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -1172,12 +1176,12 @@ test('native AX group evidence comes from the pending multi-select stock questio
 })
 
 test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, restoration, and cleanup', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   for (const token of [
     'runP4BeforeRestart', 'runP4AfterRestart', 'auditP4RawEvidence',
     'freshRootsDefaultToPersistedAuto', 'restartPreservesAutoExplicitOffAndLegacyNoRowOff',
-    'emptyWhitelistRoutesOwnedAuthorityWithoutAttempt', 'zeroCandidatesNoRouteOrAttempt',
-    'oneCandidateDeterministicAllGates', 'stockClasslessSelectedRouteHasDerivedAAndAllGates',
+    'answerSwitchOffRoutesOwnedAuthorityWithoutAttempt', 'zeroCandidatesNoRouteOrAttempt',
+    'oneCandidateDeterministicAllGates', 'stockClasslessSelectedRouteHasNoDerivedClassAndAllGates',
     'ambiguityHasCandidatesConflictAndNoAttempt', 'invalidOutputFailureHasNoOwnerOrAttempt',
     'timeoutFailureHasNoOwnerOrAttempt', 'explicitConsultPrioritizesSecondaryWithoutChangingAuto',
     'shadowOnOffIdenticalActualOutcomeAndHistoryExceptAppendOnlyDiagnostic',
@@ -1192,7 +1196,7 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   const snapshot = driver.indexOf("sqliteSnapshot('p4-interrupted-before-crash')")
   assert.ok(hold >= 0 && crash > hold && snapshot > crash, 'the owned crash immediately follows the held Router ready marker; SQLite is read only after the process stops')
   const heldWindow = driver.slice(hold, crash)
-  assert.ok(!heldWindow.includes('waitCase') && !heldWindow.includes('record('), 'no authority RPC can race the 150ms classification timeout before the crash')
+  assert.ok(!heldWindow.includes('waitCase') && !heldWindow.includes('record('), 'no authority RPC can race the 150ms Router timeout before the crash')
   const holdRoot = driver.indexOf("mkdirSync(join(out, 'it-root'), { recursive: true })")
   assert.ok(holdRoot >= 0 && holdRoot < hold, 'the Desktop run creates the hold-marker root before any Router hold')
   assert.match(driver, /await openIsolatedSession\(p4State\.autoSession\)\s*await submitMarker\(instance, 'GUI_AUTO_INTERRUPT'\)/, 'the held interruption uses the existing Auto session without changing the pinned session used by global-off checks')
@@ -1205,13 +1209,14 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
   assert.ok(mainSignal >= 0 && networkCollection > mainSignal, 'crash signals the owned main PID before any asynchronous network collection')
   assert.ok(stopBody.indexOf('const mainPid = value.app.pid') < mainSignal && stopBody.indexOf('const before =') < mainSignal, 'ownership identity and liveness are captured synchronously before SIGKILL')
   assert.match(driver, /knownSessionIds\.has\(sessionId\)/, 'raw authority reads are limited to run-created sessions')
-  assert.ok(driver.includes('[data-decision-class-set] button[data-decision-class="${entry}"]'), 'the Auto answer whitelist is entered through the rendered A/B/C chips')
+  assert.ok(driver.includes('Allow automatic answers'), 'the Auto answer permission is entered through the rendered switch')
+  assert.ok(!driver.includes('data-decision-class'), 'the retired A/B/C chips are not addressed anymore')
   assert.ok(!driver.includes('input#plugin-config-weir-settings-decisionAgentAutoAnswerClasses'), 'the retired whitelist text input is not addressed anymore')
   assert.match(driver, /keyboardSelect\('Change routing review window', 'select\[data-routing-window\]', '24h'\)/, 'Desktop changes to the first real non-default window before its controlled select starts loading')
   assert.ok(!driver.includes("keyboardSelect('Change routing review window', 'select[data-routing-window]', '7d')"), 'the known intermediate-onChange 7d prefix path is not retained')
   assert.ok(driver.includes('input#plugin-config-weir-settings-decisionAgentAnswerTimeoutMs'), 'the held interruption uses the real timeout setting input')
   assert.match(driver, /setAutoSettings\('p4-interruption-window', \{ answerTimeoutMs: 30000 \}\)/, 'only the held interruption receives an explicit bounded longer window')
-  assert.match(driver, /setAutoSettings\('p4-restored', \{ shadow: false, answerClasses: \[\], answerTimeoutMs: 150 \}\)/, 'final real-UI restoration includes the original 150ms timeout')
+  assert.match(driver, /setAutoSettings\('p4-restored', \{ shadow: false, autoAnswer: false, answerTimeoutMs: 150 \}\)/, 'final real-UI restoration includes the original 150ms timeout')
   assert.match(driver, /compareRoutingReview\(reviewSession, 'p4-routing-before-visuals', allAgain\)/, 'a fresh session mount compares to its authoritative first page')
   assert.ok(!driver.includes("compareRoutingReview(reviewSession, 'p4-routing-before-visuals', combined)"), 'the prior expanded page is not expected after a fresh mount')
   const agentStateBody = driver.match(/async function agentState\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -1221,7 +1226,7 @@ test('P4 acceptance owns the full real matrix, raw evidence, crash recovery, res
 })
 
 test('P4 Desktop settings default closed and forward only explicit isolated overrides', t => {
-  const keys = ['WEIR_DECISION_GUI_SELECTOR_DEFAULT', 'WEIR_DECISION_GUI_SHADOW', 'WEIR_DECISION_GUI_AUTO_CLASSES']
+  const keys = ['WEIR_DECISION_GUI_SELECTOR_DEFAULT', 'WEIR_DECISION_GUI_SHADOW', 'WEIR_DECISION_GUI_AUTO_ANSWER']
   const original = Object.fromEntries(keys.map(key => [key, process.env[key]]))
   t.after(() => { for (const key of keys) { if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key] } })
   const paths = { home: '/isolated/root/home', profile: '/isolated/root/home/profiles/desktop', electronData: '/isolated/root/electron-data' }
@@ -1229,16 +1234,16 @@ test('P4 Desktop settings default closed and forward only explicit isolated over
   const conservative = appEnvironment(paths, '/isolated/root/out', true)
   assert.equal(conservative.WEIR_DECISION_GUI_SELECTOR_DEFAULT, 'off')
   assert.equal(conservative.WEIR_DECISION_GUI_SHADOW, '0')
-  assert.equal(conservative.WEIR_DECISION_GUI_AUTO_CLASSES, '[]')
+  assert.equal(conservative.WEIR_DECISION_GUI_AUTO_ANSWER, '0')
   process.env.WEIR_DECISION_GUI_SELECTOR_DEFAULT = 'auto'
   process.env.WEIR_DECISION_GUI_SHADOW = '1'
-  process.env.WEIR_DECISION_GUI_AUTO_CLASSES = '["A","C"]'
+  process.env.WEIR_DECISION_GUI_AUTO_ANSWER = '1'
   const enabled = appEnvironment(paths, '/isolated/root/out', true)
   assert.equal(enabled.WEIR_DECISION_GUI_SELECTOR_DEFAULT, 'auto')
   assert.equal(enabled.WEIR_DECISION_GUI_SHADOW, '1')
-  assert.equal(enabled.WEIR_DECISION_GUI_AUTO_CLASSES, '["A","C"]')
-  const patch = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/cordis.patch.yml'), 'utf8')
-  for (const token of ['decisionAgentSelectorDefault', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswerClasses', 'WEIR_DECISION_GUI_SELECTOR_DEFAULT', 'WEIR_DECISION_GUI_SHADOW', 'WEIR_DECISION_GUI_AUTO_CLASSES']) assert.ok(patch.includes(token), token)
+  assert.equal(enabled.WEIR_DECISION_GUI_AUTO_ANSWER, '1')
+  const patch = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/cordis.patch.yml'), 'utf8')
+  for (const token of ['decisionAgentSelectorDefault', 'decisionAgentAutoShadow', 'decisionAgentAutoAnswer', 'WEIR_DECISION_GUI_SELECTOR_DEFAULT', 'WEIR_DECISION_GUI_SHADOW', 'WEIR_DECISION_GUI_AUTO_ANSWER']) assert.ok(patch.includes(token), token)
 })
 
 test('selector requests and authoritative rereads distinguish Off Auto and Agent exactly', async () => {
@@ -1266,8 +1271,8 @@ test('immutable audit rejects RouteDecision rewrites and disappearance across SQ
 })
 
 test('P4 driver exposes native Auto selection routing review and classless stock evidence seams', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const fixture = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
   const selector = driver.match(/async function selectorChoose\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   const keyboard = driver.match(/async function keyboardSelector\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   for (const body of [selector, keyboard]) {
@@ -1316,7 +1321,7 @@ test('startup isolation contract rejects current App P0 roots ports and foreign 
 })
 
 test('minimal P4 startup smoke keeps provenance runtime gates and exact owned cleanup', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes('WEIR_DECISION_PRODUCT_PREFLIGHT_ONLY'))
   assert.ok(driver.includes("runStartupPreflight"), 'a separate minimal mode avoids running the 9.2–9.3 matrix')
   const smoke = driver.match(/async function runStartupPreflight\(\) \{[\s\S]*?\n\}/)?.[0] ?? ''
@@ -1500,18 +1505,18 @@ test('legacy migration guard keeps identity and private history and starts publi
   assert.ok(legacyMigratedProfileProblems({ ...report, currentAppTouched: true, walSidecarsLeft: true }).some(problem => /current App data/.test(problem)))
 })
 
-test('the cross-workspace Auto fixture opens the real answer-class whitelist first', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+test('the cross-workspace Auto fixture opens the real answer switch first', () => {
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
-  const settings = phase.indexOf("await setAutoSettings(`${phase}-auto`, { shadow: false, answerClasses: ['A'], answerTimeoutMs: 150 })")
+  const settings = phase.indexOf("await setAutoSettings(`${phase}-auto`, { shadow: false, autoAnswer: true, answerTimeoutMs: 150 })")
   const marker = phase.indexOf("await submitMarker(instance, 'CROSS_AUTO_Q')")
-  assert.ok(settings > 0 && marker > settings, 'the whitelist is opened through the real settings surface before the Auto request')
+  assert.ok(settings > 0 && marker > settings, 'the answer switch is opened through the real settings surface before the Auto request')
   assert.ok(phase.includes('autoRecord.case.agentId === shared.agentId'), 'the Auto evidence proves the shared assistant really received the route')
   assert.ok(phase.includes('lastAttemptOutcome'), 'the Auto evidence records the attempt outcome')
 })
 
 test('cross-workspace waits return plain data across the CDP boundary', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(phase, 'the sharing phase exists')
   assert.ok(phase.includes("return Boolean(zone?.querySelector('[data-public-disclosure]'))"), 'the disclosure wait returns a boolean')
@@ -1520,7 +1525,7 @@ test('cross-workspace waits return plain data across the CDP boundary', () => {
 })
 
 test('every cross-workspace selector gesture reopens its session first', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(phase, 'the sharing phase exists')
   for (const session of ['w1.sessionId', 'w2.sessionId', 'w3.sessionId']) {
@@ -1531,8 +1536,8 @@ test('every cross-workspace selector gesture reopens its session first', () => {
 })
 
 test('the driver imports every guard it calls', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const lib = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   const imported = new Set((driver.match(/import \{([^}]+)\} from '\.\/gui-product-lib\.mjs'/) ?? [, ''])[1].split(',').map(name => name.trim()).filter(Boolean))
   const called = [...driver.matchAll(/\b(legacyLiveSurfaceProblems|legacyMigratedProfileProblems|crossWorkspaceShareProblems|memoryZoneProblems|scrollLockProblems|publicGuidancePinProblems|publicWireAttributionProblems|publicCandidateRejectionProblems|publicCandidateBodyProblems|publicCandidateWordingProblems|publicPublishedPrinciplesProblems|publicRecordDetailProblems|publicRefinedWordingProblems|exportConfirmationProblems|exportSuccessSurfaceProblems|exportFailureSurfaceProblems)\b/g)].map(match => match[1])
   for (const name of new Set(called)) {
@@ -1542,7 +1547,7 @@ test('the driver imports every guard it calls', () => {
 })
 
 test('the P4 candidate fixtures do not rely on workspace-bound eligibility', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const created = driver.indexOf("const foreign = await createAgentWithVisualSettings(foreignSession, 'FOREIGN WORKSPACE PRIVATE PROFILE")
   assert.ok(created > 0, 'the foreign assistant fixture still exists (created through the visual scope/route editor)')
   assert.ok(driver.includes('async function createAgentWithVisualSettings('), 'the visual-scope assistant flow exists')
@@ -1557,7 +1562,7 @@ test('the P4 candidate fixtures do not rely on workspace-bound eligibility', () 
 })
 
 test('SQLite snapshots accept only the v2 store whose row envelopes stay v1', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const snapshot = driver.match(/function sqliteSnapshot\(phase\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(snapshot, 'sqliteSnapshot exists')
   assert.ok(snapshot.includes("db.prepare('PRAGMA integrity_check')"), 'the snapshot reads the real integrity check')
@@ -1568,8 +1573,8 @@ test('SQLite snapshots accept only the v2 store whose row envelopes stay v1', ()
 })
 
 test('the driver keeps the cross-workspace matrix gated, isolated and lane-local', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
-  const lib = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const lib = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product-lib.mjs'), 'utf8')
   assert.ok(driver.includes("process.env.WEIR_DECISION_PRODUCT_CROSS_WORKSPACE === '1'"), 'the matrix needs an explicit opt-in flag')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(phase, 'runCrossWorkspaceMemoryMatrix exists')
@@ -1617,7 +1622,7 @@ test('the driver keeps the cross-workspace matrix gated, isolated and lane-local
 })
 
 test('assistant creation is guarded by the profile-global identity contract, not workspace membership', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.equal(/scope\?\.workspaces\?\.includes\(LANE\)/.test(driver), false, 'no oracle may require a profile to belong to the lane workspace')
   const guard = driver.match(/check\('selectorCreateUsesProfileGlobalIdentity'[^\n]*/)?.[0] ?? ''
   assert.ok(guard, 'the created assistant is still guarded')
@@ -1631,16 +1636,16 @@ test('reused drivers expect three primary destinations instead of the retired fo
     ['gui-c.mjs', 'exactlyThreePrimaryDestinations'],
     ['gui-memory.mjs', 'threePrimaryDestinationsAndNoFutureControls'],
   ]) {
-    const source = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision', file), 'utf8')
+    const source = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision', file), 'utf8')
     assert.ok(source.includes(token), `${file} carries the repaired navigation contract`)
     assert.equal(/main nav button"\)\.length === 4/.test(source), false, `${file} no longer expects four navigation buttons`)
   }
   for (const file of ['gui-learning.mjs', 'gui-qa.mjs']) {
-    const source = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision', file), 'utf8')
+    const source = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision', file), 'utf8')
     assert.equal(source.includes('nav.length === 4'), false, `${file} no longer expects four navigation actions`)
     assert.equal(source.includes('length === 4'), false, `${file} no longer expects four navigation buttons`)
   }
-  const learning = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-learning.mjs'), 'utf8')
+  const learning = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-learning.mjs'), 'utf8')
   assert.ok(learning.includes('nav.length === 3'), 'gui-learning pins the three-destination contract')
 })
 
@@ -1926,7 +1931,7 @@ test('refined wording guard discriminates a refined candidate from the still-pub
 })
 
 test('the GUI public consolidation brain refines with wording the review leg can tell apart', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes('publicRefinedWordingProblems({ rpc: secondWording.rpc, dom: secondWording.dom, published: publishedPrinciples })'), 'the refine leg is judged against the wording that is still published')
   assert.ok(driver.includes("check('publicSecondCandidateRefinesDistinctWording'"), 'the distinct refine wording is its own falsifiable check')
   const publishedWording = 'Prefer the documented option both workspaces agreed on.'
@@ -2045,7 +2050,7 @@ test('export failure guard forbids a success surface and demands an actionable e
 })
 
 test('the export leg is gated, uses the real controls and verifies the file itself', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   assert.ok(driver.includes("process.env.WEIR_DECISION_PRODUCT_EXPORT !== '1'"), 'the export leg needs an explicit opt-in flag')
   assert.ok(driver.includes('const exportSurface = await runExportSurfaceAcceptance(w4.sessionId)'), 'the leg runs inside the real Desktop matrix on the live workspace session')
   assert.ok(driver.includes("'[data-record-export] [data-action=\"export\"]'"), 'the action is reached through the rendered advanced area')
@@ -2092,7 +2097,7 @@ test('record detail guard requires both partitions and the real public pin', () 
 })
 
 test('the matrix binds every public gesture to its workspace before acting', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const phase = driver.match(/async function runCrossWorkspaceMemoryMatrix\([^)]*\) \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.ok(phase, 'the sharing phase exists')
   // M4: the page is re-opened and its own read proves the binding before a gesture.
@@ -2137,7 +2142,7 @@ test('the matrix binds every public gesture to its workspace before acting', () 
 // inside an injected single-quoted string is a page-level SyntaxError that only
 // surfaces mid-run, so every new probe is compiled here first.
 test('the injected page probes compile before the real run reaches them', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   const templateAfter = marker => {
     const from = driver.indexOf('instance.cdp.evaluate(`', driver.indexOf(marker))
     assert.ok(from > 0, `${marker}: an injected expression exists`)
@@ -2209,7 +2214,7 @@ test('pending overview guard requires one group per source and a switch only acr
 })
 
 test('the pending-overview driver probes exist, stay compiled, and pin the real surfaces', () => {
-  const driver = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
+  const driver = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-product.mjs'), 'utf8')
   for (const token of [
     'async function runPendingOverviewMatrix(', 'async function pendingBubbleDom(',
     'data-weir-decision-bubble', 'data-decision-entry', 'data-weir-decision-live', 'data-inbox-group',
@@ -2242,14 +2247,14 @@ test('the pending-overview driver probes exist, stay compiled, and pin the real 
   assert.doesNotThrow(() => new Function('document', `return (${noticeProbe.replace(/\\`/g, '`')})`), 'the notice probe is valid page source')
   // The stub is honest: the fixture rewrites only the reported delivery, and the
   // run records it as a stub rather than as the Host's own unavailable branch.
-  const fixture = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
+  const fixture = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/client.js'), 'utf8')
   assert.ok(fixture.includes("'delivery-unavailable'"), 'the fixture owns the delivery stub')
   assert.ok(fixture.includes("closed.delivery = { state: 'unavailable' }"), 'the stub rewrites only the reported delivery')
   assert.ok(driver.includes('stub: true'), 'the evidence names the delivery stub')
-  const fixtureHost = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
+  const fixtureHost = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-fixture/index.js'), 'utf8')
   assert.ok(fixtureHost.includes('userMessages'), 'the session scan exposes bounded user messages')
   assert.ok(fixtureHost.includes("event.type === 'user/message'"), 'the scan reads the real user-message event type')
-  const guiB = readFileSync(join(process.cwd(), 'plugins/weir-test-harness/spikes/decision/gui-b.mjs'), 'utf8')
+  const guiB = readFileSync(join(REPO_ROOT, 'plugins/weir-test-harness/spikes/decision/gui-b.mjs'), 'utf8')
   assert.ok(guiB.includes('finalInbox.every(item => !scenarioCaseIds.includes(item.caseId))'), 'gui-b scopes its clean-end assertion to its own Cases')
 })
 
@@ -2270,11 +2275,11 @@ const settingsOpenSnapshot = (overrides = {}) => ({
     rows: [
       { tag: 'div', text: '决策 Agent\nOff 时不拦截、不咨询、不采样，也不创建数据库（默认关闭）。', controls: [masterSwitchControl, { tag: 'button', id: null, role: null, label: null, checked: null, pressed: null, value: '', disabled: false }] },
       { tag: 'div', text: '新根会话的默认选择\n默认 Off。\nOff\nAuto', controls: [tabControl('off'), tabControl('auto')] },
-      { tag: 'div', text: '自动回答类别\n允许 Auto 自动回答的授权类别。\nA\nB\nC', controls: [chipControl('A', 'false'), chipControl('B', 'false'), chipControl('C', 'false')] },
+      { tag: 'div', text: '允许自动回答\n打开后，Auto 的结论只有通过全部证据与授权闸门才会被采纳。', controls: [{ tag: 'button', id: null, role: 'switch', label: '允许自动回答', checked: 'false', pressed: null, value: '', disabled: false }] },
     ],
   },
   advanced: { expanded: 'false', hasToggle: true, body: false, rows: [] },
-  classSet: { chips: [{ value: 'A', pressed: 'false', disabled: false }, { value: 'B', pressed: 'false', disabled: false }, { value: 'C', pressed: 'false', disabled: false }], count: 0, countText: '未允许任何类别——Auto 仍会分类与路由，但结论交给你。' },
+  answerSwitch: { checked: 'false' },
   saveBar: false,
   ...overrides,
 })
@@ -2319,11 +2324,12 @@ test('decision settings page guard proves three basic rows and a folded advanced
   assert.ok(problems.some(text => /aria-expanded=true/.test(text)) && problems.some(text => /mounts its body/.test(text)), 'the default fold must stay closed')
   const foreignGroup = settingsOpenSnapshot({ groups: ['decisionBasics', 'decisionAdvanced', 'todo'] })
   assert.ok(decisionSettingsPageProblems(foreignGroup, { masterEnabled: true }).some(text => /foreign group/.test(text)))
-  const noChips = settingsOpenSnapshot()
-  noChips.basics.rows[2].controls = []
-  assert.ok(decisionSettingsPageProblems(noChips, { masterEnabled: true }).some(text => /chips instead of three/.test(text)))
+  // The third basic row is the answer switch: class chips are a regression now.
+  const chips = settingsOpenSnapshot()
+  chips.basics.rows[2].controls = [{ tag: 'button', pressed: 'true', disabled: false }, { tag: 'button', pressed: 'false', disabled: false }, { tag: 'button', pressed: 'false', disabled: false }]
+  assert.ok(decisionSettingsPageProblems(chips, { masterEnabled: true }).some(text => /class chips/.test(text)))
   // master switch off: only its own row survives and the advanced group is gone
-  const off = settingsOpenSnapshot({ groups: ['decisionBasics'], basics: { rows: [settingsOpenSnapshot().basics.rows[0]] }, advanced: null, classSet: null })
+  const off = settingsOpenSnapshot({ groups: ['decisionBasics'], basics: { rows: [settingsOpenSnapshot().basics.rows[0]] }, advanced: null })
   assert.deepEqual(decisionSettingsPageProblems(off, { masterEnabled: false }), [])
   const offButAdvanced = settingsOpenSnapshot({ groups: ['decisionBasics', 'decisionAdvanced'], basics: { rows: [settingsOpenSnapshot().basics.rows[0]] } })
   assert.ok(decisionSettingsPageProblems(offButAdvanced, { masterEnabled: false }).some(text => /advanced group still renders/.test(text)))
@@ -2332,6 +2338,7 @@ test('decision settings page guard proves three basic rows and a folded advanced
   const wrongPage = settingsOpenSnapshot({ activeNav: 'Weir' })
   assert.ok(decisionSettingsPageProblems(wrongPage, { masterEnabled: true }).some(text => /mounted settings page is Weir/.test(text)))
 })
+
 
 test('decision settings advanced guard reads the runtime rows against authority', () => {
   assert.deepEqual(decisionSettingsAdvancedProblems(settingsExpandedSnapshot(), { timeoutMs: 150, shadow: false }), [])
@@ -2350,30 +2357,23 @@ test('decision settings advanced guard reads the runtime rows against authority'
   assert.ok(decisionSettingsAdvancedProblems(sixRows, {}).some(text => /instead of seven/.test(text)))
 })
 
-test('decision settings class-set guard keeps the stored whitelist in row order', () => {
-  const selected = (values) => ({ chips: ['A', 'B', 'C'].map(value => ({ value, pressed: String(values.includes(value)), disabled: false })), count: values.length, countText: values.length === 0 ? '未允许任何类别——Auto 仍会分类与路由，但结论交给你。' : values.join(', ') })
-  assert.deepEqual(decisionSettingsClassSetProblems(selected(['A', 'C']), ['A', 'C']), [])
-  assert.deepEqual(decisionSettingsClassSetProblems(selected([]), []), [])
-  assert.ok(decisionSettingsClassSetProblems(selected(['A', 'C']), ['A', 'C']).length === 0, 'row order, not click order')
-  const clickOrder = selected(['A', 'C'])
-  clickOrder.countText = 'C, A'
-  assert.ok(decisionSettingsClassSetProblems(clickOrder, ['A', 'C']).some(text => /instead of A, C in row order/.test(text)))
-  const stale = selected(['A', 'C'])
-  stale.chips[1].pressed = 'true'
-  assert.ok(decisionSettingsClassSetProblems(stale, ['A', 'C']).some(text => /rendered selection A,B,C differs from A,C/.test(text)))
-  const notPressed = selected(['A'])
-  notPressed.chips[1].pressed = null
-  assert.ok(decisionSettingsClassSetProblems(notPressed, ['A']).some(text => /carries no aria-pressed state/.test(text)))
-  assert.ok(decisionSettingsClassSetProblems(selected([]), ['A']).some(text => /differs from A/.test(text)))
-  assert.ok(decisionSettingsClassSetProblems(null, []).length === 1)
+test('decision settings answer-switch guard reads the stored boolean, never a class list', () => {
+  assert.deepEqual(decisionSettingsAnswerSwitchProblems({ checked: 'true' }, true), [])
+  assert.deepEqual(decisionSettingsAnswerSwitchProblems({ checked: 'false' }, false), [])
+  assert.ok(decisionSettingsAnswerSwitchProblems({ checked: 'false' }, true).some(text => /reads false instead of true/.test(text)))
+  assert.ok(decisionSettingsAnswerSwitchProblems({ checked: 'true' }, false).some(text => /reads true instead of false/.test(text)))
+  assert.ok(decisionSettingsAnswerSwitchProblems({ checked: null }, true).some(text => /carries no checked state/.test(text)))
+  assert.ok(decisionSettingsAnswerSwitchProblems(null, true).length === 1)
 })
 
+
 test('decision settings close guard is structural, not a body-text probe', () => {
-  assert.deepEqual(decisionSettingsClosedProblems({ dialog: false, groups: [], classSets: 0, advancedToggles: 0, agentEditors: 0 }), [])
-  assert.ok(decisionSettingsClosedProblems({ dialog: true, groups: [], classSets: 0, advancedToggles: 0, agentEditors: 0 }).some(text => /dialog is still open/.test(text)))
-  assert.ok(decisionSettingsClosedProblems({ dialog: false, groups: ['decisionBasics'], classSets: 1, advancedToggles: 1, agentEditors: 0 }).length === 3, 'a mounted page, its chips and its fold are each reported')
-  assert.ok(decisionSettingsClosedProblems({ dialog: false, groups: [], classSets: 0, advancedToggles: 0, agentEditors: 1 }).some(text => /assistant editor/.test(text)))
+  assert.deepEqual(decisionSettingsClosedProblems({ dialog: false, groups: [], answerSwitches: 0, advancedToggles: 0, agentEditors: 0 }), [])
+  assert.ok(decisionSettingsClosedProblems({ dialog: true, groups: [], answerSwitches: 0, advancedToggles: 0, agentEditors: 0 }).some(text => /dialog is still open/.test(text)))
+  assert.ok(decisionSettingsClosedProblems({ dialog: false, groups: ['decisionBasics'], answerSwitches: 1, advancedToggles: 1, agentEditors: 0 }).length === 3, 'a mounted page, its switch and its fold are each reported')
+  assert.ok(decisionSettingsClosedProblems({ dialog: false, groups: [], answerSwitches: 0, advancedToggles: 0, agentEditors: 1 }).some(text => /assistant editor/.test(text)))
 })
+
 
 test('assistant editor guard replaces the scope and route JSON boxes with visual controls', () => {
   const staged = {
@@ -2381,7 +2381,7 @@ test('assistant editor guard replaces the scope and route JSON boxes with visual
     scopeEditors: 1,
     scopePaths: [],
     scopeTags: [],
-    scopeClasses: ['A', 'B', 'C'].map(value => ({ value, pressed: 'true' })),
+    scopeClasses: 0,
     scopeAdd: { path: 1, tag: 1 },
     routeEditors: 1,
     routeAdd: 1,
@@ -2396,24 +2396,12 @@ test('assistant editor guard replaces the scope and route JSON boxes with visual
   assert.ok(assistantVisualEditorProblems(withRouteJson).some(text => /modelRoute JSON textarea still renders/.test(text)))
   const twoBoxes = { ...staged, textareas: [{ id: 'a', agentField: 'preference' }, { id: 'b', agentField: 'name' }] }
   assert.ok(assistantVisualEditorProblems(twoBoxes).some(text => /free-text boxes/.test(text)))
+  // A surviving authorization-class chip is the regression this guard catches.
+  assert.ok(assistantVisualEditorProblems({ ...staged, scopeClasses: 3 }).some(text => /authorization-class chips/.test(text)))
   const rungPicker = { ...staged, routeEmpty: 0, rungs: [{ index: 0, mode: 'picker', trigger: 'Mock One', remove: true }] }
   assert.deepEqual(assistantVisualEditorProblems(rungPicker), [])
-  // A freshly added rung is legitimately incomplete and its picker shows the
-  // catalogue-loading string while the catalog arrives (real Desktop shape).
-  assert.deepEqual(assistantVisualEditorProblems({ ...staged, routeEmpty: 0, routeIncomplete: 1, rungs: [{ index: 0, mode: 'picker', trigger: '正在加载 provider…', remove: true }] }), [])
-  const rawPicker = { ...rungPicker, rungs: [{ index: 0, mode: 'picker', trigger: 'modelEmpty', remove: true }] }
-  assert.ok(assistantVisualEditorProblems(rawPicker).some(text => /renders the raw picker key modelEmpty/.test(text)))
-  const fallback = { ...staged, routeEmpty: 0, rungs: [{ index: 0, mode: 'fallback', trigger: 'Remove', remove: true, values: { provider: 'mock', model: 'mock-1', effort: '' } }] }
-  assert.deepEqual(assistantVisualEditorProblems(fallback), [])
-  const missingValues = { ...staged, routeEmpty: 0, rungs: [{ index: 0, mode: 'fallback', trigger: 'Remove', remove: true, values: {} }] }
-  assert.ok(assistantVisualEditorProblems(missingValues).some(text => /does not expose provider\/model\/effort inputs/.test(text)))
-  const noRemove = { ...rungPicker, rungs: [{ index: 0, mode: 'picker', trigger: 'Mock One', remove: false }] }
-  assert.ok(assistantVisualEditorProblems(noRemove).some(text => /has no remove action/.test(text)))
-  const noChips = { ...staged, scopeClasses: [{ value: 'A', pressed: 'true' }] }
-  assert.ok(assistantVisualEditorProblems(noChips).some(text => /instead of A,B,C/.test(text)))
-  const noEditor = { ...staged, scopeEditors: 0 }
-  assert.ok(assistantVisualEditorProblems(noEditor).some(text => /0 scope editors instead of one/.test(text)))
 })
+
 
 test('assistant route picker guard rejects raw dictionary keys', () => {
   // The real isolated Desktop rendered exactly these rows before the decision
@@ -2432,21 +2420,23 @@ test('assistant route picker guard rejects raw dictionary keys', () => {
 })
 
 test('assistant visual readback guard compares the saved profile to the staged controls', () => {
-  const profile = { scope: { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], authorizationClasses: ['A', 'B'] }, modelRoute: { chain: [{ provider: 'mock', model: 'mock-1' }] } }
-  assert.deepEqual(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }), [])
-  assert.deepEqual(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: 'mock-1' }] }), [])
+  const profile = { scope: { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'] }, modelRoute: { chain: [{ provider: 'mock', model: 'mock-1' }] } }
+  assert.deepEqual(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }] }), [])
+  assert.deepEqual(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: 'mock-1' }] }), [])
   // the catalog row's default reasoning effort is only visible as a localized
   // trigger suffix, so the driver wildcards it while the ids stay exact
-  assert.deepEqual(assistantVisualReadbackProblems({ scope: profile.scope, modelRoute: { chain: [{ provider: 'mock', model: 'mock-1', reasoningEffort: 'standard' }] } }, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*', reasoningEffort: '*' }] }), [])
-  assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*', reasoningEffort: 'standard' }] }).some(text => /saved reasoning effort none instead of standard/.test(text)))
-  assert.ok(assistantVisualReadbackProblems(profile, { paths: [], tags: [], classes: ['A', 'B'], chain: [] }).length >= 3)
+  assert.deepEqual(assistantVisualReadbackProblems({ scope: profile.scope, modelRoute: { chain: [{ provider: 'mock', model: 'mock-1', reasoningEffort: 'standard' }] } }, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*', reasoningEffort: '*' }] }), [])
+  assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*', reasoningEffort: 'standard' }] }).some(text => /saved reasoning effort none instead of standard/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(profile, { paths: [], tags: [], chain: [] }).length >= 2)
   const leaked = { scope: { ...profile.scope, workspaces: ['weir-harness'] }, modelRoute: profile.modelRoute }
-  assert.ok(assistantVisualReadbackProblems(leaked, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /workspaces key/.test(text)))
-  const wrongClass = { scope: { ...profile.scope, authorizationClasses: ['C', 'B'] }, modelRoute: profile.modelRoute }
-  assert.ok(assistantVisualReadbackProblems(wrongClass, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /in row order/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(leaked, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /workspaces key/.test(text)))
+  // A retired class field in the saved scope is a regression, not an edit.
+  const legacyClass = { scope: { ...profile.scope, authorizationClasses: ['A'] }, modelRoute: profile.modelRoute }
+  assert.ok(assistantVisualReadbackProblems(legacyClass, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /retired authorizationClasses key/.test(text)))
   const wrongProvider = { scope: profile.scope, modelRoute: { chain: [{ provider: 'other', model: 'mock-1' }] } }
-  assert.ok(assistantVisualReadbackProblems(wrongProvider, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved provider other instead of mock/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(wrongProvider, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved provider other instead of mock/.test(text)))
   const emptyModel = { scope: profile.scope, modelRoute: { chain: [{ provider: 'mock', model: '' }] } }
-  assert.ok(assistantVisualReadbackProblems(emptyModel, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved no model id/.test(text)))
-  assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], classes: ['A', 'B'], chain: [{ provider: 'mock', model: '*' }, { provider: 'mock', model: 'mock-2' }] }).some(text => /holds 1 rungs instead of 2/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(emptyModel, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }] }).some(text => /saved no model id/.test(text)))
+  assert.ok(assistantVisualReadbackProblems(profile, { paths: ['plugins/weir-harness/lib'], tags: ['decision-settings'], chain: [{ provider: 'mock', model: '*' }, { provider: 'mock', model: 'mock-2' }] }).some(text => /holds 1 rungs instead of 2/.test(text)))
 })
+

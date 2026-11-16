@@ -48,6 +48,8 @@ const profile = (agentId, workspaceKey, name, extra = {}) => {
     agent_id,workspace_key,name,state,scope_json,user_desc_rev,chain_json,archived_at,
     schema_version,revision,created_at,updated_at
   ) VALUES(?,?,?,?,?,1,'{"chain":[]}',?,1,1,?,?)`).run(
+    // Historical shape on purpose: a pre-v2 row that still carries the retired
+    // authorizationClasses field must stay readable and normalize to paths/tags only.
     agentId, workspaceKey, name, extra.state ?? 'enabled',
     JSON.stringify({ workspaces: [workspaceKey], paths: ['src'], authorizationClasses: ['A', 'B', 'C'] }),
     extra.archivedAt ?? null, extra.createdAt ?? 1, extra.createdAt ?? 1,

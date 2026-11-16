@@ -10,7 +10,6 @@ const EXECUTION_TEXT = /\b(?:edit|change|write|modify|update|patch|replace)\b[\s
 export function excludedRequest(request) {
   return (request.questions ?? []).some(question => {
     if (['approval', 'plan-review'].includes(question.intent?.kind)) return true
-    if (['D', 'E', 'F'].includes(question.authorizationClass)) return true
     const text = `${question.header ?? ''} ${question.question ?? ''} ${question.detail ?? ''}`
     return AUTHORITY_TEXT.test(text) || EXECUTION_TEXT.test(text)
   })

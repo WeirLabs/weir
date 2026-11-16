@@ -12,7 +12,7 @@ function fixture(t, overrides = {}) {
     decisionAgentsEnabled: true,
     decisionAgentSelectorDefault: 'auto',
     decisionAgentAutoShadow: false,
-    decisionAgentAutoAnswerClasses: [],
+    decisionAgentAutoAnswer: false,
     decisionAgentRetentionDays: 0,
     ...overrides,
   }
@@ -145,21 +145,21 @@ test('selector writes accept every enabled shared identity without changing an o
 })
 
 test('overview exposes effective Auto settings and real global status without readiness claims', async t => {
-  const f = fixture(t, { decisionAgentAutoAnswerClasses: ['A', 'A', 'C'], decisionAgentAutoShadow: true })
+  const f = fixture(t, { decisionAgentAutoAnswer: true, decisionAgentAutoShadow: true })
   await f.broker.start()
   const view = await f.broker.overview({ sessionId: 'root' })
-  assert.deepEqual(view.auto, { answerClasses: ['A', 'C'], shadow: true })
+  assert.deepEqual(view.auto, { autoAnswer: true, shadow: true })
   assert.deepEqual(view.status, { available: true, enabled: true })
   assert.deepEqual(view.selector, { mode: 'off' })
   assert.equal('ready' in view.auto, false)
 
-  view.auto.answerClasses.push('B')
   f.config.decisionAgentsEnabled = false
   const disabled = await f.broker.overview({ sessionId: 'root' })
-  assert.deepEqual(disabled.auto, { answerClasses: ['A', 'C'], shadow: true })
+  assert.deepEqual(disabled.auto, { autoAnswer: true, shadow: true })
   assert.deepEqual(disabled.status, { available: false, enabled: false, reason: 'disabled' })
 
-  f.config.decisionAgentAutoAnswerClasses = ['A', 'D']
+  // Anything but the boolean `true` is off: a stored legacy array never opens it.
+  f.config.decisionAgentAutoAnswer = ['A', 'D']
   f.config.decisionAgentAutoShadow = 'true'
-  assert.deepEqual((await f.broker.overview({ sessionId: 'root' })).auto, { answerClasses: [], shadow: false })
+  assert.deepEqual((await f.broker.overview({ sessionId: 'root' })).auto, { autoAnswer: false, shadow: false })
 })

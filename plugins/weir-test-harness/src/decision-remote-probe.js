@@ -219,7 +219,7 @@ async function identityFlow(remote, broker, agent, args) {
     const name = args.variant === 'upper' ? String(args.name ?? '').toUpperCase() : args.name
     const result = await remote.profileUpsert({
       sessionId, name, userDescription: args.userDescription ?? '',
-      scope: { authorizationClasses: ['A', 'B', 'C'] }, modelRoute: { chain: [] },
+      scope: {}, modelRoute: { chain: [] },
     })
     const expectedFailure = args.variant !== undefined
     return wireFinish(args, 'identity', agent, result, { name, variant: args.variant ?? null, profile: profileSummary(result.value) }, {

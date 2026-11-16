@@ -30,7 +30,7 @@ function fixture(t, options = {}) {
   const audits = []
   const config = {
     decisionAgentsEnabled: true, decisionAgentRetentionDays: 0,
-    decisionAgentAutoAnswerClasses: [], ...options.config,
+    decisionAgentAutoAnswer: false, ...options.config,
   }
   const brokerFor = () => new DecisionBroker({
     profileContext: { home: dir, name: 'test' },

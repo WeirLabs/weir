@@ -1032,6 +1032,7 @@ async function check7_archiveRestart() {
     const evidence = new DecisionEvidence(broker.store)
 
     const profile = await broker.profileUpsert({
+      // Legacy scope input: the retired class array is accepted and ignored, never echoed.
       name: 'Archive me', userDescription: 'Prefer A', scope: { authorizationClasses: ['A', 'B', 'C'] },
     })
     // A closed, validated answered Case gives the private zone a real source.
@@ -1133,7 +1134,7 @@ async function check7_archiveRestart() {
       { status: archivedPublic.status, snapshotId: archivedPublic.snapshotId })
 
     const route = planAutoRoute({
-      request: { entry: 'hook', questions: [{ id: 'q', question: 'Which?', authorizationClass: 'A', options: [{ label: 'A' }] }] },
+      request: { entry: 'hook', questions: [{ id: 'q', question: 'Which?', options: [{ label: 'A' }] }] },
       scope: { workspaces: [w1] },
       profiles: broker.profiles.listProfiles({ includeArchived: true }),
     })
@@ -1215,7 +1216,7 @@ async function check7_archiveRestart() {
         && restarted.store.db.prepare("SELECT COUNT(*) AS n FROM learning_runs WHERE outcome='running'").get().n === 0,
         { private: restartedPrivate.status, public: restartedPublic.status })
       const restartedRoute = planAutoRoute({
-        request: { entry: 'hook', questions: [{ id: 'q', question: 'Which?', authorizationClass: 'A', options: [{ label: 'A' }] }] },
+        request: { entry: 'hook', questions: [{ id: 'q', question: 'Which?', options: [{ label: 'A' }] }] },
         scope: { workspaces: [w1] },
         profiles: restarted.profiles.listProfiles({ includeArchived: true }),
       })
