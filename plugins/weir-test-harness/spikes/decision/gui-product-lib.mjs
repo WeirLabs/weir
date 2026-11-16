@@ -194,11 +194,69 @@ export function immutableChanges(phases) {
         principles_json: row.principles_json, generated_description_json: row.generated_description_json,
         learning_run_id: row.learning_run_id, created_at: row.created_at, schema_version: row.schema_version,
       })
-      if (snapshotContent.has(row.snapshot_id) && snapshotContent.get(row.snapshot_id) !== value) changes.push({ kind: 'snapshot-content', id: row.snapshot_id, phase: phase.phase })
-      snapshotContent.set(row.snapshot_id, value)
+      const previous = snapshotContent.get(row.snapshot_id)
+      // A draft's principles are the one mutable piece of a Snapshot: the user
+      // revises this run's own added/changed entries before accepting them. Once
+      // the draft leaves that state (published, rejected, rolled back) its content
+      // is history, so any later drift is still a rewrite.
+      if (previous && previous.value !== value && previous.state !== 'draft') changes.push({ kind: 'snapshot-content', id: row.snapshot_id, phase: phase.phase })
+      snapshotContent.set(row.snapshot_id, { value, state: row.state })
     }
   }
   return changes
+}
+
+const CANDIDATE_UPDATE_AUDIT_FIELDS = new Set(['snapshotId', 'learningRunId', 'agentId', 'rootSessionId', 'zone', 'action', 'revisionBefore', 'revisionAfter', 'edited', 'removed'])
+const CANDIDATE_AUDIT_COUNTS = ['revisionBefore', 'revisionAfter', 'edited', 'removed']
+
+/**
+ * The audit facts of one candidate review: two `candidate-update` writes that
+ * carry only the zone, the revision pair and the counts — never principle text or
+ * scope content. `lines` are the parsed JSONL records of the product audit file.
+ * @param {any[]} lines @param {{snapshotId:string}} expected
+ */
+export function candidateUpdateAuditProblems(lines, expected = {}) {
+  const problems = []
+  const records = (Array.isArray(lines) ? lines : []).filter(line => line?.type === 'weir/decision/snapshot' && line?.data?.action === 'candidate-update' && line?.data?.snapshotId === expected.snapshotId)
+  if (records.length !== 2) problems.push(`candidate-update audit count ${records.length} != 2`)
+  for (const [index, record] of records.entries()) {
+    const data = record.data ?? {}
+    for (const key of Object.keys(data)) {
+      if (!CANDIDATE_UPDATE_AUDIT_FIELDS.has(key)) problems.push(`audit ${index} carries a non-fact field: ${key}`)
+    }
+    for (const key of CANDIDATE_AUDIT_COUNTS) if (!Number.isFinite(data[key])) problems.push(`audit ${index} is missing the numeric ${key}`)
+    const expectedRevision = index + 1
+    if (data.zone !== 'workspace') problems.push(`audit ${index} zone ${String(data.zone)} != workspace`)
+    if (data.revisionBefore !== expectedRevision || data.revisionAfter !== expectedRevision + 1) {
+      problems.push(`audit ${index} revisions ${String(data.revisionBefore)}->${String(data.revisionAfter)} != ${expectedRevision}->${expectedRevision + 1}`)
+    }
+  }
+  const edited = records.reduce((total, record) => total + (Number(record.data?.edited) || 0), 0)
+  const removed = records.reduce((total, record) => total + (Number(record.data?.removed) || 0), 0)
+  if (edited !== 1) problems.push(`audit edited count ${edited} != 1`)
+  if (removed !== 1) problems.push(`audit removed count ${removed} != 1`)
+  // No principle body, scope content or path may reach the audit file.
+  const raw = JSON.stringify(records)
+  for (const forbidden of ['Reviewed GUI', 'authorizationClasses', 'paths', 'tags']) {
+    if (raw.includes(forbidden)) problems.push(`audit carries content: ${forbidden}`)
+  }
+  return problems
+}
+
+/**
+ * The publish confirmation states this review's own edits as a fact. Read the
+ * rendered counts instead of the localized words so either language passes.
+ * @param {string|null|undefined} text @param {{edited:number,removed:number}} expected
+ */
+export function candidateEditConfirmationProblems(text, expected = {}) {
+  if (typeof text !== 'string' || text.trim().length === 0) return ['the publish confirmation states no user edits']
+  const problems = []
+  const counts = [...text.matchAll(/\d+/g)].map(match => Number(match[0]))
+  if (counts.length !== 2) problems.push(`edit fact count ${counts.length} != 2`)
+  if (counts[0] !== expected.edited) problems.push(`edited ${String(counts[0])} != ${expected.edited}`)
+  if (counts[1] !== expected.removed) problems.push(`removed ${String(counts[1])} != ${expected.removed}`)
+  if (/Reviewed GUI|authorizationClasses|AI 原稿|AI draft/i.test(text)) problems.push('the edit fact exposes the model wording')
+  return problems
 }
 
 const SELECTOR_FORBIDDEN_COPY = [

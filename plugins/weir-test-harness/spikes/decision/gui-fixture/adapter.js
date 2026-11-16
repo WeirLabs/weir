@@ -12,8 +12,30 @@ function responseText(chunk) {
   return null
 }
 
+/**
+ * Two-entry consolidation for the candidate-edit acceptance leg: the parent's
+ * active principle is refined in place (a `changed` entry) and one new principle
+ * is added (an `added` entry), so one real review offers two editable rows. The
+ * product parser, structural replay and store consume the result unchanged.
+ * @param {any} input the frozen projection the product handed the model
+ */
+function candidateEditOperations(input) {
+  const principles = Array.isArray(input?.parentSnapshot?.principles) ? input.parentSnapshot.principles : []
+  const parent = principles.find(principle => principle?.state === 'active')
+  const workspaceKey = typeof input?.workspaceKey === 'string' && input.workspaceKey ? input.workspaceKey : null
+  const lineage = values => values.filter(id => typeof id === 'string' && id.length > 0)
+  const correction = (Array.isArray(input?.feedback) ? input.feedback : []).find(item => item.kind === 'correction')
+  const sources = lineage(parent?.sources ?? [])
+  if (!parent?.principleId || !workspaceKey || sources.length === 0) return null
+  return [
+    { op: 'refine', principleId: parent.principleId, text: 'Reviewed GUI successor principle: prefer the second source-backed answer under a reviewed class.', sources },
+    // A second entry keeps its own lineage: the correction when the packet has one.
+    { op: 'add', principleId: 'temporary-gui-edit-second', text: 'Reviewed GUI second principle: keep the isolated GUI review scope for one more entry.', scope: { workspaces: [workspaceKey] }, sources: lineage([correction?.feedbackId ?? sources[0]]) },
+  ]
+}
+
 /** Add non-authoritative suggestions to real escalation output, never answers. */
-export function decorateDecisionText(text, options, noChangeAgentId = null) {
+export function decorateDecisionText(text, options, noChangeAgentId = null, candidateEditAgentId = null) {
   const observation = extract(options)
   const contract = observation.system.split('\n', 1)[0]
   if (!['Decision evaluator contract v1', 'Decision evaluator contract v2', 'Decision evaluator contract v3', 'Decision consolidation contract v1'].includes(contract)) return text
@@ -26,7 +48,9 @@ export function decorateDecisionText(text, options, noChangeAgentId = null) {
     return text
   }
   if (contract === 'Decision consolidation contract v1') {
-    return input.agentId === noChangeAgentId ? JSON.stringify({ operations: [] }) : text
+    if (input.agentId === noChangeAgentId) return JSON.stringify({ operations: [] })
+    const edited = input.agentId === candidateEditAgentId ? candidateEditOperations(input) : null
+    return edited ? JSON.stringify({ operations: edited }) : text
   }
   if (output.outcome !== 'escalate') return text
   const questions = input?.L4?.request?.questions
@@ -40,8 +64,8 @@ export function decorateDecisionText(text, options, noChangeAgentId = null) {
   return JSON.stringify(output)
 }
 
-function noChangeAgent(out) {
-  const path = join(out, 'no-change-agent.json')
+function controlAgent(out, file) {
+  const path = join(out, file)
   if (!existsSync(path)) return null
   try {
     const control = JSON.parse(readFileSync(path, 'utf8'))
@@ -57,14 +81,15 @@ export function uniqueToolCall(chunk, id) {
   return chunk
 }
 async function* stream(options, out) {
-  const noChangeAgentId = noChangeAgent(out)
+  const noChangeAgentId = controlAgent(out, 'no-change-agent.json')
+  const candidateEditAgentId = controlAgent(out, 'candidate-edit-agent.json')
   const toolCallId = `mock-product-${randomUUID()}`
   for await (const original of mock.streamScenario(options)) {
     const chunk = original
     uniqueToolCall(chunk, toolCallId)
     const target = responseText(chunk)
     if (target) {
-      const transformed = decorateDecisionText(target.value, options, noChangeAgentId)
+      const transformed = decorateDecisionText(target.value, options, noChangeAgentId, candidateEditAgentId)
       if (transformed !== target.value) {
         target.write(transformed)
         appendFileSync(join(out, 'adapter-transforms.jsonl'), `${JSON.stringify({ contract: extract(options).system.split('\n', 1)[0], before: target.value, after: transformed })}\n`)
