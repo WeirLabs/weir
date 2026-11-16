@@ -668,18 +668,13 @@ describe('decision-route P1 brain', () => {
 })
 
 describe('decision-auto-route P4 brain and Router mock dispatch', () => {
-  const classificationOptions = (question, system = 'Auto request classification contract: router-classification-contract/1\nClassify only this request.') => userOptions(JSON.stringify({
-    contract: 'router-classification-contract/1',
-    questions: [{ id: question.id, question: question.question, options: question.options }],
-    context: '',
-  }), { system })
   const routeOptions = (question, system = 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.') => userOptions(JSON.stringify({
     contract: 'router-contract/1',
-    questions: [{ ...question, authorizationClass: 'A' }],
+    questions: [{ id: question.id, question: question.question, options: question.options }],
     context: '',
     candidates: [
-      { agentId: 'ag_a', name: 'Auto A', userDescription: 'A owns the selected fixture.', scope: { workspaces: ['/repo'], authorizationClasses: ['A'] } },
-      { agentId: 'ag_b', name: 'Auto B', userDescription: 'B owns another fixture.', scope: { workspaces: ['/repo'], authorizationClasses: ['A', 'B'] } },
+      { agentId: 'ag_a', name: 'Auto A', userDescription: 'A owns the selected fixture.', scope: {} },
+      { agentId: 'ag_b', name: 'Auto B', userDescription: 'B owns another fixture.', scope: {} },
     ],
   }), { system })
   const materialize = async stream => {
@@ -728,14 +723,9 @@ describe('decision-auto-route P4 brain and Router mock dispatch', () => {
     assert.equal(done.text, 'DECISION_AUTO_ROUTE_DONE')
   })
 
-  it('dispatches both exact first-line contracts to controllable classification and route brains', async () => {
+  it('dispatches the exact first-line Router contract to a controllable route brain', async () => {
     const question = { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }, { label: 'Other' }] }
     await withMockScenario('decision-auto-route', 'dispatch', ({ planRequest }) => {
-      const classified = JSON.parse(blockEnds(planRequest(classificationOptions(question)).out)[0].text)
-      assert.deepEqual(classified, {
-        contract: 'router-classification-contract/1',
-        classes: [{ id: question.id, authorizationClass: 'A' }],
-      })
       const routed = JSON.parse(blockEnds(planRequest(routeOptions(question)).out)[0].text)
       assert.deepEqual(routed, { contract: 'router-contract/1', outcome: 'selected', agentId: 'ag_a', reason: 'Auto A owns this evidenced fixture' })
     })
@@ -765,11 +755,10 @@ describe('decision-auto-route P4 brain and Router mock dispatch', () => {
   })
 
   it('fails loudly for missing Router brains and validates tool schemas before dispatch', async () => {
-    const question = { id: 'q', question: 'Classify without a brain', options: [{ label: 'Native' }] }
+    const question = { id: 'q', question: 'Route without a brain', options: [{ label: 'Native' }] }
     await withMockScenario('decision-route', 'missing-brain', async ({ planRequest, streamScenario }) => {
-      assert.throws(() => planRequest(classificationOptions(question)), /decision-route has no Auto classification brain/)
       assert.throws(() => planRequest(routeOptions(question)), /decision-route has no Auto Router brain/)
-      const invalidSchema = classificationOptions(question)
+      const invalidSchema = routeOptions(question)
       invalidSchema.tools = [{ name: 'bad_tool', parameters: {} }]
       await assert.rejects(materialize(streamScenario(invalidSchema)), /Invalid schema for function 'bad_tool'/)
     })
@@ -778,7 +767,7 @@ describe('decision-auto-route P4 brain and Router mock dispatch', () => {
   it('does not dispatch a contract that is not the exact first line', async () => {
     const question = { id: 'decision-auto-selected', question: 'AUTO_SELECTED: choose the evidenced route', options: [{ label: 'Selected A' }] }
     await withMockScenario('decision-auto-route', 'exact-first-line', ({ planRequest }) => {
-      const options = classificationOptions(question, `Not a Router contract\nAuto request classification contract: router-classification-contract/1`)
+      const options = routeOptions(question, `Not a Router contract\nAuto candidate router contract: router-contract/1`)
       const [block] = blockEnds(planRequest(options).out)
       assert.equal(block.name, 'decision_integration_probe')
       assert.equal(JSON.parse(block.arguments).op, 'auto-setup')
@@ -814,9 +803,10 @@ describe('decision-recovery P1 brain', () => {
       assert.equal(JSON.parse(consult.arguments).request_id, 'auto-recovery-interrupt')
 
       const scenario = byId('decision-recovery')
-      const options = userOptions(JSON.stringify({ questions: [{ id: 'question', question: 'AUTO_RECOVERY_INTERRUPT: never answer an interrupted intake' }] }), { system: 'Auto request classification contract: router-classification-contract/1' })
-      const classified = JSON.parse(blockEnds([...scenario.decideRouterClassification(options, extract(options))])[0].text)
-      assert.equal(classified.classes[0].authorizationClass, 'A')
+      const options = userOptions(JSON.stringify({ questions: [{ id: 'question', question: 'AUTO_RECOVERY_INTERRUPT: never answer an interrupted intake' }], candidates: [{ agentId: 'ag_a', name: 'A', userDescription: 'Owns it' }] }), { system: 'Auto candidate router contract: router-contract/1' })
+      const routed = JSON.parse(blockEnds([...scenario.decideRouterRoute(options, extract(options))])[0].text)
+      assert.equal(routed.outcome, 'selected')
+      assert.equal(routed.agentId, 'ag_a')
       assert.equal(scenario.observe(extract(options)).autoRouterHold, 'interruption')
 
       process.env.WEIR_IT_DECISION_PHASE = 'auto-after'
@@ -974,7 +964,7 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
     const missing = evaluate('gui-learning-after-v1', [{ principleId: 'pr_v1', evidenceIds: ['pr_not_evidence'] }])
     assert.equal(missing.outcome, 'return')
   })
-  it('drives classless stock Auto markers through bounded classification and controllable Router outcomes', () => {
+  it('drives classless stock Auto markers through the controllable Router outcomes', () => {
     const scenario = byId('decision-gui')
     for (const marker of ['GUI_AUTO_SELECTED', 'GUI_AUTO_NONE', 'GUI_AUTO_AMBIGUOUS', 'GUI_AUTO_INVALID', 'GUI_AUTO_TIMEOUT', 'GUI_AUTO_EMPTY', 'GUI_AUTO_ZERO', 'GUI_AUTO_ONE', 'GUI_AUTO_PENDING', 'GUI_AUTO_INTERRUPT', 'GUI_AUTO_HIGH_RISK', 'GUI_AUTO_EXECUTION', 'GUI_SHADOW_PARITY', 'GUI_AUTO_PAGE_21']) {
       const [call] = blockEnds(run('decision-gui', userOptions(marker)))
@@ -985,21 +975,12 @@ describe('decision-gui opt-in brain', { skip: process.env.WEIR_IT_DECISION_GUI !
       assert.equal(Object.hasOwn(args.questions[0], 'authorization_class'), false, `${marker} has no tool-only authorization injection`)
     }
     const question = { id: 'gui-auto-selected', question: 'GUI_AUTO_SELECTED: choose an eligible assistant', options: [{ label: 'Auto answer' }] }
-    const classificationOptions = userOptions(JSON.stringify({ contract: 'router-classification-contract/1', questions: [question], context: '' }), { system: 'Auto request classification contract: router-classification-contract/1\nClassify only this request.' })
-    const classification = JSON.parse(blockEnds([...scenario.decideRouterClassification(classificationOptions, extract(classificationOptions))])[0].text)
-    assert.deepEqual(classification, { contract: 'router-classification-contract/1', classes: [{ id: question.id, authorizationClass: 'A' }] })
-    const observed = scenario.observe(extract(classificationOptions))
-    assert.equal(observed.autoRouter.kind, 'classification')
-    assert.deepEqual(observed.autoRouter.pack.questions, [question], 'the full pack survives lastUser trace truncation')
-    assert.deepEqual(observed.autoRouter.tools, [])
-    assert.equal(observed.autoRouter.hasTemperature, false)
-
     const primary = { agentId: 'ag_a', name: 'Primary Decision Product QA' }
     const secondary = { agentId: 'ag_b', name: 'Secondary Empty review assistant' }
     const route = (marker, candidates = [primary, secondary]) => {
       const prefix = marker === 'SHADOW_PARITY' ? 'GUI_SHADOW_PARITY' : `GUI_AUTO_${marker}`
       const routedQuestion = { ...question, id: `gui-auto-${marker.toLowerCase()}`, question: `${prefix}: controlled route` }
-      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion, authorizationClass: 'A' }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
+      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ ...routedQuestion }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
       return { chunks: [...scenario.decideRouterRoute(options, extract(options))], observed: scenario.observe(extract(options)) }
     }
     assert.equal(JSON.parse(blockEnds(route('SELECTED').chunks)[0].text).agentId, 'ag_a')
@@ -1056,7 +1037,7 @@ describe('decision-gui cross-workspace brain', () => {
 
   it('lets the shared assistant serve the cross-workspace Auto route', () => {
     const route = candidates => {
-      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ id: 'cross-auto-question', question: 'CROSS_AUTO_Q: confirm the documented option for the Auto decision', authorizationClass: 'A' }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
+      const options = userOptions(JSON.stringify({ contract: 'router-contract/1', questions: [{ id: 'cross-auto-question', question: 'CROSS_AUTO_Q: confirm the documented option for the Auto decision' }], context: '', candidates }), { system: 'Auto candidate router contract: router-contract/1\nChoose only a supplied candidate.' })
       return JSON.parse(blockEnds([...decisionGui.decideRouterRoute(options, extract(options))])[0].text)
     }
     assert.equal(route([{ agentId: 'ag_shared', name: 'Shared memory assistant' }]).agentId, 'ag_shared')

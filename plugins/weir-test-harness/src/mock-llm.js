@@ -61,10 +61,6 @@ function decide(options, obs) {
   if (options.purpose === 'session-title') return textChunks('Integration Test Session')
   if (options.purpose === 'compaction') return textChunks('SUMMARY: the probe task was in progress with no errors.')
   const contract = obs.system.split('\n', 1)[0]
-  if (contract === 'Auto request classification contract: router-classification-contract/1') {
-    if (typeof scenario.decideRouterClassification !== 'function') throw new Error(`${scenario.id} has no Auto classification brain`)
-    return scenario.decideRouterClassification(options, obs)
-  }
   if (contract === 'Auto candidate router contract: router-contract/1') {
     if (typeof scenario.decideRouterRoute !== 'function') throw new Error(`${scenario.id} has no Auto Router brain`)
     return scenario.decideRouterRoute(options, obs)

@@ -968,7 +968,6 @@ function scopeHints(scope) {
   const value = scope && typeof scope === 'object' ? scope : {}
   const hints = []
   for (const key of ['paths', 'tags']) for (const entry of Array.isArray(value[key]) ? value[key] : []) if (typeof entry === 'string' && entry) hints.push(entry)
-  for (const entry of Array.isArray(value.authorizationClasses) ? value.authorizationClasses : []) if (typeof entry === 'string' && entry) hints.push(entry)
   return hints
 }
 
@@ -1332,9 +1331,8 @@ const DECISION_SETTINGS_LABELS = Object.freeze({
   selector: /新根会话的默认选择|Default for new root sessions/,
   // Row text is the whole row (label + hint + control copy), so this one is a
   // containment test; the master and shadow labels above are exact accessible names.
-  classes: /自动回答类别|Auto answer classes/,
+  answerSwitch: /允许自动回答|Allow automatic answers/,
   shadow: /^Auto Shadow (?:诊断|diagnostics)$/,
-  none: /未允许任何类别|No class is allowed/,
 })
 
 /** Every string the shared model picker resolves through the ambient `t`; a raw
@@ -1403,9 +1401,10 @@ export function decisionSettingsPageProblems(dom = {}, expected = {}) {
   const segmentIds = selectorTabs.map(control => String(control.id ?? ''))
   if (rows[1] && !segmentIds.every(id => /decisionAgentSelectorDefault-(?:off|auto)$/.test(id))) problems.push(`the default-selector segments are not the off/auto control: ${segmentIds.join(', ')}`)
   if (rows[1] && !DECISION_SETTINGS_LABELS.selector.test(readableText(rows[1]?.text))) problems.push('the second basic row does not name the new-session default')
+  // The third basic row is the answer switch: one boolean control, no chips.
   const chips = pressedControls(rows[2])
-  if (rows[2] && chips.length !== 3) problems.push(`the answer-class row renders ${chips.length} chips instead of three`)
-  if (rows[2] && !DECISION_SETTINGS_LABELS.classes.test(readableText(rows[2]?.text))) problems.push('the third basic row does not name the Auto answer classes')
+  if (rows[2] && chips.length !== 0) problems.push(`the answer row still renders ${chips.length} class chips`)
+  if (rows[2] && !DECISION_SETTINGS_LABELS.answerSwitch.test(readableText(rows[2]?.text))) problems.push('the third basic row does not name the Auto answer switch')
   if (!dom.advanced) problems.push('the advanced group is missing while the master switch is on')
   else {
     if (dom.advanced.hasToggle !== true) problems.push('the advanced group renders no fold toggle')
@@ -1464,37 +1463,28 @@ export function decisionSettingsAdvancedProblems(dom = {}, expected = {}) {
  * @param {{chips?:any[],count?:number|null,countText?:string|null}|null} classSet
  * @param {string[]} expected
  */
-export function decisionSettingsClassSetProblems(classSet, expected = []) {
+export function decisionSettingsAnswerSwitchProblems(answerSwitch, expected) {
   const problems = []
-  const wanted = (Array.isArray(expected) ? expected : []).map(String)
-  if (!classSet) {
-    problems.push('the Auto answer class editor is not rendered')
+  if (!answerSwitch) {
+    problems.push('the Auto answer switch is not rendered')
     return problems
   }
-  const chips = (Array.isArray(classSet.chips) ? classSet.chips : []).filter(chip => chip && typeof chip === 'object')
-  if (chips.map(chip => String(chip.value)).join(',') !== 'A,B,C') problems.push(`the class chips render ${chips.map(chip => String(chip.value)).join(',') || 'nothing'} instead of A,B,C in row order`)
-  for (const chip of chips) if (!['true', 'false'].includes(String(chip.pressed))) problems.push(`the ${chip.value} chip carries no aria-pressed state`)
-  const selected = chips.filter(chip => String(chip.pressed) === 'true').map(chip => String(chip.value))
-  if (selected.join(',') !== wanted.join(',')) problems.push(`the rendered selection ${selected.join(',') || 'none'} differs from ${wanted.join(',') || 'none'}`)
-  if (chips.some(chip => chip.disabled === true)) problems.push('a class chip is disabled while the master switch is on')
-  if (classSet.count !== wanted.length) problems.push(`the class counter reads ${classSet.count} instead of ${wanted.length}`)
-  const countText = readableText(classSet.countText)
-  if (wanted.length === 0) {
-    if (!DECISION_SETTINGS_LABELS.none.test(countText)) problems.push(`an empty selection reads ${shortenedText(countText)} instead of the none sentence`)
-  } else if (countText !== wanted.join(', ')) problems.push(`the class counter reads ${shortenedText(countText)} instead of ${wanted.join(', ')} in row order`)
+  const checked = answerSwitch.checked === null || answerSwitch.checked === undefined ? null : String(answerSwitch.checked)
+  if (checked === null) problems.push('the answer switch carries no checked state')
+  else if (checked !== String(expected === true)) problems.push(`the answer switch reads ${checked} instead of ${expected === true}`)
   return problems
 }
 
 /**
  * After Escape: the Settings dialog is gone AND the Decision assistant page
  * unmounted — no group, no class chips, no advanced fold, no assistant editor.
- * @param {{dialog?:boolean,groups?:string[],classSets?:number,advancedToggles?:number,agentEditors?:number}} snapshot
+ * @param {{dialog?:boolean,groups?:string[],answerSwitches?:number,advancedToggles?:number,agentEditors?:number}} snapshot
  */
 export function decisionSettingsClosedProblems(snapshot = {}) {
   const problems = []
   if (snapshot.dialog === true) problems.push('the Settings dialog is still open after Escape')
   if ((snapshot.groups ?? []).length > 0) problems.push(`the Weir settings page is still mounted: ${(snapshot.groups ?? []).join(', ')}`)
-  if ((snapshot.classSets ?? 0) > 0) problems.push('the Auto answer class chips are still mounted after close')
+  if ((snapshot.answerSwitches ?? 0) > 0) problems.push('the Auto answer switch is still mounted after close')
   if ((snapshot.advancedToggles ?? 0) > 0) problems.push('the advanced fold is still mounted after close')
   if ((snapshot.agentEditors ?? 0) > 0) problems.push('an assistant editor is still mounted after close')
   return problems
@@ -1516,9 +1506,7 @@ export function assistantVisualEditorProblems(dom = {}) {
   const editable = textareas.map(textarea => String(textarea.agentField ?? ''))
   if (editable.length !== 1 || editable[0] !== 'preference') problems.push(`the editor's free-text boxes are ${editable.join(', ') || 'none'} instead of the preference alone`)
   if (dom.scopeEditors !== 1) problems.push(`the editor renders ${dom.scopeEditors} scope editors instead of one`)
-  const classes = (Array.isArray(dom.scopeClasses) ? dom.scopeClasses : []).map(entry => String(entry?.value))
-  if (classes.join(',') !== 'A,B,C') problems.push(`the scope class chips render ${classes.join(',') || 'nothing'} instead of A,B,C in row order`)
-  for (const chip of Array.isArray(dom.scopeClasses) ? dom.scopeClasses : []) if (!['true', 'false'].includes(String(chip?.pressed))) problems.push(`the scope class ${chip?.value} chip carries no aria-pressed state`)
+  if ((dom.scopeClasses ?? 0) > 0) problems.push(`the editor still renders ${dom.scopeClasses} authorization-class chips`)
   if ((dom.scopeAdd?.path ?? 0) !== 1 || (dom.scopeAdd?.tag ?? 0) !== 1) problems.push('the scope editor must offer one path and one tag add action')
   if (dom.routeEditors !== 1) problems.push(`the editor renders ${dom.routeEditors} route editors instead of one`)
   if (dom.routeAdd !== 1) problems.push('the route editor must offer one add action')
@@ -1564,10 +1552,10 @@ export function assistantRoutePickerProblems(picker = {}) {
 /**
  * The saved assistant profile as the authority returns it: the visual scope and
  * route reach the store exactly as the controls staged them — paths/tags only
- * when filled, authorization classes in row order, never `workspaces`, and the
- * ordered rungs without an empty reasoning effort.
+ * when filled, never `workspaces` or a retired class field, and the ordered
+ * rungs without an empty reasoning effort.
  * @param {{scope?:any,modelRoute?:any}} profile
- * @param {{paths?:string[],tags?:string[],classes?:string[],chain?:Array<{provider?:string,model?:string,reasoningEffort?:string}>}} expected
+ * @param {{paths?:string[],tags?:string[],chain?:Array<{provider?:string,model?:string,reasoningEffort?:string}>}} expected
  */
 export function assistantVisualReadbackProblems(profile = {}, expected = {}) {
   const problems = []
@@ -1578,9 +1566,7 @@ export function assistantVisualReadbackProblems(profile = {}, expected = {}) {
     const got = readList(key)
     if (got.join(',') !== want.join(',')) problems.push(`the saved scope ${key} are ${got.join(',') || 'none'} instead of ${want.join(',') || 'none'}`)
   }
-  const classes = readList('authorizationClasses')
-  const wantClasses = (expected.classes ?? []).map(String)
-  if (classes.join(',') !== wantClasses.join(',')) problems.push(`the saved authorization classes are ${classes.join(',') || 'none'} instead of ${wantClasses.join(',') || 'none'} in row order`)
+  if (Object.hasOwn(scope, 'authorizationClasses')) problems.push('the saved scope carries a retired authorizationClasses key the editor must never write')
   if (Object.hasOwn(scope, 'workspaces')) problems.push('the saved scope carries a workspaces key the editor must never write')
   const chain = (Array.isArray(profile.modelRoute?.chain) ? profile.modelRoute.chain : []).map(rung => ({
     provider: String(rung?.provider ?? ''), model: String(rung?.model ?? ''),

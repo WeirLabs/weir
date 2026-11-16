@@ -133,7 +133,7 @@
         decisionAgentsEnabled: true
         decisionAgentSelectorDefault: !!js process.env.WEIR_IT_DECISION_SELECTOR_DEFAULT ?? 'off'
         decisionAgentAutoShadow: false
-        decisionAgentAutoAnswerClasses: !!js process.env.WEIR_IT_DECISION_AUTO_CLASSES ?? '[]'
+        decisionAgentAutoAnswer: !!js process.env.WEIR_IT_DECISION_AUTO_ANSWER === '1'
         decisionAgentAnswerTimeoutMs: !!js Number(process.env.WEIR_IT_DECISION_TIMEOUT_MS ?? 60000)
         decisionAgentMaxAttemptsPerCase: !!js Number(process.env.WEIR_IT_DECISION_MAX_ATTEMPTS ?? 3)
         decisionAgentStorePath: !!js process.env.WEIR_IT_DECISION_STORE_PATH || ''
