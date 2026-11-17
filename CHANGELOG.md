@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-11-17
+
 ### Changed
 
 - **Auto 路由不再依赖授权档位，自动回答收敛为单个开关（破坏性）**：删除分类器与 A/B/C/D/E/F 档位，Auto 路由改为纯粹的确定性候选过滤（enabled、未归档、paths/tags 覆盖）+ 仅多候选时的一次受限 Router；分类器不再补类、也不会再因 `unknown` 或非严格 JSON 阻断路由。设置页的 A/B/C 芯片换成布尔开关 `decisionAgentAutoAnswer`（默认关闭；旧的 `decisionAgentAutoAnswerClasses` 数组被忽略）。关闭时 Auto 仍会选出助手并把 Case 固定给它、进入有归属的授权待办，且不消耗领域评估；打开时结论通过全部证据与授权闸门后才可直接采纳。助手编辑器与候选原则编辑器的适用范围只保留 paths/tags；`decision_consult` 去掉 `authorization_class` 参数；授权边界由确定性排除（审批、计划评审、发布/部署/合并、删除、执行命令、凭据与不可逆动作）承担。历史 `authorizationClasses` 字段惰性兼容、不再写出。
