@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-11-18
+
 ### Fixed
 
 - **会话黑板 fork 溯源补丁在宿主服务代理下自递归，导致新建会话全线失败**：`installForkProvenance` 用 `agents.create === createCapturing` / `controller.fork === forkCapturing` 判断是否还原，而 cordis 把服务方法暴露为**每次读取都新建**的 traceable 代理，身份比较恒为假——补丁在第一次 fork 后永久驻留，第二次 fork 捕获到自身代理并同步自递归（`RangeError: Maximum call stack size exceeded`），被宿主包成 `gateway/internal: failed to create session`，此后该进程内所有新建会话与委派失败，只能重启。现改为窗口内只捕获/还原一次的 `installed` 标记，并按安装前的自有属性决定用 `delete` 回到原型解析（不逐次叠加代理层）还是写回第三方包装；`sessionController.fork` 按安装时捕获的 `ownFork` 还原，dispose 现在真正摘除两个补丁。补「代理形态 / Service 形态 + 连续 fork + 层数恒定 + dispose 还原且不再捕获」回归用例。
