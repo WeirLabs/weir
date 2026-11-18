@@ -134,6 +134,77 @@ function proxyHost({ resolveChildOf = () => CHILD, onCreate = undefined } = {}) 
   }
 }
 
+/**
+ * The host's other, harder shape: a cordis Service. Its methods live on the
+ * prototype, and every read goes through the traceable proxy's get trap, which
+ * wraps ANY function property — own or inherited — in `new Proxy(value, { apply })`
+ * (createShadowMethod). Assignments create an own property on the instance, as
+ * the real service proxy's set trap does, and `delete` exposes the prototype
+ * method again. Every shadow counts one apply layer, so the base method observes
+ * how many proxies the call crossed: that is what exposes a window which writes
+ * the displaced shadow back into the slot instead of deleting its own property.
+ */
+function serviceHost({ resolveChildOf = () => CHILD, onCreate = undefined } = {}) {
+  const created = []
+  // Shadow layers active at the moment the base create runs.
+  const depth = { current: 0, atBase: [] }
+  const shadows = new WeakMap()
+  const shadow = value => {
+    const wrapped = new Proxy(value, {
+      apply(fn, thisArg, args) {
+        depth.current += 1
+        try { return Reflect.apply(fn, thisArg, args) } finally { depth.current -= 1 }
+      },
+    })
+    shadows.set(wrapped, value)
+    return wrapped
+  }
+  const unwrap = value => { while (shadows.has(value)) value = shadows.get(value); return value }
+  const service = proto => {
+    const instance = Object.create(proto)
+    return new Proxy(instance, {
+      get(object, property, receiver) {
+        const value = Reflect.get(object, property, receiver)
+        if (typeof property !== 'string' || typeof value !== 'function') return value
+        return shadow(value)
+      },
+      set(object, property, value) { object[property] = value; return true },
+    })
+  }
+  const agentsProto = {
+    async create(options, ...rest) {
+      depth.atBase.push(depth.current)
+      created.push(options)
+      if (onCreate) await onCreate(options)
+      return { sessionId: options.sessionId }
+    },
+  }
+  const controllerProto = {
+    async fork(request, ...rest) {
+      const sessionId = resolveChildOf(request?.sessionId)
+      return agents.create({ sessionId, meta: { cwd: '/workspace', isSeeded: true }, rest })
+    },
+  }
+  const agents = service(agentsProto)
+  const controller = service(controllerProto)
+  return {
+    agents,
+    controller,
+    agentsProto,
+    controllerProto,
+    created,
+    depth,
+    unwrap,
+    ctx(warnings = []) {
+      return {
+        inject: (deps, callback) => callback({ sessionController: controller, agents }),
+        get: () => undefined,
+        logger: { warn: message => warnings.push(String(message)) },
+      }
+    },
+  }
+}
+
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
 test('a captured fork seeds from its source before the child board materializes', async t => {
@@ -358,4 +429,55 @@ test('every proxy-host fork restores the create it displaced', async t => {
   assert.equal(host.unwrap(host.target.create), originalCreate)
   await host.controller.fork({ sessionId: SOURCE_B })
   assert.equal(host.unwrap(host.target.create), originalCreate)
+})
+
+test('three forks on a service host keep the patched create layer flat', async t => {
+  const f = await fixture(t)
+  const sources = ['session-source-a', 'session-source-b', 'session-source-c']
+  const children = ['session-child-a', 'session-child-b', 'session-child-c']
+  const childOf = new Map(sources.map((source, index) => [source, children[index]]))
+  for (const source of sources.slice(1)) await f.session(source)
+  for (const child of children) await f.session(child, { isSeeded: true })
+
+  const host = serviceHost({ resolveChildOf: sourceId => childOf.get(sourceId) })
+  const dispose = installForkProvenance(host.ctx(), f.runtime)
+  t.after(dispose)
+
+  for (const source of sources) assert.equal((await host.controller.fork({ sessionId: source })).sessionId, childOf.get(source))
+  for (const source of sources) assert.equal(f.runtime.forkSources.get(childOf.get(source)), source)
+
+  // The base create sees one apply layer per shadow proxy the call crossed. A
+  // window that writes the displaced shadow back into the slot adds a layer per
+  // fork (4, 5, 6 …); restoring by own-ness keeps it flat (4, 4, 4).
+  const depths = host.depth.atBase
+  assert.equal(depths.length, 3)
+  assert.ok(depths[0] > 0, `the fixture must shadow method reads, got depth ${depths[0]}`)
+  assert.deepEqual(depths, depths.map(() => depths[0]), 'the fork patch must not gain an apply layer per fork')
+})
+
+test('dispose unships both service patches and stops capturing', async t => {
+  const f = await fixture(t)
+  const host = serviceHost()
+  const dispose = installForkProvenance(host.ctx(), f.runtime)
+  t.after(dispose)
+
+  assert.equal((await host.controller.fork({ sessionId: SOURCE })).sessionId, CHILD)
+  assert.equal(f.runtime.forkSources.get(CHILD), SOURCE)
+
+  dispose()
+  f.runtime.forkSources.clear()
+  assert.equal((await host.controller.fork({ sessionId: SOURCE })).sessionId, CHILD)
+
+  // Both patches were own properties laid over prototype methods. Unship deletes
+  // them — from the own-ness captured at install, never from an identity
+  // comparison against a shadow the host hands out fresh on every read.
+  const after = {
+    recaptured: f.runtime.forkSources.size,
+    forkOwn: Object.hasOwn(host.controller, 'fork'),
+    createOwn: Object.hasOwn(host.agents, 'create'),
+  }
+  assert.deepEqual(after, { recaptured: 0, forkOwn: false, createOwn: false }, 'dispose must delete the own properties it installed and stop capturing')
+  // What the host's own calls reach afterwards is its own prototype methods.
+  assert.equal(host.unwrap(host.controller.fork), host.controllerProto.fork)
+  assert.equal(host.unwrap(host.agents.create), host.agentsProto.create)
 })

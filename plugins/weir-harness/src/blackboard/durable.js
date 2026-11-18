@@ -190,7 +190,11 @@ export function createRuntimeMount(ctx, runtime) {
  * Host service methods are reached through cordis traceable proxies: every read
  * of a function property returns a NEW Proxy (createShadowMethod), so identity
  * comparison across two reads of agents.create is never true and must never
- * guard a restore. The patch tracks its own installation state instead.
+ * guard a restore. The patch tracks its own installation state instead, and it
+ * restores by own-ness: a host Service's method lives on the prototype, so a
+ * window that installed an own property deletes it again instead of writing the
+ * displaced shadow back into the slot (the next read would wrap that shadow and
+ * every fork would add one more apply layer).
  * @param {any} ctx @param {any} runtime
  * @returns {() => void}
  */
@@ -232,9 +236,25 @@ export function installForkProvenance(ctx, runtime) {
       // install or replace a third-party wrapper inside a fork window — the
       // window restores the value it displaced and preserves no patch it did not
       // make.
+      //
+      // Own-ness decides HOW to restore, because writing the captured shadow back
+      // is itself a new layer: on a host Service `create` lives on the prototype,
+      // so `Object.hasOwn(agents, 'create')` is false and the window deletes its
+      // own property, exposing the prototype method again. Only a pre-existing own
+      // wrapper (another plugin's patch) is written back. The fork wrapper follows
+      // the same rule from the own-ness captured at install: on a host Service
+      // `sessionController.fork` is a prototype method, so a remount reuses the
+      // slot instead of nesting a second closure.
       let inFlight = 0
       let installed = false
       let displacedCreate
+      let displacedOwn = false
+      // Both unship sites (window close and disposer) restore the same way:
+      // own-ness, never identity.
+      const restoreCreate = () => {
+        if (displacedOwn) agents.create = displacedCreate
+        else delete agents.create
+      }
       /** @this {any} */
       const createCapturing = async function createCapturing(options, ...rest) {
         const store = sink.getStore()
@@ -247,6 +267,7 @@ export function installForkProvenance(ctx, runtime) {
         if (sourceId === undefined) return fork.call(this, request, ...rest)
         if (inFlight === 0) {
           if (!installed) {
+            displacedOwn = Object.prototype.hasOwnProperty.call(agents, 'create')
             displacedCreate = agents.create
             installed = true
           }
@@ -262,19 +283,19 @@ export function installForkProvenance(ctx, runtime) {
         } finally {
           inFlight -= 1
           if (inFlight === 0 && installed) {
-            agents.create = displacedCreate
+            restoreCreate()
             installed = false
           }
         }
       }
       controller.fork = forkCapturing
       state.release = () => {
-        if (controller.fork === forkCapturing) {
-          if (ownFork) controller.fork = fork
-          else delete controller.fork
-        }
+        // Unship the fork wrapper from the own-ness captured at install — never by
+        // comparing with forkCapturing, which a host Service shadow can never match.
+        if (ownFork) controller.fork = fork
+        else delete controller.fork
         if (installed) {
-          agents.create = displacedCreate ?? create
+          restoreCreate()
           installed = false
         }
         state.release = undefined
