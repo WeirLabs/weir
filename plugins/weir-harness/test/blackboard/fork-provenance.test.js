@@ -78,6 +78,62 @@ function fakeHost({ resolveChildOf = () => CHILD, onCreate = undefined } = {}) {
   }
 }
 
+/**
+ * The same host, exposed the way the real one is: through cordis traceable
+ * service proxies. `createShadowMethod` hands out `new Proxy(value, { apply })`
+ * on EVERY read of a service's own function property, so two reads of
+ * `agents.create` are never the same object — identity comparison across reads
+ * cannot work — while assignments land on the underlying target. `unwrap` peels
+ * those shadows back to the function the host actually holds: that, not a proxy,
+ * is what a restore assertion has to compare.
+ */
+function proxyHost({ resolveChildOf = () => CHILD, onCreate = undefined } = {}) {
+  const created = []
+  const target = {
+    async create(options, ...rest) {
+      created.push(options)
+      if (onCreate) await onCreate(options)
+      return { sessionId: options.sessionId }
+    },
+  }
+  const shadows = new WeakMap()
+  const shadow = value => {
+    const wrapped = new Proxy(value, { apply: (fn, thisArg, args) => Reflect.apply(fn, thisArg, args) })
+    shadows.set(wrapped, value)
+    return wrapped
+  }
+  const unwrap = value => { while (shadows.has(value)) value = shadows.get(value); return value }
+  const agents = new Proxy(target, {
+    get(object, property, receiver) {
+      const value = Reflect.get(object, property, receiver)
+      // Only the service's own function properties get shadowed, as in the host;
+      // Function.prototype members must stay callable, not wrapped.
+      return typeof property === 'string' && typeof value === 'function' && Object.prototype.hasOwnProperty.call(object, property) ? shadow(value) : value
+    },
+    set(object, property, value) { object[property] = value; return true },
+  })
+  const controller = {
+    async fork(request, ...rest) {
+      const sessionId = resolveChildOf(request?.sessionId)
+      return agents.create({ sessionId, meta: { cwd: '/workspace', isSeeded: true }, rest })
+    },
+  }
+  return {
+    agents,
+    target,
+    controller,
+    created,
+    unwrap,
+    ctx(warnings = []) {
+      return {
+        inject: (deps, callback) => callback({ sessionController: controller, agents }),
+        get: () => undefined,
+        logger: { warn: message => warnings.push(String(message)) },
+      }
+    },
+  }
+}
+
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
 
 test('a captured fork seeds from its source before the child board materializes', async t => {
@@ -257,4 +313,49 @@ test('a failing create inside the fork keeps the host error and restores the pat
   t.after(dispose)
   await assert.rejects(host.controller.fork({ sessionId: SOURCE }), /host create failed/)
   assert.equal(host.agents.create, originalCreate)
+})
+
+test('two consecutive forks on a proxy host both capture and never recurse', async t => {
+  const f = await fixture(t)
+  const SOURCE_B = 'session-source-b'
+  const SECOND = 'session-child-2'
+  await f.session(SOURCE_B)
+  await f.session(CHILD, { isSeeded: true })
+  await f.session(SECOND, { isSeeded: true })
+  // Two ordinary forks in a row: the second one used to displace the first one's
+  // wrapper and blow the stack synchronously.
+  const children = [CHILD, SECOND]
+  let child = 0
+  const host = proxyHost({ resolveChildOf: () => children[child++] })
+  const dispose = installForkProvenance(host.ctx(), f.runtime)
+  t.after(dispose)
+
+  assert.equal((await host.controller.fork({ sessionId: SOURCE })).sessionId, CHILD)
+  assert.equal((await host.controller.fork({ sessionId: SOURCE_B })).sessionId, SECOND)
+  assert.equal(f.runtime.forkSources.get(CHILD), SOURCE)
+  assert.equal(f.runtime.forkSources.get(SECOND), SOURCE_B)
+  assert.notEqual(f.runtime.forkSources.get(CHILD), f.runtime.forkSources.get(SECOND))
+  // The host still creates Sessions directly after both fork windows closed.
+  assert.equal((await host.agents.create({ sessionId: 'session-post-fork' })).sessionId, 'session-post-fork')
+  assert.equal(host.created.at(-1).sessionId, 'session-post-fork')
+})
+
+test('every proxy-host fork restores the create it displaced', async t => {
+  const f = await fixture(t)
+  const SOURCE_B = 'session-source-b'
+  const SECOND = 'session-child-2'
+  await f.session(SOURCE_B)
+  await f.session(CHILD, { isSeeded: true })
+  await f.session(SECOND, { isSeeded: true })
+  const children = [CHILD, SECOND]
+  let child = 0
+  const host = proxyHost({ resolveChildOf: () => children[child++] })
+  const originalCreate = host.target.create
+  const dispose = installForkProvenance(host.ctx(), f.runtime)
+  t.after(dispose)
+
+  await host.controller.fork({ sessionId: SOURCE })
+  assert.equal(host.unwrap(host.target.create), originalCreate)
+  await host.controller.fork({ sessionId: SOURCE_B })
+  assert.equal(host.unwrap(host.target.create), originalCreate)
 })

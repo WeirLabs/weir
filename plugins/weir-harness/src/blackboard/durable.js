@@ -186,6 +186,11 @@ export function createRuntimeMount(ctx, runtime) {
  * wrapper is reported once and never changes the host's fork semantics. The
  * returned disposer is idempotent and only the last holder restores the
  * original methods (a preset remount keeps the capture installed).
+ *
+ * Host service methods are reached through cordis traceable proxies: every read
+ * of a function property returns a NEW Proxy (createShadowMethod), so identity
+ * comparison across two reads of agents.create is never true and must never
+ * guard a restore. The patch tracks its own installation state instead.
  * @param {any} ctx @param {any} runtime
  * @returns {() => void}
  */
@@ -217,7 +222,18 @@ export function installForkProvenance(ctx, runtime) {
       // The create patch is reference-counted across in-flight forks and chains to
       // whatever it displaced, so another wrapper (a probe, a host decoration)
       // installed before the fork still runs and is restored afterwards.
+      //
+      // Restore is keyed on `installed`, never on identity: host service method
+      // reads return a fresh traceable Proxy each time (createShadowMethod), so
+      // `agents.create === createCapturing` is false even while our patch is the
+      // value the host holds. Such a guard never restores; the next fork then
+      // records its own wrapper as the displaced create and the chain collapses
+      // into synchronous self-recursion. Corollary for other plugins: never
+      // install or replace a third-party wrapper inside a fork window — the
+      // window restores the value it displaced and preserves no patch it did not
+      // make.
       let inFlight = 0
+      let installed = false
       let displacedCreate
       /** @this {any} */
       const createCapturing = async function createCapturing(options, ...rest) {
@@ -230,7 +246,10 @@ export function installForkProvenance(ctx, runtime) {
         const sourceId = typeof request?.sessionId === 'string' && request.sessionId.length > 0 ? request.sessionId : undefined
         if (sourceId === undefined) return fork.call(this, request, ...rest)
         if (inFlight === 0) {
-          displacedCreate = agents.create
+          if (!installed) {
+            displacedCreate = agents.create
+            installed = true
+          }
           agents.create = createCapturing
         }
         inFlight += 1
@@ -242,7 +261,10 @@ export function installForkProvenance(ctx, runtime) {
           throw error
         } finally {
           inFlight -= 1
-          if (inFlight === 0 && agents.create === createCapturing) agents.create = displacedCreate
+          if (inFlight === 0 && installed) {
+            agents.create = displacedCreate
+            installed = false
+          }
         }
       }
       controller.fork = forkCapturing
@@ -251,7 +273,10 @@ export function installForkProvenance(ctx, runtime) {
           if (ownFork) controller.fork = fork
           else delete controller.fork
         }
-        if (agents.create === createCapturing) agents.create = displacedCreate ?? create
+        if (installed) {
+          agents.create = displacedCreate ?? create
+          installed = false
+        }
         state.release = undefined
       }
       return undefined
