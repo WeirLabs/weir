@@ -131,6 +131,7 @@ fork 是自己的板根（不继承源板），但它的板不从空板开局：
 - 源根无旁置（从未建板）时不创建任何东西，返回 false——fork 按普通空板开局。
 - **捕获不可用即退化**：headless/SDK 等不含 `sessionController` 的组合、或 `ctx.inject` 的依赖始终缺席时，安装器不注册任何东西（每运行时至多一条告警），fork 仍以空板可用，黑板其它能力不受影响。
 - **已物化的空板不补种**：若子会话的 `_bb` 在播种前已被 `ensure` 建出（空板），播种不覆盖它——这是「已初始化旁置永不覆盖」的必然推论，也正是捕获路径必须落在 `resolveDurableRoot` 内、而不是 fork 返回之后的原因（实测 fork 返回时子板已物化）。
+- **代理安全的安装/还原（v2.4.2 修复）**：宿主把服务方法暴露为 cordis traceable 代理——**每次读取函数属性都返回新的 shadow Proxy**（`createShadowMethod`），所以任何 `agents.create === createCapturing` / `controller.fork === forkCapturing` 形式的身份比较恒为假。旧实现靠它守卫还原，导致补丁在第一次 fork 后永久驻留、第二次 fork 捕获到自身代理并同步自递归（`RangeError: Maximum call stack size exceeded`，进程内所有新建会话失败，仅重启可解）。现行实现：窗口内以 `installed` 标记**只捕获/还原一次**；还原按「安装前是否已有自有属性」分支——宿主的 `create`/`fork` 是 Service 原型方法时用 `delete` 去掉自己的自有属性、回到原型解析（不逐次叠加代理层），若已有第三方自有包装则写回；`sessionController.fork` 按安装时的 `ownFork` 还原。dispose 后两个方法都必须真正回到宿主实现，且后续 fork 不再产生捕获映射。
 
 ### 原子提交与并发边界
 
